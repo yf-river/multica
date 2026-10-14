@@ -34,7 +34,7 @@ func TestIsMetricsOnly(t *testing.T) {
 		// product-behaviour events (now DB + Grafana only)
 		EventSignup, EventWorkspaceCreated, EventIssueCreated, EventIssueExecuted,
 		EventChatMessageSent, EventTeamInviteSent, EventTeamInviteAccepted,
-		EventOnboardingStarted, EventOnboardingQuestionnaireSubmit, EventOnboardingSourceSubmit,
+		EventOnboardingStarted, EventOnboardingQuestionnaireSubmit,
 		EventAgentCreated,
 		EventOnboardingCompleted, EventCloudWaitlistJoined,
 		EventContactSalesSubmitted, EventSquadCreated, EventAutopilotCreated,
@@ -49,26 +49,14 @@ func TestIsMetricsOnly(t *testing.T) {
 	}
 }
 
-func TestOnboardingSourceSubmittedSetOnlyWhenAnswered(t *testing.T) {
-	answered := OnboardingSourceSubmitted("u1", []string{"search"}, false, false)
-	if answered.Properties["source_skipped"] != false {
-		t.Fatalf("answered: source_skipped = %v, want false", answered.Properties["source_skipped"])
+func TestOnboardingQuestionnaireOmitsAcquisitionSource(t *testing.T) {
+	ev := OnboardingQuestionnaireSubmitted("u1", "engineer", []string{"ship_code"}, false, false, false, false)
+	for _, key := range []string{"acquisition_source", "source_skipped", "source_has_other"} {
+		if _, ok := ev.Properties[key]; ok {
+			t.Fatalf("unexpected acquisition property %s", key)
+		}
 	}
-	if answered.Set == nil || answered.Set["source"] == nil {
-		t.Fatalf("answered: expected $set source, got %v", answered.Set)
-	}
-
-	declined := OnboardingSourceSubmitted("u1", nil, true, false)
-	if declined.Properties["source_skipped"] != true {
-		t.Fatalf("declined: source_skipped = %v, want true", declined.Properties["source_skipped"])
-	}
-	if declined.Set != nil {
-		t.Fatalf("declined: a skip has nothing to mirror — expected nil Set, got %v", declined.Set)
-	}
-	// nil slice must normalize to [] so property types stay stable.
-	// (Key is acquisition_source — plain "source" is the event-source
-	// dimension stamped by core properties.)
-	if src, ok := declined.Properties["acquisition_source"].([]string); !ok || src == nil {
-		t.Fatalf("declined: acquisition_source property = %#v, want empty []string", declined.Properties["acquisition_source"])
+	if _, ok := ev.Set["source"]; ok {
+		t.Fatal("acquisition source must not be mirrored to person properties")
 	}
 }

@@ -22,7 +22,6 @@ const (
 	EventTeamInviteAccepted            = "team_invite_accepted"
 	EventOnboardingStarted             = "onboarding_started"
 	EventOnboardingQuestionnaireSubmit = "onboarding_questionnaire_submitted"
-	EventOnboardingSourceSubmit        = "onboarding_source_submitted"
 	EventAgentCreated                  = "agent_created"
 	EventOnboardingCompleted           = "onboarding_completed"
 	EventCloudWaitlistJoined           = "cloud_waitlist_joined"
@@ -57,7 +56,6 @@ var metricsOnlyEvents = map[string]struct{}{
 	EventTeamInviteAccepted:            {},
 	EventOnboardingStarted:             {},
 	EventOnboardingQuestionnaireSubmit: {},
-	EventOnboardingSourceSubmit:        {},
 	EventAgentCreated:                  {},
 	EventOnboardingCompleted:           {},
 	EventCloudWaitlistJoined:           {},
@@ -429,26 +427,10 @@ func OnboardingStarted(userID, platform string) Event {
 	}
 }
 
-// OnboardingQuestionnaireSubmitted 在用户 `user.onboarding_questionnaire` 首次从
-// 「至少一个槽位没解决」变成「每个槽位都有答案或跳过标记」时触发。handler 驱动这次
-// 转变——从 PatchOnboarding 发，因此即使前端重试，发站点也只有一个、保持诚实。
-//
-// `useCase` 是多选（用户可多选）；`source` 是单选（主要获客渠道），但为了兼容 v2 的
-// 多选行仍以切片承载——当前数据里只有一个元素。`role` 保持单选。空切片表示没作答
-// （跳过由 *Skipped 布尔单独捕获）。
-//
-// 三个答案还会通过 $set 镜像成 person 属性，使按 source / role / use_case 分群
-// 能跨该用户的每条事件成立，而无须回头 join DB。PostHog 接受数组型属性值；对多值
-// 属性做分组时，每个元素被视为一个独立组。
-//
-// `*Skipped` 布尔捕获每题的「跳过」意图。`*HasOther` 是自由文本 "other" 选项的
-// 存在性布尔；自由文本内容留在 DB 供产品研究，不随分析广播（PII 风险 + 低基数诉求）。
-func OnboardingQuestionnaireSubmitted(userID string, source []string, role string, useCase []string, sourceSkipped, roleSkipped, useCaseSkipped, sourceHasOther, roleHasOther, useCaseHasOther bool) Event {
+// OnboardingQuestionnaireSubmitted 记录角色与用途首次完成的事件。
+func OnboardingQuestionnaireSubmitted(userID string, role string, useCase []string, roleSkipped, useCaseSkipped, roleHasOther, useCaseHasOther bool) Event {
 	// 把 nil 切片规整成 []，让 PostHog 属性值保持稳定（避免属性类型推断里 null 与
 	// [] 混用）。
-	if source == nil {
-		source = []string{}
-	}
 	if useCase == nil {
 		useCase = []string{}
 	}
@@ -456,13 +438,10 @@ func OnboardingQuestionnaireSubmitted(userID string, source []string, role strin
 		Name:       EventOnboardingQuestionnaireSubmit,
 		DistinctID: userID,
 		Properties: withCoreProperties(map[string]any{
-			"source":             source,
 			"role":               role,
 			"use_case":           useCase,
-			"source_skipped":     sourceSkipped,
 			"role_skipped":       roleSkipped,
 			"use_case_skipped":   useCaseSkipped,
-			"source_has_other":   sourceHasOther,
 			"role_has_other":     roleHasOther,
 			"use_case_has_other": useCaseHasOther,
 		}, CoreProperties{
@@ -470,47 +449,10 @@ func OnboardingQuestionnaireSubmitted(userID string, source []string, role strin
 			Source: SourceOnboarding,
 		}),
 		Set: map[string]any{
-			"source":   source,
 			"role":     role,
 			"use_case": useCase,
 		},
 	}
-}
-
-// OnboardingSourceSubmitted 在用户获客来源从「未解决」变成「已解决」（作答或明确
-// 拒绝）时触发。source 问题已不属于 onboarding 流程（MUL-5159）：它由「agents 为用户
-// 干完活之后」的 workspace backfill 提示去问，因此这个事件远晚于
-// `onboarding_questionnaire_submitted`（后者现在只覆盖 role + use_case）。专门事件让
-// backfill 提示拥有自己的 Grafana 计数器（作答/拒绝率），而不拖住问卷漏斗这一步。
-// 与所有服务端事件一样是 metrics-only（MUL-4127）；每个用户的 source 值经
-// saveQuestionnaire 里客户端侧的 person 属性镜像到达分析。
-//
-// `source` 保持切片形态，理由同问卷事件（v2 兼容）；客户端提交单元素数组。$set 只在
-// 用户真正作答时挂上——事件停留在 metrics-only 时这是无意义的，但万一将来上线，
-// 该准确的地方依然准确。
-func OnboardingSourceSubmitted(userID string, source []string, skipped, hasOther bool) Event {
-	if source == nil {
-		source = []string{}
-	}
-	// 属性键是 acquisition_source 而不是 source——核心属性会把「事件来源」维度打进
-	// props["source"]（withCoreProperties），获客答案不能跟它抢同一个槽位。下面的 $set
-	// person 属性保留朴素 "source" 名，是为了与客户端镜像的分群连续性。
-	ev := Event{
-		Name:       EventOnboardingSourceSubmit,
-		DistinctID: userID,
-		Properties: withCoreProperties(map[string]any{
-			"acquisition_source": source,
-			"source_skipped":     skipped,
-			"source_has_other":   hasOther,
-		}, CoreProperties{
-			UserID: userID,
-			Source: SourceOnboarding,
-		}),
-	}
-	if len(source) > 0 {
-		ev.Set = map[string]any{"source": source}
-	}
-	return ev
 }
 
 // AgentCreated 在「新 agent 加入 workspace」时触发——不只在 onboarding 内。

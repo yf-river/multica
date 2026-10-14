@@ -161,6 +161,14 @@ agent instructions. The briefing includes:
 - Squad Roster;
 - Squad Instructions, only when `instructions` is non-empty.
 
+The operating protocol lets leaders handle product requirement clarification,
+brief planning, and start confirmation directly with the user. Investigation
+needs no separate authorization and may be delegated as needed. Delegation
+follows the configured task-intake instructions; project SOP detailed
+requirements and their confirmations remain part of the project workflow.
+Product requirement confirmation and a brief plan do not replace or approve
+the project's detailed requirements plan.
+
 Roster entries include member name, member type, mention markdown, and non-empty
 role. For agent members the roster also lists their assigned skills
 (`skills: a, b`, or `no skills assigned` when the agent has none) so the leader

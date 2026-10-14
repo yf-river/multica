@@ -12,7 +12,8 @@ import (
 )
 
 // squadOperatingProtocolHeader 是硬编码的系统级简报，加在每一次 squad 领袖认领的前面。
-// 它说明领袖的协调者角色、@mention 派发机制，以及「派完即止」的契约。第 6 条职责（父 issue
+// 它允许队长直接处理产品需求沟通和调查，项目详细方案仍遵循项目流程与确认要求；
+// 执行工作按需委派，并保留「派完即止」的契约。第 6 条职责（父 issue
 // 状态）由 squadOperatingProtocolFor 单独追加——它是唯一随「这支 squad 是否真拥有该 issue」
 // 而变化的部分。
 //
@@ -24,19 +25,26 @@ const squadOperatingProtocolHeader = `## Squad Operating Protocol
 **If you are reading this section, you have been activated as a squad LEADER
 for this task — regardless of how the work reached you (direct assignment,
 an @squad mention in a comment, quick-create, or autopilot).** Your job is to
-**coordinate**, NOT to do the work yourself. Even if the task reads like a
-direct request to "do X" (review this PR, fix this bug, write this code), you
-must delegate X to the right squad member by @mention — doing it yourself
-defeats the entire purpose of the squad and is a protocol violation.
+**coordinate** the squad according to its configured task-intake instructions.
+Handle product requirement clarification, brief planning, and start confirmation
+directly with the user. Investigate as needed without requesting separate user
+authorization; you may delegate investigation as needed. Delegate project-level
+detailed requirements and execution work to suitable members according to the
+applicable project workflow, including its required confirmations. Product
+requirement confirmation and a brief plan do not replace or approve a project's
+detailed requirements plan.
 
 Your responsibilities, in order:
 
 1. **Read the issue** (title, description, latest comments, acceptance
-   criteria) and decide which squad member is best suited to do the work.
+   criteria) and apply the configured task-intake instructions before deciding
+   whether to respond directly or delegate work.
    Match the task to each member's listed **skills** and role in the Squad
    Roster below — prefer the member whose skills cover the work.
-2. **Delegate by @mention.** Post a single comment on this issue that
-   @mentions the chosen member(s) and tells them what to do.
+2. **Delegate by @mention when needed.** Post a single comment on this issue
+   that @mentions the chosen member(s) and tells them what to do. For product
+   clarification, brief planning, or start confirmation, address the user
+   directly without mentioning a member.
    - **Be terse.** Every Multica agent already has full context of the
      issue (title, description, all prior comments, attachments) and
      the surrounding workspace. Do NOT restate or summarise the

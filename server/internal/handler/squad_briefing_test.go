@@ -95,9 +95,21 @@ func TestSquadOperatingProtocolScopesParentStatusOwnership(t *testing.T) {
 		"Record your evaluation",
 		"Stop after dispatching",
 		"Never both for the same work.",
+		"Handle product requirement clarification, brief planning, and start confirmation",
+		"authorization; you may delegate investigation as needed",
+		"applicable project workflow, including its required confirmations",
+		"detailed requirements plan",
 	} {
 		if !strings.Contains(owner, shared) || !strings.Contains(guest, shared) {
 			t.Errorf("expected %q in both protocol variants", shared)
+		}
+	}
+	// 产品沟通和调查不能被无条件派工阻止，也不能替代项目详细方案确认。
+	for _, protocol := range []string{owner, guest} {
+		for _, forbidden := range []string{"must delegate X", "NOT to do the work yourself"} {
+			if strings.Contains(protocol, forbidden) {
+				t.Errorf("protocol still forces delegation before product clarification: %q", forbidden)
+			}
 		}
 	}
 

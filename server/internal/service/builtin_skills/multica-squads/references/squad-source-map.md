@@ -122,6 +122,20 @@ Contracts:
   members carry no skills segment (squad_briefing.go renderMemberRow);
 - no traced behavior injects `instructions` into every squad member.
 
+Task intake (`squadOperatingProtocolHeader` in `squad_briefing.go`):
+
+- leaders may directly clarify product requirements, give a brief plan and
+  request start confirmation, following the configured task-intake instructions;
+- investigation needs no separate user authorization and may be delegated;
+- project detailed requirements and execution follow the project workflow and
+  its required confirmations; a product confirmation and brief plan do not
+  replace or approve the detailed requirements plan;
+- delegation is conditional; mention syntax, activity recording, dispatch
+  termination and parent-status ownership rules remain in place;
+- `TestSquadOperatingProtocolScopesParentStatusOwnership` verifies these
+  clauses survive in both owner and guest briefing variants and rejects the
+  previous unconditional delegation wording.
+
 ## Leader Evaluation Recording
 
 Source:

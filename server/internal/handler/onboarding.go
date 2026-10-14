@@ -131,12 +131,7 @@ type patchOnboardingRequest struct {
 	Questionnaire *json.RawMessage `json:"questionnaire,omitempty"`
 }
 
-// questionnaireAnswers 镜像前端 QuestionnaireAnswers 的结构。use_case 是多选（第 3 步
-// 允许选多个）；source 是单选（主要获取渠道），但保留成 stringOrSlice 以兼容 v2 的
-// 多选老行——客户端现在总是提交单元素数组。role 仍是单选。
-//
-// stringOrSlice 也容忍该列还只存裸字符串的老行——否则 json.Unmarshal 读到类型不匹配
-// 会直接失败。
+// stringOrSlice 兼容用途字段的数组与历史字符串形式。
 type stringOrSlice []string
 
 func (s *stringOrSlice) UnmarshalJSON(data []byte) error {
@@ -166,9 +161,6 @@ func (s *stringOrSlice) UnmarshalJSON(data []byte) error {
 
 // questionnaireAnswers 是一次问卷答案的落库结构。
 type questionnaireAnswers struct {
-	Source         stringOrSlice `json:"source"`
-	SourceOther    string        `json:"source_other"`
-	SourceSkipped  bool          `json:"source_skipped"`
 	Role           string        `json:"role"`
 	RoleOther      string        `json:"role_other"`
 	RoleSkipped    bool          `json:"role_skipped"`
@@ -178,10 +170,7 @@ type questionnaireAnswers struct {
 	Version        int           `json:"version"`
 }
 
-// 下面三个 *Resolved 判断「这一题是否已经作答或明确跳过」，用于探测状态转换。
-func (q questionnaireAnswers) sourceResolved() bool {
-	return len(q.Source) > 0 || q.SourceSkipped
-}
+// 检查题目是否已作答或明确跳过。
 func (q questionnaireAnswers) roleResolved() bool {
 	return q.Role != "" || q.RoleSkipped
 }
@@ -193,10 +182,7 @@ func (q questionnaireAnswers) useCaseResolved() bool {
 // 事件都限定在该版本上，避免未来的 v3 行被悄悄按 v2 语义误统计。
 const questionnaireSchemaVersion = 2
 
-// complete 只覆盖「流程内问卷」：role + use_case。source 已移出引导流程（MUL-5159）
-// ——改由 workspace backfill prompt 事后收集，其完成与否由 PatchOnboarding 里单独的
-// onboarding_source_submitted 事件追踪。这里若还要求 source，会让漏斗的「问卷已提交」
-// 步骤卡上好几天（甚至永远卡住——对压根没见过 backfill prompt 的用户）。
+// complete 检查角色与用途是否已回答或跳过。
 func (q questionnaireAnswers) complete() bool {
 	if q.Version != questionnaireSchemaVersion {
 		return false
@@ -208,9 +194,7 @@ func (q questionnaireAnswers) complete() bool {
 // 步骤故意不落库——每次进入引导都从 Welcome 开始。
 //
 // 每个用户只发一次 onboarding_questionnaire_submitted：首次 PATCH 把 role + use_case
-// 从「至少一个槽空着」推进到「两者都已作答」时触发。onboarding_source_submitted 在
-// source 槽自己的「未作答 → 已作答」转换时恰好发一次——这通常更晚，走的是 workspace
-// backfill prompt。越过这些点的再编辑不再重发——漏斗统计的是用户，不是编辑次数。
+// 从「至少一个槽空着」推进到「两者都已作答」时触发。
 func (h *Handler) PatchOnboarding(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -261,29 +245,12 @@ func (h *Handler) PatchOnboarding(w http.ResponseWriter, r *http.Request) {
 	if after.complete() && !before.complete() {
 		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.OnboardingQuestionnaireSubmitted(
 			userID,
-			[]string(after.Source),
 			after.Role,
 			[]string(after.UseCase),
-			after.SourceSkipped,
 			after.RoleSkipped,
 			after.UseCaseSkipped,
-			after.SourceOther != "",
 			after.RoleOther != "",
 			after.UseCaseOther != "",
-		))
-	}
-
-	// source 在它自己的时间线上完成——通常比流程内问卷晚好几天，经 workspace
-	// backfill prompt（它已不能再在流程内完成）。在「未作答 → 已作答」转换时发事件，
-	// 让 backfill prompt 的回答/拒绝率呈现在 Grafana 上；转换检查保证每人只发一次，
-	// 与上面的问卷事件同理。
-	if after.Version == questionnaireSchemaVersion &&
-		after.sourceResolved() && !before.sourceResolved() {
-		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.OnboardingSourceSubmitted(
-			userID,
-			[]string(after.Source),
-			after.SourceSkipped,
-			after.SourceOther != "",
 		))
 	}
 

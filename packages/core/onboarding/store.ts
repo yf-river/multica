@@ -20,16 +20,10 @@ export async function saveQuestionnaire(
 ): Promise<void> {
   const user = await api.patchOnboarding({ questionnaire: answers });
   useAuthStore.getState().setUser(user);
-  // 把三个队列信号镜像成 person properties，这样该用户的每条 PostHog 事件
-  // 都能按 source / role / use_case 拆解，无需回连数据库。`source` 单选但以
-  // 单元素数组形式提交（兼容 JSONB 列的 v2 结构）；`use_case` 多选。PostHog
-  // 接受数组属性值，拆解时会把每个元素拆成一组——单元素 source 因此也能干净
-  // 切分。
-  const sourceList = answers.source ?? [];
+  // 角色与用途用于个性化。
   const useCaseList = answers.use_case ?? [];
-  if (sourceList.length > 0 || answers.role || useCaseList.length > 0) {
+  if (answers.role || useCaseList.length > 0) {
     setPersonProperties({
-      ...(sourceList.length > 0 ? { source: sourceList } : {}),
       ...(answers.role ? { role: answers.role } : {}),
       ...(useCaseList.length > 0 ? { use_case: useCaseList } : {}),
     });

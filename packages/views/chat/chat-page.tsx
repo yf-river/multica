@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
-import { ArrowLeft, Loader2, MessageSquare } from "lucide-react";
+import { ArrowLeft, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -14,13 +14,11 @@ import {
 import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useChatStore } from "@multica/core/chat";
-import { chatKeys, chatQuickActionsPendingOptions, sortChatSessions } from "@multica/core/chat/queries";
-import { useCreateChatSession, useRegenerateChatQuickActions } from "@multica/core/chat/mutations";
+import { chatQuickActionsPendingOptions } from "@multica/core/chat/queries";
+import { useRegenerateChatQuickActions } from "@multica/core/chat/mutations";
 import { useQuickActionsPendingTimeout } from "@multica/core/chat/use-quick-actions-pending-timeout";
 import { useQuickActionsFailureToast } from "./components/use-quick-actions-failure-toast";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { isMikaAgent } from "@multica/core/onboarding";
-import { isAgentRuntimeBound } from "@multica/core/agents";
+import { useQuery } from "@tanstack/react-query";
 import type { Agent, ChatSession } from "@multica/core/types";
 import { PageHeader } from "../layout/page-header";
 import { useNavigation } from "../navigation";
@@ -59,11 +57,6 @@ export function ChatPage() {
   const isCompact = useIsCompact();
 
   const c = useChatController({ isActive: true });
-  const createSession = useCreateChatSession();
-  const queryClient = useQueryClient();
-  const quickCreating = useRef(false);
-  const mika = c.availableAgents.find(isMikaAgent);
-
   const { data: quickActionsPending = null } = useQuery(
     chatQuickActionsPendingOptions(c.activeSessionId ?? ""),
   );
@@ -196,27 +189,6 @@ export function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- URL 参数或解析出的 agent 列表变化时消费意图
   }, [urlAgent, c.availableAgents, c.agentsSettled]);
 
-  const quickCreate = async () => {
-    if (!mika || !isAgentRuntimeBound(mika) || quickCreating.current) return;
-    quickCreating.current = true;
-    try {
-      // 每次明确点击都创建新会话，不复用侧栏 Mika 入口的历史会话。
-      const session = await createSession.mutateAsync({ agent_id: mika.id, title: mika.name });
-      // 先把服务端返回的会话加入列表，避免选中时被当成已删除的会话清除。
-      const sessionsKey = chatKeys.sessions(session.workspace_id);
-      await queryClient.cancelQueries({ queryKey: sessionsKey });
-      queryClient.setQueryData<ChatSession[]>(sessionsKey, (previous = []) =>
-        sortChatSessions([session, ...previous.filter((item) => item.id !== session.id)]),
-      );
-      queryClient.setQueryData(chatKeys.session(session.workspace_id, session.id), session);
-      handleSelect(session);
-    } catch {
-      toast.error(t(($) => $.page.quick_create_failed));
-    } finally {
-      quickCreating.current = false;
-    }
-  };
-
   const newChatButton = (
     <NewChatButton
       agents={c.availableAgents}
@@ -229,16 +201,6 @@ export function ChatPage() {
   const listHeader = (
     <PageHeader>
       <h1 className="flex-1 text-body font-semibold">{t(($) => $.page.title)}</h1>
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={!mika || !isAgentRuntimeBound(mika) || createSession.isPending}
-        title={!mika || !isAgentRuntimeBound(mika) ? t(($) => $.page.quick_create_unavailable) : undefined}
-        onClick={() => void quickCreate()}
-      >
-        {createSession.isPending && <Loader2 className="animate-spin" />}
-        {t(($) => $.page.quick_create)}
-      </Button>
       {newChatButton}
     </PageHeader>
   );

@@ -14,13 +14,7 @@ import type { OnboardingStep } from "./types";
  * 进度指示器也不为它显示，理由相同——不该让用户把「读介绍」也算成「在完成
  * 设置上往前走」。
  *
- * 有两个问题刻意不再作为独立步骤：
- *
- *   - "source"（你是怎么知道 Multica 的？）是纯归因数据，对用户零回报，
- *     所以不再占用关键路径。它改在引导后由工作区的 source-backfill 弹窗
- *     收集，而且只在 agent 为用户完成过工作之后——见 `needs-backfill.ts`。
- *   - "role" / "use_case" 合并进单一的 "about_you" 步骤，让相关的个性化
- *     输入待在一起。
+ * role / use_case 合并在 about_you 步骤，提供个性化输入。
  *
  * Runtime 是最后一个表单步骤。连接了 runtime 的路径会在 runtime 步骤的提交
  * 动作里一并「创建 Mika 并打开交互式引导聊天」——那个聊天本身就是产品体验，

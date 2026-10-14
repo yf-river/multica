@@ -84,7 +84,7 @@ describe("no untranslated toast copy", () => {
     ['toast.error', 'toast.error("Failed to save");'],
     ['toast.success', 'toast.success("Workspace created");'],
     ['template literal', 'toast.error(`Failed to save`);'],
-    // The shape that shipped untranslated in source-backfill-modal.tsx.
+    // User-facing option labels must be translated.
     [
       'ternary fallback',
       'toast.error(err instanceof Error ? err.message : "Failed to save");',

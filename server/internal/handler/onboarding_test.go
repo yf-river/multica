@@ -231,11 +231,8 @@ func patchOnboardingAs(t *testing.T, h *Handler, userID, questionnaire string) {
 	}
 }
 
-// The in-flow questionnaire is role + use_case only (MUL-5159): its
-// funnel counter must move without source, and source's own counter
-// must move exactly once when source resolves later via the workspace
-// backfill prompt.
-func TestPatchOnboardingSplitsQuestionnaireAndSourceEvents(t *testing.T) {
+// 角色与用途完成时只记录一次问卷事件，历史来源字段不影响计数。
+func TestPatchOnboardingQuestionnaireEventIsIdempotent(t *testing.T) {
 	userID := newWaitlistTestUser(t, "onboarding-event-split@multica.ai")
 
 	m := obsmetrics.NewBusinessMetrics()
@@ -243,20 +240,15 @@ func TestPatchOnboardingSplitsQuestionnaireAndSourceEvents(t *testing.T) {
 	h.Metrics = m
 
 	const questionnaireCounter = "multica_onboarding_questionnaire_submitted_total"
-	const sourceCounter = "multica_onboarding_source_submitted_total"
 
 	const inFlow = `{"source":[],"source_other":null,"source_skipped":false,` +
 		`"role":"engineer","role_other":null,"role_skipped":false,` +
 		`"use_case":["ship_code"],"use_case_other":null,"use_case_skipped":false,"version":2}`
 
-	// Role + use_case resolved, source untouched → questionnaire counter
-	// moves now; source counter must NOT.
+	// 角色与用途完成后记录问卷事件。
 	patchOnboardingAs(t, &h, userID, inFlow)
 	if got := counterValue(t, m, questionnaireCounter); got != 1 {
 		t.Fatalf("expected questionnaire counter 1 after role+use_case resolve, got %v", got)
-	}
-	if got := counterValue(t, m, sourceCounter); got != 0 {
-		t.Fatalf("expected source counter 0 while source unresolved, got %v", got)
 	}
 
 	// Idempotency: replaying the same answers re-emits nothing.
@@ -265,29 +257,24 @@ func TestPatchOnboardingSplitsQuestionnaireAndSourceEvents(t *testing.T) {
 		t.Fatalf("expected questionnaire counter to stay at 1 after replay, got %v", got)
 	}
 
-	// Source lands later (the backfill prompt merges it into the row).
+	// 兼容旧客户端提交的来源字段，不重复记录问卷事件。
 	const withSource = `{"source":["search"],"source_other":null,"source_skipped":false,` +
 		`"role":"engineer","role_other":null,"role_skipped":false,` +
 		`"use_case":["ship_code"],"use_case_other":null,"use_case_skipped":false,"version":2}`
 	patchOnboardingAs(t, &h, userID, withSource)
-	if got := counterValue(t, m, sourceCounter); got != 1 {
-		t.Fatalf("expected source counter 1 after source resolves, got %v", got)
-	}
 	if got := counterValue(t, m, questionnaireCounter); got != 1 {
 		t.Fatalf("expected questionnaire counter to stay at 1 after source lands, got %v", got)
 	}
 
-	// Replaying the source answer re-emits nothing.
+	// 重放不重复计数。
 	patchOnboardingAs(t, &h, userID, withSource)
-	if got := counterValue(t, m, sourceCounter); got != 1 {
-		t.Fatalf("expected source counter to stay at 1 after replay, got %v", got)
+	if got := counterValue(t, m, questionnaireCounter); got != 1 {
+		t.Fatalf("expected one questionnaire event after replay, got %v", got)
 	}
 }
 
-// Declining every question at once (the About-you Skip writes both
-// role and use_case skip markers; a backfill Skip writes source's) is
-// a resolution too: both counters move exactly once.
-func TestPatchOnboardingAllSkippedResolvesBothCounters(t *testing.T) {
+// 显式跳过角色与用途同样完成问卷。
+func TestPatchOnboardingAllSkippedResolvesQuestionnaire(t *testing.T) {
 	userID := newWaitlistTestUser(t, "onboarding-source-skip@multica.ai")
 
 	m := obsmetrics.NewBusinessMetrics()
@@ -301,8 +288,5 @@ func TestPatchOnboardingAllSkippedResolvesBothCounters(t *testing.T) {
 
 	if got := counterValue(t, m, "multica_onboarding_questionnaire_submitted_total"); got != 1 {
 		t.Fatalf("expected questionnaire counter 1 for all-skip, got %v", got)
-	}
-	if got := counterValue(t, m, "multica_onboarding_source_submitted_total"); got != 1 {
-		t.Fatalf("expected source counter 1 for an explicit decline, got %v", got)
 	}
 }

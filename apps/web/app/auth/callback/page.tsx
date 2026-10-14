@@ -114,8 +114,6 @@ function CallbackContent() {
 
           // 3. 默认：交给解析器（首次用户去 onboarding，回访用户去第一个 workspace，
           //    已 onboard 但没有 workspace 的用户去 /workspaces/new）。
-          //    已 onboard 但没记录来源的用户，其来源归因回填由 dashboard 外壳里的
-          //    `<SourceBackfillModal />` 处理——不是一次路由绕行，所以我们直接路由到目标。
           router.push(resolvePostAuthDestination(wsList, onboarded));
         })
         .catch((err) => {
