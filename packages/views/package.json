@@ -87,7 +87,8 @@
     "./locales": "./locales/index.ts",
     "./locales/*": "./locales/*",
     "./cooking": "./cooking/cooking-page.tsx",
-    "./meals": "./meals/meals-page.tsx"
+    "./meals": "./meals/meals-page.tsx",
+    "./settings/capability-page": "./settings/components/capability-page.tsx"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

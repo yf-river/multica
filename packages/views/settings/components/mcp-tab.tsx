@@ -4,6 +4,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useAuthStore } from "@multica/core/auth";
+import { runtimeListOptions } from "@multica/core/runtimes";
+import { memberListOptions } from "@multica/core/workspace/queries";
+import { RuntimePicker } from "../../agents/components/runtime-picker";
+import { Input } from "@multica/ui/components/ui/input";
+import { McpMetadataDialog, McpConnectionCheck } from "./mcp-library-controls";
 import { Loader2, Pencil, Plus, Server, Trash2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -33,18 +39,7 @@ import type { ManagedMcpServer } from "../../agents/components/tabs/mcp-config-m
 import { useT } from "../../i18n";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 
-/**
- * 工作区 MCP 服务器库（需求单 GH #6062）。
- *
- * 这个页面的两个关键设定，先说明白：
- *
- *  - 在这里添加的服务器不会隐式交给任何 agent。它只是库里的一个条目，作用类似
- *    「工作区技能」：由 agent 的拥有者在 agent 自己的 MCP 页里选定使用，并在那里
- *    获得每个 agent 一个开关。本页的操作不会暗地里触达任何 agent。
- *  - 保存的配置是「只写」的。接口只会返回名称和传输方式，绝不返回 url / 命令 /
- *    头信息 / 环境变量，所以编辑时没有「当前值」可以回填——改一个服务器就意味着
- *    要重新填一遍它的配置。界面如实说明了这一点，而不是把空表单伪装成已保存的状态。
- */
+// 工作区服务库只供显式分配；元信息和连接配置分别编辑。
 export function McpTab() {
   const { t } = useT("settings");
   const workspace = useCurrentWorkspace();
@@ -59,6 +54,30 @@ export function McpTab() {
   const deleteServer = useDeleteWorkspaceMcpServer(wsId);
 
   const servers = serversQuery.data ?? [];
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  const runtimeQuery = useQuery(runtimeListOptions(wsId));
+  const members = useQuery(memberListOptions(wsId));
+  const [runtimeId, setRuntimeId] = useState("");
+  const [search, setSearch] = useState("");
+  const [description, setDescription] = useState("");
+  const [metadataServer, setMetadataServer] =
+    useState<WorkspaceMcpServer | null>(null);
+  const runtimes = useMemo(
+    () =>
+      (runtimeQuery.data ?? []).filter(
+        (rt) =>
+          rt.status === "online" &&
+          (rt.metadata?.capabilities as string[] | undefined)?.includes(
+            "workspace-mcp-check-v1",
+          ),
+      ),
+    [runtimeQuery.data],
+  );
+  const filteredServers = servers.filter((server) =>
+    `${server.name} ${server.description ?? ""}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
   const existingNames = useMemo(
     () => new Set(servers.map((server) => server.name)),
     [servers],
@@ -68,9 +87,8 @@ export function McpTab() {
   const [editingServer, setEditingServer] = useState<WorkspaceMcpServer | null>(
     null,
   );
-  const [deletingServer, setDeletingServer] = useState<WorkspaceMcpServer | null>(
-    null,
-  );
+  const [deletingServer, setDeletingServer] =
+    useState<WorkspaceMcpServer | null>(null);
 
   // 编辑弹窗与 agent 的 MCP 页共用（那边会传入已保存的条目来回填表单）。这里没有
   // 可回填的内容——编辑总是从空表单开始、保存时整体替换原条目。传输方式仍取自
@@ -93,9 +111,13 @@ export function McpTab() {
     try {
       if (editingServer) {
         // 这里改名是安全的：各 agent 的引用挂的是服务器 id，改名后仍指向同一个服务器。
-        await updateServer.mutateAsync({ serverId: editingServer.id, name, config });
+        await updateServer.mutateAsync({
+          serverId: editingServer.id,
+          name,
+          config,
+        });
       } else {
-        await createServer.mutateAsync({ name, config });
+        await createServer.mutateAsync({ name, config, description });
       }
       toast.success(
         editingServer
@@ -134,12 +156,13 @@ export function McpTab() {
     >
       <SettingsSection
         title={t(($) => $.mcp.servers_title)}
-        description={t(($) => $.mcp.write_only_note)}
+        description={t(($) => $.mcp.saved_note)}
         action={
           canManage ? (
             <Button
               size="sm"
               onClick={() => {
+                setDescription("");
                 setEditingServer(null);
                 setEditorOpen(true);
               }}
@@ -150,8 +173,43 @@ export function McpTab() {
           ) : null
         }
       >
+        <Input
+          aria-label={t(($) => $.mcp.search)}
+          placeholder={t(($) => $.mcp.search)}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {canManage && (
+          <div className="space-y-2">
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.mcp.check_note)}
+            </p>
+            <RuntimePicker
+              runtimes={runtimes}
+              runtimesLoading={runtimeQuery.isLoading}
+              members={members.data ?? []}
+              currentUserId={userId}
+              selectedRuntimeId={runtimeId}
+              onSelect={setRuntimeId}
+            />
+            {!runtimeQuery.isLoading && !runtimes.length && (
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.mcp.no_runtime)}
+              </p>
+            )}
+          </div>
+        )}
         <SettingsCard>
-          {serversQuery.isLoading ? (
+          {serversQuery.isError ? (
+            <div role="alert" className="p-4">
+              <Button
+                variant="outline"
+                onClick={() => void serversQuery.refetch()}
+              >
+                {t(($) => $.mcp.retry)}
+              </Button>
+            </div>
+          ) : serversQuery.isLoading ? (
             <div className="flex items-center justify-center py-8 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
             </div>
@@ -167,14 +225,20 @@ export function McpTab() {
             </div>
           ) : (
             <ul className="divide-y divide-surface-border">
-              {servers.map((server) => (
+              {filteredServers.length === 0 && (
+                <li className="p-4 text-muted-foreground">
+                  {t(($) => $.mcp.no_matches)}
+                </li>
+              )}
+              {filteredServers.map((server) => (
                 <McpServerRow
-                  key={server.name}
+                  key={server.id}
+                  wsId={wsId}
+                  runtimeId={runtimeId}
                   server={server}
                   canManage={canManage}
                   onEdit={() => {
-                    setEditingServer(server);
-                    setEditorOpen(true);
+                    setMetadataServer(server);
                   }}
                   onDelete={() => setDeletingServer(server)}
                 />
@@ -189,7 +253,23 @@ export function McpTab() {
         ) : null}
       </SettingsSection>
 
+      {metadataServer && (
+        <McpMetadataDialog
+          key={metadataServer.id}
+          wsId={wsId}
+          server={metadataServer}
+          onClose={() => setMetadataServer(null)}
+          onReplace={() => {
+            setEditingServer(metadataServer);
+            setMetadataServer(null);
+            setEditorOpen(true);
+          }}
+        />
+      )}
       <McpServerDialog
+        description={description}
+        onDescriptionChange={editingServer ? undefined : setDescription}
+        lockName={!!editingServer}
         open={editorOpen}
         server={dialogServer}
         existingNames={existingNames}
@@ -207,7 +287,9 @@ export function McpTab() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t(($) => $.mcp.delete_title)}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t(($) => $.mcp.delete_description, { name: deletingServer?.name ?? "" })}
+              {t(($) => $.mcp.delete_description, {
+                name: deletingServer?.name ?? "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -239,10 +321,14 @@ export function McpTab() {
  */
 function McpServerRow({
   server,
+  wsId,
+  runtimeId,
   canManage,
   onEdit,
   onDelete,
 }: {
+  wsId: string;
+  runtimeId: string;
   server: WorkspaceMcpServer;
   canManage: boolean;
   onEdit: () => void;
@@ -250,7 +336,7 @@ function McpServerRow({
 }) {
   const { t } = useT("settings");
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
+    <li className="flex items-start gap-3 px-4 py-4">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-body font-medium">{server.name}</span>
@@ -259,8 +345,21 @@ function McpServerRow({
           ) : null}
         </div>
         <p className="mt-0.5 text-caption text-muted-foreground">
-          {transportLabel(server.transport)}
+          {transportLabel(server.transport)} ·{" "}
+          {server.configured
+            ? t(($) => $.mcp.configured)
+            : t(($) => $.mcp.not_configured)}
         </p>
+        <p className="my-2 text-body text-muted-foreground break-words">
+          {server.description || t(($) => $.mcp.no_description)}
+        </p>
+        {canManage && (
+          <McpConnectionCheck
+            wsId={wsId}
+            serverId={server.id}
+            runtimeId={runtimeId}
+          />
+        )}
       </div>
       {canManage ? (
         <div className="flex shrink-0 items-center gap-1">

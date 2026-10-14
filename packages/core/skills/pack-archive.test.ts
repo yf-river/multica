@@ -107,14 +107,14 @@ describe("prepareSkillArchiveFromEntries", () => {
     });
   });
 
-  it("skips binary supporting files instead of failing the import", () => {
+  it("preserves binary supporting files", () => {
     const prepared = prepareSkillArchiveFromEntries([
       { relativePath: "skill/SKILL.md", data: bytes(SKILL_MD) },
       { relativePath: "skill/icon.png", data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
     ]);
     expect(prepared.ok).toBe(true);
     if (!prepared.ok) return;
-    expect(prepared.preview.fileCount).toBe(1);
+    expect(prepared.preview.fileCount).toBe(2);
   });
 });
 
@@ -145,10 +145,10 @@ describe("isSkillArchiveFilename", () => {
 });
 
 describe("isIgnoredArchiveEntry", () => {
-  it("drops editor/OS noise and license files", () => {
+  it("drops editor/OS noise and retains license files", () => {
     expect(isIgnoredArchiveEntry("skill/.DS_Store")).toBe(true);
     expect(isIgnoredArchiveEntry("__MACOSX/foo")).toBe(true);
-    expect(isIgnoredArchiveEntry("skill/LICENSE")).toBe(true);
+    expect(isIgnoredArchiveEntry("skill/LICENSE")).toBe(false);
     expect(isIgnoredArchiveEntry("skill/scripts/run.sh")).toBe(false);
   });
 });
@@ -213,9 +213,7 @@ describe("prepareSkillArchiveFromPickerFiles", () => {
       oversized,
       binary,
     ]);
-    expect(prepared.ok).toBe(true);
-    if (!prepared.ok) return;
-    expect(prepared.preview.fileCount).toBe(1);
+    expect(prepared).toEqual({ok:false,error:"too_large"});
   });
 });
 

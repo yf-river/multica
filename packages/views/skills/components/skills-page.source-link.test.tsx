@@ -15,7 +15,10 @@ import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 
 const mocks = vi.hoisted(() => ({
   skills: [] as SkillSummary[],
+  labels: [] as {id:string;name:string}[],
   viewState: {
+    collapsedGroups: [] as string[],
+    setCollapsedGroups: vi.fn(),
     sortField: "name",
     sortDirection: "asc" as string,
     hiddenColumns: [] as string[],
@@ -35,6 +38,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+ queryOptions: (options: unknown) => options,
+ useQueries: ({queries}:{queries:unknown[]}) => queries.map(()=>({data:mocks.labels,isPending:false,isError:false})),
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     if (options.queryKey?.[0] === "skills") {
       return {
@@ -113,7 +118,7 @@ vi.mock("@multica/ui/components/ui/tooltip", () => ({
   TooltipContent: () => null,
 }));
 vi.mock("./create-skill-dialog", () => ({ CreateSkillDialog: () => null }));
-vi.mock("./skill-list-toolbar", () => ({ SkillListToolbar: () => null }));
+vi.mock("./skill-list-toolbar", () => ({ SkillListToolbar: ({ search, onSearchChange }: { search: string; onSearchChange: (value: string) => void }) => <input aria-label="Search skills" value={search} onChange={(event) => onSearchChange(event.target.value)} /> }));
 vi.mock("./skill-list-actions", () => ({
   SkillBatchToolbar: () => null,
   SkillRowActions: () => null,
@@ -170,6 +175,7 @@ function middleClick(target: Element): MouseEvent {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.skills = [importedSkill];
+ mocks.labels=[];mocks.viewState.collapsedGroups=[];
 });
 
 describe("SkillsPage source link vs row navigation", () => {
@@ -215,4 +221,34 @@ describe("SkillsPage source link vs row navigation", () => {
       "noopener,noreferrer",
     );
   });
+});
+
+
+describe("SkillsPage description search", () => {
+  it("finds a skill by its Chinese purpose without changing its English name", () => {
+    mocks.skills = [{ ...importedSkill, description: "制作动画演示。" }];
+    renderPage(makeAdapter());
+    expect(screen.getByText("Description")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search skills" }), { target: { value: "动画" } });
+    expect(screen.getByText("animations")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search skills" }), { target: { value: "会议" } });
+    expect(screen.queryByText("animations")).not.toBeInTheDocument();
+  });
+});
+
+describe("SkillsPage label groups", () => {
+ it("shows a skill in each matching label and opens matching collapsed groups during search", () => {
+  mocks.labels=[{id:"design",name:"设计与画图"},{id:"dev",name:"开发协作"}];
+  mocks.viewState.collapsedGroups=["design","dev"];
+  renderPage(makeAdapter());
+  expect(screen.queryByText("animations")).not.toBeInTheDocument();
+  expect(screen.getByRole("button",{name:/设计与画图/})).toHaveAttribute("aria-expanded","false");
+  fireEvent.change(screen.getByRole("textbox",{name:"Search skills"}),{target:{value:"animations"}});
+  expect(screen.getAllByText("animations")).toHaveLength(2);
+  fireEvent.change(screen.getByRole("textbox",{name:"Search skills"}),{target:{value:""}});
+  expect(screen.queryByText("animations")).not.toBeInTheDocument();
+ });
+ it("puts unlabeled skills in the unclassified group",()=>{
+  renderPage(makeAdapter());expect(screen.getByRole("button",{name:/Unclassified/})).toHaveAttribute("aria-expanded","true");
+ });
 });

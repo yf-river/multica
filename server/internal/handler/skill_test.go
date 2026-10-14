@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -188,7 +187,7 @@ func TestFetchFromSkillsSh_FallbackDoesNotDoubleEscapeDirectoryNames(t *testing.
 	}
 }
 
-func TestFetchFromSkillsSh_LogsSubdirectoryFailures(t *testing.T) {
+func TestFetchFromSkillsSh_RejectsSubdirectoryFailures(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
 		case "api.github.com":
@@ -226,30 +225,8 @@ func TestFetchFromSkillsSh_LogsSubdirectoryFailures(t *testing.T) {
 		}
 	})
 
-	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-	})
-
-	result, err := fetchFromSkillsSh(t.Context(), client, "https://skills.sh/acme/skills/pptx")
-	if err != nil {
-		t.Fatalf("fetchFromSkillsSh: %v", err)
-	}
-	if len(result.files) != 0 {
-		t.Fatalf("expected no files when subdirectory listing fails, got %v", importedFilePaths(result.files))
-	}
-
-	logOutput := logs.String()
-	if !strings.Contains(logOutput, "github import: failed to list subdirectory") {
-		t.Fatalf("expected warning log, got %q", logOutput)
-	}
-	if !strings.Contains(logOutput, "status=404") {
-		t.Fatalf("expected status in warning log, got %q", logOutput)
-	}
-	if !strings.Contains(logOutput, "skills/pptx/scripts?ref=main") {
-		t.Fatalf("expected subdirectory URL in warning log, got %q", logOutput)
+	if _, err := fetchFromSkillsSh(t.Context(), client, "https://skills.sh/acme/skills/pptx"); err == nil {
+		t.Fatal("accepted incomplete directory listing")
 	}
 }
 
@@ -361,22 +338,16 @@ func TestFetchFromSkillsSh_ResolvesRootLevelSkillMd(t *testing.T) {
 	if !strings.HasPrefix(result.content, "---\nname: huashu-design") {
 		t.Fatalf("SKILL.md content not populated, got %q", result.content)
 	}
-	// assets/logo.png is intentionally dropped by the binary-extension guard —
-	// PG TEXT columns can't store image bytes, and agents never read them as
-	// text. With tree-based enumeration the .png is filtered out from the tree
-	// metadata, so it is never even downloaded.
 	gotPaths := importedFilePaths(result.files)
-	wantPaths := []string{"README.md"}
+	wantPaths := []string{"README.md", "assets/logo.png"}
 	if !equalStrings(gotPaths, wantPaths) {
 		t.Fatalf("files = %v, want %v", gotPaths, wantPaths)
 	}
 	if !containsString(*requests, "api.github.com /repos/alchaincyf/huashu-design/git/trees/master?recursive=1") {
 		t.Fatalf("expected recursive tree fetch, got %v", *requests)
 	}
-	for _, request := range *requests {
-		if request == "raw.githubusercontent.com /alchaincyf/huashu-design/master/assets/logo.png" {
-			t.Fatalf("binary asset must not be downloaded, got %v", *requests)
-		}
+	if !containsString(*requests, "raw.githubusercontent.com /alchaincyf/huashu-design/master/assets/logo.png") {
+		t.Fatal("binary asset not fetched")
 	}
 }
 
@@ -1374,7 +1345,7 @@ func TestImportedSkill_AddFileEnforcesBundleLimits(t *testing.T) {
 	t.Run("file count", func(t *testing.T) {
 		s := &importedSkill{}
 		for i := 0; i < maxImportFileCount; i++ {
-			if err := s.addFile("f", "x"); err != nil {
+			if err := s.addFile(fmt.Sprintf("f%d", i), "x"); err != nil {
 				t.Fatalf("addFile %d: %v", i, err)
 			}
 		}
@@ -1388,9 +1359,11 @@ func TestImportedSkill_AddFileEnforcesBundleLimits(t *testing.T) {
 	})
 	t.Run("total bytes", func(t *testing.T) {
 		s := &importedSkill{}
-		big := strings.Repeat("y", maxImportTotalSize)
-		if err := s.addFile("a", big); err != nil {
-			t.Fatalf("addFile at cap: %v", err)
+		big := strings.Repeat("y", maxImportFileSize)
+		for i := 0; i < maxImportTotalSize/maxImportFileSize; i++ {
+			if err := s.addFile(fmt.Sprintf("a%d", i), big); err != nil {
+				t.Fatalf("addFile at cap: %v", err)
+			}
 		}
 		err := s.addFile("b", "x")
 		if err == nil {
@@ -1576,7 +1549,7 @@ func TestFetchFromGitHub_UnresolvableRefFailsLoudly(t *testing.T) {
 // the overwhelming majority of URLs, so we fall back to it and let the raw
 // SKILL.md fetch be the source of truth. This covers the common case of
 // self-hosted servers hitting GitHub's 60-req/hour unauthenticated limit.
-func TestFetchFromGitHub_FallsBackOnAPIBlocked(t *testing.T) {
+func TestFetchFromGitHub_RejectsUnavailableFileListing(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
 		case "api.github.com":
@@ -1601,19 +1574,10 @@ func TestFetchFromGitHub_FallsBackOnAPIBlocked(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	result, err := fetchFromGitHub(t.Context(), client, "https://github.com/anthropics/skills/tree/main/skills/pptx")
-	if err != nil {
-		t.Fatalf("fetchFromGitHub: %v", err)
+	if _, err := fetchFromGitHub(t.Context(), client, "https://github.com/anthropics/skills/tree/main/skills/pptx"); err == nil {
+		t.Fatal("accepted unavailable supporting file listing")
 	}
-	if result.origin["ref"] != "main" {
-		t.Fatalf("origin ref = %v, want main (optimistic fallback)", result.origin["ref"])
-	}
-	if result.origin["path"] != "skills/pptx" {
-		t.Fatalf("origin path = %v, want skills/pptx (optimistic fallback)", result.origin["path"])
-	}
-	if result.name != "pptx" {
-		t.Fatalf("name = %q, want pptx", result.name)
-	}
+
 }
 
 // GITHUB_TOKEN, when set, must be forwarded as a bearer token on every

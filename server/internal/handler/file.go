@@ -982,6 +982,10 @@ func (h *Handler) ServeLocalUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setAttachmentPreviewSecurityHeaders(w)
 	key := strings.TrimPrefix(r.URL.Path, "/uploads/")
+	if strings.HasPrefix(path.Clean(key), "private/") {
+		http.NotFound(w, r)
+		return
+	}
 	local.ServeFile(w, r, key)
 }
 

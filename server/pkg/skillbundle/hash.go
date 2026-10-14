@@ -20,8 +20,12 @@ const (
 
 // File 是 skill 的一个附带支持文件（路径 + 内容）。
 type File struct {
-	Path    string
-	Content string
+	Kind      string
+	SHA256    string
+	SizeBytes int64
+	Mode      int32
+	Path      string
+	Content   string
 }
 
 // Skill 是一次待计算清单的 skill（含主内容与支持文件）。
@@ -58,7 +62,14 @@ func BuildManifest(skill Skill) Manifest {
 	})
 
 	h := sha256.New()
-	writeHashPart(h, "v1")
+	version := "v1"
+	for _, f := range files {
+		if f.Kind == "binary" || f.Mode == 0755 {
+			version = "v2"
+			break
+		}
+	}
+	writeHashPart(h, version)
 	writeHashPart(h, skill.Source)
 	writeHashPart(h, skill.ID)
 	writeHashPart(h, skill.Name)
@@ -70,14 +81,24 @@ func BuildManifest(skill Skill) Manifest {
 	for _, file := range files {
 		fileHash := sha256.Sum256([]byte(file.Content))
 		fileDigest := "sha256:" + hex.EncodeToString(fileHash[:])
+		fileSize := int64(len(file.Content))
+		if file.Kind == "binary" {
+			fileDigest = file.SHA256
+			fileSize = file.SizeBytes
+		}
+		if version == "v2" {
+			writeHashPart(h, fmt.Sprint(file.Mode))
+			writeHashPart(h, file.Kind)
+			writeHashPart(h, fmt.Sprint(fileSize))
+		}
 		writeHashPart(h, file.Path)
 		writeHashPart(h, fileDigest)
 		writeHashPart(h, file.Content)
-		size += int64(len(file.Content))
+		size += fileSize
 		refs = append(refs, FileRef{
 			Path:      file.Path,
 			SHA256:    fileDigest,
-			SizeBytes: int64(len(file.Content)),
+			SizeBytes: fileSize,
 		})
 	}
 

@@ -179,7 +179,9 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 // （技能引用、合并评论）。rpc-v1 宣告 WS 请求/响应支持（MUL-4257）。
 func daemonClientCapabilities() string {
 	return strings.Join([]string{
+		"workspace-mcp-check-v1",
 		protocol.DaemonCapabilitySkillBundlesV1,
+		protocol.DaemonCapabilitySkillAssetsV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityExecutionManifestV1,
 		protocol.DaemonCapabilityAgentSkillV1,
@@ -362,20 +364,30 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // 自己的截止时间、能独立缓存，慢链路做的是增量进展，而不是每次派发都让整组失败。
 // （GitHub #4505）
 func (c *Client) ResolveSkillBundle(ctx context.Context, runtimeID, taskID string, ref SkillRefData) (SkillData, TransferStats, error) {
-	var resp struct {
-		Bundles []SkillData `json:"bundles"`
+	for attempt := 0; attempt < 3; attempt++ {
+		var resp struct {
+			Bundles []SkillData `json:"bundles"`
+		}
+		var stats TransferStats
+		path := fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/skill-bundles/resolve", runtimeID, taskID)
+		if err := c.postJSONViaWithRetry(ctx, c.bundleClient, path, map[string]any{
+			"skills": []SkillRefData{ref},
+		}, &resp, skillBundleResolveRetrySchedule, &stats); err != nil {
+			return SkillData{}, stats, err
+		}
+		if len(resp.Bundles) != 1 {
+			return SkillData{}, stats, fmt.Errorf("resolve skill bundle: expected 1 bundle, got %d", len(resp.Bundles))
+		}
+		bundle := resp.Bundles[0]
+		if err := c.downloadSkillAssets(ctx, runtimeID, taskID, &bundle); err != nil {
+			if errors.Is(err, errSkillAssetVersionChanged) {
+				continue
+			}
+			return SkillData{}, stats, err
+		}
+		return bundle, stats, nil
 	}
-	var stats TransferStats
-	path := fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/skill-bundles/resolve", runtimeID, taskID)
-	if err := c.postJSONViaWithRetry(ctx, c.bundleClient, path, map[string]any{
-		"skills": []SkillRefData{ref},
-	}, &resp, skillBundleResolveRetrySchedule, &stats); err != nil {
-		return SkillData{}, stats, err
-	}
-	if len(resp.Bundles) != 1 {
-		return SkillData{}, stats, fmt.Errorf("resolve skill bundle: expected 1 bundle, got %d", len(resp.Bundles))
-	}
-	return resp.Bundles[0], stats, nil
+	return SkillData{}, TransferStats{}, errSkillAssetVersionChanged
 }
 
 // ExtendTaskPrepareLease 延长任务准备阶段的租约，防止准备耗时过长被服务端回收。

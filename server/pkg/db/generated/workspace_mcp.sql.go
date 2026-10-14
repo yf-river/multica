@@ -27,10 +27,66 @@ func (q *Queries) AddAgentMcpServer(ctx context.Context, arg AddAgentMcpServerPa
 	return err
 }
 
+const claimWorkspaceMcpCheck = `-- name: ClaimWorkspaceMcpCheck :one
+UPDATE workspace_mcp_check SET status='running',started_at=now()
+WHERE id=(SELECT c.id FROM workspace_mcp_check c JOIN workspace_mcp_server s ON s.id=c.server_id
+ WHERE c.runtime_id=$1 AND c.status='pending' AND c.created_at > now()-interval '60 seconds' AND c.config_version=s.config_version
+ ORDER BY c.created_at LIMIT 1 FOR UPDATE OF c SKIP LOCKED)
+RETURNING id, workspace_id, server_id, runtime_id, config_version, status, tool_count, error_code, created_at, started_at, completed_at
+`
+
+func (q *Queries) ClaimWorkspaceMcpCheck(ctx context.Context, runtimeID pgtype.UUID) (WorkspaceMcpCheck, error) {
+	row := q.db.QueryRow(ctx, claimWorkspaceMcpCheck, runtimeID)
+	var i WorkspaceMcpCheck
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ServerID,
+		&i.RuntimeID,
+		&i.ConfigVersion,
+		&i.Status,
+		&i.ToolCount,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const completeWorkspaceMcpCheck = `-- name: CompleteWorkspaceMcpCheck :execrows
+UPDATE workspace_mcp_check SET status=$4,tool_count=$5,error_code=$6,completed_at=now()
+WHERE id=$1 AND runtime_id=$2 AND workspace_id=$3 AND status='running' AND started_at > now()-interval '60 seconds'
+`
+
+type CompleteWorkspaceMcpCheckParams struct {
+	ID          pgtype.UUID `json:"id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Status      string      `json:"status"`
+	ToolCount   int32       `json:"tool_count"`
+	ErrorCode   string      `json:"error_code"`
+}
+
+func (q *Queries) CompleteWorkspaceMcpCheck(ctx context.Context, arg CompleteWorkspaceMcpCheckParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeWorkspaceMcpCheck,
+		arg.ID,
+		arg.RuntimeID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.ToolCount,
+		arg.ErrorCode,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createWorkspaceMcpServer = `-- name: CreateWorkspaceMcpServer :one
-INSERT INTO workspace_mcp_server (workspace_id, name, config, created_by)
-VALUES ($1, $2, $3, $4)
-RETURNING id, workspace_id, name, config, created_by, created_at, updated_at
+INSERT INTO workspace_mcp_server (workspace_id, name, config, created_by, description)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, workspace_id, name, config, created_by, created_at, updated_at, description, config_version
 `
 
 type CreateWorkspaceMcpServerParams struct {
@@ -38,6 +94,7 @@ type CreateWorkspaceMcpServerParams struct {
 	Name        string      `json:"name"`
 	Config      []byte      `json:"config"`
 	CreatedBy   pgtype.UUID `json:"created_by"`
+	Description string      `json:"description"`
 }
 
 func (q *Queries) CreateWorkspaceMcpServer(ctx context.Context, arg CreateWorkspaceMcpServerParams) (WorkspaceMcpServer, error) {
@@ -46,6 +103,7 @@ func (q *Queries) CreateWorkspaceMcpServer(ctx context.Context, arg CreateWorksp
 		arg.Name,
 		arg.Config,
 		arg.CreatedBy,
+		arg.Description,
 	)
 	var i WorkspaceMcpServer
 	err := row.Scan(
@@ -56,6 +114,8 @@ func (q *Queries) CreateWorkspaceMcpServer(ctx context.Context, arg CreateWorksp
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Description,
+		&i.ConfigVersion,
 	)
 	return i, err
 }
@@ -68,6 +128,15 @@ DELETE FROM agent_mcp_server WHERE server_id = $1
 // in the same transaction as the delete.
 func (q *Queries) DeleteAgentMcpServersByServer(ctx context.Context, serverID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteAgentMcpServersByServer, serverID)
+	return err
+}
+
+const deleteWorkspaceMcpChecks = `-- name: DeleteWorkspaceMcpChecks :exec
+DELETE FROM workspace_mcp_check WHERE server_id=$1
+`
+
+func (q *Queries) DeleteWorkspaceMcpChecks(ctx context.Context, serverID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceMcpChecks, serverID)
 	return err
 }
 
@@ -89,8 +158,18 @@ func (q *Queries) DeleteWorkspaceMcpServer(ctx context.Context, arg DeleteWorksp
 	return result.RowsAffected(), nil
 }
 
+const expireWorkspaceMcpChecks = `-- name: ExpireWorkspaceMcpChecks :exec
+UPDATE workspace_mcp_check SET status='timeout',error_code='timeout',completed_at=now()
+WHERE workspace_id=$1 AND ((status='pending' AND created_at < now()-interval '60 seconds') OR (status='running' AND started_at < now()-interval '60 seconds'))
+`
+
+func (q *Queries) ExpireWorkspaceMcpChecks(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, expireWorkspaceMcpChecks, workspaceID)
+	return err
+}
+
 const getWorkspaceMcpServer = `-- name: GetWorkspaceMcpServer :one
-SELECT id, workspace_id, name, config, created_by, created_at, updated_at FROM workspace_mcp_server
+SELECT id, workspace_id, name, config, created_by, created_at, updated_at, description, config_version FROM workspace_mcp_server
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -110,12 +189,14 @@ func (q *Queries) GetWorkspaceMcpServer(ctx context.Context, arg GetWorkspaceMcp
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Description,
+		&i.ConfigVersion,
 	)
 	return i, err
 }
 
 const listAgentMcpServers = `-- name: ListAgentMcpServers :many
-SELECT s.id, s.workspace_id, s.name, s.config, s.created_at, s.updated_at, ams.enabled
+SELECT s.id, s.workspace_id, s.name, s.description, s.config, s.created_at, s.updated_at, ams.enabled
 FROM workspace_mcp_server s
 JOIN agent_mcp_server ams ON ams.server_id = s.id
 WHERE ams.agent_id = $1
@@ -126,6 +207,7 @@ type ListAgentMcpServersRow struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
 	Name        string             `json:"name"`
+	Description string             `json:"description"`
 	Config      []byte             `json:"config"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
@@ -147,6 +229,7 @@ func (q *Queries) ListAgentMcpServers(ctx context.Context, agentID pgtype.UUID) 
 			&i.ID,
 			&i.WorkspaceID,
 			&i.Name,
+			&i.Description,
 			&i.Config,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -198,8 +281,66 @@ func (q *Queries) ListEnabledAgentMcpServers(ctx context.Context, agentID pgtype
 	return items, nil
 }
 
+const listWorkspaceMcpChecks = `-- name: ListWorkspaceMcpChecks :many
+SELECT c.id, c.workspace_id, c.server_id, c.runtime_id, c.config_version, c.status, c.tool_count, c.error_code, c.created_at, c.started_at, c.completed_at, (c.config_version <> s.config_version) AS stale FROM workspace_mcp_check c JOIN workspace_mcp_server s ON s.id=c.server_id
+WHERE c.workspace_id=$1 AND c.server_id=$2 ORDER BY c.created_at DESC
+`
+
+type ListWorkspaceMcpChecksParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ServerID    pgtype.UUID `json:"server_id"`
+}
+
+type ListWorkspaceMcpChecksRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ServerID      pgtype.UUID        `json:"server_id"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	ConfigVersion int64              `json:"config_version"`
+	Status        string             `json:"status"`
+	ToolCount     int32              `json:"tool_count"`
+	ErrorCode     string             `json:"error_code"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+	Stale         bool               `json:"stale"`
+}
+
+func (q *Queries) ListWorkspaceMcpChecks(ctx context.Context, arg ListWorkspaceMcpChecksParams) ([]ListWorkspaceMcpChecksRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceMcpChecks, arg.WorkspaceID, arg.ServerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspaceMcpChecksRow{}
+	for rows.Next() {
+		var i ListWorkspaceMcpChecksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ServerID,
+			&i.RuntimeID,
+			&i.ConfigVersion,
+			&i.Status,
+			&i.ToolCount,
+			&i.ErrorCode,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Stale,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkspaceMcpServers = `-- name: ListWorkspaceMcpServers :many
-SELECT id, workspace_id, name, config, created_by, created_at, updated_at FROM workspace_mcp_server
+SELECT id, workspace_id, name, config, created_by, created_at, updated_at, description, config_version FROM workspace_mcp_server
 WHERE workspace_id = $1
 ORDER BY name ASC
 `
@@ -224,6 +365,8 @@ func (q *Queries) ListWorkspaceMcpServers(ctx context.Context, workspaceID pgtyp
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Description,
+			&i.ConfigVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -319,16 +462,19 @@ func (q *Queries) SetAgentMcpServerEnabled(ctx context.Context, arg SetAgentMcpS
 const updateWorkspaceMcpServer = `-- name: UpdateWorkspaceMcpServer :one
 UPDATE workspace_mcp_server SET
     name = COALESCE($3, name),
-    config = COALESCE($4, config),
+    description = COALESCE($4, description),
+    config_version = config_version + CASE WHEN $5::jsonb IS NULL THEN 0 ELSE 1 END,
+    config = COALESCE($5, config),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, name, config, created_by, created_at, updated_at
+RETURNING id, workspace_id, name, config, created_by, created_at, updated_at, description, config_version
 `
 
 type UpdateWorkspaceMcpServerParams struct {
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	Name        pgtype.Text `json:"name"`
+	Description pgtype.Text `json:"description"`
 	Config      []byte      `json:"config"`
 }
 
@@ -340,6 +486,7 @@ func (q *Queries) UpdateWorkspaceMcpServer(ctx context.Context, arg UpdateWorksp
 		arg.ID,
 		arg.WorkspaceID,
 		arg.Name,
+		arg.Description,
 		arg.Config,
 	)
 	var i WorkspaceMcpServer
@@ -351,6 +498,47 @@ func (q *Queries) UpdateWorkspaceMcpServer(ctx context.Context, arg UpdateWorksp
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Description,
+		&i.ConfigVersion,
+	)
+	return i, err
+}
+
+const upsertWorkspaceMcpCheck = `-- name: UpsertWorkspaceMcpCheck :one
+INSERT INTO workspace_mcp_check (workspace_id,server_id,runtime_id,config_version) VALUES ($1,$2,$3,$4)
+ON CONFLICT (server_id,runtime_id) DO UPDATE SET
+ id=EXCLUDED.id, config_version=EXCLUDED.config_version, status='pending', tool_count=0, error_code='', created_at=now(),started_at=NULL,completed_at=NULL
+WHERE workspace_mcp_check.status NOT IN ('pending','running') OR workspace_mcp_check.config_version <> EXCLUDED.config_version
+RETURNING id, workspace_id, server_id, runtime_id, config_version, status, tool_count, error_code, created_at, started_at, completed_at
+`
+
+type UpsertWorkspaceMcpCheckParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ServerID      pgtype.UUID `json:"server_id"`
+	RuntimeID     pgtype.UUID `json:"runtime_id"`
+	ConfigVersion int64       `json:"config_version"`
+}
+
+func (q *Queries) UpsertWorkspaceMcpCheck(ctx context.Context, arg UpsertWorkspaceMcpCheckParams) (WorkspaceMcpCheck, error) {
+	row := q.db.QueryRow(ctx, upsertWorkspaceMcpCheck,
+		arg.WorkspaceID,
+		arg.ServerID,
+		arg.RuntimeID,
+		arg.ConfigVersion,
+	)
+	var i WorkspaceMcpCheck
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ServerID,
+		&i.RuntimeID,
+		&i.ConfigVersion,
+		&i.Status,
+		&i.ToolCount,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }

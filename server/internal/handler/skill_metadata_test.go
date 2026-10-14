@@ -198,7 +198,7 @@ func TestSkillMetadataSizeDoesNotTrackContentSize(t *testing.T) {
 	after := measure()
 
 	// 600KB of new content; the listing may only grow by its 10 new rows.
-	if grew := after - before; grew > 3000 {
+	if grew := after - before; grew > 5000 {
 		t.Errorf("listing grew by %d bytes after adding 600KB of content, want a per-row increase", grew)
 	}
 }

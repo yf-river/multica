@@ -318,3 +318,9 @@ multica agent skills list <agent-id> --output json
 
 - `references/skill-importing-source-map.md` — every behavior above mapped to
   `file:line` in `server/`, plus the verification command to re-derive the lines.
+
+## Native supporting files
+
+Imports preserve images, binary documents, nested SKILL.md files, and executable permissions when supplied by an archive or local runtime. Limits: 16 MiB per file, 64 MiB of supporting files, 512 supporting files, and 80 MiB per archive upload. A failed or oversized file aborts the import. PNG/JPEG/GIF/WebP preview in the skill file page; other attachments can be downloaded. SVG remains text.
+
+Do not encode images into text or add a restoration script. The task daemon downloads and validates assigned skill attachments before starting the agent; it must advertise `skill-assets-v1`. Library installation does not assign skills to agents.

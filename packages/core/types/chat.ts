@@ -206,18 +206,6 @@ export interface SendChatMessageResponse {
   attachment_ids?: string[];
 }
 
-/** 启动 Mika onboarding 的接口响应。 */
-export interface StartMikaOnboardingResponse {
-  /** 仅对真正写入了开场白的请求为 true。 */
-  started: boolean;
-  /**
-   * 开场消息已持久化且是最终版。没有 agent 运行来产生它，所以没有任务可等——
-   * `started` 响应意味着 Mika 对成员的第一条消息此刻已在记录里。
-   */
-  message_id?: string;
-  created_at?: string;
-}
-
 /** 一条被取消的聊天消息（供草稿恢复）。 */
 export interface CancelledChatMessage {
   chat_session_id: string;

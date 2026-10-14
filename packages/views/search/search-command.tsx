@@ -106,6 +106,8 @@ const PAGE_KEYWORDS: Record<WorkspacePageKey, string[]> = {
   usage: ["usage", "analytics", "stats", "metrics", "统计", "分析", "用量"],
   runReviews: ["run", "reviews", "history", "trace", "运行", "复盘", "历史", "轨迹"],
   runtimes: ["runtimes", "environments", "machines", "运行时"],
+  mcp: ["mcp", "工具", "服务"],
+  quickActions: ["quick actions", "快捷操作"],
   skills: ["skills", "library", "技能"],
   settings: ["settings", "config", "preferences", "设置", "配置"],
   cooking: ["cooking", "recipes", "烹饪", "菜谱", "做饭"],

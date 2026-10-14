@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
   updateAgent: vi.fn(),
   listChatSessions: vi.fn(),
   createChatSession: vi.fn(),
-  startMikaOnboarding: vi.fn(),
 }));
 
 vi.mock("../api", () => ({ api: mocks }));
@@ -50,15 +49,10 @@ beforeEach(() => {
     ...agent,
     onboarding_session: session,
   });
-  mocks.startMikaOnboarding.mockResolvedValue({
-    started: true,
-    message_id: "message-1",
-    created_at: "2026-01-01T00:00:00Z",
-  });
 });
 
 describe("bootstrapMika", () => {
-  it("asks the server for Mika, then opens one session and one hidden kickoff", async () => {
+  it("creates Mika and opens its ordinary session", async () => {
     const result = await bootstrapMika(input);
 
     // Only a runtime and the session label cross the wire: name,
@@ -70,10 +64,6 @@ describe("bootstrapMika", () => {
         runtime_id: "runtime-1",
         session_title: "开始使用 Mika",
       },
-      "venus",
-    );
-    expect(mocks.startMikaOnboarding).toHaveBeenCalledWith(
-      "session-1",
       "venus",
     );
     expect(result.agent.id).toBe("agent-1");
@@ -89,14 +79,6 @@ describe("bootstrapMika", () => {
     expect(mocks.updateAgent).not.toHaveBeenCalled();
   });
 
-  it("sends nothing about the member's other workspaces", async () => {
-    await bootstrapMika(input);
-
-    // Every workspace onboards from scratch. A member's second workspace may
-    // carry entirely different work and collaborators, so its opening is built
-    // from this workspace's own inputs and nothing else.
-    expect(mocks.startMikaOnboarding.mock.calls[0]).toEqual(["session-1", "venus"]);
-  });
 
   // The session is now resolved server-side under an advisory lock. Listing
   // sessions and creating one on a miss was a check-then-insert with nothing
@@ -104,13 +86,9 @@ describe("bootstrapMika", () => {
   // — and because the match was on display copy, changing the title between a
   // failed attempt and its retry opened another.
   it("never resolves the session client-side", async () => {
-    mocks.startMikaOnboarding.mockResolvedValue({ started: false });
-
     await bootstrapMika(input);
-
     expect(mocks.listChatSessions).not.toHaveBeenCalled();
     expect(mocks.createChatSession).not.toHaveBeenCalled();
-    expect(mocks.startMikaOnboarding).toHaveBeenCalledOnce();
   });
 
   // Rather than falling back to creating one, which is the race this removed.
@@ -119,7 +97,6 @@ describe("bootstrapMika", () => {
 
     await expect(bootstrapMika(input)).rejects.toThrow(/session/i);
     expect(mocks.createChatSession).not.toHaveBeenCalled();
-    expect(mocks.startMikaOnboarding).not.toHaveBeenCalled();
   });
 
   // MUL-5501: on desktop the tab system also writes the global
@@ -130,8 +107,6 @@ describe("bootstrapMika", () => {
   it("names the target workspace on every request, not just the first", async () => {
     await bootstrapMika({ ...input, workspaceSlug: "proxima-centauri" });
 
-    for (const call of [mocks.createMikaAgent, mocks.startMikaOnboarding]) {
-      expect(call.mock.calls[0]).toContain("proxima-centauri");
-    }
+    expect(mocks.createMikaAgent.mock.calls[0]).toContain("proxima-centauri");
   });
 });

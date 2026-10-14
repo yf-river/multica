@@ -1,26 +1,23 @@
 package daemon
 
 import (
-	"bytes"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 const (
-	maxLocalSkillFileSize   int64 = 1 << 20
-	maxLocalSkillBundleSize int64 = 8 << 20
+	maxLocalSkillFileSize   int64 = skill.MaxFileBytes
+	maxLocalSkillBundleSize int64 = skill.MaxBundleBytes
 	// 与服务端导入器的 maxImportFileCount 保持同步，使“从 URL/压缩包导入的技能”也能
 	// 从 runtime 本地目录导入。8 MiB 的包上限才是技能大小的真正闸门。
-	maxLocalSkillFileCount = 256
+	maxLocalSkillFileCount = skill.MaxFiles
 	// 限制技能发现在 runtime 根目录之下最多下钻多少层。opencode 把技能存两层深
 	// （例如 `release/reporter/SKILL.md`）；再多几层能覆盖任何现实中的未来布局，同时
 	// 万一安装器把我们指向 $HOME 也限制住了工作量。
@@ -253,18 +250,11 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 // isIgnoredLocalSkillEntry 判断技能目录下的条目是否应被忽略（空名、点开头，或
 // license 相关文件）。
 func isIgnoredLocalSkillEntry(name string) bool {
-	if name == "" {
+	switch name {
+	case "", ".git", ".svn", "__MACOSX", ".DS_Store":
 		return true
 	}
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-	switch strings.ToLower(name) {
-	case "license", "license.md", "license.txt":
-		return true
-	default:
-		return false
-	}
+	return false
 }
 
 // normalizeLocalSkillKey 把技能 key 清洗成“斜杠分隔的相对路径”形态：去空白、防
@@ -330,7 +320,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 
 	err := filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil
+			return walkErr
 		}
 		if path == walkRoot {
 			return nil
@@ -347,7 +337,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 			}
 			return nil
 		}
-		if isIgnoredLocalSkillEntry(entry.Name()) || strings.EqualFold(entry.Name(), "SKILL.md") {
+		if isIgnoredLocalSkillEntry(entry.Name()) || path == filepath.Join(walkRoot, "SKILL.md") {
 			return nil
 		}
 
@@ -361,51 +351,15 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 		}
 
 		info, err := entry.Info()
-		if err != nil || info.Size() > maxLocalSkillFileSize {
-			return nil
+		if err != nil {
+			return err
 		}
-		// 二进制支撑文件无法安全走 SkillFileData.Content：字节会经 Go 字符串出站，而
-		// encoding/json 会把每个非法 UTF-8 字节改写成 U+FFFD——之后 writeSkillFiles 重建
-		// 出的文件与原文件不同、打不开。
-		//
-		// IsLikelyBinaryFilePath 是看扩展名的廉价第一道检查——与 archive/URL 导入器同一
-		// 套启发——在任何读取前先做，已知二进制文件就不付 I/O。它单独做会漏掉“扩展名不
-		// 在列或没有扩展名的二进制”（.safetensors、.parquet、散落的无扩展名 blob），以及
-		// 非 UTF-8 编码的文本文件——两者都会以同样的方式损坏。
-		if skill.IsLikelyBinaryFilePath(rel) {
-			slog.Info("local skill: skipping binary file",
-				"skill_dir", skillDir,
-				"path", filepath.ToSlash(rel),
-				"size", info.Size(),
-				"reason", "binary_extension",
-			)
-			return nil
+		if info.Size() > maxLocalSkillFileSize {
+			return fmt.Errorf("file %s exceeds 16 MiB", rel)
 		}
-		// 下面的读取才是真正的保证：只要字节本身无法安全往返就跳过，无论扩展名暗示了
-		// 什么。它在 includeContent=false（发现）与 includeContent=true（同步）两趟都跑，
-		// 让两趟对“包由哪些文件组成”看法一致——false 趟跳过读取会让发现列表承诺一个
-		// sync 随后悄悄丢掉的包。
-		//
-		// 仅合法 UTF-8 不够：NUL 字节是合法 UTF-8，但服务端导入路径会用
-		// sanitizeNullBytes 剥掉每个 0x00（server/internal/handler/skill_create.go），
-		// 因此一个“合法 UTF-8 却含 NUL”的文件——由 ASCII 字符组成的 UTF-16LE 文本就是
-		// 现实例子——仍会与进去时不一样。两个都要：合法 UTF-8 且无 NUL。
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return nil
-		}
-		if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
-			reason := "invalid_utf8"
-			if utf8.Valid(content) {
-				reason = "embedded_nul"
-			}
-			slog.Info("local skill: skipping binary file",
-				"skill_dir", skillDir,
-				"path", filepath.ToSlash(rel),
-				"size", info.Size(),
-				"reason", reason,
-			)
-			return nil
+			return err
 		}
 		if len(files) >= maxLocalSkillFileCount {
 			return fmt.Errorf("local skill exceeds %d files", maxLocalSkillFileCount)
@@ -415,9 +369,13 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 			return fmt.Errorf("local skill exceeds %d bytes in total", maxLocalSkillBundleSize)
 		}
 
-		file := SkillFileData{Path: filepath.ToSlash(rel)}
+		file := SkillFileData{Path: filepath.ToSlash(rel), Kind: skill.FileKind(rel, content), Mode: skill.FileMode(int32(info.Mode().Perm()))}
 		if includeContent {
-			file.Content = string(content)
+			if file.Kind == "binary" {
+				file.Data = content
+			} else {
+				file.Content = string(content)
+			}
 		}
 		files = append(files, file)
 		return nil

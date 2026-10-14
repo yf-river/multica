@@ -23,7 +23,9 @@
     "cooking": "烹饪指南",
     "health": "身体数据",
     "meals": "饮食",
-    "goals": "目标"
+    "goals": "目标",
+    "mcp": "MCP",
+    "quick_actions": "快捷操作"
   },
   "living_pages": {
     "health": {

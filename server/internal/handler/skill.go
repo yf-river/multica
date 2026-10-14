@@ -96,12 +96,17 @@ type AgentSkillSummary struct {
 
 // SkillFileResponse 是单个技能支持文件的完整线格式（含正文 content）。
 type SkillFileResponse struct {
-	ID        string `json:"id"`
-	SkillID   string `json:"skill_id"`
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	Mode        int32  `json:"mode"`
+	SizeBytes   int64  `json:"size_bytes"`
+	SHA256      string `json:"sha256"`
+	ID          string `json:"id"`
+	SkillID     string `json:"skill_id"`
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 // SkillFileMetadataResponse 是文件列表形状：SkillFileResponse 除 `content` 外的
@@ -111,9 +116,14 @@ type SkillFileResponse struct {
 // 约 600KB 的技能在每行都携带完整正文时根本无法列出——能诊断问题的命令本身
 // 成了问题（GH multica-ai/multica#7498）。列表端点就该只做列表。
 type SkillFileMetadataResponse struct {
-	ID      string `json:"id"`
-	SkillID string `json:"skill_id"`
-	Path    string `json:"path"`
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	Mode        int32  `json:"mode"`
+	SizeBytes   int64  `json:"size_bytes"`
+	SHA256      string `json:"sha256"`
+	ID          string `json:"id"`
+	SkillID     string `json:"skill_id"`
+	Path        string `json:"path"`
 	// Size 是文件正文字节长度，在 Postgres 内计算。
 	Size int64 `json:"size"`
 	// ContentHash 是文件正文的十六进制 SHA-256。缓存技能文件的调用方可借此
@@ -251,7 +261,12 @@ func skillSummaryToResponse(
 }
 
 func skillFileToResponse(f db.SkillFile) SkillFileResponse {
+	size, hash := int64(len(f.Content)), contentHash(f.Content)
+	if f.Kind == "binary" {
+		size, hash = f.SizeBytes, f.Sha256
+	}
 	return SkillFileResponse{
+		Kind: f.Kind, ContentType: f.ContentType, Mode: f.Mode, SizeBytes: size, SHA256: hash,
 		ID:        uuidToString(f.ID),
 		SkillID:   uuidToString(f.SkillID),
 		Path:      f.Path,
@@ -263,6 +278,7 @@ func skillFileToResponse(f db.SkillFile) SkillFileResponse {
 
 func skillFileMetadataToResponse(f db.ListSkillFileMetadataRow) SkillFileMetadataResponse {
 	return SkillFileMetadataResponse{
+		Kind: f.Kind, ContentType: f.ContentType, Mode: f.Mode, SizeBytes: f.Size, SHA256: f.ContentHash,
 		ID:          uuidToString(f.ID),
 		SkillID:     uuidToString(f.SkillID),
 		Path:        f.Path,
@@ -295,8 +311,16 @@ type CreateSkillRequest struct {
 
 // CreateSkillFileRequest 是随技能创建/更新的单个附带文件的请求体（相对路径+正文）。
 type CreateSkillFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	ID          string `json:"id,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Mode        int32  `json:"mode,omitempty"`
+	data        []byte
+	storageKey  string
+	contentType string
+	sizeBytes   int64
+	sha256      string
+	Path        string `json:"path"`
+	Content     string `json:"content"`
 }
 
 // UpdateSkillRequest 是更新技能的请求体：指针字段区分「未传」与「显式清空」，
@@ -323,17 +347,7 @@ type AddAgentSkillsRequest struct {
 
 // validateFilePath 检查文件路径是否安全（不得穿越目录、不得为绝对路径）。
 func validateFilePath(p string) bool {
-	if p == "" {
-		return false
-	}
-	if filepath.IsAbs(p) {
-		return false
-	}
-	cleaned := filepath.Clean(p)
-	if strings.HasPrefix(cleaned, "..") {
-		return false
-	}
-	return true
+	return skillpkg.SafePath(p)
 }
 
 func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id string) (db.Skill, bool) {
@@ -599,6 +613,10 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.prepareSkillFiles(r.Context(), skill.WorkspaceID, skill.ID, req.Files); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -648,11 +666,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 			if skillpkg.IsReservedContentPath(f.Path) {
 				continue
 			}
-			sf, err := qtx.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
-				SkillID: skill.ID,
-				Path:    sanitizeNullBytes(f.Path),
-				Content: sanitizeNullBytes(f.Content),
-			})
+			sf, err := upsertPreparedSkillFile(r.Context(), qtx, skill.ID, f)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())
 				return
@@ -768,9 +782,9 @@ func validImportOnConflict(strategy string) bool {
 // 每次导入的包级限额，镜像本地 runtime 导入器，URL 导入不能偷运其余栈会拒绝的
 // 负载。fetchRawFile 执行单文件上限；importedSkill.addFile 执行包级上限。
 const (
-	maxImportFileSize  = 1 << 20 // 单文件 1 MiB
-	maxImportTotalSize = 8 << 20 // 每次导入 8 MiB（支持文件总大小）
-	maxImportFileCount = 256     // 支持文件数量上限
+	maxImportFileSize  = skillpkg.MaxFileBytes   // 单文件 1 MiB
+	maxImportTotalSize = skillpkg.MaxBundleBytes // 支持文件合计 64 MiB
+	maxImportFileCount = skillpkg.MaxFiles       // 支持文件数量上限
 )
 
 // importedSkill 保存从外部源抽取出来的数据。
@@ -784,6 +798,7 @@ type importedSkill struct {
 }
 
 type importedFile struct {
+	mode    int32
 	path    string
 	content string
 }
@@ -804,13 +819,18 @@ func isCapError(err error) bool {
 // addFile 追加一个支持文件，同时执行包级限额。文件数或总字节预算将被超出时
 // 返回错误，让调用方中止导入而不是静默截断。
 //
-// 二进制文件（图片、字体、归档）被静默跳过：其字节无法存活于 PG TEXT 列
-// （SQLSTATE 22021），且它们本就是 agent 不会当文本读的引用资源。记录跳过日志，
-// 若用户期待其中某个导入成功可留下痕迹。
+// 内容先保留原始字节，入库时由 prepareSkillFiles 区分文本与对象。
 func (s *importedSkill) addFile(path, content string) error {
-	if skillpkg.IsLikelyBinaryFilePath(path) {
-		slog.Info("skill import: skipping binary file", "path", path, "size", len(content))
-		return nil
+	if !validateFilePath(path) {
+		return fmt.Errorf("invalid file path: %s", path)
+	}
+	for _, f := range s.files {
+		if f.path == path {
+			return fmt.Errorf("duplicate file path: %s", path)
+		}
+	}
+	if len(content) > maxImportFileSize {
+		return fmt.Errorf("%w: file %s too large", errImportCapExceeded, path)
 	}
 	if len(s.files) >= maxImportFileCount {
 		return fmt.Errorf("%w: import bundle exceeds %d file limit", errImportCapExceeded, maxImportFileCount)
@@ -896,6 +916,7 @@ type githubTreeResponse struct {
 }
 
 type githubTreeEntry struct {
+	Mode string `json:"mode"`
 	Path string `json:"path"`
 	Type string `json:"type"` // "blob" 或 "tree"
 	Size int64  `json:"size"` // blob 字节大小（tree 条目缺席/为 0）
@@ -1151,8 +1172,7 @@ func fetchFromClawHub(ctx context.Context, httpClient *http.Client, rawURL strin
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("clawhub import: fetch aborted at %s: %w", fp, ctx.Err())
 			}
-			slog.Warn("clawhub import: file download failed", "path", fp, "error", err)
-			continue
+			return nil, fmt.Errorf("clawhub import: %s: %w", fp, err)
 		}
 		if fp == "SKILL.md" {
 			result.content = string(body)
@@ -1274,7 +1294,7 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 		if ctx.Err() != nil {
 			return fmt.Errorf("github import: directory listing aborted: %w", ctx.Err())
 		}
-		return nil
+		return fmt.Errorf("%w: directory listing failed", errImportSourceUnavailable)
 	}
 	defer dirResp.Body.Close()
 
@@ -1285,12 +1305,13 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 		if ctx.Err() != nil {
 			return fmt.Errorf("github import: directory listing read aborted: %w", ctx.Err())
 		}
-		slog.Warn("github import: failed to decode top-level directory listing", "url", apiURL, "error", err)
-		return nil
+		return fmt.Errorf("decode skill directory: %w", err)
 	}
 
 	var allFiles []githubContentEntry
-	collectGitHubFiles(ctx, httpClient, entries, &allFiles, apiURL)
+	if err := collectGitHubFiles(ctx, httpClient, entries, &allFiles, apiURL); err != nil {
+		return err
+	}
 	// collectGitHubFiles 对子目录列举失败保持宽容；若爬取途中 context 被取消，
 	// 收集到的集合是不完整的，因此这里中止。
 	if ctx.Err() != nil {
@@ -1302,8 +1323,11 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 		basePath = skillDir + "/"
 	}
 	for _, entry := range allFiles {
-		if entry.DownloadURL == "" {
+		if skillpkg.IsReservedContentPath(strings.TrimPrefix(entry.Path, basePath)) {
 			continue
+		}
+		if entry.DownloadURL == "" {
+			return fmt.Errorf("missing download URL: %s", entry.Path)
 		}
 		body, err := fetchRawFile(ctx, httpClient, entry.DownloadURL)
 		if err != nil {
@@ -1313,8 +1337,7 @@ func addSupportingFilesViaCrawl(ctx context.Context, httpClient *http.Client, re
 			if ctx.Err() != nil {
 				return fmt.Errorf("github import: fetch aborted at %s: %w", entry.Path, ctx.Err())
 			}
-			slog.Warn("github import: file download failed", "path", entry.Path, "error", err)
-			continue
+			return fmt.Errorf("github import: %s: %w", entry.Path, err)
 		}
 		relPath := strings.TrimPrefix(entry.Path, basePath)
 		if err := result.addFile(relPath, string(body)); err != nil {
@@ -1449,6 +1472,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 	// 跳过技能自身 SKILL.md、LICENSE 文件与二进制资源（addFile 反正会丢）。过滤
 	// 放在这里能让下面的算术限额检查与实际导入内容一致。
 	type treeFile struct {
+		mode     int32
 		repoPath string
 		relPath  string
 		size     int64
@@ -1465,14 +1489,17 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		if relPath == "" {
 			continue
 		}
-		lowerBase := strings.ToLower(filepath.Base(relPath))
-		if lowerBase == "skill.md" || lowerBase == "license" || lowerBase == "license.txt" || lowerBase == "license.md" {
+		if skillpkg.IsReservedContentPath(relPath) || isIgnoredArchiveEntry(relPath) {
 			continue
 		}
-		if skillpkg.IsLikelyBinaryFilePath(relPath) {
-			continue
+		mode := int32(0644)
+		if entry.Mode == "100755" {
+			mode = 0755
 		}
-		eligible = append(eligible, treeFile{repoPath: entry.Path, relPath: relPath, size: entry.size()})
+		if entry.Mode == "120000" {
+			return fmt.Errorf("unsupported symbolic link: %s", relPath)
+		}
+		eligible = append(eligible, treeFile{repoPath: entry.Path, relPath: relPath, size: entry.size(), mode: mode})
 	}
 
 	// 稳定顺序，导入结果与下载时序无关，可复现。
@@ -1514,8 +1541,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 					return fmt.Errorf("github import: fetch aborted at %s: %w", f.repoPath, gctx.Err())
 				}
 				// 其余情况匹配旧循环的宽容：单个失败的支持文件记日志跳过，不致命。
-				slog.Warn("github import: file download failed", "path", f.repoPath, "error", err)
-				return nil
+				return fmt.Errorf("github import: %s: %w", f.repoPath, err)
 			}
 			contents[i] = string(body)
 			fetched[i] = true
@@ -1533,6 +1559,7 @@ func addSupportingFilesFromTree(ctx context.Context, httpClient *http.Client, re
 		if err := result.addFile(f.relPath, contents[i]); err != nil {
 			return err
 		}
+		result.files[len(result.files)-1].mode = f.mode
 	}
 	return nil
 }
@@ -1546,54 +1573,49 @@ func (e githubTreeEntry) size() int64 {
 }
 
 // collectGitHubFiles 从 GitHub 目录列举里递归收集文件条目。
-func collectGitHubFiles(ctx context.Context, httpClient *http.Client, entries []githubContentEntry, out *[]githubContentEntry, parentURL string) {
+func collectGitHubFiles(ctx context.Context, httpClient *http.Client, entries []githubContentEntry, out *[]githubContentEntry, parentURL string) error {
 	for _, entry := range entries {
-		// context 一取消就停止下行；调用方事后检查 ctx.Err() 并中止，避免导入
-		// 半个爬取结果。
-		if ctx.Err() != nil {
-			return
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		lower := strings.ToLower(entry.Name)
-		if lower == "skill.md" || lower == "license" || lower == "license.txt" || lower == "license.md" {
+		if isIgnoredArchiveEntry(entry.Name) {
 			continue
 		}
-		if entry.Type == "file" {
+		switch entry.Type {
+		case "file":
 			*out = append(*out, entry)
-		} else if entry.Type == "dir" {
-			// 拉取子目录内容
+		case "dir":
 			subURL := entry.URL
 			if subURL == "" {
 				parsed, err := url.Parse(parentURL)
 				if err != nil {
-					slog.Warn("github import: invalid parent directory url", "url", parentURL, "error", err)
-					continue
+					return err
 				}
 				parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/" + entry.Name
 				subURL = parsed.String()
 			}
-			subResp, err := doGitHubAPIGet(ctx, httpClient, subURL)
-			if err != nil || subResp.StatusCode != http.StatusOK {
-				attrs := []any{"url", subURL}
-				if subResp != nil {
-					attrs = append(attrs, "status", subResp.StatusCode)
-					subResp.Body.Close()
-				}
-				if err != nil {
-					attrs = append(attrs, "error", err)
-				}
-				slog.Warn("github import: failed to list subdirectory", attrs...)
-				continue
+			response, err := doGitHubAPIGet(ctx, httpClient, subURL)
+			if err != nil {
+				return err
 			}
-			var subEntries []githubContentEntry
-			if err := json.NewDecoder(subResp.Body).Decode(&subEntries); err != nil {
-				subResp.Body.Close()
-				slog.Warn("github import: failed to decode subdirectory listing", "url", subURL, "error", err)
-				continue
+			if response.StatusCode != http.StatusOK {
+				response.Body.Close()
+				return fmt.Errorf("%w: directory %s HTTP %d", errImportSourceUnavailable, entry.Path, response.StatusCode)
 			}
-			subResp.Body.Close()
-			collectGitHubFiles(ctx, httpClient, subEntries, out, subURL)
+			var children []githubContentEntry
+			err = json.NewDecoder(response.Body).Decode(&children)
+			response.Body.Close()
+			if err != nil {
+				return err
+			}
+			if err = collectGitHubFiles(ctx, httpClient, children, out, subURL); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported skill entry: %s (%s)", entry.Path, entry.Type)
 		}
 	}
+	return nil
 }
 
 func findSkillDirFromConventionalPrefixes(ctx context.Context, httpClient *http.Client, owner, repo, defaultBranch, rawPrefix, skillName string) (string, []byte, bool) {
@@ -2327,8 +2349,7 @@ func importedSkillFileRequests(imported *importedSkill) []CreateSkillFileRequest
 			continue
 		}
 		files = append(files, CreateSkillFileRequest{
-			Path:    f.path,
-			Content: f.content,
+			Path: f.path, Content: f.content, Mode: f.mode, data: []byte(f.content),
 		})
 	}
 	return files
@@ -2456,17 +2477,12 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sf, err := h.Queries.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
-		SkillID: skill.ID,
-		Path:    sanitizeNullBytes(req.Path),
-		Content: sanitizeNullBytes(req.Content),
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())
+	files := []CreateSkillFileRequest{req}
+	if err := h.prepareSkillFiles(r.Context(), skill.WorkspaceID, skill.ID, files); err != nil {
+		writeError(w, 400, err.Error())
 		return
 	}
-
-	writeJSON(w, http.StatusOK, skillFileToResponse(sf))
+	h.saveSkillFile(w, r, skill, files[0])
 }
 
 // DeleteSkillFile 处理 DELETE /api/skills/{id}/files/{fileId}。门控 canManageSkill；

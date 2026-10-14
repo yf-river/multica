@@ -148,11 +148,11 @@ func TestInsertedRowsAreGoneAfterTheirTest(t *testing.T) {
 func TestOverridesReplaceDefaults(t *testing.T) {
 	f := newFixture(t)
 
-	issueID := f.Issue(t, "overridden", Cols{"status": "in_progress", "priority": "urgent"})
+	issueID := f.Issue(t, "overridden", Cols{"status": "in_progress", "priority": "important_urgent"})
 	var status, priority string
 	f.QueryRow(t, `SELECT status, priority FROM issue WHERE id = $1`, issueID).Scan(&status, &priority)
-	if status != "in_progress" || priority != "urgent" {
-		t.Fatalf("status/priority = %q/%q, want in_progress/urgent", status, priority)
+	if status != "in_progress" || priority != "important_urgent" {
+		t.Fatalf("status/priority = %q/%q, want in_progress/important_urgent", status, priority)
 	}
 }
 

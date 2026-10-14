@@ -62,11 +62,7 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		if skillpkg.IsReservedContentPath(f.Path) {
 			continue
 		}
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
-		})
+		sf, err := upsertPreparedSkillFile(ctx, qtx, skill.ID, f)
 		if err != nil {
 			return SkillWithFilesResponse{}, err
 		}
@@ -80,6 +76,9 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 }
 
 func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInput) (SkillWithFilesResponse, error) {
+	if err := h.prepareSkillFiles(ctx, input.WorkspaceID, pgtype.UUID{}, input.Files); err != nil {
+		return SkillWithFilesResponse{}, err
+	}
 	// 独立创建的默认入口：自管事务，成功则广播 skill:created 事件。
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -158,6 +157,9 @@ type skillOverwriteInput struct {
 // 包里缺席的文件经 DeleteSkillFilesBySkill 修剪。任何错误都回滚事务，原技能保持
 // 不变。
 func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
+	if err := h.prepareSkillFiles(ctx, input.WorkspaceID, input.TargetSkillID, input.Files); err != nil {
+		return SkillWithFilesResponse{}, err
+	}
 	config, err := json.Marshal(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -231,11 +233,7 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	}
 	fileResps := make([]SkillFileResponse, 0, len(input.Files))
 	for _, f := range input.Files {
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
-		})
+		sf, err := upsertPreparedSkillFile(ctx, qtx, skill.ID, f)
 		if err != nil {
 			return SkillWithFilesResponse{}, err
 		}

@@ -44,7 +44,8 @@ The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
 - Only an explicit user request for independent local development permits `MULTICA_LOCAL_DEV=1` on the relevant command. Do not persist this opt-in in environment files.
 - Verify incrementally, then build and deploy one reviewable feature unit, not each small edit. Exclude unrelated dirty work from the source snapshot; use the current production source baseline when isolation is necessary.
 - Use existing int/prod release locks, Daemon drain and rollback. Wait for concurrent releases rather than opening another preview. Do not use production accounts or data for integration verification, rotate secrets, or edit installed releases.
-- Commit, push, production deployment and database deletion require separate authorization.
+- 联调验收所需的检查和证据全部通过，且没有未解决的问题时，自动将同一个已验收的不可变发布包部署到生产，无需再次询问。联调或发布过程中出现检查失败、证据缺失或运行异常时，暂停后续发布，说明具体问题并询问用户；生产发布失败时先按既有流程安全回滚，再等待用户决定。
+- Commit、push 和数据库删除仍需单独授权。用户明确要求不部署或仅本地修改时，以用户指定范围为准。
 
 ## State Rules
 

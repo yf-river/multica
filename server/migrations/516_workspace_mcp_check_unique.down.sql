@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY workspace_mcp_check_server_runtime;

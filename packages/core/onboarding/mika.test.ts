@@ -51,10 +51,10 @@ describe("memberNeedsMikaSetup", () => {
     expect(memberNeedsMikaSetup([mika], [])).toBe(true);
   });
 
-  it("stays true when the session exists but the kickoff never landed", () => {
+  it("is complete once the member has an empty Mika session", () => {
     expect(
       memberNeedsMikaSetup([mika], [{ agent_id: "agent-mika", last_message: null }]),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   // Sessions are per member, so another agent's conversation is not this one.

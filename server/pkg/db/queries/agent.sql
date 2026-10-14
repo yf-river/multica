@@ -2673,9 +2673,7 @@ LIMIT 1;
 -- Creates a product-defined agent that members can still see, chat with, and
 -- assign issues to. Deliberately kind='user': kind='system' hides the row from
 -- agent lists and assignment surfaces and hard deletes it with its runtime.
--- Every product-owned field is a server constant; instructions stays empty
--- because the system half ships with the binary and is layered in at claim
--- time, leaving this column free for the workspace's own notes.
+-- Default instructions are stored at creation and remain editable.
 --
 -- CONTRACT: call only while holding the per-workspace mika advisory lock. The
 -- one-per-workspace invariant rests on a check inside that lock, not on a
@@ -2689,6 +2687,6 @@ INSERT INTO agent (
 ) VALUES (
     @workspace_id, @name, @description, @avatar_url, @runtime_mode, '{}'::jsonb,
     @runtime_id, @model, @visibility, @permission_mode, @max_concurrent_tasks,
-    @owner_id, '', '{}'::jsonb, '[]'::jsonb, 'user', @system_key
+    @owner_id, @instructions, '{}'::jsonb, '[]'::jsonb, 'user', @system_key
 )
 RETURNING *;

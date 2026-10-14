@@ -1756,13 +1756,25 @@ type Skill struct {
 	PluginInstallationID pgtype.UUID        `json:"plugin_installation_id"`
 }
 
+type SkillAsset struct {
+	StorageKey  string             `json:"storage_key"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type SkillFile struct {
-	ID        pgtype.UUID        `json:"id"`
-	SkillID   pgtype.UUID        `json:"skill_id"`
-	Path      string             `json:"path"`
-	Content   string             `json:"content"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID          pgtype.UUID        `json:"id"`
+	SkillID     pgtype.UUID        `json:"skill_id"`
+	Path        string             `json:"path"`
+	Content     string             `json:"content"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Kind        string             `json:"kind"`
+	StorageKey  string             `json:"storage_key"`
+	ContentType string             `json:"content_type"`
+	SizeBytes   int64              `json:"size_bytes"`
+	Sha256      string             `json:"sha256"`
+	Mode        int32              `json:"mode"`
 }
 
 type SkillToLabel struct {
@@ -2073,14 +2085,30 @@ type WorkspaceInvitation struct {
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }
 
+type WorkspaceMcpCheck struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ServerID      pgtype.UUID        `json:"server_id"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	ConfigVersion int64              `json:"config_version"`
+	Status        string             `json:"status"`
+	ToolCount     int32              `json:"tool_count"`
+	ErrorCode     string             `json:"error_code"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+}
+
 type WorkspaceMcpServer struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	Name        string             `json:"name"`
-	Config      []byte             `json:"config"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	Name          string             `json:"name"`
+	Config        []byte             `json:"config"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	Description   string             `json:"description"`
+	ConfigVersion int64              `json:"config_version"`
 }
 
 type WorkspaceShareLink struct {

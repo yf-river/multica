@@ -736,6 +736,7 @@ func main() {
 
 	// 媒体"意图台账"对账器（PR #5580）：结算"已上传但没绑定"的频道媒体对象。
 	// 独立 worker，对象存储延迟尖峰才不会饿死其它清扫器的节奏。
+	go h.RunSkillAssetCleanup(sweepCtx)
 	if h.ChannelMediaReconciler != nil {
 		h.ChannelMediaReconciler.Metrics = channelMediaMetrics
 		go h.ChannelMediaReconciler.Run(sweepCtx)

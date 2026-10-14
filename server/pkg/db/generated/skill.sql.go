@@ -82,6 +82,15 @@ func (q *Queries) DeleteSkill(ctx context.Context, arg DeleteSkillParams) error 
 	return err
 }
 
+const deleteSkillAsset = `-- name: DeleteSkillAsset :exec
+DELETE FROM skill_asset WHERE storage_key=$1
+`
+
+func (q *Queries) DeleteSkillAsset(ctx context.Context, storageKey string) error {
+	_, err := q.db.Exec(ctx, deleteSkillAsset, storageKey)
+	return err
+}
+
 const deleteSkillFile = `-- name: DeleteSkillFile :exec
 DELETE FROM skill_file WHERE id = $1
 `
@@ -154,7 +163,7 @@ func (q *Queries) GetSkillByWorkspaceAndName(ctx context.Context, arg GetSkillBy
 }
 
 const getSkillFile = `-- name: GetSkillFile :one
-SELECT id, skill_id, path, content, created_at, updated_at FROM skill_file
+SELECT id, skill_id, path, content, created_at, updated_at, kind, storage_key, content_type, size_bytes, sha256, mode FROM skill_file
 WHERE id = $1
 `
 
@@ -168,6 +177,12 @@ func (q *Queries) GetSkillFile(ctx context.Context, id pgtype.UUID) (SkillFile, 
 		&i.Content,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.Mode,
 	)
 	return i, err
 }
@@ -421,8 +436,9 @@ func (q *Queries) ListAgentSkillsByWorkspace(ctx context.Context, workspaceID pg
 
 const listSkillFileMetadata = `-- name: ListSkillFileMetadata :many
 SELECT id, skill_id, path,
-       octet_length(content)::bigint AS size,
-       encode(sha256(convert_to(content, 'UTF8')), 'hex') AS content_hash,
+       CASE WHEN kind = 'binary' THEN size_bytes ELSE octet_length(content)::bigint END AS size,
+       CASE WHEN kind = 'binary' THEN sha256 ELSE encode(sha256(convert_to(content, 'UTF8')), 'hex') END::text AS content_hash,
+       kind, content_type, mode,
        created_at, updated_at
 FROM skill_file
 WHERE skill_id = $1
@@ -435,6 +451,9 @@ type ListSkillFileMetadataRow struct {
 	Path        string             `json:"path"`
 	Size        int64              `json:"size"`
 	ContentHash string             `json:"content_hash"`
+	Kind        string             `json:"kind"`
+	ContentType string             `json:"content_type"`
+	Mode        int32              `json:"mode"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
@@ -467,6 +486,9 @@ func (q *Queries) ListSkillFileMetadata(ctx context.Context, skillID pgtype.UUID
 			&i.Path,
 			&i.Size,
 			&i.ContentHash,
+			&i.Kind,
+			&i.ContentType,
+			&i.Mode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -482,7 +504,7 @@ func (q *Queries) ListSkillFileMetadata(ctx context.Context, skillID pgtype.UUID
 
 const listSkillFiles = `-- name: ListSkillFiles :many
 
-SELECT id, skill_id, path, content, created_at, updated_at FROM skill_file
+SELECT id, skill_id, path, content, created_at, updated_at, kind, storage_key, content_type, size_bytes, sha256, mode FROM skill_file
 WHERE skill_id = $1
 ORDER BY path ASC
 `
@@ -504,6 +526,12 @@ func (q *Queries) ListSkillFiles(ctx context.Context, skillID pgtype.UUID) ([]Sk
 			&i.Content,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+			&i.StorageKey,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Sha256,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}
@@ -516,7 +544,7 @@ func (q *Queries) ListSkillFiles(ctx context.Context, skillID pgtype.UUID) ([]Sk
 }
 
 const listSkillFilesBySkillIDs = `-- name: ListSkillFilesBySkillIDs :many
-SELECT id, skill_id, path, content, created_at, updated_at FROM skill_file
+SELECT id, skill_id, path, content, created_at, updated_at, kind, storage_key, content_type, size_bytes, sha256, mode FROM skill_file
 WHERE skill_id = ANY($1::uuid[])
 ORDER BY skill_id, path ASC
 `
@@ -543,6 +571,12 @@ func (q *Queries) ListSkillFilesBySkillIDs(ctx context.Context, skillIds []pgtyp
 			&i.Content,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+			&i.StorageKey,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Sha256,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}
@@ -644,6 +678,49 @@ func (q *Queries) ListSkillsByWorkspace(ctx context.Context, workspaceID pgtype.
 	return items, nil
 }
 
+const listUnusedSkillAssets = `-- name: ListUnusedSkillAssets :many
+SELECT a.storage_key FROM skill_asset a
+WHERE a.created_at < now() - interval '24 hours'
+AND NOT EXISTS (SELECT 1 FROM skill_file f WHERE f.storage_key=a.storage_key)
+AND NOT EXISTS (SELECT 1 FROM agent_task_queue t JOIN agent ag ON ag.id=t.agent_id
+ WHERE ag.workspace_id=a.workspace_id AND t.status IN ('dispatched','waiting_local_directory'))
+ORDER BY a.created_at LIMIT 100
+`
+
+func (q *Queries) ListUnusedSkillAssets(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listUnusedSkillAssets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var storage_key string
+		if err := rows.Scan(&storage_key); err != nil {
+			return nil, err
+		}
+		items = append(items, storage_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const registerSkillAsset = `-- name: RegisterSkillAsset :exec
+INSERT INTO skill_asset(storage_key,workspace_id) VALUES ($1,$2)
+`
+
+type RegisterSkillAssetParams struct {
+	StorageKey  string      `json:"storage_key"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) RegisterSkillAsset(ctx context.Context, arg RegisterSkillAssetParams) error {
+	_, err := q.db.Exec(ctx, registerSkillAsset, arg.StorageKey, arg.WorkspaceID)
+	return err
+}
+
 const removeAgentSkill = `-- name: RemoveAgentSkill :exec
 DELETE FROM agent_skill
 WHERE agent_id = $1 AND skill_id = $2
@@ -731,13 +808,64 @@ func (q *Queries) UpdateSkill(ctx context.Context, arg UpdateSkillParams) (Skill
 	return i, err
 }
 
+const upsertSkillAssetFile = `-- name: UpsertSkillAssetFile :one
+INSERT INTO skill_file (skill_id, path, content, kind, storage_key, content_type, size_bytes, sha256, mode)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (skill_id,path) DO UPDATE SET content=EXCLUDED.content, kind=EXCLUDED.kind,
+storage_key=EXCLUDED.storage_key, content_type=EXCLUDED.content_type, size_bytes=EXCLUDED.size_bytes,
+sha256=EXCLUDED.sha256, mode=EXCLUDED.mode, updated_at=now()
+RETURNING id, skill_id, path, content, created_at, updated_at, kind, storage_key, content_type, size_bytes, sha256, mode
+`
+
+type UpsertSkillAssetFileParams struct {
+	SkillID     pgtype.UUID `json:"skill_id"`
+	Path        string      `json:"path"`
+	Content     string      `json:"content"`
+	Kind        string      `json:"kind"`
+	StorageKey  string      `json:"storage_key"`
+	ContentType string      `json:"content_type"`
+	SizeBytes   int64       `json:"size_bytes"`
+	Sha256      string      `json:"sha256"`
+	Mode        int32       `json:"mode"`
+}
+
+func (q *Queries) UpsertSkillAssetFile(ctx context.Context, arg UpsertSkillAssetFileParams) (SkillFile, error) {
+	row := q.db.QueryRow(ctx, upsertSkillAssetFile,
+		arg.SkillID,
+		arg.Path,
+		arg.Content,
+		arg.Kind,
+		arg.StorageKey,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.Sha256,
+		arg.Mode,
+	)
+	var i SkillFile
+	err := row.Scan(
+		&i.ID,
+		&i.SkillID,
+		&i.Path,
+		&i.Content,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.Mode,
+	)
+	return i, err
+}
+
 const upsertSkillFile = `-- name: UpsertSkillFile :one
 INSERT INTO skill_file (skill_id, path, content)
 VALUES ($1, $2, $3)
 ON CONFLICT (skill_id, path) DO UPDATE SET
     content = EXCLUDED.content,
     updated_at = now()
-RETURNING id, skill_id, path, content, created_at, updated_at
+RETURNING id, skill_id, path, content, created_at, updated_at, kind, storage_key, content_type, size_bytes, sha256, mode
 `
 
 type UpsertSkillFileParams struct {
@@ -756,6 +884,12 @@ func (q *Queries) UpsertSkillFile(ctx context.Context, arg UpsertSkillFileParams
 		&i.Content,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.Mode,
 	)
 	return i, err
 }

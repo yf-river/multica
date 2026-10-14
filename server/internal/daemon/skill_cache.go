@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,11 +149,25 @@ func validateSkillBundle(ref SkillRefData, bundle SkillData) bool {
 		return false
 	}
 	files := make([]skillbundle.File, 0, len(bundle.Files))
+	seen := map[string]bool{}
 	for _, file := range bundle.Files {
+		if seen[file.Path] || (file.Mode != 0 && file.Mode != 0644 && file.Mode != 0755) {
+			return false
+		}
+		seen[file.Path] = true
+		if file.Kind != "binary" && (file.Data != nil || (file.Kind != "text" && file.Kind != "")) {
+			return false
+		}
+		if file.Kind == "binary" {
+			sum := sha256.Sum256(file.Data)
+			if int64(len(file.Data)) != file.SizeBytes || "sha256:"+hex.EncodeToString(sum[:]) != file.SHA256 {
+				return false
+			}
+		}
 		if !safeSkillFilePath(file.Path) {
 			return false
 		}
-		files = append(files, skillbundle.File{Path: file.Path, Content: file.Content})
+		files = append(files, skillbundle.File{Path: file.Path, Content: file.Content, Kind: file.Kind, Mode: file.Mode, SHA256: file.SHA256, SizeBytes: file.SizeBytes})
 	}
 	manifest := skillbundle.BuildManifest(skillbundle.Skill{
 		ID:          bundle.ID,

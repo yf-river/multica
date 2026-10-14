@@ -170,3 +170,5 @@ dedicated single-file endpoint `PUT /api/skills/{id}/files`.
 | CLI sends `include=metadata` unless `--with-content` | `skillIncludeQuery`, `server/cmd/multica/cmd_skill.go` |
 | Handler tests | `server/internal/handler/skill_metadata_test.go` |
 | CLI tests | `server/cmd/multica/cmd_skill_test.go`, grep `AsksForMetadataUnlessContentRequested` |
+
+- Native attachment upload, authorized reads and atomic bundle replacement: `server/internal/handler/skill_asset.go`; metadata migration: `513_skill_assets`; task download and integrity validation: `server/internal/daemon/skill_asset.go`, `skill_cache.go`; materialization: `execenv/context.go`.

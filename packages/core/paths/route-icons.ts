@@ -53,6 +53,8 @@ export type NavLabelKey =
   | "usage"
   | "run_reviews"
   | "runtimes"
+  | "mcp"
+  | "quick_actions"
   | "skills"
   | "settings"
   | "cooking"
@@ -74,6 +76,8 @@ export type WorkspacePageKey =
   | "usage"
   | "runReviews"
   | "runtimes"
+  | "mcp"
+  | "quickActions"
   | "skills"
   | "settings"
   | "cooking"
@@ -107,6 +111,8 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   usage: { segment: "usage", icon: "BarChart3", navKey: "usage" },
   runReviews: { segment: "run-reviews", icon: "BarChart3", navKey: "run_reviews" },
   runtimes: { segment: "runtimes", icon: "Monitor", navKey: "runtimes" },
+  mcp: { segment: "mcp", icon: "Server", navKey: "mcp" },
+  quickActions: { segment: "quick-actions", icon: "Zap", navKey: "quick_actions" },
   skills: { segment: "skills", icon: "BookOpenText", navKey: "skills" },
   settings: { segment: "settings", icon: "Settings", navKey: "settings" },
   cooking: { segment: "cooking", icon: "ChefHat", navKey: "cooking" },

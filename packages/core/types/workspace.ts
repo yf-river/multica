@@ -66,6 +66,8 @@ export interface Workspace {
  * workspace 库列表没有绑定关系可报告。
  */
 export interface WorkspaceMcpServer {
+  description?: string;
+  configured?: boolean;
   id: string;
   workspace_id: string;
   name: string;

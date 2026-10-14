@@ -6,6 +6,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import {
+  ChevronRight,
   AlertCircle,
   AlertTriangle,
   Download,
@@ -22,7 +23,8 @@ import type {
   Skill,
   SkillSummary,
 } from "@multica/core/types";
-import { useQuery } from "@tanstack/react-query";
+import { resourceLabelsOptions } from "@multica/core/labels/queries";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -33,7 +35,10 @@ import {
   selectSkillAssignments,
   skillListOptions,
 } from "@multica/core/workspace/queries";
-import { runtimeDisplayLabel, runtimeListOptions } from "@multica/core/runtimes";
+import {
+  runtimeDisplayLabel,
+  runtimeListOptions,
+} from "@multica/core/runtimes";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -82,7 +87,7 @@ import {
 import { useT, useTimeAgo } from "../../i18n";
 
 // 列模板：表头、数据行、骨架屏三处共用的唯一事实来源。
-// 轨道结构：[边距 0.75rem][复选框 1rem][名称，唯一 fr 弹性轨道][usedBy][source]
+// 轨道结构：[边距 0.75rem][复选框 1rem][名称，唯一 fr 弹性轨道][description][usedBy][source]
 // [creator][updated][created][操作 1.75rem][边距 0.75rem]。
 // 内容单元格默认带 list-grid.tsx 的 px-2 内边距（结构列用 px-0 取消），窄边距轨道
 // 加上单元格内边距后，内容正好距容器边缘 20px。非核心列带 `hidden @2xl:flex`；
@@ -98,10 +103,10 @@ import { useT, useTimeAgo } from "../../i18n";
 //   min-width = Σ(启用轨道+间距)，列总宽超出容器时外层横向滚动兜底；绝不让某个
 //   启用的列静默消失（「勾了白勾」这个 bug 曾出过两次）。
 // - 容器 < @2xl（手机、窄分栏）：固定核心两列（名称 + usedBy），不横向滚动，
-//   列显隐开关不生效。
+//   描述按列偏好显示在名称下方。
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_var(--lgc-usedby)_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--lgc-usedby)_var(--lgc-source)_var(--lgc-creator)_var(--lgc-updated)_var(--lgc-created)_1.75rem_0.75rem]";
+  "@2xl:grid-cols-[0.75rem_1rem_var(--lgc-name)_var(--lgc-description)_var(--lgc-usedby)_var(--lgc-source)_var(--lgc-creator)_var(--lgc-updated)_var(--lgc-created)_1.75rem_0.75rem]";
 
 // 行高 48px（h-12）。虚拟滚动要求每行固定这个高度：行高恒定，虚拟器才能
 // 跳过逐行实测、直接按固定尺寸推算渲染区间与偏移。
@@ -109,6 +114,7 @@ const ROW_HEIGHT = 48;
 
 // 可隐藏列宽的唯一事实来源：列轨道变量与网格 min-width 都从这组数推导。
 const COLUMN_WIDTHS: Record<SkillColumnKey, number> = {
+  description: 320,
   usedBy: 144,
   source: 152,
   creator: 144,
@@ -117,8 +123,8 @@ const COLUMN_WIDTHS: Record<SkillColumnKey, number> = {
 };
 
 // 固定轨道宽（左右边距 12+12、复选框 16、名称最小 200、操作 28）加上宽模板
-// 10 条轨道之间 9 个 gap-x-3 的间距（宽度为 0 的隐藏轨道同样占一个间距）。
-const FIXED_TRACKS_WIDTH = 268 + 9 * 12;
+// 11 条轨道之间 10 个 gap-x-3 的间距（宽度为 0 的隐藏轨道同样占一个间距）。
+const FIXED_TRACKS_WIDTH = 268 + 10 * 12;
 
 /**
  * 把各列显隐状态折算成 CSS 变量：可见列写入真实宽度，隐藏列写 0px 让轨道
@@ -136,6 +142,8 @@ function columnTrackVars(
       0,
     );
   return {
+    "--lgc-name": isVisible("description") ? "240px" : "minmax(200px,1fr)",
+    "--lgc-description": isVisible("description") ? "minmax(280px,1fr)" : "0px",
     "--lgc-usedby": width("usedBy"),
     "--lgc-source": width("source"),
     "--lgc-creator": width("creator"),
@@ -232,7 +240,9 @@ function CheckboxCell({
           onToggle();
         }}
         className={`-m-1.5 flex items-center p-1.5 ${
-          checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
+          checked
+            ? ""
+            : "opacity-0 transition-opacity group-hover/row:opacity-100"
         }`}
       >
         <Checkbox
@@ -245,20 +255,32 @@ function CheckboxCell({
   );
 }
 
-function NameCell({ row }: { row: SkillRow }) {
+function NameCell({
+  row,
+  showDescription,
+}: {
+  row: SkillRow;
+  showDescription: boolean;
+}) {
   const { t } = useT("skills");
   const { skill, canEdit } = row;
   return (
     <ListGridCell className="gap-1.5">
-      <span className="min-w-0 truncate text-body font-medium">
-        {skill.name}
-      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-body font-medium">{skill.name}</div>
+        {showDescription && (
+          <div
+            className="truncate text-caption text-muted-foreground @2xl:hidden"
+            title={skill.description}
+          >
+            {skill.description || "—"}
+          </div>
+        )}
+      </div>
       {!canEdit && (
         <Tooltip>
           <TooltipTrigger
-            render={
-              <Lock className="h-3 w-3 shrink-0 text-faint-foreground" />
-            }
+            render={<Lock className="h-3 w-3 shrink-0 text-faint-foreground" />}
           />
           <TooltipContent>{t(($) => $.table.lock_tooltip)}</TooltipContent>
         </Tooltip>
@@ -344,7 +366,9 @@ function SourceCell({
   if (origin.type === "runtime_local") {
     icon = <HardDrive className="h-3 w-3 shrink-0" />;
     label = runtime
-      ? t(($) => $.table.source_runtime_named, { name: runtimeDisplayLabel(runtime) })
+      ? t(($) => $.table.source_runtime_named, {
+          name: runtimeDisplayLabel(runtime),
+        })
       : origin.provider
         ? t(($) => $.table.source_runtime_provider, {
             provider: origin.provider,
@@ -491,6 +515,15 @@ function SkillListHeader({
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.table.name)}
       </ListGridHeaderCell>
+      <ListGridHeaderCell
+        className={
+          isColVisible("description")
+            ? "hidden @2xl:flex"
+            : "hidden px-0 @2xl:flex"
+        }
+      >
+        {isColVisible("description") ? t(($) => $.table.description) : null}
+      </ListGridHeaderCell>
       {isColVisible("usedBy") ? (
         <ListGridHeaderCell
           sorted={sorted("usedBy")}
@@ -553,6 +586,9 @@ function LoadingSkeleton() {
         <ListGridHeaderCell>
           <Skeleton className="h-3 w-12" />
         </ListGridHeaderCell>
+        <ListGridHeaderCell className="hidden @2xl:flex">
+          <Skeleton className="h-3 w-40" />
+        </ListGridHeaderCell>
         <ListGridHeaderCell>
           <Skeleton className="h-3 w-14" />
         </ListGridHeaderCell>
@@ -573,6 +609,9 @@ function LoadingSkeleton() {
           <span aria-hidden="true" />
           <ListGridCell>
             <Skeleton className="h-3.5 w-40 max-w-full" />
+          </ListGridCell>
+          <ListGridCell className="hidden @2xl:flex">
+            <Skeleton className="h-3 w-60" />
           </ListGridCell>
           <ListGridCell>
             <Skeleton className="h-5 w-14" />
@@ -627,6 +666,13 @@ export default function SkillsPage() {
     runtimeListOptions(wsId),
   );
 
+  const labelQueries = useQueries({
+    queries: skills.map((skill) =>
+      resourceLabelsOptions(wsId, "skill", skill.id),
+    ),
+  });
+  const collapsedGroups = useSkillsViewStore((s) => s.collapsedGroups);
+  const setCollapsedGroups = useSkillsViewStore((s) => s.setCollapsedGroups);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
@@ -690,13 +736,13 @@ export default function SkillsPage() {
       const origin = readOrigin(skill);
       const runtime =
         origin.type === "runtime_local" && origin.runtime_id
-          ? runtimesById.get(origin.runtime_id) ?? null
+          ? (runtimesById.get(origin.runtime_id) ?? null)
           : null;
       return {
         skill,
         agents: assignments.get(skill.id) ?? [],
         creator: skill.created_by
-          ? membersById.get(skill.created_by) ?? null
+          ? (membersById.get(skill.created_by) ?? null)
           : null,
         runtime,
         originType: origin.type,
@@ -705,12 +751,18 @@ export default function SkillsPage() {
     });
   }, [skills, assignments, membersById, runtimesById, currentUserId, myRole]);
 
-  // 最终可见行：先按名称搜索词 + 三类筛选（使用情况/来源/agent/创建者）过滤，
+  // 最终可见行：先按名称和描述搜索词 + 三类筛选（使用情况/来源/agent/创建者）过滤，
   // 再按当前排序字段排序；usedBy 排序相同时退回按名称排，保证顺序稳定。
   const rows = useMemo<SkillRow[]>(() => {
     const q = search.trim().toLowerCase();
     const filtered = allRows.filter((row) => {
-      if (q && !row.skill.name.toLowerCase().includes(q)) return false;
+      if (
+        q &&
+        ![row.skill.name, row.skill.description].some((value) =>
+          value.toLowerCase().includes(q),
+        )
+      )
+        return false;
       if (filters.usage.length > 0) {
         const usage = row.agents.length > 0 ? "used" : "unused";
         if (!filters.usage.includes(usage)) return false;
@@ -761,13 +813,51 @@ export default function SkillsPage() {
     return filtered;
   }, [allRows, search, filters, sortField, sortDirection]);
 
+  const grouped = new Map<
+    string,
+    { id: string; name: string; rows: SkillRow[] }
+  >();
+  const labelsById = new Map(
+    skills.map((skill, i) => [skill.id, labelQueries[i]?.data ?? []]),
+  );
+  for (const row of rows) {
+    const labels = labelsById.get(row.skill.id) ?? [];
+    for (const label of labels.length
+      ? labels
+      : [{ id: "unclassified", name: t(($) => $.groups.unclassified) }]) {
+      if (!grouped.has(label.id))
+        grouped.set(label.id, { id: label.id, name: label.name, rows: [] });
+      grouped.get(label.id)!.rows.push(row);
+    }
+  }
+  const groups = [...grouped.values()].sort((a, b) =>
+    a.id === "unclassified"
+      ? 1
+      : b.id === "unclassified"
+        ? -1
+        : a.name.localeCompare(b.name, "zh-CN"),
+  );
+  const isCollapsed = (id: string) =>
+    !search.trim() && collapsedGroups.includes(id);
+  const groupedRows = groups.flatMap((group) => [
+    { key: group.id, group, row: null as SkillRow | null },
+    ...(isCollapsed(group.id)
+      ? []
+      : group.rows.map((row) => ({
+          key: `${group.id}:${row.skill.id}`,
+          group: null,
+          row,
+        }))),
+  ]);
+
   // 行虚拟化——Linear 风格：虚拟器只负责算（可见行区间 + 偏移量），DOM 仍由
   // 我们掌控。偏移量转成行容器的 padding，于是挂载中的行始终是 subgrid 的直接
   // 子元素，列对齐不受影响。行高固定为 ROW_HEIGHT，因此无需逐行测量。滚动容器
   // 是唯一的外层滚动条（横纵共用）；为何弃用分体滚动结构见 ListGridBody 注释。
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: groupedRows.length,
+    getItemKey: (index) => groupedRows[index]!.key,
     getScrollElement: () => listScrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
@@ -787,7 +877,7 @@ export default function SkillsPage() {
   };
 
   // --- 列表请求失败：整页降级为错误态，可重试 ---
-  if (listError) {
+  if (listError || labelQueries.some((query) => query.isError)) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
         <PageHeaderBar totalCount={0} onCreate={() => setCreateOpen(true)} />
@@ -806,7 +896,10 @@ export default function SkillsPage() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => refetchList()}
+              onClick={() => {
+                void refetchList();
+                labelQueries.forEach((query) => void query.refetch());
+              }}
             >
               {t(($) => $.page.list_error.retry)}
             </Button>
@@ -828,9 +921,7 @@ export default function SkillsPage() {
   const lastVirtual = virtualItems[virtualItems.length - 1];
   const virtualPadding = {
     top: firstVirtual ? firstVirtual.start : 0,
-    bottom: lastVirtual
-      ? rowVirtualizer.getTotalSize() - lastVirtual.end
-      : 0,
+    bottom: lastVirtual ? rowVirtualizer.getTotalSize() - lastVirtual.end : 0,
   };
 
   return (
@@ -851,7 +942,7 @@ export default function SkillsPage() {
         </div>
       )}
 
-      {isLoading ? (
+      {isLoading || labelQueries.some((query) => query.isPending) ? (
         <div className="flex-1 overflow-y-auto @container">
           <LoadingSkeleton />
         </div>
@@ -876,88 +967,167 @@ export default function SkillsPage() {
             allRows={allRows}
             visibleCount={rows.length}
           />
+          <div className="flex justify-end gap-2 px-4 pb-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={Boolean(search.trim())}
+              onClick={() => setCollapsedGroups([])}
+            >
+              {t(($) => $.groups.expand_all)}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={Boolean(search.trim())}
+              onClick={() => setCollapsedGroups(groups.map((g) => g.id))}
+            >
+              {t(($) => $.groups.collapse_all)}
+            </Button>
+          </div>
           <div
             ref={listScrollRef}
             className="min-h-0 flex-1 overflow-auto @container"
           >
-          <ListGrid
-            className={`${GRID_COLS} @2xl:min-w-[var(--lgc-minw)]`}
-            style={columnTrackVars(isColVisible)}
-          >
-            <SkillListHeader
-              sortField={sortField}
-              sortDirection={sortDirection}
-              onSort={handleSort}
-              allSelected={allSelected}
-              someSelected={someSelected}
-              onToggleAll={handleToggleAll}
-              isColVisible={isColVisible}
-            />
-            <ListGridBody
-              style={{
-                paddingTop: virtualPadding.top,
-                paddingBottom:
-                  virtualPadding.bottom + LIST_GRID_BOTTOM_CLEARANCE,
-              }}
+            <ListGrid
+              className={`${GRID_COLS} @2xl:min-w-[var(--lgc-minw)]`}
+              style={columnTrackVars(isColVisible)}
             >
-              {rows.length === 0 && (
-                <div className="col-span-full py-16 text-center text-body text-muted-foreground">
-                  {t(($) => $.page.no_matches.title)}
-                </div>
-              )}
-              {virtualItems.map((vi) => {
-                const row = rows[vi.index];
-                if (!row) return null;
-                return (
-              <ListGridRow
-                key={row.skill.id}
-                className={`cursor-pointer ${
-                  selectedIds.has(row.skill.id) ? "bg-accent/30" : ""
-                }`}
-                {...rowLink(paths.skillDetail(row.skill.id))}
+              <SkillListHeader
+                sortField={sortField}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+                allSelected={allSelected}
+                someSelected={someSelected}
+                onToggleAll={handleToggleAll}
+                isColVisible={isColVisible}
+              />
+              <ListGridBody
+                style={{
+                  paddingTop: virtualPadding.top,
+                  paddingBottom:
+                    virtualPadding.bottom + LIST_GRID_BOTTOM_CLEARANCE,
+                }}
               >
-                <CheckboxCell
-                  checked={selectedIds.has(row.skill.id)}
-                  onToggle={() => toggleSelected(row.skill.id)}
-                />
-                <NameCell row={row} />
-                {isColVisible("usedBy") ? (
-                  <UsedByCell agents={row.agents} />
-                ) : (
-                  <ListGridCell className="px-0" />
+                {rows.length === 0 && (
+                  <div className="col-span-full py-16 text-center text-body text-muted-foreground">
+                    {t(($) => $.page.no_matches.title)}
+                  </div>
                 )}
-                {isColVisible("source") ? (
-                  <SourceCell skill={row.skill} runtime={row.runtime} />
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                {isColVisible("creator") ? (
-                  <CreatorCell creator={row.creator} />
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                {isColVisible("updated") ? (
-                  <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
-                    {timeAgo(row.skill.updated_at)}
-                  </ListGridCell>
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                {isColVisible("created") ? (
-                  <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
-                    {timeAgo(row.skill.created_at)}
-                  </ListGridCell>
-                ) : (
-                  <ListGridCell className="hidden px-0 @2xl:flex" />
-                )}
-                <ListGridCell className="justify-end px-0">
-                  <SkillRowActions row={row} ctx={actionsCtx} />
-                </ListGridCell>
-              </ListGridRow>
-                );
-              })}
-            </ListGridBody>
-          </ListGrid>
+                {virtualItems.map((vi) => {
+                  const item = groupedRows[vi.index];
+                  if (item?.group) {
+                    const group = item.group;
+                    return (
+                      <div
+                        key={item.key}
+                        className="col-span-full flex h-12 items-center border-t border-surface-border bg-muted/30 px-4"
+                      >
+                        <button
+                          type="button"
+                          className="flex min-h-10 items-center gap-2 rounded px-2 text-body font-medium focus-visible:outline-2 focus-visible:outline-ring"
+                          aria-expanded={!isCollapsed(group.id)}
+                          onClick={() =>
+                            setCollapsedGroups(
+                              isCollapsed(group.id)
+                                ? collapsedGroups.filter(
+                                    (id) => id !== group.id,
+                                  )
+                                : [...collapsedGroups, group.id],
+                            )
+                          }
+                        >
+                          <ChevronRight
+                            className={`size-4 ${isCollapsed(group.id) ? "" : "rotate-90"}`}
+                          />
+                          {group.name}
+                          <span className="text-caption tabular-nums text-muted-foreground">
+                            {group.rows.length}
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  }
+                  const row = item?.row;
+                  if (!row) return null;
+                  return (
+                    <ListGridRow
+                      key={item!.key}
+                      className={`cursor-pointer ${
+                        selectedIds.has(row.skill.id) ? "bg-accent/30" : ""
+                      }`}
+                      {...rowLink(paths.skillDetail(row.skill.id))}
+                    >
+                      <CheckboxCell
+                        checked={selectedIds.has(row.skill.id)}
+                        onToggle={() => toggleSelected(row.skill.id)}
+                      />
+                      <NameCell
+                        row={row}
+                        showDescription={isColVisible("description")}
+                      />
+                      <ListGridCell
+                        className={
+                          isColVisible("description")
+                            ? "hidden text-body text-muted-foreground @2xl:flex"
+                            : "hidden px-0 @2xl:flex"
+                        }
+                      >
+                        {isColVisible("description") && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span
+                                  tabIndex={0}
+                                  className="min-w-0 truncate rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
+                                />
+                              }
+                            >
+                              {row.skill.description || "—"}
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-sm break-words">
+                              {row.skill.description || "—"}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </ListGridCell>
+                      {isColVisible("usedBy") ? (
+                        <UsedByCell agents={row.agents} />
+                      ) : (
+                        <ListGridCell className="px-0" />
+                      )}
+                      {isColVisible("source") ? (
+                        <SourceCell skill={row.skill} runtime={row.runtime} />
+                      ) : (
+                        <ListGridCell className="hidden px-0 @2xl:flex" />
+                      )}
+                      {isColVisible("creator") ? (
+                        <CreatorCell creator={row.creator} />
+                      ) : (
+                        <ListGridCell className="hidden px-0 @2xl:flex" />
+                      )}
+                      {isColVisible("updated") ? (
+                        <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
+                          {timeAgo(row.skill.updated_at)}
+                        </ListGridCell>
+                      ) : (
+                        <ListGridCell className="hidden px-0 @2xl:flex" />
+                      )}
+                      {isColVisible("created") ? (
+                        <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
+                          {timeAgo(row.skill.created_at)}
+                        </ListGridCell>
+                      ) : (
+                        <ListGridCell className="hidden px-0 @2xl:flex" />
+                      )}
+                      <ListGridCell className="justify-end px-0">
+                        <SkillRowActions row={row} ctx={actionsCtx} />
+                      </ListGridCell>
+                    </ListGridRow>
+                  );
+                })}
+              </ListGridBody>
+            </ListGrid>
           </div>
         </>
       )}

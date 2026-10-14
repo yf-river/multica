@@ -1126,11 +1126,17 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if canReceiveMcpCheck(rt, middleware.DaemonIDFromContext(r.Context()), requestUserID(r)) {
+		ack.PendingMcpCheck = h.pendingWorkspaceMcpCheck(r.Context(), rt)
+	}
 	outcome = "ok"
 	// Preserve the existing HTTP response shape: the runtime_id field is new
 	// in the WS path and would be redundant noise on the HTTP path where the
 	// caller already knows which runtime it asked about.
 	resp := map[string]any{"status": ack.Status}
+	if ack.PendingMcpCheck != nil {
+		resp["pending_mcp_check"] = ack.PendingMcpCheck
+	}
 	if ack.PendingUpdate != nil {
 		resp["pending_update"] = ack.PendingUpdate
 	}
@@ -1183,6 +1189,9 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 		return nil, fmt.Errorf("runtime not in connection workspace")
 	}
 	ack, _, err := h.processHeartbeat(ctx, rt, supportsBatchImport)
+	if err == nil && canReceiveMcpCheck(rt, identity.DaemonID, identity.UserID) {
+		ack.PendingMcpCheck = h.pendingWorkspaceMcpCheck(ctx, rt)
+	}
 	return ack, err
 }
 
@@ -2181,22 +2190,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		RuntimeConfig:         runtimeConfig,
 		DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
 	}
-	// System agents carry a product-owned instruction layer that ships with
-	// this binary instead of being copied into their row at creation. That
-	// is what makes it hot-updatable: editing the embedded file and
-	// deploying reaches every existing workspace on its next task, with no
-	// migration and no client upgrade. agent.Instructions holds only the
-	// workspace's own notes, so a release can never overwrite them.
-	//
-	// Composing here covers every task kind, because this is the single
-	// place a claimed task's agent payload is assembled.
-	if agent.SystemKey.String == service.MikaSystemKey {
-		resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
-	}
 	if useSkillRefs {
-		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+		bundles, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
 		if err != nil {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
+		}
+		if !requestHasClientCapability(r, protocol.DaemonCapabilitySkillAssetsV1) && hasBinarySkillFiles(bundles) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, fmt.Errorf("upgrade daemon: skill-assets-v1 is required"))
 		}
 		agentSkillCount = len(skillRefs)
 		resp.Agent.SkillRefs = skillRefs
@@ -2204,6 +2204,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		skills, err := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
 		if err != nil {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
+		}
+		if hasBinarySkillFiles(skills) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, fmt.Errorf("upgrade daemon: skill-assets-v1 is required"))
 		}
 		agentSkillCount = len(skills)
 		builtinSkills := h.TaskService.BuiltinSkills()
@@ -2763,6 +2766,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				message: "failed to load chat input",
 			}
 		}
+
+		// 历史引导消息保留在记录中，但不再作为执行输入。
+		inputs := unanswered[:0]
+		for _, message := range unanswered {
+			if message.MessageKind != protocol.ChatMessageKindOnboardingKickoff {
+				inputs = append(inputs, message)
+			}
+		}
+		unanswered = inputs
 
 		// Input ownership is the claim's fail-closed boundary. Resume-history
 		// reads belong after it: a task that cannot load its input is preserved
@@ -3592,6 +3604,10 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		}
 		if ref.Source == skillbundle.SourcePlugin && bundle.Hash != ref.Hash {
 			writeError(w, http.StatusConflict, "pinned plugin skill bundle hash mismatch")
+			return
+		}
+		if hasBinarySkillFiles([]service.AgentSkillData{bundle}) && !requestHasClientCapability(r, protocol.DaemonCapabilitySkillAssetsV1) {
+			writeError(w, 409, "upgrade daemon: skill-assets-v1 is required")
 			return
 		}
 		resolved = append(resolved, bundle)

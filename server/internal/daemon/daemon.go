@@ -3875,6 +3875,9 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 			"local_skill_import", resp.PendingLocalSkillImport != nil,
 		)
 	}
+	if resp.PendingMcpCheck != nil {
+		go d.handleWorkspaceMcpCheck(ctx, runtimeID, *resp.PendingMcpCheck)
+	}
 	if resp.PendingUpdate != nil {
 		go d.handleUpdate(ctx, runtimeID, resp.PendingUpdate)
 	}
@@ -6283,7 +6286,7 @@ func skillRefKey(source, id string) string {
 func skillRefFromBundle(bundle SkillData) SkillRefData {
 	files := make([]skillbundle.File, 0, len(bundle.Files))
 	for _, file := range bundle.Files {
-		files = append(files, skillbundle.File{Path: file.Path, Content: file.Content})
+		files = append(files, skillbundle.File{Path: file.Path, Content: file.Content, Kind: file.Kind, Mode: file.Mode, SHA256: file.SHA256, SizeBytes: file.SizeBytes})
 	}
 	manifest := skillbundle.BuildManifest(skillbundle.Skill{
 		ID:          bundle.ID,
@@ -8469,6 +8472,7 @@ func convertSkillsForEnv(skills []SkillData) []execenv.SkillContextForEnv {
 		}
 		for _, f := range s.Files {
 			result[i].Files = append(result[i].Files, execenv.SkillFileContextForEnv{
+				Data: f.Data, Mode: f.Mode,
 				Path:    f.Path,
 				Content: f.Content,
 			})

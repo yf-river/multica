@@ -21,7 +21,7 @@ import (
 )
 
 // Mika 的产品级身份。刻意做成服务端常量：公开的 CreateAgent API 既不接受 `kind` 也不接受
-// `system_key`，客户端无法铸造一个会收到系统指令层、或能通过引导门槛的 Agent。若可以，既
+// `system_key`，客户端无法铸造一个能通过引导门槛的内置 Agent。若可以，既
 // 能伪造一个「Mika」，又会打破「每工作区一个」的不变式。
 const (
 	mikaAgentMaxConcurrency = 3
@@ -51,7 +51,7 @@ type createMikaAgentRequest struct {
 // 两者要一起返回，因为每个调用方两个都需要，而且这对组合必须原子产出。客户端以前是先列
 // 会话、看不到匹配就创建一个——那是一处没有保护的 check-then-insert：LockWorkspaceForChatSessionCreate
 // 特意取 FOR KEY SHARE，让并发创建会话彼此不阻塞，于是两个标签页各建了一条会话、各拿到
-// 一次自己的「幂等」kickoff。
+// 自己的普通会话。
 type mikaAgentResponse struct {
 	AgentResponse
 	OnboardingSession *ChatSessionResponse `json:"onboarding_session,omitempty"`
@@ -152,6 +152,7 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 	created, err := qtx.CreateSystemUserAgent(r.Context(), db.CreateSystemUserAgentParams{
 		WorkspaceID:        wsUUID,
 		Name:               service.MikaDefaultName,
+		Instructions:       service.MikaDefaultInstructions(service.MikaDefaultName),
 		Description:        mikaAgentDescription,
 		AvatarUrl:          pgtype.Text{String: mikaAgentAvatarURL, Valid: true},
 		RuntimeMode:        runtime.RuntimeMode,
@@ -284,13 +285,4 @@ func (h *Handler) getOrCreateMikaSession(ctx context.Context, agent db.Agent, wo
 		return db.ChatSession{}, err
 	}
 	return created, nil
-}
-
-// systemInstructionsFor 暴露系统 Agent prompt 里「产品拥有」的那一半，供 UI 只读展示。
-// 普通 Agent 返回 ""——它们的整段 prompt 本来就在可编辑的 Instructions 字段里。
-func systemInstructionsFor(a db.Agent) string {
-	if a.SystemKey.String == service.MikaSystemKey {
-		return service.MikaSystemInstructions(a.Name)
-	}
-	return ""
 }

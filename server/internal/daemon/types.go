@@ -263,6 +263,10 @@ type SkillData struct {
 
 // SkillFileData 表示技能内的一个支撑文件。
 type SkillFileData struct {
+	Kind      string `json:"kind,omitempty"`
+	FileID    string `json:"file_id,omitempty"`
+	Mode      int32  `json:"mode,omitempty"`
+	Data      []byte `json:"data,omitempty"`
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	SHA256    string `json:"sha256,omitempty"`

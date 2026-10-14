@@ -73,23 +73,19 @@ type AgentResponse struct {
 	RuntimeBound bool   `json:"runtime_bound"`
 	Name         string `json:"name"`
 	Description  string `json:"description"`
-	// Instructions 是 agent 所有者自己写的指令。对系统 agent 而言它只保存
-	// 工作区自身的备注——产品那半部分在 SystemInstructions 里，从不落库。
+	// Instructions 是 Agent 的完整可编辑提示词。
 	Instructions string `json:"instructions"`
 	// ConversationStarters 是可选的、agent 专属的第一轮建议。空列表表示
 	// 让客户端渲染本地化的兜底开场白。
 	ConversationStarters []AgentConversationStarter `json:"conversation_starters"`
 	// SystemKey 标识产品内置 agent（如 "mika"）。用户或模板创建的 agent 为空。
 	// UI 用该键而不是显示名（所有者可以改名）来判断「这个 agent 由 Multica 维护」。
-	SystemKey string `json:"system_key,omitempty"`
-	// SystemInstructions 是系统 agent 提示词中只读的产品半部分，从服务端
-	// 二进制注入。普通 agent 为空。
-	SystemInstructions string          `json:"system_instructions,omitempty"`
-	AvatarURL          *string         `json:"avatar_url"`
-	RuntimeMode        string          `json:"runtime_mode"`
-	RuntimeConfig      any             `json:"runtime_config"`
-	CustomArgs         []string        `json:"custom_args"`
-	McpConfig          json.RawMessage `json:"mcp_config"`
+	SystemKey     string          `json:"system_key,omitempty"`
+	AvatarURL     *string         `json:"avatar_url"`
+	RuntimeMode   string          `json:"runtime_mode"`
+	RuntimeConfig any             `json:"runtime_config"`
+	CustomArgs    []string        `json:"custom_args"`
+	McpConfig     json.RawMessage `json:"mcp_config"`
 	// custom_env 有意不序列化进 agent 资源。agent 的 list/get/create/update/
 	// archive/restore 响应及 WS 事件只暴露粗粒度元数据（has_custom_env、
 	// custom_env_key_count），让 UI 能展示「已配置 N 个变量」而无需把密钥
@@ -206,7 +202,6 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		Instructions:             a.Instructions,
 		ConversationStarters:     conversationStarters,
 		SystemKey:                a.SystemKey.String,
-		SystemInstructions:       systemInstructionsFor(a),
 		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
 		RuntimeMode:              a.RuntimeMode,
 		RuntimeConfig:            rc,

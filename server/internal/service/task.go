@@ -2161,9 +2161,6 @@ type DirectChatSendResult struct {
 	TaskQueuedEvent events.Event
 }
 
-// ErrChatSessionAlreadyStarted 表示会话已存在用户消息，不能再写入 onboarding 开场消息。
-var ErrChatSessionAlreadyStarted = errors.New("chat session already has a user message")
-
 // SendDirectChatMessage 原子地持久化一轮 web/mobile direct-chat 消息：承载任务（经 chat_input_task_id
 // 认领自己的输入批次）、绑定到该任务的用户消息、附件绑定与会话 touch 一并提交（MUL-4351）。只在提交后
 // 通知 daemon，因此 daemon 绝不会看到“有消息没任务”或“有任务没输入归属”——后续认领精确读到本任务的用户
@@ -2255,18 +2252,6 @@ func (s *TaskService) SendDirectChatMessage(
 			return fmt.Errorf("stamp direct chat input owner: %w", err)
 		}
 		out.Task = task
-
-		// 收养本会话仍无人认领的 onboarding kickoff（若存在）。它由 OpenMikaOnboardingChat 写入且不带任务，因此
-		// 只有这里能把它送进运行时——而且必须先于成员自己的消息行写入，让批次按 created_at 排成
-		// “上下文，然后用户消息”的顺序。
-		//
-		// 其它会话都是 no-op：只有 Mika onboarding 写这种消息，且只有它的第一条发送会看到它未被认领。
-		if err := qtx.AdoptOrphanOnboardingKickoff(ctx, db.AdoptOrphanOnboardingKickoffParams{
-			ChatSessionID: session.ID,
-			TaskID:        task.ID,
-		}); err != nil {
-			return fmt.Errorf("adopt onboarding kickoff: %w", err)
-		}
 
 		// 在插入首条公开用户消息前，为显式空白的 Chat 初始化标题。CAS 查询同时防手动改名与并发首发的覆盖；
 		// 把它放进本事务可避免“只提交了标题、没有消息”的中间态。
@@ -2386,84 +2371,6 @@ func (s *TaskService) SendDirectChatMessage(
 	// 第二种 task:queued 事件形态。
 	publishCommittedEvent(s.Bus, out.TaskQueuedEvent)
 	s.NotifyTaskEnqueued(ctx, out.Task)
-	return &out, nil
-}
-
-// MikaOnboardingOpenResult 携带打开一个 Mika 会话时写入的两行数据。
-type MikaOnboardingOpenResult struct {
-	// Kickoff 是隐藏的产品上下文。它【不带任务】写入——由成员的第一条真实发送收养（AdoptOrphanOnboardingKickoff）。
-	Kickoff db.ChatMessage
-	// Opening 是成员读到、且已定稿的开场白。没有任何 agent 参与，因此不带任务 id、没有耗时、也没有可
-	// 重新生成的内容。
-	Opening db.ChatMessage
-}
-
-// OpenMikaOnboardingChat 在单事务里写入一个 Mika 会话的前两行：隐藏 kickoff 与产品作者的开场白
-// （成员所见，MUL-5827）。不再入队任何东西——以前这是完整聊天任务，成员要等一次运行时冷启动才能读到
-// 产品早已逐字定稿的回复。
-//
-// “会话仍为空”在 chat-session 锁下强制，因此重试、React 双提交与两客户端并发抢同一会话最多也只产生一条
-// 开场白。正是 kickoff 行支撑了这个检查：它是 role='user' 行，ChatSessionHasUserMessage 对它的判断与旧的
-// kickoff 回合完全一致。
-func (s *TaskService) OpenMikaOnboardingChat(ctx context.Context, session db.ChatSession, kickoff, opening string) (*MikaOnboardingOpenResult, error) {
-	var out MikaOnboardingOpenResult
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
-		// 与发送路径相同的锁和加锁【顺序】：开场白与首发 / 运行时重绑竞争时只串行化，不会死锁。
-		if _, err := qtx.LockChatSessionForRuntimeBind(ctx, session.ID); err != nil {
-			return fmt.Errorf("lock chat session: %w", err)
-		}
-		current, err := qtx.GetChatSession(ctx, session.ID)
-		if err != nil {
-			return fmt.Errorf("reload chat session: %w", err)
-		}
-		if current.Status != "active" {
-			return ErrChatSessionArchived
-		}
-		hasUserMessage, err := qtx.ChatSessionHasUserMessage(ctx, session.ID)
-		if err != nil {
-			return fmt.Errorf("check chat session input: %w", err)
-		}
-		if hasUserMessage {
-			return ErrChatSessionAlreadyStarted
-		}
-
-		kickoffRow, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-			ID:            dbid.NewV7(),
-			ChatSessionID: session.ID,
-			Role:          "user",
-			Content:       kickoff,
-			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindOnboardingKickoff, Valid: true},
-		})
-		if err != nil {
-			return fmt.Errorf("create onboarding kickoff: %w", err)
-		}
-		out.Kickoff = kickoffRow
-
-		// 比 kickoff 晚一微秒排序——为何不能共用一个事务时间戳，见该查询注释。
-		openingRow, err := qtx.CreateMikaOnboardingOpening(ctx, db.CreateMikaOnboardingOpeningParams{
-			ID:               dbid.NewV7(),
-			ChatSessionID:    session.ID,
-			KickoffCreatedAt: kickoffRow.CreatedAt,
-			Content:          opening,
-		})
-		if err != nil {
-			return fmt.Errorf("create onboarding opening: %w", err)
-		}
-		out.Opening = openingRow
-
-		if err := qtx.TouchChatSession(ctx, session.ID); err != nil {
-			return fmt.Errorf("touch chat session: %w", err)
-		}
-		return nil
-	}); err != nil {
-		if !errors.Is(err, ErrChatSessionAlreadyStarted) {
-			slog.Error("mika onboarding open failed",
-				"chat_session_id", util.UUIDToString(session.ID),
-				"agent_id", util.UUIDToString(session.AgentID),
-				"error", err)
-		}
-		return nil, err
-	}
 	return &out, nil
 }
 
@@ -6496,7 +6403,7 @@ func (s *TaskService) skillsWithFiles(ctx context.Context, skills []db.Skill) ([
 	filesBySkill := make(map[string][]AgentSkillFileData, len(skills))
 	for _, f := range files {
 		id := util.UUIDToString(f.SkillID)
-		filesBySkill[id] = append(filesBySkill[id], AgentSkillFileData{Path: f.Path, Content: f.Content})
+		filesBySkill[id] = append(filesBySkill[id], AgentSkillFileData{Path: f.Path, Content: f.Content, Kind: f.Kind, FileID: util.UUIDToString(f.ID), Mode: f.Mode, SHA256: "sha256:" + f.Sha256, SizeBytes: f.SizeBytes})
 	}
 
 	result := make([]AgentSkillData, 0, len(skills))
@@ -6627,7 +6534,7 @@ func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentS
 
 		files := make([]skillbundle.File, 0, len(skill.Files))
 		for _, file := range skill.Files {
-			files = append(files, skillbundle.File{Path: file.Path, Content: file.Content})
+			files = append(files, skillbundle.File{Path: file.Path, Content: file.Content, Kind: file.Kind, Mode: file.Mode, SHA256: file.SHA256, SizeBytes: file.SizeBytes})
 		}
 		manifest := skillbundle.BuildManifest(skillbundle.Skill{
 			ID:          skill.ID,
@@ -6687,6 +6594,10 @@ type AgentSkillData struct {
 
 // AgentSkillFileData 表示技能内的一个支持文件。
 type AgentSkillFileData struct {
+	Kind      string `json:"kind,omitempty"`
+	FileID    string `json:"file_id,omitempty"`
+	Mode      int32  `json:"mode,omitempty"`
+	Data      []byte `json:"data,omitempty"`
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	SHA256    string `json:"sha256,omitempty"`

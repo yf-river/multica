@@ -250,6 +250,8 @@ type SkillContextForEnv struct {
 
 // SkillFileContextForEnv 描述技能目录里的一个附属文件（相对路径 + 内容）。
 type SkillFileContextForEnv struct {
+	Data    []byte
+	Mode    int32
 	Path    string
 	Content string
 }

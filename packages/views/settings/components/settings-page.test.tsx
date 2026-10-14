@@ -31,6 +31,7 @@ vi.mock("./keyboard-shortcuts-tab", stub("KeyboardShortcutsTab"));
 vi.mock("./plugins-tab", stub("PluginsTab"));
 
 vi.mock("@multica/core/paths", () => ({
+  useWorkspacePaths: () => ({mcp:()=>"/acme/mcp",quickActions:()=>"/acme/quick-actions"}),
   useCurrentWorkspace: () => ({ name: "Acme" }),
 }));
 
@@ -135,3 +136,5 @@ describe("SettingsPage Plugin feature flag", () => {
     expect(await screen.findByText("PluginsTab")).toBeInTheDocument();
   });
 });
+
+it("redirects legacy MCP and quick-action links to their independent pages",()=>{navigationState.search="?tab=mcp";renderWithI18n(<SettingsPage/>);expect(replace).toHaveBeenCalledWith("/acme/mcp");});

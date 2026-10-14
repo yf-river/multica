@@ -8,9 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func createMika(t *testing.T, body any) *httptest.ResponseRecorder {
@@ -62,13 +60,8 @@ func TestCreateMikaAgent_ServerOwnsTheDefinition(t *testing.T) {
 	if resp.PermissionMode != mikaAgentPermissionMode {
 		t.Fatalf("permission_mode = %q, want %q", resp.PermissionMode, mikaAgentPermissionMode)
 	}
-	// The workspace half starts empty — the product half is never written to
-	// the row, which is what keeps a release from overwriting workspace notes.
-	if resp.Instructions != "" {
-		t.Fatalf("instructions must start empty, got %q", resp.Instructions)
-	}
-	if !strings.Contains(resp.SystemInstructions, "You are Mika") {
-		t.Fatalf("system_instructions should carry the product prompt, got %q", resp.SystemInstructions)
+	if resp.Instructions != service.MikaDefaultInstructions(service.MikaDefaultName) {
+		t.Fatal("Mika must start with an editable default prompt")
 	}
 
 	// kind stays 'user' so Mika keeps appearing in agent lists and assignment
@@ -110,46 +103,11 @@ func TestCreateMikaAgent_IsIdempotentPerWorkspace(t *testing.T) {
 	}
 }
 
-// TestComposeMikaInstructions covers the layering contract: the product half
-// always leads, workspace notes are labelled with their provenance, and an
-// empty second layer adds nothing — including the section heading that
-// describes it.
-func TestComposeMikaInstructions(t *testing.T) {
-	system := service.MikaSystemInstructions(service.MikaDefaultName)
-
-	if got := service.ComposeMikaInstructions(service.MikaDefaultName, ""); got != system {
-		t.Fatal("an empty workspace layer must compose to exactly the system layer")
-	}
-	if got := service.ComposeMikaInstructions(service.MikaDefaultName, "   \n  "); got != system {
-		t.Fatal("a blank workspace layer must compose to exactly the system layer")
-	}
-	// Without notes the prompt must not end by announcing a section that has
-	// nothing under it.
-	if strings.Contains(system, "Workspace notes below add") {
-		t.Fatalf("the notes rule must not appear when there are no notes:\n%s", system)
-	}
-
-	composed := service.ComposeMikaInstructions(service.MikaDefaultName, "Our main repo is acme/platform.")
-	if !strings.HasPrefix(composed, system) {
-		t.Fatal("the system layer must lead the composed prompt")
-	}
-	for _, want := range []string{
-		"## Workspace notes",
-		"Workspace notes below add",
-		"Added by this workspace's admins",
-		"Our main repo is acme/platform.",
-	} {
-		if !strings.Contains(composed, want) {
-			t.Fatalf("composed prompt missing %q:\n%s", want, composed)
-		}
-	}
-}
-
 // The runtime brief announces "**You are: <name>**" from the agent row, so a
 // hardcoded "You are Mika" would contradict it the moment an owner renames the
 // agent.
-func TestMikaSystemInstructionsUsesTheCurrentDisplayName(t *testing.T) {
-	renamed := service.MikaSystemInstructions("Jarvis")
+func TestMikaDefaultInstructionsUsesTheCurrentDisplayName(t *testing.T) {
+	renamed := service.MikaDefaultInstructions("Jarvis")
 	if !strings.HasPrefix(renamed, "You are Jarvis,") {
 		t.Fatalf("prompt should open as the current name:\n%s", renamed[:120])
 	}
@@ -161,7 +119,7 @@ func TestMikaSystemInstructionsUsesTheCurrentDisplayName(t *testing.T) {
 		t.Fatal("prompt should still identify itself as Multica's built-in agent")
 	}
 
-	if blank := service.MikaSystemInstructions("   "); !strings.HasPrefix(blank, "You are Mika,") {
+	if blank := service.MikaDefaultInstructions("   "); !strings.HasPrefix(blank, "You are Mika,") {
 		t.Fatalf("a blank name should fall back to the default:\n%s", blank[:120])
 	}
 }
@@ -195,23 +153,5 @@ func TestArchiveMikaIsRejected(t *testing.T) {
 	}
 	if archivedAt != nil {
 		t.Fatalf("agent must remain active, got archived_at = %v", *archivedAt)
-	}
-}
-
-// TestSystemInstructionsFor_OnlySystemAgents guards the blast radius: an
-// ordinary agent's payload must be byte-identical to before this feature.
-func TestSystemInstructionsFor_OnlySystemAgents(t *testing.T) {
-	mika := db.Agent{SystemKey: pgtype.Text{String: service.MikaSystemKey, Valid: true}}
-	if systemInstructionsFor(mika) == "" {
-		t.Fatal("Mika should expose the product prompt")
-	}
-	for _, ordinary := range []db.Agent{
-		{},
-		{SystemKey: pgtype.Text{String: "", Valid: true}},
-		{SystemKey: pgtype.Text{String: "agent_builder:abc", Valid: true}},
-	} {
-		if got := systemInstructionsFor(ordinary); got != "" {
-			t.Fatalf("non-Mika agent must expose no system instructions, got %q", got)
-		}
 	}
 }

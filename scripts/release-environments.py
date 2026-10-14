@@ -106,6 +106,7 @@ def relocate_dependency_links(stage, source):
 
 def build():
     with lock('build'):
+        base_release = read(meta_path("prod")).get("release_id") if meta_path("prod").exists() else None
         digest, files = source_digest(ROOT)
         sha = output(['git', 'rev-parse', 'HEAD'], cwd=ROOT)
         release_id = sha[:12] + '-' + digest[:12]
@@ -137,7 +138,7 @@ def build():
         copy_tree(stage/'apps/web/public', pending/'apps/web/public')
         copy_tree(stage/'server/bin', pending/'server/bin')
         copy_tree(stage/'server/migrations', pending/'server/migrations')
-        manifest = dict(id=release_id, source_commit=sha, source_digest=digest, created_at=time.strftime('%FT%TZ',time.gmtime()), files=checksums(pending))
+        manifest = dict(id=release_id, base_release_id=base_release, source_commit=sha, source_digest=digest, created_at=time.strftime('%FT%TZ',time.gmtime()), files=checksums(pending))
         write(pending/'release.json', manifest)
         os.rename(pending, artifact)
         print('发布包:', release_id)
@@ -246,6 +247,8 @@ def deploy(env,release_id,timeout=900):
             isolation_check()
             print(env,'版本已运行，无需重启',release_id)
             return
+        if manifest.get('base_release_id') and release_id != m.get('previous_release_id') and read(meta_path('prod')).get('release_id') != manifest['base_release_id']:
+            raise RuntimeError('生产版本已被其他发布更新，请整合最新源码并重新验收后发布')
         release=RUN/'releases'/env/release_id
         if release.exists():
             # 发布目录中的 .next/cache 为环境独立的可变缓存；只核验包内文件。
@@ -418,6 +421,10 @@ def verify_logs():
     if not ok: raise RuntimeError('发布日志存在致命错误；请在私有日志中查看')
 
 def backup():
+    cfg=read(config_path('prod'))
+    if not cfg['server'].get('S3_BUCKET'):
+        run(['node', ROOT/'scripts/backup-skill-assets.mjs', 'prod'])
+        return
     cfg=read(config_path('prod'));url=urllib.parse.urlparse(cfg['server']['DATABASE_URL'])
     database=url.path.lstrip('/')
     destination=RUN/'backups'/('prod-'+time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'.dump')

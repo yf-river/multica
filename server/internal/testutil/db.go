@@ -162,7 +162,7 @@ func (f *Fixture) Issue(t TB, title string, over ...Cols) string {
 		"workspace_id": f.WorkspaceID,
 		"title":        title,
 		"status":       "todo",
-		"priority":     "none",
+		"priority":     "not_important_not_urgent",
 		"creator_type": "member",
 		"creator_id":   f.UserID,
 		"position":     0,

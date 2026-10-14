@@ -28,8 +28,8 @@ SELECT * FROM workspace_mcp_server
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: CreateWorkspaceMcpServer :one
-INSERT INTO workspace_mcp_server (workspace_id, name, config, created_by)
-VALUES ($1, $2, $3, $4)
+INSERT INTO workspace_mcp_server (workspace_id, name, config, created_by, description)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: UpdateWorkspaceMcpServer :one
@@ -38,6 +38,8 @@ RETURNING *;
 -- the agents that use it.
 UPDATE workspace_mcp_server SET
     name = COALESCE(sqlc.narg('name'), name),
+    description = COALESCE(sqlc.narg('description'), description),
+    config_version = config_version + CASE WHEN sqlc.narg('config')::jsonb IS NULL THEN 0 ELSE 1 END,
     config = COALESCE(sqlc.narg('config'), config),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
@@ -55,7 +57,7 @@ DELETE FROM agent_mcp_server WHERE server_id = $1;
 -- name: ListAgentMcpServers :many
 -- Every workspace server bound to this agent, enabled or not, for the agent
 -- settings list. `enabled` comes from the binding.
-SELECT s.id, s.workspace_id, s.name, s.config, s.created_at, s.updated_at, ams.enabled
+SELECT s.id, s.workspace_id, s.name, s.description, s.config, s.created_at, s.updated_at, ams.enabled
 FROM workspace_mcp_server s
 JOIN agent_mcp_server ams ON ams.server_id = s.id
 WHERE ams.agent_id = $1
@@ -84,3 +86,32 @@ WHERE agent_id = $1 AND server_id = $2;
 -- name: RemoveAgentMcpServer :execrows
 DELETE FROM agent_mcp_server
 WHERE agent_id = $1 AND server_id = $2;
+
+-- name: UpsertWorkspaceMcpCheck :one
+INSERT INTO workspace_mcp_check (workspace_id,server_id,runtime_id,config_version) VALUES ($1,$2,$3,$4)
+ON CONFLICT (server_id,runtime_id) DO UPDATE SET
+ id=EXCLUDED.id, config_version=EXCLUDED.config_version, status='pending', tool_count=0, error_code='', created_at=now(),started_at=NULL,completed_at=NULL
+WHERE workspace_mcp_check.status NOT IN ('pending','running') OR workspace_mcp_check.config_version <> EXCLUDED.config_version
+RETURNING *;
+
+-- name: ExpireWorkspaceMcpChecks :exec
+UPDATE workspace_mcp_check SET status='timeout',error_code='timeout',completed_at=now()
+WHERE workspace_id=$1 AND ((status='pending' AND created_at < now()-interval '60 seconds') OR (status='running' AND started_at < now()-interval '60 seconds'));
+
+-- name: ListWorkspaceMcpChecks :many
+SELECT c.*, (c.config_version <> s.config_version) AS stale FROM workspace_mcp_check c JOIN workspace_mcp_server s ON s.id=c.server_id
+WHERE c.workspace_id=$1 AND c.server_id=$2 ORDER BY c.created_at DESC;
+
+-- name: ClaimWorkspaceMcpCheck :one
+UPDATE workspace_mcp_check SET status='running',started_at=now()
+WHERE id=(SELECT c.id FROM workspace_mcp_check c JOIN workspace_mcp_server s ON s.id=c.server_id
+ WHERE c.runtime_id=$1 AND c.status='pending' AND c.created_at > now()-interval '60 seconds' AND c.config_version=s.config_version
+ ORDER BY c.created_at LIMIT 1 FOR UPDATE OF c SKIP LOCKED)
+RETURNING *;
+
+-- name: CompleteWorkspaceMcpCheck :execrows
+UPDATE workspace_mcp_check SET status=$4,tool_count=$5,error_code=$6,completed_at=now()
+WHERE id=$1 AND runtime_id=$2 AND workspace_id=$3 AND status='running' AND started_at > now()-interval '60 seconds';
+
+-- name: DeleteWorkspaceMcpChecks :exec
+DELETE FROM workspace_mcp_check WHERE server_id=$1;

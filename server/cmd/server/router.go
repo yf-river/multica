@@ -1279,10 +1279,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/claim", h.ClaimTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/prepare-lease", h.ExtendTaskPrepareLease)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/skill-bundles/resolve", h.ResolveTaskSkillBundles)
+		r.Get("/runtimes/{runtimeId}/tasks/{taskId}/skill-files/{fileId}/content", h.GetTaskSkillFileContent)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
+		r.Post("/runtimes/{runtimeId}/mcp-checks/{requestId}/result", h.ReportWorkspaceMcpCheck)
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
@@ -1428,6 +1430,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// 通过 agent 路由把它加进自己的 agent。
 					r.Post("/mcp-servers", h.CreateWorkspaceMcpServer)
 					r.Put("/mcp-servers/{serverId}", h.UpdateWorkspaceMcpServer)
+					r.Patch("/mcp-servers/{serverId}/metadata", h.UpdateWorkspaceMcpMetadata)
+					r.Post("/mcp-servers/{serverId}/checks", h.CreateWorkspaceMcpCheck)
+					r.Get("/mcp-servers/{serverId}/checks", h.ListWorkspaceMcpChecks)
 					r.Delete("/mcp-servers/{serverId}", h.DeleteWorkspaceMcpServer)
 					r.Post("/share-links", h.CreateShareLink)
 					r.Delete("/share-links/{linkId}", h.RevokeShareLink)
@@ -1862,6 +1867,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/labels/{labelId}", h.DetachLabelFromSkill)
 					r.Get("/files", h.ListSkillFiles)
 					r.Put("/files", h.UpsertSkillFile)
+					r.Post("/files/upload", h.UploadSkillFile)
+					r.Put("/bundle", h.ReplaceSkillBundle)
+					r.Get("/files/{fileId}/content", h.GetSkillFileContent)
+					r.Get("/files/{fileId}/download", h.GetSkillFileContent)
 					r.Delete("/files/{fileId}", h.DeleteSkillFile)
 				})
 			})
@@ -1950,7 +1959,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/archive", h.SetChatSessionArchived)
 					r.Delete("/", h.DeleteChatSession)
 					r.Post("/messages", h.SendChatMessage)
-					r.Post("/onboarding", h.StartMikaOnboarding)
 					// 明确「刷新」某轮的 quick actions：对最新 assistant 回复重跑一次
 					// daemon 建议流程（MUL-5149）。
 					r.Post("/quick-actions/regenerate", h.RegenerateChatQuickActions)

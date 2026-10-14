@@ -48,7 +48,6 @@ import type {
 } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { buildTimeline } from "../../common/task-transcript";
-import { OnboardingStarterCards } from "./onboarding-starter-cards";
 import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { FOLLOW_EDGE_THRESHOLD } from "../../common/task-transcript/transcript-follow";
@@ -216,17 +215,6 @@ export function ChatMessageList({
     return null;
   }, [messages]);
 
-  // Mika 的新手引导开场白自带自我介绍（message_kind 由完成路径盖章——隐藏的
-  // kickoff 行永远不会到达客户端），并携带产品固定的开场卡片，而不是那一回合的
-  // quick-action chips（MUL-5765）。
-  const starterCardsMessageId = useMemo(
-    () =>
-      messages.find(
-        (m) => m.role === "assistant" && m.message_kind === "onboarding_opening",
-      )?.id ?? null,
-    [messages],
-  );
-
   // 一旦这条 pending 任务的 assistant 消息落进了消息列表，渲染就交给
   // AssistantMessage——抑制实时 timeline（和 pill），避免在 invalidate → refetch
   // 窗口里同一份内容渲染两遍。
@@ -362,7 +350,6 @@ export function ChatMessageList({
               onRegenerateQuickActions={onRegenerateQuickActions}
               latestAssistantMessageId={latestAssistantMessageId}
               quickActionsPendingMessageId={quickActionsPendingMessageId}
-              starterCardsMessageId={starterCardsMessageId}
             />
           </div>
         )}
@@ -423,7 +410,6 @@ const MessageBubble = memo(function MessageBubble({
   onRegenerateQuickActions,
   latestAssistantMessageId,
   quickActionsPendingMessageId,
-  starterCardsMessageId,
 }: {
   item: ChatRenderItem;
   isPending: boolean;
@@ -433,7 +419,6 @@ const MessageBubble = memo(function MessageBubble({
   onRegenerateQuickActions?: (message: ChatMessage) => void | Promise<unknown>;
   latestAssistantMessageId: string | null;
   quickActionsPendingMessageId: string | null;
-  starterCardsMessageId: string | null;
 }) {
   // 实时行与持久化后的 assistant 行都落在这里、共用一个 key，且两者都渲染
   // <AssistantMessage>——相同组件类型、相同位置——所以任务完成时 React 做的是
@@ -487,7 +472,6 @@ const MessageBubble = memo(function MessageBubble({
       onRegenerateQuickActions={onRegenerateQuickActions}
       canRegenerateQuickActions={message.id === latestAssistantMessageId}
       quickActionsPending={quickActionsPendingMessageId === message.id}
-      showStarterCards={message.id === starterCardsMessageId}
     />
   );
 });
@@ -516,7 +500,6 @@ function AssistantMessage({
   onRegenerateQuickActions,
   canRegenerateQuickActions = false,
   quickActionsPending = false,
-  showStarterCards = false,
 }: {
   taskId: string | null;
   message?: ChatMessage;
@@ -527,8 +510,6 @@ function AssistantMessage({
   onRegenerateQuickActions?: (message: ChatMessage) => void | Promise<unknown>;
   canRegenerateQuickActions?: boolean;
   quickActionsPending?: boolean;
-  /** 这一回合是 Mika 的新手引导开场白——渲染开场卡片，而不是 chips。 */
-  showStarterCards?: boolean;
 }) {
   const { t } = useT("chat");
   const canFetchTaskMessages = isTaskMessageTaskId(taskId);
@@ -623,14 +604,7 @@ function AssistantMessage({
             timeline={timeline}
             isPending={isPending}
           />
-          {onQuickAction && showStarterCards ? (
-            // 开场白自带的开场卡片占据这一回合的建议条（MUL-5765）；
-            // 服务端会为它跳过 chip 生成。
-            <OnboardingStarterCards
-              onPick={onQuickAction}
-              disabled={quickActionsDisabled || isPending}
-            />
-          ) : onQuickAction && (message.quick_actions?.length ?? 0) > 0 ? (
+          {onQuickAction && (message.quick_actions?.length ?? 0) > 0 ? (
             <QuickActions
               actions={message.quick_actions ?? []}
               disabled={quickActionsDisabled || isPending}

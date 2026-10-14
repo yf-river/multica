@@ -7,13 +7,13 @@
 import { parseFrontmatter } from "./frontmatter";
 
 /** 单个技能文件最大字节数（镜像 server/internal/handler 的 maxImportFileSize）。 */
-export const MAX_SKILL_FILE_BYTES = 1 << 20; // 1 MiB
+export const MAX_SKILL_FILE_BYTES = 16 << 20; // 1 MiB
 /** 支撑文件总字节上限（镜像 maxImportTotalSize）。 */
-export const MAX_SKILL_BUNDLE_BYTES = 8 << 20; // 8 MiB
+export const MAX_SKILL_BUNDLE_BYTES = 64 << 20; // 8 MiB
 /** 支撑文件数量上限（镜像 maxImportFileCount）。 */
-export const MAX_SKILL_FILE_COUNT = 256;
+export const MAX_SKILL_FILE_COUNT = 512;
 /** 归档上传总大小上限（镜像 maxImportArchiveUploadSize）。 */
-export const MAX_SKILL_ARCHIVE_BYTES = 16 << 20; // 16 MiB
+export const MAX_SKILL_ARCHIVE_BYTES = 80 << 20; // 16 MiB
 
 const SKILL_MD = "skill.md";
 
@@ -192,12 +192,11 @@ export function selectSkillArchiveMembers(
     if (skillMd.prefix && !file.path.startsWith(skillMd.prefix)) continue;
     const rel = skillMd.prefix ? file.path.slice(skillMd.prefix.length) : file.path;
     if (!rel || rel.endsWith("/")) continue;
-    if (isSkillMdPath(rel)) {
+    if (rel.toLowerCase() === SKILL_MD) {
       selected.push(file);
       continue;
     }
-    if (isLikelyBinaryFilePath(rel)) continue;
-    if (file.size > MAX_SKILL_FILE_BYTES) continue;
+    if (file.size > MAX_SKILL_FILE_BYTES) return {ok:false,error:"too_large"};
     supportingCount += 1;
     if (supportingCount > MAX_SKILL_FILE_COUNT) {
       return { ok: false, error: "too_many_files" };
@@ -397,12 +396,7 @@ function wrapperNameFromPrefix(prefix: string): string {
 /** 该相对路径是否该被忽略：空段、__MACOSX 目录、任何以点开头的段，或名为
  * license / license.md / license.txt 的文件。 */
 export function isIgnoredArchiveEntry(rel: string): boolean {
-  const segments = rel.split("/");
-  for (const seg of segments) {
-    if (seg === "" || seg === "__MACOSX" || seg.startsWith(".")) return true;
-  }
-  const base = (segments[segments.length - 1] ?? "").toLowerCase();
-  return base === "license" || base === "license.md" || base === "license.txt";
+ return rel.split("/").some((seg) => ["", ".git", ".svn", "__MACOSX", ".DS_Store"].includes(seg));
 }
 
 /** 扩展名是否大概率是二进制文件（图片/字体/压缩包/Office 文档/音视频等）。 */

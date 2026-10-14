@@ -159,7 +159,8 @@
     "./autopilots/stores": "./autopilots/stores/index.ts",
     "./life": "./life/index.ts",
     "./cooking": "./cooking/index.ts",
-    "./meals": "./meals/index.ts"
+    "./meals": "./meals/index.ts",
+    "./workspace/mcp-checks": "./workspace/mcp-checks.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",

@@ -57,6 +57,7 @@ export type OriginType = SkillOriginType;
 
 /** 可隐藏/显示的表格列（固定顺序）。 */
 const COLUMN_KEYS: SkillColumnKey[] = [
+  "description",
   "usedBy",
   "source",
   "creator",
@@ -172,6 +173,7 @@ export function SkillListToolbar({
   };
 
   const COLUMN_LABELS: Record<SkillColumnKey, string> = {
+    description: t(($) => $.table.description),
     usedBy: t(($) => $.table.used_by),
     source: t(($) => $.table.source),
     creator: t(($) => $.table.created_by),

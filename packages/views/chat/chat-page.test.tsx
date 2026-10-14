@@ -3,7 +3,8 @@
 import { StrictMode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { chatKeys } from "@multica/core/chat/queries";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../locales-test/en/common.json";
@@ -96,6 +97,12 @@ const storeRef = vi.hoisted(() => ({
   current: { activeSessionId: null as string | null },
 }));
 const storeListeners = vi.hoisted(() => new Set<() => void>());
+const mockCreateSession = vi.hoisted(() => vi.fn());
+const mockSelectSession = vi.hoisted(() => vi.fn());
+vi.mock("@multica/core/chat/mutations", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@multica/core/chat/mutations")>(),
+  useCreateChatSession: () => ({ mutateAsync: mockCreateSession, isPending: false }),
+}));
 const availableAgentsRef = vi.hoisted(() => ({ current: [] as Agent[] }));
 const agentsSettledRef = vi.hoisted(() => ({ current: true }));
 const mockStartNewChat = vi.hoisted(() => vi.fn());
@@ -162,7 +169,7 @@ vi.mock("./components/use-chat-controller", async () => {
       handleUploadFile: vi.fn(),
       handleNewChat: vi.fn(),
       handleStartNewChat: mockStartNewChat,
-      handleSelectSession: vi.fn(),
+      handleSelectSession: mockSelectSession,
       advanceSelectionAfterArchive: vi.fn(),
       archiveSession: vi.fn(),
       setActiveSession: mockSetActiveSession,
@@ -229,7 +236,7 @@ function renderPage(search: string, { strict = false } = {}) {
     return strict ? <StrictMode>{page}</StrictMode> : page;
   };
   const view = render(makeUi());
-  return { replace, rerender: () => view.rerender(makeUi()) };
+  return { qc, replace, rerender: () => view.rerender(makeUi()) };
 }
 
 beforeEach(() => {
@@ -369,5 +376,30 @@ describe("ChatPage responsive layout", () => {
       screen.getByRole("button", { name: "select-thread" }),
     ).toBeInTheDocument();
     expect(screen.getByText("chat-input")).toBeInTheDocument();
+  });
+});
+
+
+describe("ChatPage quick create", () => {
+  it("creates a fresh conversation with Mika even after renaming", async () => {
+    const mika = { ...agent, id: "mika-1", name: "Renamed assistant", system_key: "mika" };
+    availableAgentsRef.current = [agent, mika];
+    const session = { id: "fresh-session", agent_id: mika.id, workspace_id: "ws-1" };
+    mockCreateSession.mockResolvedValue(session);
+    const { qc } = renderPage("");
+    let cachedWhenSelected: unknown;
+    mockSelectSession.mockImplementation(() => {
+      cachedWhenSelected = qc.getQueryData(chatKeys.sessions("ws-1"));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Quick create" }));
+    await waitFor(() => expect(mockSelectSession).toHaveBeenCalledWith(session));
+    expect(cachedWhenSelected).toEqual([session]);
+    expect(mockCreateSession).toHaveBeenCalledExactlyOnceWith({ agent_id: mika.id, title: mika.name });
+  });
+
+  it("does not select another agent when Mika is unavailable", () => {
+    renderPage("");
+    expect(screen.getByRole("button", { name: "Quick create" })).toBeDisabled();
+    expect(mockCreateSession).not.toHaveBeenCalled();
   });
 });

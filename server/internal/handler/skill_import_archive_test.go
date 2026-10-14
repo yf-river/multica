@@ -145,27 +145,14 @@ func TestParseSkillArchive_RejectsUnsafeSkillMdPath(t *testing.T) {
 	}
 }
 
-func TestParseSkillArchive_DropsTraversalAndJunk(t *testing.T) {
-	data := buildTestZip(t, map[string]string{
-		"s/SKILL.md":     testSkillMd,
-		"s/../evil.sh":   "pwn",       // zip-slip out of the skill root
-		"s/.git/config":  "secret",    // dotfile dir
-		"s/.DS_Store":    "junk",      // dotfile
-		"__MACOSX/s/._x": "applemeta", // mac noise (outside root anyway)
-		"s/LICENSE":      "MIT",       // license excluded
-		"s/keep.md":      "real",      // legitimate asset
-	})
-	imported, err := parseSkillArchive(data, "s.skill")
-	if err != nil {
-		t.Fatalf("parseSkillArchive: %v", err)
-	}
-	got := filePaths(imported)
-	if len(got) != 1 || got[0] != "keep.md" {
-		t.Fatalf("files = %v, want only [keep.md]", got)
+func TestParseSkillArchive_RejectsTraversal(t *testing.T) {
+	data := buildTestZip(t, map[string]string{"s/SKILL.md": testSkillMd, "s/../evil.sh": "pwn"})
+	if _, err := parseSkillArchive(data, "s.zip"); err == nil {
+		t.Fatal("accepted traversal")
 	}
 }
 
-func TestParseSkillArchive_SkipsBinaryAssets(t *testing.T) {
+func TestParseSkillArchive_PreservesBinaryAssets(t *testing.T) {
 	data := buildTestZip(t, map[string]string{
 		"s/SKILL.md": testSkillMd,
 		"s/logo.png": "\x89PNG\x00binary",
@@ -175,8 +162,8 @@ func TestParseSkillArchive_SkipsBinaryAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseSkillArchive: %v", err)
 	}
-	if got := filePaths(imported); len(got) != 1 || got[0] != "note.txt" {
-		t.Errorf("files = %v, want [note.txt] (binary png dropped)", got)
+	if got := filePaths(imported); len(got) != 2 || got[0] != "logo.png" || got[1] != "note.txt" {
+		t.Errorf("files = %v, want [logo.png note.txt]", got)
 	}
 }
 

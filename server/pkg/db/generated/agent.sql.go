@@ -3179,7 +3179,7 @@ INSERT INTO agent (
 ) VALUES (
     $1, $2, $3, $4, $5, '{}'::jsonb,
     $6, $7, $8, $9, $10,
-    $11, '', '{}'::jsonb, '[]'::jsonb, 'user', $12
+    $11, $12, '{}'::jsonb, '[]'::jsonb, 'user', $13
 )
 RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters
 `
@@ -3196,15 +3196,14 @@ type CreateSystemUserAgentParams struct {
 	PermissionMode     string      `json:"permission_mode"`
 	MaxConcurrentTasks int32       `json:"max_concurrent_tasks"`
 	OwnerID            pgtype.UUID `json:"owner_id"`
+	Instructions       string      `json:"instructions"`
 	SystemKey          pgtype.Text `json:"system_key"`
 }
 
 // Creates a product-defined agent that members can still see, chat with, and
 // assign issues to. Deliberately kind='user': kind='system' hides the row from
 // agent lists and assignment surfaces and hard deletes it with its runtime.
-// Every product-owned field is a server constant; instructions stays empty
-// because the system half ships with the binary and is layered in at claim
-// time, leaving this column free for the workspace's own notes.
+// Default instructions are stored at creation and remain editable.
 //
 // CONTRACT: call only while holding the per-workspace mika advisory lock. The
 // one-per-workspace invariant rests on a check inside that lock, not on a
@@ -3224,6 +3223,7 @@ func (q *Queries) CreateSystemUserAgent(ctx context.Context, arg CreateSystemUse
 		arg.PermissionMode,
 		arg.MaxConcurrentTasks,
 		arg.OwnerID,
+		arg.Instructions,
 		arg.SystemKey,
 	)
 	var i Agent

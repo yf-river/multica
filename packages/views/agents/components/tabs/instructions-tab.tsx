@@ -1,7 +1,6 @@
 "use client";
 
-// 本文件是 Agent 详情页的“指令与开场白”标签页：编辑系统提示词（或系统 Agent 的
-// 工作区备注）与对话开场白，手动保存。含聊天空态“定制”入口的深链高亮逻辑。
+// Agent 系统提示词与对话开场白编辑，含聊天空态“定制”入口的深链高亮逻辑。
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Save } from "lucide-react";
@@ -53,7 +52,6 @@ export function InstructionsTab({
   const conversationStartersRef = useRef<HTMLDivElement | null>(null);
   const focusHandledForAgentRef = useRef<string | null>(null);
   const focusFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [systemOpen, setSystemOpen] = useState(false);
   const persistedConversationStartersKey = JSON.stringify(
     agent.conversation_starters ?? [],
   );
@@ -79,12 +77,6 @@ export function InstructionsTab({
     conversationStarters.every(
       (item) => item.label.trim() && item.prompt.trim(),
     );
-
-  // 系统 Agent 的提示词有两半：产品那一半随后端发布、部署即更新，所以只读展示；
-  // 下面可编辑的文本框只放本工作区自己的备注，任何版本发布都不会覆盖它。
-  // 普通 Agent 没有系统半，渲染与原来无异。
-  const systemInstructions = agent.system_instructions?.trim() ?? "";
-  const hasSystemLayer = systemInstructions.length > 0;
 
   // 重新拉取会把嵌套数组整体替换——哪怕内容没变。跟“上一次持久化”的语义快照比较，
   // 让这些重拉不会抹掉本地编辑。真实的服务端变更只在本地表单干净时才采纳；
@@ -190,48 +182,15 @@ export function InstructionsTab({
   return (
     <div className="space-y-5">
       <p className="max-w-2xl text-pretty text-body leading-6 text-muted-foreground">
-        {hasSystemLayer
-          ? t(($) => $.tab_body.instructions.workspace_notes_intro)
-          : t(($) => $.tab_body.instructions.intro)}
+        {t(($) => $.tab_body.instructions.intro)}
       </p>
-
-      {hasSystemLayer && (
-        <div className="rounded-lg border bg-muted/30">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
-            <span className="text-body font-medium">
-              {t(($) => $.tab_body.instructions.system_layer_label)}
-            </span>
-            <p className="min-w-0 flex-1 text-caption leading-snug text-muted-foreground">
-              {t(($) => $.tab_body.instructions.system_layer_hint)}
-            </p>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="shrink-0"
-              aria-expanded={systemOpen}
-              onClick={() => setSystemOpen((open) => !open)}
-            >
-              {systemOpen
-                ? t(($) => $.tab_body.instructions.system_layer_hide)
-                : t(($) => $.tab_body.instructions.system_layer_show)}
-            </Button>
-          </div>
-          {systemOpen && (
-            <pre className="max-h-80 overflow-auto border-t px-3 py-2.5 text-caption leading-6 whitespace-pre-wrap text-muted-foreground">
-              {systemInstructions}
-            </pre>
-          )}
-        </div>
-      )}
 
       <div className="space-y-2">
         <label
           htmlFor={`agent-system-prompt-${agent.id}`}
           className="text-body font-medium"
         >
-          {hasSystemLayer
-            ? t(($) => $.tab_body.instructions.workspace_notes_label)
-            : t(($) => $.tab_body.instructions.system_prompt_label)}
+          {t(($) => $.tab_body.instructions.system_prompt_label)}
         </label>
         <Textarea
           id={`agent-system-prompt-${agent.id}`}
@@ -239,11 +198,7 @@ export function InstructionsTab({
           autoComplete="off"
           value={value}
           onChange={(event) => setValue(event.target.value)}
-          placeholder={
-            hasSystemLayer
-              ? t(($) => $.tab_body.instructions.workspace_notes_placeholder)
-              : t(($) => $.tab_body.instructions.placeholder)
-          }
+          placeholder={t(($) => $.tab_body.instructions.placeholder)}
           rows={18}
           className="min-h-96 resize-y leading-6"
         />

@@ -11,6 +11,7 @@ import "encoding/json"
 // 靠它们做协议协商：daemon 报 capability、server 报 server_capabilities，
 // 双方都只启用对方声明支持的特性。
 const (
+	DaemonCapabilitySkillAssetsV1       = "skill-assets-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
 	DaemonCapabilityExecutionManifestV1 = "execution-manifest-v1"
@@ -336,7 +337,13 @@ type DaemonHeartbeatRequestPayload struct {
 // Status=HeartbeatStatusRuntimeGone、RuntimeGone=true 的 ack，而不是带着错误
 // 拆掉连接。daemon 读到该信号后，从本地状态清除过期 runtime 并重新注册；
 // 没有它，死 UUID 会一直心跳到 daemon 进程重启为止。
+type DaemonHeartbeatPendingMcpCheck struct {
+	ID     string          `json:"id"`
+	Config json.RawMessage `json:"config"`
+}
+
 type DaemonHeartbeatAckPayload struct {
+	PendingMcpCheck         *DaemonHeartbeatPendingMcpCheck         `json:"pending_mcp_check,omitempty"`
 	RuntimeID               string                                  `json:"runtime_id"`
 	Status                  string                                  `json:"status"`
 	ServerCapabilities      []string                                `json:"server_capabilities,omitempty"`

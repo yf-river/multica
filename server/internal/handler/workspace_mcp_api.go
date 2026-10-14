@@ -7,7 +7,9 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -30,6 +32,8 @@ type WorkspaceMcpServerResponse struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
+	Description string `json:"description"`
+	Configured  bool   `json:"configured"`
 	Transport   string `json:"transport"`
 	Enabled     *bool  `json:"enabled,omitempty"`
 	CreatedAt   string `json:"created_at"`
@@ -78,6 +82,8 @@ func workspaceMcpServerToResponse(server db.WorkspaceMcpServer) WorkspaceMcpServ
 		ID:          uuidToString(server.ID),
 		WorkspaceID: uuidToString(server.WorkspaceID),
 		Name:        server.Name,
+		Description: server.Description,
+		Configured:  len(server.Config) > 2,
 		Transport:   mcpTransportOf(server.Config),
 		CreatedAt:   timestampToString(server.CreatedAt),
 		UpdatedAt:   timestampToString(server.UpdatedAt),
@@ -129,8 +135,9 @@ func (h *Handler) requireWorkspaceMcpWriter(w http.ResponseWriter, r *http.Reque
 // WorkspaceMcpServerRequest 携带一条服务器条目。config 是 mcpServers 里某个
 // 名字下的那部分对象；它只写不回，任何响应都不会带它。
 type WorkspaceMcpServerRequest struct {
-	Name   string          `json:"name"`
-	Config json.RawMessage `json:"config"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description,omitempty"`
+	Config      json.RawMessage `json:"config,omitempty"`
 }
 
 // CreateWorkspaceMcpServer 往 workspace 库里加一台服务器。它不会绑定任何
@@ -180,6 +187,7 @@ func (h *Handler) CreateWorkspaceMcpServer(w http.ResponseWriter, r *http.Reques
 		Name:        name,
 		Config:      append([]byte(nil), req.Config...),
 		CreatedBy:   parseUUID(requestUserID(r)),
+		Description: mcpDescription(req.Description),
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -229,6 +237,9 @@ func (h *Handler) UpdateWorkspaceMcpServer(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		params.Name = pgtype.Text{String: name, Valid: true}
+	}
+	if req.Description != nil {
+		params.Description = pgtype.Text{String: mcpDescription(req.Description), Valid: true}
 	}
 	if len(req.Config) > 0 {
 		if err := validateWorkspaceMcpServerEntry(req.Config); err != nil {
@@ -299,6 +310,10 @@ func (h *Handler) DeleteWorkspaceMcpServer(w http.ResponseWriter, r *http.Reques
 	}
 	if rows == 0 {
 		writeError(w, http.StatusNotFound, "MCP server not found")
+		return
+	}
+	if err := qtx.DeleteWorkspaceMcpChecks(r.Context(), serverUUID); err != nil {
+		writeError(w, 500, "failed to delete connection checks")
 		return
 	}
 	if err := qtx.DeleteAgentMcpServersByServer(r.Context(), serverUUID); err != nil {
@@ -522,4 +537,28 @@ func (h *Handler) writeAgentMcpServers(w http.ResponseWriter, r *http.Request, a
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func mcpDescription(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+// 元信息更新不会接收连接配置。
+func (h *Handler) UpdateWorkspaceMcpMetadata(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeError(w, 400, "invalid metadata")
+		return
+	}
+	raw, _ := json.Marshal(WorkspaceMcpServerRequest{Name: body.Name, Description: &body.Description})
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	h.UpdateWorkspaceMcpServer(w, r)
 }

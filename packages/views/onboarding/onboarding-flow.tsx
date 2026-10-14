@@ -89,8 +89,8 @@ function mergeQuestionnaire(
  *   - 跳过运行时（第 3 步没有运行时）：completeOnboarding 标记已引导；这里再往
  *     welcome store 写一个 {choice:"skip"} 信号并跳进工作区。工作区外壳里的欢迎
  *     Hook 会在落地时创建一条「安装运行时」的引导 Issue。
- *   - 连上运行时：在选定的运行时上创建或修复该工作区的 Mika、发起一条隐藏的
- *     onboarding kickoff、标记引导完成，然后打开 Mika 的真实对话。不创建固定的
+ *   - 连上运行时：在选定的运行时上创建或修复该工作区的 Mika，
+ *     标记初始化完成，然后打开 Mika 的普通对话。不创建固定的
  *     specialist 团队。
  *
  * 本文件从不直接碰 createAgent / createIssue。「跳过运行时」的引导 Issue 逻辑在
@@ -214,8 +214,8 @@ function OnboardingStepFlow({
     (ws: Workspace) => {
       setWorkspace(ws);
       // 刻意不调 setCurrentWorkspace：那个单例同时被桌面端标签页系统写，新工作区
-      // 还没有标签组时它会被后者收走。跟它竞争会把后续整个流程——Mika、会话、
-      // kickoff——带进之前活跃的工作区。所以从这里开始每一步都指名目标工作区，
+      // 还没有标签组时它会被后者收走。跟它竞争会把后续整个流程——Mika 和会话——
+      // 带进之前活跃的工作区。所以从这里开始每一步都指名目标工作区，
       // 真正的切换只发生一次，就在 onComplete 里的那次导航上。
       advanceFrom("workspace");
     },
@@ -225,13 +225,11 @@ function OnboardingStepFlow({
   const handleRuntimeNext = useCallback(
     async (rt: AgentRuntime | null, model?: string) => {
       if (!workspace) return;
-      // 连上运行时：只创建 Mika 并立刻打开那段真实的交互式引导对话。specialist
+      // 连上运行时：只创建 Mika 并打开普通对话。specialist
       // 留到以后、等成员的实际工作流确实需要时再创建。
       if (rt) {
         try {
-          // 此前的问卷保存都是刻意乐观的。这里把最新快照冲刷一次，好让服务端
-          // 生成的 kickoff 能读到可靠的 role/use-case 上下文，而不是跟上一次
-          // PATCH 赛跑。
+          // 完成初始化前保存最新的个人资料。
           await saveQuestionnaire(answers);
           const result = await bootstrapMika.mutateAsync({
             workspaceSlug: workspace.slug,

@@ -47,6 +47,21 @@ func NewLocalStorageFromEnv() *LocalStorage {
 		uploadDir = "./data/uploads"
 	}
 
+	if required := os.Getenv("LOCAL_UPLOAD_REQUIRED_MOUNT"); required != "" {
+		data, err := os.ReadFile("/proc/self/mountinfo")
+		mounted := false
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 4 && fields[4] == required {
+				mounted = true
+				break
+			}
+		}
+		if err != nil || !mounted || !isUnder(required, uploadDir) {
+			slog.Error("required upload mount unavailable", "mount", required)
+			return nil
+		}
+	}
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		slog.Error("failed to create upload directory", "dir", uploadDir, "error", err)
 		return nil

@@ -119,6 +119,8 @@ type NavKey =
   | "usage"
   | "runReviews"
   | "runtimes"
+  | "mcp"
+  | "quickActions"
   | "skills"
   | "settings"
   | "life";
@@ -136,6 +138,8 @@ type NavLabelKey =
   | "usage"
   | "run_reviews"
   | "runtimes"
+  | "mcp"
+  | "quick_actions"
   | "skills"
   | "settings"
   | "life";
@@ -160,6 +164,8 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
 const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "runtimes", labelKey: "runtimes" },
   { key: "skills", labelKey: "skills" },
+  { key: "mcp", labelKey: "mcp" },
+  { key: "quickActions", labelKey: "quick_actions" },
   { key: "settings", labelKey: "settings" },
 ];
 

@@ -95,8 +95,8 @@ export function useDeleteWorkspace() {
 export function useCreateWorkspaceMcpServer(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, config }: { name: string; config: Record<string, unknown> }) =>
-      api.createWorkspaceMcpServer(wsId, name, config),
+    mutationFn: ({ name, config, description }: { name: string; config: Record<string, unknown>; description?:string }) =>
+      api.createWorkspaceMcpServer(wsId, name, config, description),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: workspaceKeys.mcpServers(wsId) }),
   });

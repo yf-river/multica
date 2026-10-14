@@ -215,6 +215,8 @@ export function McpServerDialog({
   lockName = false,
   onOpenChange,
   onSave,
+  description,
+  onDescriptionChange,
 }: {
   open: boolean;
   server: ManagedMcpServer | null;
@@ -226,6 +228,8 @@ export function McpServerDialog({
    */
   lockName?: boolean;
   onOpenChange: (open: boolean) => void;
+  description?: string;
+  onDescriptionChange?: (value: string) => void;
   onSave: (name: string, config: Record<string, unknown>) => Promise<void>;
 }) {
   const { t } = useT("agents");
@@ -363,6 +367,7 @@ export function McpServerDialog({
           ) : null}
         </div>
 
+        {onDescriptionChange && <div className="space-y-2"><Label htmlFor="mcp-description">{t(($) => $.tab_body.mcp_config.description_label)}</Label><Input id="mcp-description" value={description ?? ""} onChange={(e) => onDescriptionChange(e.target.value)} /></div>}
         <Tabs value={mode} onValueChange={handleModeChange}>
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="form" disabled={!formAvailable}>

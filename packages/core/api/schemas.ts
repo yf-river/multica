@@ -13,7 +13,6 @@ import type {
   ChatSession,
   PrioritizeQueuedChatTaskResponse,
   SendChatMessageResponse,
-  StartMikaOnboardingResponse,
   Comment,
   CronPreviewResponse,
   DingTalkInstallation,
@@ -2188,14 +2187,6 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
   attachment_ids: z.array(z.string()).nullish().transform((ids) => ids ?? undefined),
 }).loose();
 
-// `started` 是流程唯一分支的字段，畸形响应绝不能读成「开场消息已发出」——parseWithFallback
-// 的兜底表示没发出，让流程自己的重试成为恢复路径。
-export const StartMikaOnboardingResponseSchema: z.ZodType<StartMikaOnboardingResponse> = z.object({
-  started: z.boolean(),
-  message_id: z.string().nullish().transform((id) => id ?? undefined),
-  created_at: z.string().nullish().transform((at) => at ?? undefined),
-}).loose();
-
 /** 校验「把排队聊天任务提前」的响应。 */
 export const PrioritizeQueuedChatTaskResponseSchema:
   z.ZodType<PrioritizeQueuedChatTaskResponse> = z.object({
@@ -2328,7 +2319,6 @@ export const SquadSchema = z.object({
   description: z.string().default(""),
   instructions: z.string().default(""),
   system_key: z.string().optional(),
-  system_instructions: z.string().optional(),
   avatar_url: z.string().nullable().optional().transform((v) => v ?? null),
   leader_id: z.string(),
   creator_id: z.string(),
@@ -2973,6 +2963,11 @@ export const EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE: RedeemTelegramBinding
 // 宽松记录：服务器拥有 `origin` 来源形状的所有权，可能自由扩展。
 /** 校验 skill 的一个源文件。 */
 export const SkillFileSchema = z.object({
+ kind: z.enum(["text", "binary"]).catch("text").default("text"),
+ content_type: z.string().catch("application/octet-stream").default("text/plain"),
+ size_bytes: z.number().nonnegative().catch(0).default(0),
+ sha256: z.string().catch("").default(""),
+ mode: z.number().catch(420).default(420),
   id: z.string(),
   skill_id: z.string(),
   path: z.string(),
@@ -3076,6 +3071,8 @@ export const WorkspaceRepoProbeResponseSchema: z.ZodType<WorkspaceRepoProbeRespo
 
 /** 校验 workspace 的单个 MCP 服务器摘要。 */
 export const WorkspaceMcpServerSchema = z.object({
+  description: z.string().default(""),
+  configured: z.boolean().default(false),
   id: z.string().default(""),
   workspace_id: z.string().default(""),
   name: z.string().default(""),
@@ -3199,3 +3196,9 @@ export const WorkspaceRepositoryCenterSchema = z.object({
  work_dir:z.string(),branch:z.string(),status:z.string(),started_at:z.string().nullable(),completed_at:z.string().nullable(),
  })),
 });
+
+export const WorkspaceMcpCheckSchema = z.object({
+ id:z.string(), runtime_id:z.string(), status:z.string(), tool_count:z.number(), error_code:z.string(),
+ created_at:z.string(), completed_at:z.string().nullable(), stale:z.boolean().default(false),
+}).transform((v)=>({id:v.id,runtimeId:v.runtime_id,status:v.status,toolCount:v.tool_count,errorCode:v.error_code,createdAt:v.created_at,completedAt:v.completed_at,stale:v.stale}));
+export const WorkspaceMcpChecksSchema = z.array(WorkspaceMcpCheckSchema);

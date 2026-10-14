@@ -89,8 +89,8 @@ func TestListRuntimeLocalSkills_Claude(t *testing.T) {
 	// Bundle file count purposely excludes SKILL.md (it travels in
 	// `Content`) but the summary count adds it back so the user sees
 	// the real total.
-	if skill.FileCount != 2 {
-		t.Fatalf("file_count = %d, want 2", skill.FileCount)
+	if skill.FileCount != 4 {
+		t.Fatalf("file_count = %d, want 4", skill.FileCount)
 	}
 	if skill.SourcePath != "~/.claude/skills/review-helper" {
 		t.Fatalf("source_path = %q", skill.SourcePath)
@@ -669,8 +669,8 @@ func TestLoadRuntimeLocalSkillBundle_Cursor(t *testing.T) {
 	if bundle.Name != "Docs Helper" {
 		t.Fatalf("name = %q", bundle.Name)
 	}
-	if len(bundle.Files) != 2 {
-		t.Fatalf("expected 2 files, got %d", len(bundle.Files))
+	if len(bundle.Files) != 3 {
+		t.Fatalf("expected 3 files, got %d", len(bundle.Files))
 	}
 	if bundle.SourcePath != "~/.cursor/skills/docs-helper" {
 		t.Fatalf("source_path = %q", bundle.SourcePath)
@@ -1084,7 +1084,7 @@ func TestLoadRuntimeLocalSkillBundle_ProviderNonDirFallsThrough(t *testing.T) {
 // the file written back into the task environment no longer opens.
 const invalidUTF8Docx = "PK\x03\x04\x14\x00\x06\x00\xff\xfe\x80\x81payload"
 
-func TestCollectLocalSkillFiles_SkipsBinarySupportingFiles(t *testing.T) {
+func TestCollectLocalSkillFiles_PreservesBinarySupportingFiles(t *testing.T) {
 	root := t.TempDir()
 	skillDir := writeTestLocalSkill(t, root, "docs", map[string]string{
 		"SKILL.md":               "---\nname: docs\n---\nbody\n",
@@ -1102,18 +1102,18 @@ func TestCollectLocalSkillFiles_SkipsBinarySupportingFiles(t *testing.T) {
 	for _, f := range files {
 		paths = append(paths, f.Path)
 	}
-	want := []string{"references/notes.md"}
+	want := []string{"assets/logo.png", "references/notes.md", "references/report.docx"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("collected paths = %v, want %v", paths, want)
 	}
 
 	// The text file that survives must survive byte-for-byte.
-	if files[0].Content != "# notes\n" {
-		t.Errorf("text content = %q, want %q", files[0].Content, "# notes\n")
+	if files[1].Content != "# notes\n" {
+		t.Errorf("text content = %q, want %q", files[1].Content, "# notes\n")
 	}
 }
 
-func TestCollectLocalSkillFiles_BinarySkipIsConsistentAcrossPasses(t *testing.T) {
+func TestCollectLocalSkillFiles_BinaryImportIsConsistentAcrossPasses(t *testing.T) {
 	// Discovery reports the bundle with includeContent=false and sync uploads
 	// it with includeContent=true. If only one pass skipped binary files the
 	// two would disagree on what the bundle contains. This must hold both for
@@ -1148,7 +1148,7 @@ func TestCollectLocalSkillFiles_BinarySkipIsConsistentAcrossPasses(t *testing.T)
 	if !reflect.DeepEqual(listedPaths, syncedPaths) {
 		t.Fatalf("discovery pass = %v, sync pass = %v; passes must agree", listedPaths, syncedPaths)
 	}
-	want := []string{"references/notes.md"}
+	want := []string{"references/notes.md", "references/report.docx", "weights/model.safetensors"}
 	if !reflect.DeepEqual(listedPaths, want) {
 		t.Fatalf("collected paths = %v, want %v", listedPaths, want)
 	}
@@ -1161,7 +1161,7 @@ const invalidUTF8Bytes = "\xff\xfe\x00\x01payload\x80\x81"
 // Bohan-J's review on #7175: the extension blacklist alone doesn't close the
 // root cause. A binary file with an unlisted extension must still be caught
 // by the content-level utf8.Valid check.
-func TestCollectLocalSkillFiles_SkipsUnlistedBinaryExtension(t *testing.T) {
+func TestCollectLocalSkillFiles_PreservesUnlistedBinaryExtension(t *testing.T) {
 	root := t.TempDir()
 	skillDir := writeTestLocalSkill(t, root, "docs", map[string]string{
 		"SKILL.md":                  "---\nname: docs\n---\nbody\n",
@@ -1180,14 +1180,14 @@ func TestCollectLocalSkillFiles_SkipsUnlistedBinaryExtension(t *testing.T) {
 	for _, f := range files {
 		paths = append(paths, f.Path)
 	}
-	want := []string{"references/notes.md"}
+	want := []string{"blob.bin", "data/table.parquet", "references/notes.md", "weights/model.safetensors"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("collected paths = %v, want %v — an unlisted binary extension must still be caught by the content check", paths, want)
 	}
 }
 
 // A binary file with no extension at all must be caught the same way.
-func TestCollectLocalSkillFiles_SkipsInvalidUTF8WithNoExtension(t *testing.T) {
+func TestCollectLocalSkillFiles_PreservesInvalidUTF8WithNoExtension(t *testing.T) {
 	root := t.TempDir()
 	skillDir := writeTestLocalSkill(t, root, "docs", map[string]string{
 		"SKILL.md":            "---\nname: docs\n---\nbody\n",
@@ -1204,7 +1204,7 @@ func TestCollectLocalSkillFiles_SkipsInvalidUTF8WithNoExtension(t *testing.T) {
 	for _, f := range files {
 		paths = append(paths, f.Path)
 	}
-	want := []string{"references/notes.md"}
+	want := []string{"references/README", "references/notes.md"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("collected paths = %v, want %v — a no-extension binary file must still be caught by the content check", paths, want)
 	}
@@ -1220,7 +1220,7 @@ const validUTF8WithNUL = "H\x00e\x00l\x00l\x00o\x00"
 
 // A file with an unlisted extension that is valid UTF-8 but contains an
 // embedded NUL must still be caught — utf8.Valid alone is not sufficient.
-func TestCollectLocalSkillFiles_SkipsUnlistedExtensionWithEmbeddedNUL(t *testing.T) {
+func TestCollectLocalSkillFiles_PreservesUnlistedExtensionWithEmbeddedNUL(t *testing.T) {
 	root := t.TempDir()
 	skillDir := writeTestLocalSkill(t, root, "docs", map[string]string{
 		"SKILL.md":            "---\nname: docs\n---\nbody\n",
@@ -1237,7 +1237,7 @@ func TestCollectLocalSkillFiles_SkipsUnlistedExtensionWithEmbeddedNUL(t *testing
 	for _, f := range files {
 		paths = append(paths, f.Path)
 	}
-	want := []string{"references/notes.md"}
+	want := []string{"references/notes.md", "weights/model.dat"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("collected paths = %v, want %v — valid UTF-8 with an embedded NUL must still be caught", paths, want)
 	}
@@ -1245,7 +1245,7 @@ func TestCollectLocalSkillFiles_SkipsUnlistedExtensionWithEmbeddedNUL(t *testing
 
 // A no-extension file with the same valid-UTF-8-but-NUL-containing content
 // must be caught the same way.
-func TestCollectLocalSkillFiles_SkipsNoExtensionWithEmbeddedNUL(t *testing.T) {
+func TestCollectLocalSkillFiles_PreservesNoExtensionWithEmbeddedNUL(t *testing.T) {
 	root := t.TempDir()
 	skillDir := writeTestLocalSkill(t, root, "docs", map[string]string{
 		"SKILL.md":             "---\nname: docs\n---\nbody\n",
@@ -1262,7 +1262,7 @@ func TestCollectLocalSkillFiles_SkipsNoExtensionWithEmbeddedNUL(t *testing.T) {
 	for _, f := range files {
 		paths = append(paths, f.Path)
 	}
-	want := []string{"references/notes.md"}
+	want := []string{"references/UTF16NAME", "references/notes.md"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("collected paths = %v, want %v — a no-extension file with an embedded NUL must still be caught", paths, want)
 	}

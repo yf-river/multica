@@ -22,7 +22,7 @@ import (
 // 受既有的单文件/总量/文件数上限（maxImportFileSize、maxImportTotalSize、
 // maxImportFileCount）约束；这个外层上限只是防止客户端在解压限流能生效之前就
 // 流进一个无界的压缩体。
-const maxImportArchiveUploadSize = 16 << 20 // 16 MiB
+const maxImportArchiveUploadSize = skillpkg.MaxArchiveBytes // 80 MiB
 
 // isMultipartForm 判断请求是否携带 multipart/form-data body（上传的技能归档），
 // 而不是 JSON 的 URL 导入 body。
@@ -100,12 +100,20 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 	// 定位技能根：最浅 SKILL.md 所在的目录。这同时接受根级 SKILL.md 与常见的
 	// 单层包装布局。候选路径前置校验（拒绝绝对/穿越条目），恶意归档无法把不安全
 	// 路径偷渡成主内容——保证每个被接受的条目都 zip-slip 安全。
+	seen := map[string]bool{}
 	var skillMd *zip.File
 	rootPrefix := ""
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
 			continue
 		}
+		if !validateFilePath(strings.TrimSuffix(f.Name, "/")) {
+			return nil, fmt.Errorf("unsafe archive path: %s", f.Name)
+		}
+		if seen[f.Name] {
+			return nil, fmt.Errorf("duplicate archive path: %s", f.Name)
+		}
+		seen[f.Name] = true
 		clean := path.Clean(f.Name)
 		if !strings.EqualFold(path.Base(clean), skillpkg.ContentFilename) {
 			continue
@@ -146,6 +154,9 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 		if f.FileInfo().IsDir() {
 			continue
 		}
+		if !validateFilePath(strings.TrimSuffix(f.Name, "/")) {
+			return nil, fmt.Errorf("unsafe archive path: %s", f.Name)
+		}
 		clean := path.Clean(f.Name)
 		// 只有解析出的技能根之下的文件才属于这个技能。
 		if rootPrefix != "" && !strings.HasPrefix(clean, rootPrefix) {
@@ -155,28 +166,27 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 		if rel == "" {
 			continue
 		}
-		// 任何深度的 SKILL.md 都不算附带文件：顶层的那个是主内容，嵌套的会与保留
-		// 的主内容名撞名。镜像 daemon 的 local-skill 规则。
-		if strings.EqualFold(path.Base(rel), skillpkg.ContentFilename) {
+		// 根 SKILL.md 是正文；嵌套技能正文属于支持文件。
+		if skillpkg.IsReservedContentPath(rel) {
 			continue
 		}
 		if isIgnoredArchiveEntry(rel) {
 			continue
 		}
 		// zip-slip / 绝对路径防护。
-		if !validateFilePath(rel) {
-			continue
+		if !validateFilePath(rel) || !f.Mode().IsRegular() {
+			return nil, fmt.Errorf("unsafe archive path: %s", rel)
 		}
 		fileContent, ferr := readZipFile(f, maxImportFileSize)
 		if ferr != nil {
-			// 单个超大或不可读的素材被跳过而不是让整个导入失败，与 local-runtime
-			// 导入器一致。
-			continue
+			return nil, ferr
 		}
-		// addFile 强制单包上限并丢弃二进制素材；超限会让导入中止而不是悄悄截断。
+
+		// addFile 校验整个资源包的大小、路径唯一性和文件数量。
 		if err := imported.addFile(rel, fileContent); err != nil {
 			return nil, err
 		}
+		imported.files[len(imported.files)-1].mode = skillpkg.FileMode(int32(f.Mode().Perm()))
 	}
 
 	sort.Slice(imported.files, func(i, j int) bool {
@@ -216,13 +226,10 @@ func skillNameFromArchive(rootPrefix, filename string) string {
 // 镜像 daemon 的 local-skill 发现规则。
 func isIgnoredArchiveEntry(rel string) bool {
 	for _, seg := range strings.Split(rel, "/") {
-		if seg == "" || seg == "__MACOSX" || strings.HasPrefix(seg, ".") {
+		switch seg {
+		case "", ".git", ".svn", "__MACOSX", ".DS_Store":
 			return true
 		}
-	}
-	switch strings.ToLower(path.Base(rel)) {
-	case "license", "license.md", "license.txt":
-		return true
 	}
 	return false
 }

@@ -519,12 +519,15 @@ type CreateRuntimeLocalSkillImportRequest struct {
 
 // reportedRuntimeLocalSkill 是 daemon 在导入完成上报里带回的技能包（含内容与文件列表）。
 type reportedRuntimeLocalSkill struct {
-	Name        string                   `json:"name"`
-	Description string                   `json:"description"`
-	Content     string                   `json:"content"`
-	SourcePath  string                   `json:"source_path"`
-	Provider    string                   `json:"provider"`
-	Files       []CreateSkillFileRequest `json:"files,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+	SourcePath  string `json:"source_path"`
+	Provider    string `json:"provider"`
+	Files       []struct {
+		CreateSkillFileRequest
+		Data []byte `json:"data,omitempty"`
+	} `json:"files,omitempty"`
 }
 
 // cleanOptionalString 去掉可选字符串首尾空白；空结果统一变 nil，让「没传」和「传了空白」
@@ -866,7 +869,9 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 		if !validateFilePath(f.Path) {
 			continue
 		}
-		files = append(files, f)
+		request := f.CreateSkillFileRequest
+		request.data = f.Data
+		files = append(files, request)
 	}
 
 	config := map[string]any{

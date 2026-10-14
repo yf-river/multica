@@ -81,8 +81,9 @@ ORDER BY skill_id, path ASC;
 -- snippet — fails outright with "invalid input syntax for type bytea",
 -- turning an ordinary skill into a 500 on this endpoint.
 SELECT id, skill_id, path,
-       octet_length(content)::bigint AS size,
-       encode(sha256(convert_to(content, 'UTF8')), 'hex') AS content_hash,
+       CASE WHEN kind = 'binary' THEN size_bytes ELSE octet_length(content)::bigint END AS size,
+       CASE WHEN kind = 'binary' THEN sha256 ELSE encode(sha256(convert_to(content, 'UTF8')), 'hex') END::text AS content_hash,
+       kind, content_type, mode,
        created_at, updated_at
 FROM skill_file
 WHERE skill_id = $1
@@ -168,3 +169,25 @@ FROM agent_skill ask
 JOIN skill s ON s.id = ask.skill_id
 WHERE s.workspace_id = $1
 ORDER BY s.name ASC;
+
+-- name: UpsertSkillAssetFile :one
+INSERT INTO skill_file (skill_id, path, content, kind, storage_key, content_type, size_bytes, sha256, mode)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (skill_id,path) DO UPDATE SET content=EXCLUDED.content, kind=EXCLUDED.kind,
+storage_key=EXCLUDED.storage_key, content_type=EXCLUDED.content_type, size_bytes=EXCLUDED.size_bytes,
+sha256=EXCLUDED.sha256, mode=EXCLUDED.mode, updated_at=now()
+RETURNING *;
+
+-- name: RegisterSkillAsset :exec
+INSERT INTO skill_asset(storage_key,workspace_id) VALUES ($1,$2);
+
+-- name: ListUnusedSkillAssets :many
+SELECT a.storage_key FROM skill_asset a
+WHERE a.created_at < now() - interval '24 hours'
+AND NOT EXISTS (SELECT 1 FROM skill_file f WHERE f.storage_key=a.storage_key)
+AND NOT EXISTS (SELECT 1 FROM agent_task_queue t JOIN agent ag ON ag.id=t.agent_id
+ WHERE ag.workspace_id=a.workspace_id AND t.status IN ('dispatched','waiting_local_directory'))
+ORDER BY a.created_at LIMIT 100;
+
+-- name: DeleteSkillAsset :exec
+DELETE FROM skill_asset WHERE storage_key=$1;

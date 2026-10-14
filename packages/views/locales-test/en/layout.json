@@ -22,7 +22,9 @@
     "memory": "Memory",
     "experiment": "Experiments",
     "observers": "Observation seat",
-    "chronicle": "Chronicle"
+    "chronicle": "Chronicle",
+    "mcp": "MCP",
+    "quick_actions": "Quick actions"
   },
   "tab": {
     "issue": "Issue",

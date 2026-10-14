@@ -53,6 +53,7 @@ export const EMPTY_SKILL_FILTERS: SkillListFilters = {
 
 // 用户可隐藏的列。名字与结构性列（复选框、kebab 菜单）永远可见。
 export type SkillColumnKey =
+  | "description"
   | "usedBy"
   | "source"
   | "creator"
@@ -68,6 +69,8 @@ export interface SkillsViewState {
   sortDirection: SkillSortDirection;
   hiddenColumns: SkillColumnKey[];
   filters: SkillListFilters;
+  collapsedGroups: string[];
+  setCollapsedGroups: (ids: string[]) => void;
   /** 表头点击：当前字段上切换方向；否则切到该字段并套用其默认方向。 */
   toggleSort: (field: SkillSortField) => void;
   /** 显示面板选择：切字段（默认方向），不切换。 */
@@ -83,6 +86,7 @@ const DEFAULTS = {
   sortDirection: SKILL_SORT_DEFAULT_DIRECTION.updated,
   hiddenColumns: DEFAULT_HIDDEN_COLUMNS,
   filters: EMPTY_SKILL_FILTERS,
+  collapsedGroups: [] as string[],
 };
 
 /** skills 列表视图偏好 store，按工作区 slug 分桶持久化。 */
@@ -90,6 +94,7 @@ export const useSkillsViewStore = create<SkillsViewState>()(
   persist(
     (set) => ({
       ...DEFAULTS,
+      setCollapsedGroups: (collapsedGroups) => set({ collapsedGroups }),
       toggleSort: (field) =>
         set((state) =>
           state.sortField === field
@@ -135,6 +140,7 @@ export const useSkillsViewStore = create<SkillsViewState>()(
         sortDirection: state.sortDirection,
         hiddenColumns: state.hiddenColumns,
         filters: state.filters,
+        collapsedGroups: state.collapsedGroups,
       }),
       // 水合时，若新工作区没有持久化值，就重置为默认值，而不是留下上一个
       // 工作区的内存视图状态（与 agents 视图 store 同理由）。
@@ -146,6 +152,7 @@ export const useSkillsViewStore = create<SkillsViewState>()(
         return {
           ...current,
           ...p,
+          collapsedGroups: p.collapsedGroups ?? [],
           filters: { ...EMPTY_SKILL_FILTERS, ...(p.filters ?? {}) },
         };
       },

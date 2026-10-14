@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
-import { useCurrentWorkspace } from "@multica/core/paths";
+import { useWorkspacePaths, useCurrentWorkspace } from "@multica/core/paths";
 import { PLUGINS_V1_FLAG } from "@multica/core/feature-flags";
 import { useFeatureEnabled } from "@multica/core/config";
 import { useNavigation } from "../../navigation";
@@ -101,8 +101,6 @@ const WORKSPACE_TAB_KEYS = [
   "labels",
   "issue_statuses",
   "properties",
-  "quick_actions",
-  "mcp",
   "plugins",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
@@ -150,6 +148,7 @@ const SETTINGS_TAB_TRIGGER_CLASS =
  */
 export function SettingsPage() {
   const { t } = useT("settings");
+  const paths = useWorkspacePaths();
   const workspaceName = useCurrentWorkspace()?.name;
   const navigation = useNavigation();
   const isMobile = useIsMobile();
@@ -177,6 +176,13 @@ export function SettingsPage() {
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
+  React.useEffect(() => {
+    if (tabFromUrl !== "mcp" && tabFromUrl !== "quick-actions" && tabFromUrl !== "quick_actions") return;
+    const params = new URLSearchParams(navigation.searchParams);
+    params.delete(TAB_QUERY_KEY);
+    const target = tabFromUrl === "mcp" ? paths.mcp() : paths.quickActions();
+    navigation.replace(params.size ? `${target}?${params}` : target);
+  }, [tabFromUrl, paths, navigation]);
   const candidateTab = tabFromUrl
     ? LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl
     : null;

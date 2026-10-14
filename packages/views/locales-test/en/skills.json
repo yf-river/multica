@@ -4,7 +4,7 @@
     "tagline": "Instructions any agent in this workspace can use.",
     "learn_more": "Learn more →",
     "new_skill": "New skill",
-    "search_placeholder": "Search skills…",
+    "search_placeholder": "Search name or description…",
     "scopes": {
       "all": {
         "label": "All",
@@ -62,7 +62,8 @@
     "source_runtime_unknown": "From a runtime",
     "source_clawhub": "From ClawHub",
     "source_skills_sh": "From Skills.sh",
-    "source_github": "From GitHub"
+    "source_github": "From GitHub",
+    "description": "Description"
   },
   "actions": {
     "row_menu": "Actions",
@@ -383,5 +384,20 @@
     "markdown_placeholder": "Write markdown content...",
     "raw_placeholder": "File content...",
     "raw_aria": "Plain text content of {{path}}"
+  },
+  "attachments": {
+    "upload": "Upload attachment",
+    "uploading": "Uploading...",
+    "replace": "Replace file",
+    "download": "Download",
+    "save_first": "Save or discard your changes before uploading.",
+    "failed": "Unable to load attachment",
+    "loading": "Loading image...",
+    "no_preview": "Download this file to view it."
+  },
+  "groups": {
+    "unclassified": "Unclassified",
+    "expand_all": "Expand all",
+    "collapse_all": "Collapse all"
   }
 }

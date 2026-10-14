@@ -150,6 +150,9 @@ cleared_agent_mcp_bindings AS (
     WHERE server_id IN (SELECT id FROM ws_mcp_servers)
        OR agent_id IN (SELECT id FROM ws_agents)
 ),
+cleared_workspace_mcp_checks AS (
+ DELETE FROM workspace_mcp_check WHERE workspace_id=$1
+),
 cleared_workspace_mcp_servers AS (
     DELETE FROM workspace_mcp_server WHERE workspace_id = $1
 ),

@@ -103,7 +103,6 @@ import type {
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
-  StartMikaOnboardingResponse,
   CancelTaskResponse,
   Project,
   CreateProjectRequest,
@@ -266,7 +265,6 @@ import {
   ChatSessionSchema,
   PrioritizeQueuedChatTaskResponseSchema,
   SendChatMessageResponseSchema,
-  StartMikaOnboardingResponseSchema,
   ChildIssuesResponseSchema,
   ChildIssueProgressResponseSchema,
   CommentsListSchema,
@@ -403,6 +401,7 @@ import {
   RuntimeModelListRequestSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
   SkillSchema,
+  SkillFileSchema,
   EMPTY_SKILL,
   SkillImportResultSchema,
   EMPTY_SKILL_IMPORT_RESULT,
@@ -429,6 +428,7 @@ import {
   PluginPreviewSchema,
   WorkspaceMcpServerListSchema,
   WorkspaceMcpServerSchema,
+  WorkspaceMcpChecksSchema,
   WorkspaceRepoSchema,
   WorkspaceRepositoryCenterSchema,
   WorkspaceRepoProbeResponseSchema,
@@ -2550,10 +2550,11 @@ export class ApiClient {
     workspaceId: string,
     name: string,
     config: Record<string, unknown>,
+    description?: string,
   ): Promise<WorkspaceMcpServer> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/mcp-servers`, {
       method: "POST",
-      body: JSON.stringify({ name, config }),
+      body: JSON.stringify({ name, config, ...(description !== undefined ? {description} : {}) }),
     });
     return parseWithFallback(raw, WorkspaceMcpServerSchema, EMPTY_WORKSPACE_MCP_SERVER, {
       endpoint: "POST /api/workspaces/{id}/mcp-servers",
@@ -2565,7 +2566,7 @@ export class ApiClient {
   async updateWorkspaceMcpServer(
     workspaceId: string,
     serverId: string,
-    update: { name?: string; config?: Record<string, unknown> },
+    update: { name?: string; description?: string; config?: Record<string, unknown> },
   ): Promise<WorkspaceMcpServer> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/mcp-servers/${encodeURIComponent(serverId)}`,
@@ -2577,6 +2578,17 @@ export class ApiClient {
   }
 
   /** 从库中删除一台服务器，同时删除所有指向它的 agent 分配。 */
+  async updateWorkspaceMcpMetadata(workspaceId:string, serverId:string, name:string, description:string) {
+    const endpoint=`/api/workspaces/${workspaceId}/mcp-servers/${encodeURIComponent(serverId)}/metadata`;
+    const raw=await this.fetch<unknown>(endpoint,{method:"PATCH",body:JSON.stringify({name,description})});
+    return parseWithFallback(raw,WorkspaceMcpServerSchema,EMPTY_WORKSPACE_MCP_SERVER,{endpoint});
+  }
+  async workspaceMcpChecks(workspaceId:string,serverId:string,runtimeId?:string) {
+    const endpoint=`/api/workspaces/${workspaceId}/mcp-servers/${encodeURIComponent(serverId)}/checks`;
+    const raw=await this.fetch<unknown>(endpoint,runtimeId?{method:"POST",body:JSON.stringify({runtime_id:runtimeId})}:undefined);
+    return parseWithFallback(raw,WorkspaceMcpChecksSchema,[] as {id:string;runtimeId:string;status:string;toolCount:number;errorCode:string;createdAt:string;completedAt:string|null;stale:boolean}[],{endpoint});
+  }
+
   async deleteWorkspaceMcpServer(workspaceId: string, serverId: string): Promise<void> {
     await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/mcp-servers/${encodeURIComponent(serverId)}`,
@@ -2977,7 +2989,7 @@ export class ApiClient {
 
   /** 获取技能详情。 */
   async getSkill(id: string): Promise<Skill> {
-    return this.fetch(`/api/skills/${id}`);
+    return parseWithFallback(await this.fetch(`/api/skills/${id}`), SkillSchema, EMPTY_SKILL, { endpoint: `/api/skills/${id}` });
   }
 
   /** 新建技能。 */
@@ -2994,6 +3006,19 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  async uploadSkillFile(id: string, file: File, path: string) {
+    const body = new FormData(); body.append("file", file); body.append("path", path);
+    const response = await this.fetchRaw(`/api/skills/${id}/files/upload`, {method:"POST", body});
+    if (!response.ok) throw new Error(await response.text());
+    return parseWithFallback(await response.json(), SkillFileSchema, {id:"",skill_id:id,path,content:"",created_at:"",updated_at:"",kind:"text",content_type:"",size_bytes:0,sha256:"",mode:420}, {endpoint:"skill file upload"});
+  }
+
+  async getSkillFileBlob(id: string, fileId: string): Promise<Blob> {
+    const response = await this.fetchRaw(`/api/skills/${id}/files/${fileId}/content`);
+    if (!response.ok) throw new Error(await response.text());
+    return response.blob();
   }
 
   /** 删除技能。 */
@@ -3494,24 +3519,6 @@ export class ApiClient {
     );
     if (!response) throw new Error("invalid send chat message response");
     return response;
-  }
-
-  /** 启动 Mika onboarding 对话流程。 */
-  async startMikaOnboarding(
-    sessionId: string,
-    workspaceSlug?: string,
-  ): Promise<StartMikaOnboardingResponse> {
-    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/onboarding`, {
-      method: "POST",
-      headers: workspaceHeader(workspaceSlug),
-      body: JSON.stringify({}),
-    });
-    return parseWithFallback(
-      raw,
-      StartMikaOnboardingResponseSchema,
-      { started: false },
-      { endpoint: "POST /api/chat/sessions/:id/onboarding" },
-    );
   }
 
   /** 查询会话当前挂起的任务（等待中的 agent 回复）。 */

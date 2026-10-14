@@ -83,6 +83,7 @@ import {
   totalFileCount,
   type OriginInfo,
 } from "../lib/origin";
+import { SkillAttachment } from "./skill-attachment";
 import { FileTree } from "./file-tree";
 import { FileViewer, isMarkdownPath, type FileMode } from "./file-viewer";
 import {
@@ -95,7 +96,7 @@ import { ResourceLabelPicker } from "../../labels/resource-label-picker";
 
 const SKILL_MD = "SKILL.md";
 
-type DraftFile = { id?: string; path: string; content: string };
+type DraftFile = Pick<SkillFile, "path" | "content" | "kind" | "content_type" | "size_bytes" | "sha256" | "mode"> & { id?: string };
 
 /** 可编辑草稿：四个可编辑字段合成的一张快照。 */
 type SkillDraft = {
@@ -123,9 +124,7 @@ function toDraft(s: Skill): SkillDraft {
     description: s.description.trim(),
     content: s.content,
     files: (s.files ?? []).map((f: SkillFile) => ({
-      id: f.id,
-      path: f.path,
-      content: f.content,
+      ...f,
     })),
   };
 }
@@ -548,6 +547,7 @@ function OverviewTab({
 // ---------------------------------------------------------------------------
 
 function FilesTab({
+  skillId, selectedFile, onUpload, uploading, hasUnsavedChanges,
   filePaths,
   selectedPath,
   selectedContent,
@@ -566,6 +566,11 @@ function FilesTab({
   onContentChange,
   onFocusHandled,
 }: {
+  skillId: string;
+  selectedFile?: DraftFile;
+  onUpload: (file: File, path: string) => void;
+  uploading: boolean;
+  hasUnsavedChanges: boolean;
   filePaths: string[];
   selectedPath: string;
   selectedContent: string;
@@ -658,6 +663,12 @@ function FilesTab({
               {t(($) => $.detail.files.add_file)}
             </Button>
           ))}
+        {canEdit && <label className="mt-2 flex min-h-11 cursor-pointer items-center rounded-md px-2.5 text-caption focus-within:ring-2 focus-within:ring-ring">
+          {uploading ? t(($) => $.attachments.uploading) : t(($) => $.attachments.upload)}
+          <input type="file" className="sr-only" aria-label={t(($) => $.attachments.upload)} disabled={uploading || hasUnsavedChanges}
+            onChange={(e) => {const f=e.target.files?.[0]; if(f) onUpload(f,f.name);e.target.value="";}} />
+        </label>}
+        {canEdit && hasUnsavedChanges && <p className="px-2.5 text-caption text-muted-foreground">{t(($) => $.attachments.save_first)}</p>}
       </aside>
 
       <section className="flex min-h-[32rem] min-w-0 flex-1 flex-col md:min-h-0">
@@ -721,7 +732,8 @@ function FilesTab({
         </div>
 
         <div className="min-h-0 flex-1">
-          <FileViewer
+          {selectedFile?.kind === "binary" && selectedFile.id ? <SkillAttachment skillId={skillId} file={{...selectedFile,id:selectedFile.id}}
+            canEdit={canEdit && !hasUnsavedChanges} uploading={uploading} onReplace={(f) => onUpload(f,selectedPath)} /> : <FileViewer
             key={selectedPath}
             path={selectedPath}
             content={selectedContent}
@@ -730,7 +742,7 @@ function FilesTab({
             autoFocus={focusEditor}
             onChange={onContentChange}
             onFocusHandled={onFocusHandled}
-          />
+          />}
         </div>
       </section>
     </div>
@@ -792,6 +804,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [files, setFiles] = useState<DraftFile[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [selectedPath, setSelectedPath] = useState(SKILL_MD);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -967,6 +980,18 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     dirtySummary.nameChanged ||
     dirtySummary.descChanged ||
     dirtySummary.changedFileCount > 0;
+
+  const handleUpload = async (file: File, path: string) => {
+    if (!skill || !canEdit || isDirty || uploading) return;
+    setUploading(true);
+    try {
+      await api.uploadSkillFile(skill.id,file,path);
+      const updated=await api.getSkill(skill.id);
+      qc.setQueryData(skillDetailOptions(wsId,skill.id).queryKey,updated);
+      adoptServerVersion(updated); setSelectedPath(path);
+    } catch(err) {toast.error(err instanceof Error ? err.message : t(($) => $.attachments.failed));}
+    finally {setUploading(false);}
+  };
 
   const handleSave = async () => {
     if (!skill || !canEdit) return;
@@ -1305,6 +1330,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
           />
         ) : (
           <FilesTab
+            skillId={skillId} selectedFile={files.find((f) => f.path === selectedPath)}
+            onUpload={handleUpload} uploading={uploading} hasUnsavedChanges={isDirty}
             filePaths={filePaths}
             selectedPath={selectedPath}
             selectedContent={selectedContent}

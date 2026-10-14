@@ -891,7 +891,7 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 		// slug（撞名时可能与 baseSlug 不同），让 YAML name 与目录名一致；依赖二者
 		// 任一作键的运行时都保持一致。
 		body := ensureSkillFrontmatter(skill.Content, slug, skill.Description)
-		if err := recordWriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644, manifest); err != nil {
+		if err := recordSkillFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644, manifest); err != nil {
 			return err
 		}
 
@@ -908,11 +908,18 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 			if skillpkg.IsReservedContentPath(f.Path) {
 				continue
 			}
+			if !skillpkg.SafePath(f.Path) {
+				return fmt.Errorf("unsafe skill file path: %s", f.Path)
+			}
 			fpath := filepath.Join(dir, f.Path)
 			if err := recordMkdirAll(filepath.Dir(fpath), 0o755, manifest); err != nil {
 				return err
 			}
-			if err := recordWriteFile(fpath, []byte(f.Content), 0o644, manifest); err != nil {
+			data := []byte(f.Content)
+			if f.Data != nil {
+				data = f.Data
+			}
+			if err := recordSkillFile(fpath, data, os.FileMode(skillpkg.FileMode(f.Mode)), manifest); err != nil {
 				return err
 			}
 		}

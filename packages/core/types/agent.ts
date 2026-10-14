@@ -574,16 +574,13 @@ export interface Agent {
   name: string;
   /** 一句话描述。 */
   description: string;
-  /** agent 拥有者写的指令提示词。对系统级 agent，这里只装工作区自己加的
-   *  备注，产品那一半在 `system_instructions`。 */
+  /** Agent 的完整可编辑提示词。 */
   instructions: string;
   /** 最多三条、由 agent 作者预设的首轮对话建议。老服务器缺省。 */
   conversation_starters?: AgentConversationStarter[];
   /** 产品定义的 agent（如 "mika"）才有。用户/模板创建的 agent 缺省。这是
    *  判断"由 Multica 维护"的身份键——别拿展示名判，因为名字能被拥有者改。 */
   system_key?: string;
-  /** 系统 agent 提示词中"只读的产品那一半"，由后端二进制下发。普通 agent 缺省。 */
-  system_instructions?: string;
   avatar_url: string | null;
   /** 执行模式：本地 daemon / 云端。 */
   runtime_mode: AgentRuntimeMode;
@@ -932,6 +929,11 @@ export interface Skill extends SkillSummary {
 
 /** 技能包里的一个附属文件：一段带路径的文本内容。 */
 export interface SkillFile {
+ kind?: "text" | "binary";
+ content_type?: string;
+ size_bytes?: number;
+ sha256?: string;
+ mode?: number;
   id: string;
   skill_id: string;
   /** 相对路径。 */
@@ -948,7 +950,7 @@ export interface CreateSkillRequest {
   description?: string;
   content?: string;
   config?: Record<string, unknown>;
-  files?: { path: string; content: string }[];
+  files?: { id?: string; path: string; content: string; kind?: "text" | "binary"; mode?: number }[];
 }
 
 /** 上传压缩包走 POST /api/skills/import 时的结构化返回。 */
@@ -975,7 +977,7 @@ export interface UpdateSkillRequest {
   description?: string;
   content?: string;
   config?: Record<string, unknown>;
-  files?: { path: string; content: string }[];
+  files?: { id?: string; path: string; content: string; kind?: "text" | "binary"; mode?: number }[];
 }
 
 /** 请求体：一次性设置某 agent 挂载哪几个工作区技能（整表替换）。 */
