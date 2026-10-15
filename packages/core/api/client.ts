@@ -1,3 +1,4 @@
+import { TaskOutputPageSchema, TaskMessagePayloadSchema, type TaskOutputPage } from "./schemas";
 import { MealsSchema, mealWire, type MealsData, type MealCommand } from "../meals/schema";
 import { CookingListSchema, CookingDetailSchema, CookingCategoriesSchema, type CookingList, type CookingDetail, type CookingCategory } from "../cooking/schema";
 import { HealthOverviewSchema, HealthReportsSchema, HealthRevisionsSchema, HealthReportSchema, HealthReceiptSchema, EMPTY_HEALTH, observationWire, type HealthOverview, type HealthReport, type HealthProfile, type HealthObservation, type HealthRevision } from "../health/schema";
@@ -2245,7 +2246,14 @@ export class ApiClient {
 
   /** 列出某任务的消息记录。 */
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
-    return this.fetch(`/api/tasks/${taskId}/messages`);
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/messages`);
+    return parseWithFallback<TaskMessagePayload[]>(raw, TaskMessagePayloadSchema.array(), [], { endpoint: "GET /api/tasks/:id/messages" });
+  }
+
+  async readTaskOutput(taskId: string, messageId: string, offset = 0, query = "") {
+    const params = new URLSearchParams({ output_id: messageId, offset: String(offset), q: query });
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/messages?${params}`);
+    return parseWithFallback<TaskOutputPage | null>(raw, TaskOutputPageSchema, null, { endpoint: "GET /api/tasks/:id/messages?output_id" });
   }
 
   /** 列出与某议题关联的全部任务运行记录。 */

@@ -241,6 +241,9 @@ func writeRuntimeConfigFile(path, brief string) error {
 		// 吞掉，所以连续运行不会在区块周围累积空行。托管分隔符（若有）位于
 		// existingStr[:start]，原样保留不受影响。
 		newContent := existingStr[:start] + block + existingStr[end:]
+		if newContent == existingStr {
+			return nil
+		}
 		return os.WriteFile(path, []byte(newContent), 0o644)
 	}
 

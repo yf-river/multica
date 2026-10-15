@@ -855,7 +855,15 @@
     "tool_kind_command": "命令",
     "tool_kind_write": "编辑",
     "tool_kind_read": "读取",
-    "tool_kind_misc": "其他"
+    "tool_kind_misc": "其他",
+    "output_search": "搜索完整输出",
+    "output_search_action": "搜索",
+    "output_loading": "正在读取输出...",
+    "output_retry": "读取失败，重试",
+    "output_not_found": "未找到匹配内容",
+    "output_previous": "上一页",
+    "output_next": "下一页",
+    "copy_step_preview": "复制步骤预览"
   },
   "task_failure": {
     "cancelled_by_system": "系统已取消",

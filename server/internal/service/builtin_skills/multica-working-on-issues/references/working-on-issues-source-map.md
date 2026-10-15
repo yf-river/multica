@@ -221,3 +221,5 @@ grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/githu
 grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
 ```
+
+Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`runIssueRunMessages`), `server/internal/handler/task_output.go`, and `server/pkg/protocol/task_output.go`.

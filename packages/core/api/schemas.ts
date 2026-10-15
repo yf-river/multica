@@ -1850,9 +1850,12 @@ export const AgentTaskSchema = z.object({
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
 // 任务消息负载：任务执行过程中产生的一则消息（文本/思考/工具调用等）。
-const TaskMessagePayloadSchema = z.object({
+export const TaskMessagePayloadSchema = z.object({
+  id: z.string().optional(),
+  output_chars: z.number().optional(),
+  output_truncated: z.boolean().optional(),
   task_id: z.string(),
-  issue_id: z.string(),
+  issue_id: z.string().optional().default(""),
   chat_session_id: z.string().optional(),
   seq: z.number(),
   type: z.enum(["text", "thinking", "tool_use", "tool_result", "error"]),
@@ -3205,3 +3208,13 @@ export const WorkspaceMcpCheckSchema = z.object({
  created_at:z.string(), completed_at:z.string().nullable(), stale:z.boolean().default(false),
 }).transform((v)=>({id:v.id,runtimeId:v.runtime_id,status:v.status,toolCount:v.tool_count,errorCode:v.error_code,createdAt:v.created_at,completedAt:v.completed_at,stale:v.stale}));
 export const WorkspaceMcpChecksSchema = z.array(WorkspaceMcpCheckSchema);
+
+export const TaskOutputPageSchema = z.object({
+  output: z.string(), offset: z.number(), next_offset: z.number(),
+  total_chars: z.number(), has_more: z.boolean(), found: z.boolean(),
+}).transform((page) => ({
+  output: page.output, offset: page.offset, nextOffset: page.next_offset,
+  totalChars: page.total_chars, hasMore: page.has_more, found: page.found,
+}));
+
+export type TaskOutputPage = z.output<typeof TaskOutputPageSchema>;

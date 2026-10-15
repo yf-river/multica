@@ -47,8 +47,8 @@ func seedUserCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv,
 	}
 
 	reserved := make(map[string]struct{}, len(workspaceSkills))
-	for _, s := range workspaceSkills {
-		reserved[sanitizeSkillName(s.Name)] = struct{}{}
+	for _, slug := range resolveSkillSlugs(workspaceSkills) {
+		reserved[slug] = struct{}{}
 	}
 
 	entries, err := os.ReadDir(sharedSkillsDir)

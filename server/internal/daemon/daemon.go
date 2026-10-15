@@ -7119,6 +7119,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 注入 runtime 专属配置（meta skill），让 agent 发现 .agent_context/。
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
+		if provider == "codex" {
+			return TaskResult{}, fmt.Errorf("inject runtime config: %w", err)
+		}
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
 	if err := execenv.WriteRuntimeProvenance(env.RootDir, env.WorkDir, provider, runtimeBrief, taskCtx); err != nil {
@@ -7138,6 +7141,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		promptOptions = append(promptOptions, WithWorktreeReplayConflicts(env.LocalWorktree.ReplayConflicts))
 	}
 	prompt := BuildPrompt(task, provider, promptOptions...)
+	if provider == "codex" && env.CodexHome != "" {
+		prompt += fmt.Sprintf("\nCurrent runtime paths: CODEX_HOME=%q; installed skill paths and content fingerprints: %q. Use these paths for this turn; paths from older turns may belong to a previous task environment.\n", env.CodexHome, filepath.Join(env.CodexHome, "skills-manifest.json"))
+	}
 	if env.LocalWorktree != nil {
 		prompt += fmt.Sprintf("\nThis task's isolated worktree is %q on branch %q, based on %s. Reuse this branch when the task requires SOP or MR delivery.\n", env.WorkDir, env.LocalWorktree.Branch, env.LocalWorktree.BaseCommit)
 	}
@@ -8042,9 +8048,6 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					}
 					s := msgSeq.Add(1)
 					output := msg.Output
-					if len(output) > 8192 {
-						output = output[:8192]
-					}
 					toolName := msg.Tool
 					if toolName == "" && msg.CallID != "" {
 						mu.Lock()

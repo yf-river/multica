@@ -86,3 +86,6 @@ ORDER BY seq ASC;
 -- name: DeleteTaskMessages :exec
 DELETE FROM task_message
 WHERE task_id = $1;
+
+-- name: GetTaskMessageOutput :one
+SELECT output FROM task_message WHERE task_id = $1 AND id = $2;

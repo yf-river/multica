@@ -319,6 +319,9 @@ export interface ActivityCreatedPayload {
 
 /** 任务的一条消息（流式输出、工具调用等）。 */
 export interface TaskMessagePayload {
+  id?: string;
+  output_chars?: number;
+  output_truncated?: boolean;
   task_id: string;
   issue_id: string;
   chat_session_id?: string;

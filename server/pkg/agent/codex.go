@@ -1060,7 +1060,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			if activity == "status:running" {
 				firstItemWait.start(time.Now())
 			}
-			trySend(msgCh, msg)
+			// 工具证据与消息共用记录链；消费缓慢时施加背压，取消时释放读取方。
+			select {
+			case msgCh <- msg:
+			case <-runCtx.Done():
+				return
+			}
 			trySendString(semanticActivityCh, activity)
 			if activity != "" {
 				semanticObserved.Store(true)

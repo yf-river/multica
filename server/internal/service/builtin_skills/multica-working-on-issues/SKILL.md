@@ -341,3 +341,18 @@ contract above: the `pull-requests` CLI and route, the PR response field list,
 notify, the stage column / `stageBarrierClosed` barrier and the `--stage` /
 `issue children` CLI, and the metadata CLI. Re-derive before depending on an
 exact line.
+
+### Inspect complete tool output
+
+`multica issue run-messages <task-id>` returns output previews. When
+`output_truncated` is true, use the message `id` to retrieve the stored output:
+
+```bash
+multica issue run-messages <task-id> --message-output <message-id> --offset 0
+multica issue run-messages <task-id> --message-output <message-id> --search 'error'
+```
+
+Offsets count Unicode characters. Continue with `next_offset` while `has_more`
+is true. Search starts at `offset` and checks the full stored output. These
+records contain the provider-delivered output after secret redaction; historical
+outputs truncated before storage cannot be recovered through this command.

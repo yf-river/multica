@@ -161,15 +161,18 @@ type ChatQuickActionsPayload struct {
 
 // TaskMessagePayload 表示单条 agent 执行消息（工具调用、文本等）。
 type TaskMessagePayload struct {
-	TaskID    string         `json:"task_id"`
-	IssueID   string         `json:"issue_id,omitempty"`
-	Seq       int            `json:"seq"`
-	Type      string         `json:"type"`              // "text"、"tool_use"、"tool_result"、"error"
-	Tool      string         `json:"tool,omitempty"`    // tool_use/tool_result 时的工具名
-	Content   string         `json:"content,omitempty"` // 文本内容
-	Input     map[string]any `json:"input,omitempty"`   // 工具入参（仅 tool_use）
-	Output    string         `json:"output,omitempty"`  // 工具输出（仅 tool_result）
-	CreatedAt string         `json:"created_at,omitempty"`
+	ID              string         `json:"id,omitempty"`
+	OutputChars     int            `json:"output_chars,omitempty"`
+	OutputTruncated bool           `json:"output_truncated,omitempty"`
+	TaskID          string         `json:"task_id"`
+	IssueID         string         `json:"issue_id,omitempty"`
+	Seq             int            `json:"seq"`
+	Type            string         `json:"type"`              // "text"、"tool_use"、"tool_result"、"error"
+	Tool            string         `json:"tool,omitempty"`    // tool_use/tool_result 时的工具名
+	Content         string         `json:"content,omitempty"` // 文本内容
+	Input           map[string]any `json:"input,omitempty"`   // 工具入参（仅 tool_use）
+	Output          string         `json:"output,omitempty"`  // 工具输出（仅 tool_result）
+	CreatedAt       string         `json:"created_at,omitempty"`
 }
 
 // DaemonRegisterPayload 是 daemon 连接建立时发给 server 的注册消息。

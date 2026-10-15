@@ -4010,3 +4010,30 @@ func TestIsTerminalChildIssue(t *testing.T) {
 		})
 	}
 }
+
+func TestRunIssueRunMessagesReadsOutputPage(t *testing.T) {
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	messageID := "bbbb1234-0000-0000-0000-000000000000"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tasks/"+taskID+"/messages" || r.URL.Query().Get("output_id") != messageID || r.URL.Query().Get("offset") != "8192" || r.URL.Query().Get("q") != "下游 error" {
+			t.Errorf("unexpected output request %s", r.URL.String())
+		}
+		json.NewEncoder(w).Encode(map[string]any{"output": "tail evidence", "has_more": false, "next_offset": 8205})
+	}))
+	defer srv.Close()
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	cmd := &cobra.Command{Use: "run-messages"}
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("message-output", messageID, "")
+	cmd.Flags().Int("offset", 8192, "")
+	cmd.Flags().String("search", "下游 error", "")
+	output, err := captureStdout(t, func() error { return runIssueRunMessages(cmd, []string{taskID}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "tail evidence") {
+		t.Fatalf("missing output: %s", output)
+	}
+}

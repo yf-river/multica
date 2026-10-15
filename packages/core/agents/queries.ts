@@ -159,3 +159,16 @@ export function agentBuilderSessionListOptions(wsId: string) {
     staleTime: 0,
   });
 }
+
+export function taskOutputOptions(wsId: string, taskId: string, messageId: string, offset: number, query: string) {
+  return queryOptions({
+    queryKey: ["workspaces", wsId, "task-output", taskId, messageId, offset, query],
+    queryFn: async () => {
+      const page = await api.readTaskOutput(taskId, messageId, offset, query);
+      if (!page) throw new Error("Invalid task output response");
+      return page;
+    },
+    enabled: !!wsId && !!taskId && !!messageId,
+    staleTime: Infinity,
+  });
+}

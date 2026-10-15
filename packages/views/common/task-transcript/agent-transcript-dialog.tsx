@@ -6,6 +6,7 @@
 
 "use client";
 
+import { TaskOutput } from "./task-output";
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
 import { Virtuoso, type VirtuosoHandle, type Components } from "react-virtuoso";
 import {
@@ -1670,8 +1671,8 @@ function StepInspector({
           variant="ghost"
           size="icon-sm"
           onClick={handleCopy}
-          aria-label={t(($) => $.transcript.copy_step)}
-          title={t(($) => $.transcript.copy_step)}
+          aria-label={t(($) => call?.result?.outputTruncated ? $.transcript.copy_step_preview : $.transcript.copy_step)}
+          title={t(($) => call?.result?.outputTruncated ? $.transcript.copy_step_preview : $.transcript.copy_step)}
           className="shrink-0 text-muted-foreground"
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -1728,6 +1729,8 @@ function StepBody({ item }: { item: TimelineItem }) {
   const { t } = useT("agents");
   const detail = useMemo(() => traceEventDetail(item), [item]);
   const image = useMemo(() => readImageResult(item.output), [item.output]);
+
+  if ((item.outputTruncated || (item.output?.length ?? 0) > 8000) && item.id && item.taskId) return <TaskOutput key={item.id} item={item} />;
 
   // 截图是图片，不是塞在 <pre> 里的一串 200KB base64。
   if (image) {

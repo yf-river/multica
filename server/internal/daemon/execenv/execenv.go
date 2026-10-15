@@ -909,14 +909,17 @@ func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, 
 		return fmt.Errorf("clear codex skills dir: %w", err)
 	}
 	if err := seedUserCodexSkills(codexHome, workspaceSkills, logger); err != nil {
-		logger.Warn("execenv: seed user codex skills failed", "error", err)
+		return fmt.Errorf("seed user codex skills: %w", err)
 	}
 	if len(workspaceSkills) > 0 {
 		if err := writeSkillFiles(skillsDir, workspaceSkills, nil); err != nil {
 			return err
 		}
 	}
-	return ensureCodexDisabledSkillsConfig(filepath.Join(codexHome, "config.toml"), codexHome, disabledRuntimeSkills, workspaceSkills)
+	if err := ensureCodexDisabledSkillsConfig(filepath.Join(codexHome, "config.toml"), codexHome, disabledRuntimeSkills, workspaceSkills); err != nil {
+		return err
+	}
+	return writeCodexSkillManifest(codexHome)
 }
 
 // GCMetaKind 标识一个任务 workdir 归属于哪种父记录。GC 循环按这个值分发决策树，

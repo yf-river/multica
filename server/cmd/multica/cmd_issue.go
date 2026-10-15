@@ -604,6 +604,9 @@ func init() {
 	// issue run-messages
 	issueRunMessagesCmd.Flags().String("output", "json", "Output format: table or json")
 	issueRunMessagesCmd.Flags().Int("since", 0, "Only return messages after this sequence number")
+	issueRunMessagesCmd.Flags().String("message-output", "", "Read a page of complete output by message ID")
+	issueRunMessagesCmd.Flags().Int("offset", 0, "Output character offset")
+	issueRunMessagesCmd.Flags().String("search", "", "Find text in complete output from offset")
 	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
 
 	// issue comment add
@@ -2279,6 +2282,19 @@ func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 	}
 
 	path := "/api/tasks/" + url.PathEscape(taskRef.ID) + "/messages"
+	if messageID, _ := cmd.Flags().GetString("message-output"); messageID != "" {
+		offset, _ := cmd.Flags().GetInt("offset")
+		if offset < 0 {
+			return fmt.Errorf("output offset must be non-negative")
+		}
+		search, _ := cmd.Flags().GetString("search")
+		query := url.Values{"output_id": {messageID}, "offset": {fmt.Sprint(offset)}, "q": {search}}
+		var page map[string]any
+		if err := client.GetJSON(ctx, path+"?"+query.Encode(), &page); err != nil {
+			return fmt.Errorf("read run output: %w", err)
+		}
+		return cli.PrintJSON(os.Stdout, page)
+	}
 	if since, _ := cmd.Flags().GetInt("since"); since > 0 {
 		path += fmt.Sprintf("?since=%d", since)
 	}

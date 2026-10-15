@@ -11,6 +11,10 @@ import { redactSecrets } from "./redact";
  * 各字段对应原始消息里的同名属性，只做聚合不做裁剪。
  */
 export interface TimelineItem {
+  id?: string;
+  taskId?: string;
+  outputChars?: number;
+  outputTruncated?: boolean;
   /** 全局递增序号，用于排序（不同来源的消息共用同一把序号）。 */
   seq: number;
   /** 条目类型：工具调用 / 工具结果 / 思考 / 文本 / 错误。 */
@@ -91,6 +95,10 @@ export function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   for (const msg of msgs) {
     items.push({
+      id: msg.id,
+      taskId: msg.task_id,
+      outputChars: msg.output_chars,
+      outputTruncated: msg.output_truncated,
       seq: msg.seq,
       type: msg.type,
       tool: msg.tool,

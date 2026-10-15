@@ -197,6 +197,22 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 	return err
 }
 
+const getTaskMessageOutput = `-- name: GetTaskMessageOutput :one
+SELECT output FROM task_message WHERE task_id = $1 AND id = $2
+`
+
+type GetTaskMessageOutputParams struct {
+	TaskID pgtype.UUID `json:"task_id"`
+	ID     pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetTaskMessageOutput(ctx context.Context, arg GetTaskMessageOutputParams) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getTaskMessageOutput, arg.TaskID, arg.ID)
+	var output pgtype.Text
+	err := row.Scan(&output)
+	return output, err
+}
+
 const listTaskMessages = `-- name: ListTaskMessages :many
 SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
 WHERE task_id = $1

@@ -4910,16 +4910,20 @@ func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.Tas
 	if m.CreatedAt.Valid {
 		createdAt = m.CreatedAt.Time.UTC().Format(time.RFC3339Nano)
 	}
+	preview, chars, truncated := protocol.TaskOutputPreview(m.Output.String)
 	return protocol.TaskMessagePayload{
-		TaskID:    taskID,
-		IssueID:   issueID,
-		Seq:       int(m.Seq),
-		Type:      m.Type,
-		Tool:      m.Tool.String,
-		Content:   m.Content.String,
-		Input:     input,
-		Output:    m.Output.String,
-		CreatedAt: createdAt,
+		ID:              uuidToString(m.ID),
+		OutputChars:     chars,
+		OutputTruncated: truncated,
+		TaskID:          taskID,
+		IssueID:         issueID,
+		Seq:             int(m.Seq),
+		Type:            m.Type,
+		Tool:            m.Tool.String,
+		Content:         m.Content.String,
+		Input:           input,
+		Output:          preview,
+		CreatedAt:       createdAt,
 	}
 }
 
@@ -5122,6 +5126,27 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 			writeError(w, 404, "task not found")
 			return
 		}
+	}
+
+	if task.ChatSessionID.Valid {
+		if r.Header.Get("X-Actor-Source") == "task_token" {
+			sourceID, valid := parseUUIDOrBadRequest(w, r.Header.Get("X-Task-ID"), "task_id")
+			if !valid {
+				return
+			}
+			source, err := h.Queries.GetAgentTask(r.Context(), sourceID)
+			if err != nil || !rerunSourceMatchesTaskScope(task, source) {
+				writeError(w, http.StatusForbidden, "not your chat session")
+				return
+			}
+		} else if _, ok := h.gateChatSessionForUser(w, r, requestUserID(r), wsID, uuidToString(task.ChatSessionID)); !ok {
+			return
+		}
+	}
+
+	if r.URL.Query().Has("output_id") {
+		h.readTaskOutput(w, r, taskUUID)
+		return
 	}
 
 	var (
