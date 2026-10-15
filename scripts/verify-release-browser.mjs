@@ -38,6 +38,14 @@ try {
       await expect(page.locator('[data-slot="sidebar-inset"]')).toBeVisible();
       if (process.env.GOAL_TEST_ENV !== 'int') await expect(page.getByText('联调环境', { exact: true })).toHaveCount(0);
     }
+    const repositories = await read(`/api/workspaces/${workspace.id}/repos/details`, workspace.id);
+    const repoIds = new Set(repositories.repos.map(repo => repo.id));
+    for (const project of repositories.projects) for (const resource of project.resources) {
+      if (["github_repo", "gongfeng_repo"].includes(resource.resource_type) && !repoIds.has(resource.resource_ref.repository_id)) throw Error("project repository missing from registry");
+    }
+    await page.goto(`${base}/${workspace.slug}/settings?tab=repositories`, {waitUntil: 'networkidle'});
+    await expect(page.getByPlaceholder('搜索仓库、组织或路径')).toBeVisible();
+    checks.push('unified repository registry and project bindings');
     await page.reload({ waitUntil: 'networkidle' });
     if ((await read('/api/me')).id !== me.id) throw Error('identity changed after refresh');
     const sessions = await read('/api/chat/sessions?status=all', workspace.id);

@@ -14,6 +14,9 @@ export function normalizeWorkspaceRepoProvider(provider?: string): WorkspaceRepo
 
 /** workspace 关联的一个 git 仓库的元信息。 */
 export interface WorkspaceRepo {
+  id?: string;
+  revision?: number;
+  default_for_tasks?: boolean;
   url: string;
   description?: string;
   /** API 可能返回未来值，读取时用 normalizeWorkspaceRepoProvider 收敛。 */
@@ -173,7 +176,13 @@ export interface ShareLinkInfo {
 }
 
 /** 工作区仓库中心读取已确认的项目资源和运行目录。 */
+export interface RepositoryLocation {
+ id: string; workspace_id: string; repository_id: string; daemon_id: string;
+ local_path: string; execution_mode: "worktree" | "in_place";
+}
+
 export interface WorkspaceRepositoryCenter {
+  configured_locations?: RepositoryLocation[];
   repos: WorkspaceRepo[];
   projects: Array<{ id: string; title: string; resources: import('./project').ProjectResource[] }>;
   locations: Array<{

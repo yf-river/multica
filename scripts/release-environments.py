@@ -280,6 +280,20 @@ def drain(env,m,timeout=900):
         print('已恢复接单',flush=True)
         raise
 
+def migrate(release, cfg, action='up', previous=None):
+    args=[Path(release)/'server/bin/migrate', action]
+    if action=='up':
+        if previous is None: raise RuntimeError('迁移需要切换前版本作为基线')
+        old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
+        versions=sorted(p.name.removesuffix('.up.sql') for p in (Path(release)/'server/migrations').glob('*.up.sql') if p.name not in old)
+        if not versions: return
+        args.extend(['--versions', ','.join(versions)])
+    run(args, cwd=Path(release)/'server', env=cfg['server'])
+
+def repository_transition_needed(previous, target):
+    migration='server/migrations/525_repository_migration_guard.up.sql'
+    return (Path(target)/migration).exists() and not (Path(previous)/migration).exists()
+
 def launch(env, release, cfg, m):
     result={}
     m['pids']=result
@@ -324,6 +338,8 @@ def deploy(env, release, timeout=900):
         write(RUN/'env'/f'{env}-before-deploy.json',oldcfg,True)
         old_cwds={r:str(Path(f'/proc/{pid}/cwd').resolve()) for r,pid in m['pids'].items()}
         write(RUN/'deployments'/f'{env}-previous.json', prior, True)
+        prior['repository_transition']=repository_transition_needed(old_cwds['server'],release)
+        write(RUN/'deployments'/f'{env}-previous.json', prior, True)
         drain(env,m,timeout)
         offsets={role:Path(log).stat().st_size if Path(log).exists() else 0 for role,log in m['log_paths'].items()}
         try:
@@ -333,6 +349,7 @@ def deploy(env, release, timeout=900):
             if exists(m['pids']['daemon']): raise RuntimeError('Daemon 未退出，拒绝强杀')
             owned_stop(m['pids']['web'],'web',old_cwds['web'])
             owned_stop(m['pids']['server'],'server',old_cwds['server'])
+            migrate(release,cfg,previous=old_cwds['server'])
             m['pids']=launch(env,release,cfg,m)
         except Exception as failure:
             # 启动失败时只回收本次创建的进程，并恢复切换前的程序与运行配置。
@@ -346,6 +363,7 @@ def deploy(env, release, timeout=900):
                 oldrelease=Path(old_cwds['server'])
                 for role in ('web','server'):
                     if exists(prior['pids'][role]): owned_stop(prior['pids'][role],role,old_cwds[role])
+                if prior.get('repository_transition'): migrate(release,cfg,'restore-repositories')
                 prior['pids']=launch(env,oldrelease,oldcfg,prior)
             write(meta_path(env),prior)
             isolation_check()
@@ -409,6 +427,7 @@ def restore(env, timeout=900):
     for role in ('web', 'server'):
         cwd=Path(current['release_dir'])/ 'apps/web' if role=='web' else Path(current['release_dir'])
         owned_stop(current['pids'][role], role, cwd)
+    if prior.get('repository_transition'): migrate(Path(current['release_dir']),read(config_path(env)),'restore-repositories')
     baseline=prior.pop('published_before',None)
     prior['pids']=launch(env, old, read(config_path(env)), prior)
     write(meta_path(env), prior)
@@ -441,6 +460,8 @@ def publish(env, directory, timeout=900):
     try:
         verify_browser(env)
         verify_logs(env)
+        if read(RUN/'deployments'/f'{env}-previous.json').get('repository_transition'):
+            migrate(directory,read(config_path(env)),'accept-repositories')
     except Exception:
         try:
             restore(env, timeout)

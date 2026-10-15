@@ -47,6 +47,19 @@ class ReleaseTest(unittest.TestCase):
                 'branch':'refs/heads/feature/test/task','git_common':str(self.root/'.git'),
                 'release_id':self.sha,'source_digest':r.source_digest(source)[0],'deployed_at':'today'}
 
+    def test_migrate_only_new_version_files(self):
+        previous=self.base/'old';target=self.base/'new'
+        for folder in (previous,target):
+            (folder/'server/migrations').mkdir(parents=True)
+            (folder/'server/migrations/518_existing.up.sql').write_text('existing')
+        (target/'server/migrations/519_repositories.up.sql').write_text('new')
+        with patch.object(r,'run') as execute:
+            r.migrate(target,{'server':{}},previous=previous)
+            self.assertEqual(execute.call_args.args[0][-2:],['--versions','519_repositories'])
+        with patch.object(r,'run') as execute:
+            r.migrate(previous,{'server':{}},previous=previous)
+            execute.assert_not_called()
+
     def test_clean_source_and_digest(self):
         source=self.worktree()
         self.assertEqual(r.checked_source(source)[1],self.sha)

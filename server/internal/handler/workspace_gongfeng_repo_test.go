@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -18,29 +17,17 @@ func TestParseGongfengRepositoryURL(t *testing.T) {
 	}
 }
 
-func TestValidateWorkspaceReposRequiresResolvedGongfengIdentity(t *testing.T) {
-	_, err := validateAndNormalizeWorkspaceRepos([]map[string]any{{
-		"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center",
-	}})
-	if err == nil || !strings.Contains(err.Error(), "项目路径") {
-		t.Fatalf("unresolved Gongfeng repository error = %v", err)
-	}
-
-	raw, err := validateAndNormalizeWorkspaceRepos([]map[string]any{{
-		"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center",
-		"provider":       "gongfeng",
-		"project_path":   "ChainWeaver/ida/user-center",
-		"default_branch": "master",
-	}})
+func TestNormalizeRepositoryGongfeng(t *testing.T) {
+	raw, err := normalizeRepositoryConfig(map[string]any{"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center", "provider": "gongfeng", "ref": "v5.2.0_qc"})
 	if err != nil {
-		t.Fatalf("resolved Gongfeng repository: %v", err)
+		t.Fatal(err)
 	}
-	var repos []workspaceRepoRef
-	if err := json.Unmarshal(raw, &repos); err != nil {
-		t.Fatalf("decode normalized repositories: %v", err)
+	var repo map[string]any
+	if err = json.Unmarshal(raw, &repo); err != nil {
+		t.Fatal(err)
 	}
-	if len(repos) != 1 || repos[0].Ref != "master" {
-		t.Fatalf("normalized repositories = %+v", repos)
+	if repo["ref"] != "v5.2.0_qc" {
+		t.Fatalf("ref=%v", repo["ref"])
 	}
 }
 

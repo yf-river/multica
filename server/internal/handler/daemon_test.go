@@ -95,13 +95,13 @@ func (s *popRecordingLocalSkillImportStore) PopPending(ctx context.Context, runt
 
 func setHandlerTestWorkspaceRepos(t *testing.T, repos []map[string]string) {
 	t.Helper()
-	data, err := json.Marshal(repos)
-	if err != nil {
-		t.Fatalf("marshal repos: %v", err)
+	dbfx.Exec(t, `UPDATE repository SET default_for_tasks=false WHERE workspace_id=$1`, testWorkspaceID)
+	for _, repo := range repos {
+		raw, _ := json.Marshal(repo)
+		dbfx.Exec(t, `INSERT INTO repository(workspace_id,identity,config,default_for_tasks) VALUES($1,$2,$3,true) ON CONFLICT(workspace_id,identity) DO UPDATE SET config=EXCLUDED.config,default_for_tasks=true`, testWorkspaceID, repositoryIdentity(repo["url"]), raw)
 	}
-	dbfx.Exec(t, `UPDATE workspace SET repos = $1 WHERE id = $2`, data, testWorkspaceID)
 	t.Cleanup(func() {
-		dbfx.Exec(t, `UPDATE workspace SET repos = $1 WHERE id = $2`, []byte("[]"), testWorkspaceID)
+		dbfx.Exec(t, `DELETE FROM repository WHERE workspace_id=$1 AND default_for_tasks`, testWorkspaceID)
 	})
 }
 
@@ -1560,13 +1560,13 @@ func TestGetDaemonWorkspaceRepos_VersionIgnoresOrderAndDescription(t *testing.T)
 
 	version1 := getReposVersion()
 
-	dbfx.Exec(t, `UPDATE workspace SET repos = $1 WHERE id = $2`, []byte(`[{"url":"git@example.com:team/web.git","description":"frontend"},{"url":"git@example.com:team/api.git","description":"backend"}]`), testWorkspaceID)
+	setHandlerTestWorkspaceRepos(t, []map[string]string{{"url": "git@example.com:team/web.git", "description": "frontend"}, {"url": "git@example.com:team/api.git", "description": "backend"}})
 	version2 := getReposVersion()
 	if version1 != version2 {
 		t.Fatalf("expected repos_version to ignore order/description changes, got %s vs %s", version1, version2)
 	}
 
-	dbfx.Exec(t, `UPDATE workspace SET repos = $1 WHERE id = $2`, []byte(`[{"url":"git@example.com:team/api.git","description":"backend"},{"url":"git@example.com:team/mobile.git","description":"mobile"}]`), testWorkspaceID)
+	setHandlerTestWorkspaceRepos(t, []map[string]string{{"url": "git@example.com:team/api.git", "description": "backend"}, {"url": "git@example.com:team/mobile.git", "description": "mobile"}})
 	version3 := getReposVersion()
 	if strings.EqualFold(version2, version3) {
 		t.Fatalf("expected repos_version to change when URL set changes, got %s", version3)
@@ -2004,7 +2004,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 		INSERT INTO project_resource (
 			project_id, workspace_id, resource_type, resource_ref, position
 		) VALUES ($1, $2, 'github_repo', $3::jsonb, 0)
-	`, projectID, testWorkspaceID, `{"url":"`+projectRepoURL+`","ref":"`+projectRepoRef+`"}`)
+	`, projectID, testWorkspaceID, testRepositoryBinding(t, testWorkspaceID, projectRepoURL, projectRepoRef))
 
 	// Agent + runtime + queued task in this project.
 	var agentID, runtimeID string
@@ -2015,7 +2015,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 
 	issueID := dbfx.Issue(t, "project repo override", testutil.Cols{
 		"project_id": projectID,
-		"priority":   "medium",
+		"priority":   "important_not_urgent",
 		"number":     88001,
 	})
 
@@ -2170,7 +2170,7 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 
 	issueID := dbfx.Issue(t, "no project repos", testutil.Cols{
 		"project_id": projectID,
-		"priority":   "medium",
+		"priority":   "important_not_urgent",
 		"number":     88002,
 	})
 

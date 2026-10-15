@@ -430,6 +430,15 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		if res.Position != nil {
 			position = *res.Position
 		}
+		if _, err = tx.Exec(r.Context(), "SELECT id FROM workspace WHERE id=$1 FOR UPDATE", project.WorkspaceID); err != nil {
+			writeError(w, 500, "锁定工作区失败")
+			return
+		}
+		normalizedRefs[i], err = bindRepository(r.Context(), qtx, project.WorkspaceID, res.ResourceType, normalizedRefs[i])
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
 		row, err := qtx.CreateProjectResource(r.Context(), db.CreateProjectResourceParams{
 			ProjectID:    project.ID,
 			WorkspaceID:  project.WorkspaceID,
@@ -456,6 +465,16 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record project event")
 		return
 	}
+	resourceRows, err = resolveRepositoryResources(r.Context(), qtx, project.WorkspaceID, resourceRows)
+	if err != nil {
+		writeError(w, 500, "解析项目仓库失败")
+		return
+	}
+	repoEvent, err := recordRepositoryChange(r.Context(), qtx, project.WorkspaceID, userID)
+	if err != nil {
+		writeError(w, 500, "记录仓库变更失败")
+		return
+	}
 	resourceEvents := make([]events.Event, 0, len(resourceRows))
 	for _, row := range resourceRows {
 		event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectResourceDomainEvent(
@@ -479,6 +498,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.ResourceCount = int64(len(resourceResp))
 	h.publishEvent(projectEvent)
+	h.publishEvent(repoEvent)
 	for _, event := range resourceEvents {
 		h.publishEvent(event)
 	}

@@ -430,6 +430,7 @@ import {
   WorkspaceMcpServerSchema,
   WorkspaceMcpChecksSchema,
   WorkspaceRepoSchema,
+  RepositoryLocationSchema,
   WorkspaceRepositoryCenterSchema,
   WorkspaceRepoProbeResponseSchema,
   ShareLinkSchema,
@@ -2481,11 +2482,34 @@ export class ApiClient {
   }
 
   /** 更新 workspace 资料与设置。 */
-  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
+  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
     return this.fetch(`/api/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+  }
+
+  async createRepository(workspaceId: string, data: WorkspaceRepo): Promise<WorkspaceRepo> {
+    const raw=await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos`,{method:"POST",body:JSON.stringify(data)});
+    return parseOrThrow(raw,WorkspaceRepoSchema,{endpoint:"POST /api/workspaces/:id/repos"});
+  }
+
+  async updateRepository(workspaceId:string,id:string,data:Partial<WorkspaceRepo>):Promise<WorkspaceRepo>{
+    const raw=await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/${id}`,{method:"PATCH",body:JSON.stringify(data)});
+    return parseOrThrow(raw,WorkspaceRepoSchema,{endpoint:"PATCH /api/workspaces/:id/repos/:repositoryId"});
+  }
+
+  async deleteRepository(workspaceId:string,id:string):Promise<void>{
+    await this.fetch(`/api/workspaces/${workspaceId}/repos/${id}`,{method:"DELETE"});
+  }
+
+  async putRepositoryLocation(workspaceId:string,id:string,data:{daemon_id:string;local_path:string;execution_mode:"worktree"|"in_place"}):Promise<import('../types/workspace').RepositoryLocation>{
+    const raw=await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/${id}/locations`,{method:"PUT",body:JSON.stringify(data)});
+    return parseOrThrow(raw,RepositoryLocationSchema,{endpoint:"PUT /api/workspaces/:id/repos/:repositoryId/locations"});
+  }
+
+  async deleteRepositoryLocation(workspaceId:string,id:string,locationId:string):Promise<void>{
+    await this.fetch(`/api/workspaces/${workspaceId}/repos/${id}/locations/${locationId}`,{method:"DELETE"});
   }
 
   async getWorkspaceRepositoryCenter(workspaceId: string): Promise<import('../types/workspace').WorkspaceRepositoryCenter | null> {

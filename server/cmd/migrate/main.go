@@ -118,6 +118,11 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
+	"520_repository_id":              "repository_id_idx",
+	"521_repository_identity":        "repository_identity_idx",
+	"522_repository_location_id":     "repository_location_id_idx",
+	"523_repository_location_daemon": "repository_location_daemon_idx",
+
 	"498_cooking_favorite_unique":                                              "cooking_favorite_user_recipe_idx",
 	"457_domain_event_outbox_pending_index":                                    "domain_event_outbox_pending_idx",
 	"458_domain_event_outbox_stream_index":                                     "domain_event_outbox_stream_idx",
@@ -691,7 +696,7 @@ func main() {
 	}
 
 	direction := os.Args[1]
-	if direction != "up" && direction != "down" {
+	if direction != "up" && direction != "down" && direction != "accept-repositories" && direction != "restore-repositories" {
 		fmt.Println("Usage: go run ./cmd/migrate <up|down>")
 		os.Exit(1)
 	}
@@ -708,6 +713,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	if direction == "accept-repositories" || direction == "restore-repositories" {
+		if err := repositoryTransition(context.Background(), pool, direction); err != nil {
+			slog.Error("repository migration transition failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	files, err := migrations.Files(direction)
 	if err != nil {
@@ -715,6 +727,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	if len(os.Args) > 2 {
+		if len(os.Args) != 4 || os.Args[2] != "--versions" {
+			slog.Error("expected --versions name,name")
+			os.Exit(1)
+		}
+		selected := map[string]bool{}
+		for _, name := range strings.Split(os.Args[3], ",") {
+			selected[name] = true
+		}
+		filtered := files[:0]
+		for _, file := range files {
+			if selected[migrations.ExtractVersion(file)] {
+				filtered = append(filtered, file)
+				delete(selected, migrations.ExtractVersion(file))
+			}
+		}
+		if len(selected) > 0 {
+			slog.Error("unknown migration version")
+			os.Exit(1)
+		}
+		files = filtered
+	}
 	options := runOptions{
 		Direction:          direction,
 		Files:              files,

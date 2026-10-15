@@ -721,7 +721,10 @@ export function useRealtimeSync(
       },
       project: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+          qc.invalidateQueries({ queryKey: ["workspace-repositories", wsId] });
+        }
       },
       squad: () => {
         const wsId = getCurrentWsId();
@@ -1131,6 +1134,10 @@ export function useRealtimeSync(
 
     const unsubWsUpdated = ws.on("workspace:updated", (p) => {
       applyWorkspaceUpdatedToCache(qc, p as WorkspaceUpdatedPayload);
+      const changedWorkspace=(p as WorkspaceUpdatedPayload)?.workspace?.id;
+      if (!changedWorkspace) return;
+      void qc.invalidateQueries({queryKey:["workspace-repositories",changedWorkspace]});
+      void qc.invalidateQueries({queryKey:["projects",changedWorkspace]});
     });
 
     const unsubWsDeleted = ws.on("workspace:deleted", (p) => {

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -9,10 +8,14 @@ import (
 )
 
 func TestProjectResourcesForClaimIncludesGongfengRepository(t *testing.T) {
+	config, err := normalizeRepositoryConfig(map[string]any{"url": "https://git.code.tencent.com/acme/service/-/tree/release", "provider": "gongfeng", "ref": "release"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	resources, repos := projectResourcesForClaim([]db.ProjectResource{{
 		ID:           pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
 		ResourceType: "gongfeng_repo",
-		ResourceRef:  json.RawMessage(`{"url":"https://git.code.tencent.com/acme/service/-/tree/release","project_path":"acme/service","ref":"release"}`),
+		ResourceRef:  config,
 	}})
 
 	if len(resources) != 1 {

@@ -6,7 +6,7 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales-test/en/common.json";
 import zhSettings from "../../locales/zh-Hans/settings.json";
 
-const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
+const mockCreateRepository = vi.hoisted(() => vi.fn());
 const mockGetGitHubConnectURL = vi.hoisted(() => vi.fn());
 const mockFetchNextPage = vi.hoisted(() => vi.fn());
 const mockNavReplace = vi.hoisted(() => vi.fn());
@@ -102,7 +102,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
-    updateWorkspace: mockUpdateWorkspace,
+    createRepository: mockCreateRepository,
     getGitHubConnectURL: mockGetGitHubConnectURL,
     getWorkspaceRepositoryCenter: vi.fn(async () => ({ repos: workspaceRef.current.repos, projects: [], locations: [] })),
     probeWorkspaceRepo: vi.fn(), resolveWorkspaceRepo: vi.fn(), createProjectResource: vi.fn(), deleteProjectResource: vi.fn(),
@@ -150,7 +150,7 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 
 
 describe("RepositoriesTab repository center", () => {
- beforeEach(() => { vi.clearAllMocks(); githubRef.current.installations=[]; githubRepositoriesRef.current=[]; mockUpdateWorkspace.mockImplementation(async (_id, input) => ({...workspaceRef.current, repos:input.repos})); workspaceRef.current = { id:"workspace-1", name:"Test Workspace", slug:"test-workspace", repos:[{url:"https://github.com/multica-ai/multica", provider:"github", default_branch:"main", test_status:"passed"}] }; membersRef.current=[{user_id:"user-1",role:"owner"}]; });
+ beforeEach(() => { vi.clearAllMocks(); githubRef.current.installations=[]; githubRepositoriesRef.current=[]; mockCreateRepository.mockImplementation(async (_id, input) => ({...workspaceRef.current, repos:[input]})); workspaceRef.current = { id:"workspace-1", name:"Test Workspace", slug:"test-workspace", repos:[{url:"https://github.com/multica-ai/multica", provider:"github", default_branch:"main", test_status:"passed"}] }; membersRef.current=[{user_id:"user-1",role:"owner"}]; });
  it("renders provider connections and the structured repository center", () => { render(<RepositoriesTab />, {wrapper:I18nWrapper}); expect(screen.getAllByText("GitHub").length).toBeGreaterThan(0); expect(screen.getByText("腾讯工蜂")).toBeTruthy(); expect(screen.getByText("Code repositories")).toBeTruthy(); expect(screen.getByText("添加仓库")).toBeTruthy(); });
  it("supports mixed provider data without crashing", () => { workspaceRef.current.repos=[{url:"https://github.com/a/one",provider:"github",test_status:"passed"},{url:"https://git.code.tencent.com/a/two",provider:"gongfeng",test_status:"failed"}]; render(<RepositoriesTab />, {wrapper:I18nWrapper}); expect(screen.getByText("代码仓库")).toBeTruthy(); });
  it("opens the four-section detail drawer", async () => { const user=userEvent.setup(); render(<RepositoriesTab />, {wrapper:I18nWrapper}); await user.click(screen.getByRole("button", {name:/查看.*详情/})); expect(screen.getByText("概览")).toBeTruthy(); expect(screen.getByText("项目绑定")).toBeTruthy(); expect(screen.getByText("运行位置")).toBeTruthy(); });
@@ -179,15 +179,15 @@ describe("RepositoriesTab repository center", () => {
    githubRef.current.installations=[{id:"1",account_login:"acme"}];
    githubRepositoriesRef.current=[{id:42,full_name:"acme/new",clone_url:"https://github.com/acme/new.git",html_url:"https://github.com/acme/new",description:null,private:false,archived:false,default_branch:"develop"}];
    let complete: (value: unknown) => void = () => {};
-   mockUpdateWorkspace.mockImplementation(()=>new Promise(resolve=>{complete=resolve;}));
+   mockCreateRepository.mockImplementation(()=>new Promise(resolve=>{complete=resolve;}));
    const user=userEvent.setup();render(<RepositoriesTab />, {wrapper:I18nWrapper});
    await user.click(screen.getByRole("button",{name:"管理GitHub"}));
    await user.click(screen.getByRole("checkbox"));
    await user.click(screen.getByRole("button",{name:"添加仓库"}));
-   expect(mockUpdateWorkspace).toHaveBeenCalledTimes(1);
-   expect(mockUpdateWorkspace.mock.calls[0]?.[1].repos.at(-1)).toMatchObject({provider:"github",default_branch:"develop"});
+   expect(mockCreateRepository).toHaveBeenCalledTimes(1);
+   expect(mockCreateRepository.mock.calls[0]?.[1]).toMatchObject({provider:"github",default_branch:"develop"});
    expect(screen.getByRole("button",{name:"添加仓库"})).toBeDisabled();
-   complete({...workspaceRef.current,repos:mockUpdateWorkspace.mock.calls[0]?.[1].repos});
+   complete({...workspaceRef.current,repos:mockCreateRepository.mock.calls[0]?.[1].repos});
    await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
  });
 

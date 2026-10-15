@@ -117,7 +117,7 @@ func TestClaimTask_IssueProjectInForeignWorkspace_DegradesToWorkspaceRepos(t *te
 
 	issueID := dbfx.Issue(t, "issue pointing at a foreign project", testutil.Cols{
 		"project_id": foreignProjectID,
-		"priority":   "medium",
+		"priority":   "important_not_urgent",
 		"number":     88101,
 	})
 	dbfx.Task(t, agentID, testutil.Cols{
@@ -221,7 +221,7 @@ func TestClaimTask_ProjectResourceFromForeignWorkspace_IsFilteredOut(t *testing.
 		"project_id":    projectID,
 		"workspace_id":  testWorkspaceID,
 		"resource_type": "github_repo",
-		"resource_ref":  `{"url":"` + localRepoURL + `"}`,
+		"resource_ref":  testRepositoryBinding(t, testWorkspaceID, localRepoURL, ""),
 		"position":      0,
 	})
 	// Same project, foreign workspace_id: only reachable through corrupt data,
@@ -249,7 +249,7 @@ func TestClaimTask_ProjectResourceFromForeignWorkspace_IsFilteredOut(t *testing.
 
 	issueID := dbfx.Issue(t, "issue with a mismatched project resource", testutil.Cols{
 		"project_id": projectID,
-		"priority":   "medium",
+		"priority":   "important_not_urgent",
 		"number":     88102,
 	})
 	dbfx.Task(t, agentID, testutil.Cols{
@@ -404,7 +404,7 @@ func TestBuildClaimedTaskResponse_SourceLoadFailure_PreservesTaskAndEmitsNoConte
 	})
 	issueID := dbfx.Issue(t, "source load failure issue", testutil.Cols{
 		"project_id": projectID,
-		"priority":   "medium",
+		"priority":   "important_not_urgent",
 		"number":     88201,
 	})
 	chatSessionID := dbfx.ChatSession(t, agentID, testutil.Cols{"project_id": projectID})

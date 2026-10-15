@@ -10,6 +10,7 @@ sql:
       - "migrations/508_chat_health_reports.up.sql"
       - "migrations/513_skill_assets.up.sql"
       - "migrations/515_workspace_mcp_checks.up.sql"
+      - "migrations/519_repositories.up.sql"
     gen:
       go:
         package: "db"

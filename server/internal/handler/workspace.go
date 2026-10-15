@@ -126,7 +126,7 @@ type WorkspaceResponse struct {
 
 // workspaceToResponse 把库行转成对外响应；Settings/Repos 存的是 JSONB，这里
 // 尽力解成通用结构体，解不出就保持零值再兜底为空对象/空数组。
-func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
+func (h *Handler) workspaceToResponse(ctx context.Context, w db.Workspace) (WorkspaceResponse, error) {
 	var settings any
 	if w.Settings != nil {
 		json.Unmarshal(w.Settings, &settings)
@@ -134,12 +134,9 @@ func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	if settings == nil {
 		settings = map[string]any{}
 	}
-	var repos any
-	if w.Repos != nil {
-		json.Unmarshal(w.Repos, &repos)
-	}
-	if repos == nil {
-		repos = []any{}
+	repos, err := repositoryConfigs(ctx, h.Queries, w.ID, false)
+	if err != nil {
+		return WorkspaceResponse{}, err
 	}
 	return WorkspaceResponse{
 		ID:          uuidToString(w.ID),
@@ -153,7 +150,7 @@ func (h *Handler) workspaceToResponse(w db.Workspace) WorkspaceResponse {
 		AvatarURL:   h.resolveAvatarURLPtr(textToPtr(w.AvatarUrl)),
 		CreatedAt:   timestampToString(w.CreatedAt),
 		UpdatedAt:   timestampToString(w.UpdatedAt),
-	}
+	}, nil
 }
 
 // MemberResponse 是成员关系（谁以什么角色属于哪个 workspace）的对外形态。
@@ -195,7 +192,11 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]WorkspaceResponse, len(workspaces))
 	for i, ws := range workspaces {
-		resp[i] = h.workspaceToResponse(ws)
+		resp[i], err = h.workspaceToResponse(r.Context(), ws)
+		if err != nil {
+			writeError(w, 500, "读取仓库失败")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -215,7 +216,12 @@ func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "workspace not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.workspaceToResponse(ws))
+	response, responseErr := h.workspaceToResponse(r.Context(), ws)
+	if responseErr != nil {
+		writeError(w, 500, "读取仓库失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // CreateWorkspaceRequest 是创建 workspace 的入参。name 允许任意文本
@@ -358,7 +364,12 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	h.notifyDaemonWorkspacesChanged(userID)
 
 	slog.Info("workspace created", append(logger.RequestAttrs(r), "workspace_id", wsID, "name", ws.Name, "slug", ws.Slug)...)
-	writeJSON(w, http.StatusCreated, h.workspaceToResponse(ws))
+	response, responseErr := h.workspaceToResponse(r.Context(), ws)
+	if responseErr != nil {
+		writeError(w, 500, "读取仓库失败")
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 // UpdateWorkspaceRequest 是更新 workspace 的入参。各字段均为指针以区分
@@ -371,90 +382,6 @@ type UpdateWorkspaceRequest struct {
 	Repos       any     `json:"repos"`
 	IssuePrefix *string `json:"issue_prefix"`
 	AvatarURL   *string `json:"avatar_url"`
-}
-
-// workspaceRepoRef 描述一个与 workspace 绑定的代码仓库引用。URL 必填且必须是
-// 合法 git 地址；Provider 为 gongfeng 时额外要求项目路径与地址一致、默认分支
-// 已选，Ref 未给则沿用默认分支。
-type workspaceRepoRef struct {
-	URL              string `json:"url"`
-	Description      string `json:"description,omitempty"`
-	Provider         string `json:"provider,omitempty"`
-	ProjectPath      string `json:"project_path,omitempty"`
-	DefaultBranch    string `json:"default_branch,omitempty"`
-	Ref              string `json:"ref,omitempty"`
-	HeadCommit       string `json:"head_commit,omitempty"`
-	ConnectionStatus string `json:"connection_status,omitempty"`
-	SyncStatus       string `json:"sync_status,omitempty"`
-	TestStatus       string `json:"test_status,omitempty"`
-	LastTestedAt     string `json:"last_tested_at,omitempty"`
-	LastSyncedAt     string `json:"last_synced_at,omitempty"`
-}
-
-// validateAndNormalizeWorkspaceRepos 校验并规范化整份 repos 数组：
-// 逐条去空格、URL 合法性/工蜂项目路径一致性校验、给工蜂仓库补齐 Provider 与
-// Ref，最后按 URL 去重。返回可直接入库的 JSON。任何一条不合法即整体失败。
-func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-
-	var repos []workspaceRepoRef
-	if err := json.Unmarshal(raw, &repos); err != nil {
-		return nil, fmt.Errorf("repos must be an array of repository objects: %w", err)
-	}
-
-	normalized := make([]workspaceRepoRef, 0, len(repos))
-	seen := make(map[string]struct{}, len(repos))
-	for i, repo := range repos {
-		repo.URL = strings.TrimSpace(repo.URL)
-		repo.Description = strings.TrimSpace(repo.Description)
-		repo.Provider = strings.TrimSpace(repo.Provider)
-		repo.ProjectPath = strings.Trim(strings.TrimSpace(repo.ProjectPath), "/")
-		repo.DefaultBranch = strings.TrimSpace(repo.DefaultBranch)
-		repo.Ref = strings.TrimSpace(repo.Ref)
-		repo.HeadCommit = strings.TrimSpace(repo.HeadCommit)
-		repo.ConnectionStatus = strings.TrimSpace(repo.ConnectionStatus)
-		repo.SyncStatus = strings.TrimSpace(repo.SyncStatus)
-		repo.TestStatus = strings.TrimSpace(repo.TestStatus)
-		repo.LastTestedAt = strings.TrimSpace(repo.LastTestedAt)
-		repo.LastSyncedAt = strings.TrimSpace(repo.LastSyncedAt)
-		if repo.URL == "" {
-			return nil, fmt.Errorf("repos[%d]: url is required", i)
-		}
-		if !isValidGitRepoURL(repo.URL) {
-			return nil, fmt.Errorf("repos[%d]: url must be a valid http(s) or ssh git URL", i)
-		}
-		projectPath, gongfengErr := parseGongfengRepositoryURL(repo.URL)
-		isGongfeng := gongfengErr == nil || strings.EqualFold(repo.Provider, "gongfeng")
-		if isGongfeng {
-			if gongfengErr != nil {
-				return nil, fmt.Errorf("repos[%d]: %w", i, gongfengErr)
-			}
-			if repo.ProjectPath == "" || repo.ProjectPath != projectPath {
-				return nil, fmt.Errorf("repos[%d]: 工蜂项目路径必须与仓库地址一致", i)
-			}
-			if repo.DefaultBranch == "" {
-				return nil, fmt.Errorf("repos[%d]: 工蜂仓库必须选择默认分支", i)
-			}
-			repo.Provider = "gongfeng"
-			if repo.Ref == "" {
-				repo.Ref = repo.DefaultBranch
-			}
-		}
-		if _, ok := seen[repo.URL]; ok {
-			continue
-		}
-		seen[repo.URL] = struct{}{}
-		normalized = append(normalized, repo)
-	}
-
-	out, err := json.Marshal(normalized)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // UpdateWorkspace 更新 workspace 的可变字段（名称/描述/上下文/设置/仓库/
@@ -495,12 +422,8 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		params.Settings = s
 	}
 	if req.Repos != nil {
-		reposJSON, err := validateAndNormalizeWorkspaceRepos(req.Repos)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		params.Repos = reposJSON
+		writeError(w, 400, "请通过仓库管理接口修改仓库")
+		return
 	}
 	if req.IssuePrefix != nil {
 		prefix, ok := normalizeIssuePrefix(*req.IssuePrefix)
@@ -533,43 +456,19 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	if req.Repos != nil {
-		var current []byte
-		if err := tx.QueryRow(r.Context(), "SELECT repos FROM workspace WHERE id=$1 FOR UPDATE", idUUID).Scan(&current); err != nil {
-			writeError(w, 500, "读取仓库失败")
-			return
-		}
-		projects, err := qtx.ListProjects(r.Context(), db.ListProjectsParams{WorkspaceID: idUUID})
-		if err != nil {
-			writeError(w, 500, "读取项目失败")
-			return
-		}
-		ids := make([]pgtype.UUID, len(projects))
-		for i, p := range projects {
-			ids[i] = p.ID
-		}
-		resources, err := qtx.ListProjectResourcesForProjects(r.Context(), ids)
-		if err != nil {
-			writeError(w, 500, "读取项目绑定失败")
-			return
-		}
-		scoped := resources[:0]
-		for _, res := range resources {
-			if res.WorkspaceID == idUUID {
-				scoped = append(scoped, res)
-			}
-		}
-		if checkRemovedRepositoryBindings(current, params.Repos, scoped) {
-			writeError(w, 409, "仓库仍有项目绑定，请先解绑")
-			return
-		}
-	}
+
 	ws, err := qtx.UpdateWorkspace(r.Context(), params)
 	if err != nil {
 		slog.Warn("update workspace failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to update workspace: "+err.Error())
 		return
 	}
+	repos, err := repositoryConfigs(r.Context(), qtx, idUUID, false)
+	if err != nil {
+		writeError(w, 500, "读取仓库失败")
+		return
+	}
+	ws.Repos, _ = json.Marshal(repos)
 	workspaceEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildWorkspaceDomainEvent(
 		protocol.EventWorkspaceUpdated, ws, "member", requestUserID(r), map[string]any{"action": "updated"},
 	))
@@ -597,7 +496,12 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, h.workspaceToResponse(ws))
+	response, responseErr := h.workspaceToResponse(r.Context(), ws)
+	if responseErr != nil {
+		writeError(w, 500, "读取仓库失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // ListMembers 返回 workspace 的成员列表（仅成员关系，不含用户资料）。调用者

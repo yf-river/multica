@@ -53,7 +53,9 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 }
 
 const deleteWorkspace = `-- name: DeleteWorkspace :exec
-WITH ws_installations AS (
+WITH cleared_repositories AS (DELETE FROM repository WHERE workspace_id=$1),
+cleared_repository_locations AS (DELETE FROM repository_location WHERE workspace_id=$1),
+ws_installations AS (
     SELECT id FROM channel_installation WHERE workspace_id = $1
 ),
 ws_sessions AS (
@@ -439,9 +441,8 @@ UPDATE workspace SET
     description = COALESCE($3, description),
     context = COALESCE($4, context),
     settings = COALESCE($5, settings),
-    repos = COALESCE($6, repos),
-    issue_prefix = COALESCE($7, issue_prefix),
-    avatar_url = COALESCE($8, avatar_url),
+    issue_prefix = COALESCE($6, issue_prefix),
+    avatar_url = COALESCE($7, avatar_url),
     updated_at = now()
 WHERE id = $1
 RETURNING id, name, slug, description, settings, created_at, updated_at, context, repos, issue_prefix, issue_counter, avatar_url, attribution_fail_closed
@@ -453,7 +454,6 @@ type UpdateWorkspaceParams struct {
 	Description pgtype.Text `json:"description"`
 	Context     pgtype.Text `json:"context"`
 	Settings    []byte      `json:"settings"`
-	Repos       []byte      `json:"repos"`
 	IssuePrefix pgtype.Text `json:"issue_prefix"`
 	AvatarUrl   pgtype.Text `json:"avatar_url"`
 }
@@ -465,7 +465,6 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		arg.Description,
 		arg.Context,
 		arg.Settings,
-		arg.Repos,
 		arg.IssuePrefix,
 		arg.AvatarUrl,
 	)

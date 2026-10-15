@@ -224,7 +224,7 @@ func normalizeWorkspaceRepos(repos []RepoData) []RepoData {
 			continue
 		}
 		seen[url] = struct{}{}
-		normalized = append(normalized, RepoData{URL: url, Description: repo.Description})
+		normalized = append(normalized, RepoData{URL: url, Description: repo.Description, Ref: repo.Ref})
 	}
 	return normalized
 }
@@ -235,7 +235,7 @@ func workspaceReposVersion(repos []RepoData) string {
 		if repo.URL == "" {
 			continue
 		}
-		urls = append(urls, repo.URL)
+		urls = append(urls, repo.URL+"\x00"+repo.Ref)
 	}
 	sort.Strings(urls)
 	sum := sha256.Sum256([]byte(strings.Join(urls, "\n")))
@@ -710,7 +710,12 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		"runtimes": resp,
 	})
 
-	repoResp := workspaceReposResponse(req.WorkspaceID, ws.Repos, ws.Settings)
+	rawRepos, repoErr := repositoryTaskConfig(r.Context(), h.Queries, ws.ID)
+	if repoErr != nil {
+		writeError(w, 500, "读取仓库失败")
+		return
+	}
+	repoResp := workspaceReposResponse(req.WorkspaceID, rawRepos, ws.Settings)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"runtimes":      resp,
@@ -893,7 +898,12 @@ func (h *Handler) GetDaemonWorkspaceRepos(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	writeJSON(w, http.StatusOK, workspaceReposResponse(workspaceID, ws.Repos, ws.Settings))
+	rawRepos, repoErr := repositoryTaskConfig(r.Context(), h.Queries, ws.ID)
+	if repoErr != nil {
+		writeError(w, 500, "读取仓库失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceReposResponse(workspaceID, rawRepos, ws.Settings))
 }
 
 // setRuntimeOffline flips a runtime offline, recording the daemon's reason when

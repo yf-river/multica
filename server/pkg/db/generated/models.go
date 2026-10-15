@@ -1728,6 +1728,33 @@ type QuickAction struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Repository struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	Identity        string             `json:"identity"`
+	Config          []byte             `json:"config"`
+	DefaultForTasks bool               `json:"default_for_tasks"`
+	Revision        int32              `json:"revision"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RepositoryLocation struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	RepositoryID  pgtype.UUID        `json:"repository_id"`
+	DaemonID      string             `json:"daemon_id"`
+	LocalPath     string             `json:"local_path"`
+	ExecutionMode string             `json:"execution_mode"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type RepositoryMigrationBackup struct {
+	Kind string      `json:"kind"`
+	ID   pgtype.UUID `json:"id"`
+	Data []byte      `json:"data"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

@@ -77,6 +77,8 @@ export type ProjectResourceType = "github_repo" | "gongfeng_repo" | "local_direc
 
 /** github_repo 类型的资源引用。 */
 export interface GithubRepoResourceRef {
+  repository_id?: string;
+  project_ref?: string;
   url: string;
   ref?: string;
   default_branch_hint?: string;
@@ -84,6 +86,8 @@ export interface GithubRepoResourceRef {
 
 /** gongfeng_repo 类型的资源引用。 */
 export interface GongfengRepoResourceRef {
+  repository_id?: string;
+  project_ref?: string;
   url: string;
   project_path?: string;
   resource_kind?: string;
@@ -97,8 +101,8 @@ export interface GongfengRepoResourceRef {
  *   会在 `waiting_local_directory` 状态里等待。改动落在用户的工作副本上。
  * - `worktree`: 每个任务在 runtime 的 workspace 里为那个仓库建自己的 git
  *   worktree，任务可并发执行，并以分支形式交付成果而不是改动工作副本。
- *   同一会话的每个任务共享那条分支——`agent/<agent>/<issue>`——使后续
- *   任务接续上一轮的工作；没有会话背景的任务得到 `agent/<agent>/<task>`。
+ *   同一会话的每个任务共享那条分支——`feature/<agent>/<issue>`——使后续
+ *   任务接续上一轮的工作；没有会话背景的任务得到 `feature/<agent>/<task>`。
  *   是否接续由仓库里的一条归属记录决定，而不是看分支名，因此用户自己建的
  *   同名分支绝不会被采纳。
  *

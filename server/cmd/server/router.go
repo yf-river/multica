@@ -1396,6 +1396,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// connect/disconnect。
 					r.Get("/github/installations", h.ListGitHubInstallations)
 					r.Get("/repos/details", h.GetWorkspaceRepositoryCenter)
+					r.Get("/repos", h.ListRepositories)
 					// VCS 连接（Forgejo / Gitea / GitLab）——与 GitHub 安装同理对成员可见；
 					// connect/disconnect 由下面管理组把关。
 					r.Get("/vcs/connections", h.ListVCSConnections)
@@ -1418,6 +1419,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
+					r.Post("/repos", h.CreateRepository)
+					r.Patch("/repos/{repositoryId}", h.UpdateRepository)
+					r.Delete("/repos/{repositoryId}", h.DeleteRepository)
+					r.Put("/repos/{repositoryId}/locations", h.PutRepositoryLocation)
+					r.Delete("/repos/{repositoryId}/locations/{locationId}", h.DeleteRepositoryLocation)
 					r.Post("/repos/probe", h.ProbeWorkspaceRepo)
 					r.Post("/repos/resolve", h.ResolveWorkspaceRepo)
 					r.Post("/members", h.CreateInvitation)

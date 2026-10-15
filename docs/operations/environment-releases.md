@@ -1,16 +1,26 @@
 # 固定联调与生产更新
 
-开发任务在独立 worktree 修改代码，在固定 int 验证功能，再将同一份运行产物应用到 prod。Git 保存源码历史；两个环境各自保留当前运行文件，更新期间临时多留一份，验证成功后删除旧文件。不维护发布包仓库，也不强制 MR 审批。
+并发开发任务在独立 worktree 修改代码，在固定 int 验证功能，按授权将成果汇入并推送主分支，再将同一份运行产物应用到 prod。Git 保存源码历史；两个环境各自保留当前运行文件，更新期间临时多留一份，验证成功后删除旧文件。不维护发布包仓库，也不强制 MR 审批。
 
 ## 开发入口
 
 候选必须是干净 Git 提交。提交、推送、MR 及部署按用户授权执行；明确要求先 review 或仅本地修改时停在对应边界。SOP 使用平台准备的任务分支，不额外建立分支。
+
+主分支为 `personal-studio-upstream`，交付目标为 `origin/personal-studio-upstream`；`upstream` 用于同步上游。任务分支用于隔离并发修改，最终交付归入主分支。默认流程如下：
+
+1. 在任务分支整合最新主分支和最新生产提交，完成修改与必要检查。
+2. 从干净提交准备固定 int，验证本次功能并记录验收结果。
+3. 按授权将已验收提交快进合入主分支，推送到 `origin/personal-studio-upstream` 并核对远端提交。若主分支已前进、无法快进，先整合新增提交，再准备候选并重新验收；不得强推覆盖他人修改。
+4. 提交生产更新请求，由发布器应用同一份 int 程序。发布成功后清理任务 worktree，再清理已合入的临时分支。
+
+主分支汇入和推送由开发 Agent 执行，发布器只检查生产基线与候选身份，不自动合并或推送 Git。操作主 checkout 前确认其工作区状态，保留其他任务的未提交修改。授权不足时完成其余独立工作，再说明需要的具体授权；用户明确仅本地提交或仅部署时，按指定范围执行并说明主分支同步状态。默认交付不创建 PR、标签或 GitHub Release；下述 `release` 命令用于更新固定 int/prod 环境。
 
 ```bash
 # 在固定发布控制目录调用，源码来自任务 worktree。
 pnpm --dir /data/ida/multica release int --source /absolute/task/worktree
 # 上一步返回候选编号。开发 Agent 在 int 验证本次功能后记录结果。
 pnpm --dir /data/ida/multica release accept <candidate> --evidence /absolute/acceptance.json
+# 按上述流程完成主分支汇入、推送和远端核对后，请求生产更新。
 pnpm --dir /data/ida/multica release request <candidate>
 pnpm --dir /data/ida/multica release request-status <candidate>
 ```
@@ -49,10 +59,22 @@ int 中的任务不能同步更新自身。由生产开发 Agent 调用 int，�
 
 ## 清理与排查
 
-生产成功记录持久化后清理旧运行文件和对应任务 worktree。目录必须无运行进程引用、仍指向该次已发布提交、没有未保存成果；非构建类忽略文件也会阻止删除。普通主 checkout、其他任务目录及分支保留。Daemon 已正常回收 worktree 时视为清理完成。
+生产成功记录持久化后，发布器清理旧运行文件和对应任务 worktree。目录必须无运行进程引用、仍指向该次已发布提交、没有未保存成果；非构建类忽略文件也会阻止删除。发布器保留普通主 checkout、其他任务目录及分支。Daemon 已正常回收 worktree 时视为清理完成。
+
+开发 Agent 在发布成功、任务 worktree 已回收后，确认临时分支全部提交已进入主分支，且分支未被其他任务使用，再按授权删除本次临时分支；曾推送的临时分支同时清理远端引用。发布完成前保留任务分支，发布器仍需用它核对候选身份。
 
 清理失败不回滚生产，记录 `cleanup_error`。重试只清理本次任务成果，不触碰后来发布的恢复目录；任务提交仍在已发布历史中时也可以回收。执行 `pnpm release cleanup <candidate>` 重试。当前缓存按目录限制 1 GiB，超出后在构建结束时删除；Web/API 日志超过 64 MiB 时，在服务重新启动前保留末尾 16 MiB。共享 pnpm/Go 缓存不自动清理，以免影响其他项目。
 
 请求与日志位于 `.run/publish-requests/`，当前候选位于 `.run/candidate.json`。`pnpm release status` 查看记录，`pnpm release verify` 检查真实环境身份，`pnpm release verify-logs --env int|prod` 检查本轮致命日志。恢复入口 `pnpm release restore --env int|prod` 仅在临时旧目录仍存在时有效，必须从被恢复运行环境之外执行。
 
 平台提示来源可通过运行环境根目录的 `runtime-instructions.json` 排查：包含提示指纹、技能名称及父目录规则候选路径，不保存凭据或提示正文，也不证明所有候选文件实际被读取。任务触发消息见 `server/internal/daemon/prompt.go`，平台运行规则见 `server/internal/daemon/execenv/runtime_config_sections.go`。
+
+## 仓库配置与执行目录
+
+设置 → 代码仓库管理工作区的统一仓库清单。项目资源引用仓库 ID，可以覆盖该项目的开发分支；取消项目关联不会删除仓库。仍被项目引用的仓库不能删除。平台连接用于列出和探测远端仓库，本机 Git 凭据决定服务器能否拉取，两者分别显示。
+
+仓库详情的「分支」设置真实开发分支；留空时采用远端默认分支。「提供给未指定项目仓库的任务」控制通用任务的仓库范围，项目关联不会自动扩大这个范围。「运行位置」配置持有 Git checkout 的运行时机器和绝对路径。新任务从该开发分支的最新可比较提交创建独立 `feature/` 分支，不复制基础目录中的未提交文件。当地与远端分支分叉时拒绝启动新任务，先整合提交；已有任务续接自己的分支。
+
+项目有多个仓库时，资源顺序中第一个在当前机器配置了位置的仓库是工作目录；其他仓库可按需 checkout。显式关联的普通本地目录优先决定工作目录。服务器保存路径配置，Daemon 在运行时验证实际目录、远端身份与分支。
+
+发布器执行新旧程序目录之间新增的迁移文件，不重放已有历史迁移。首次统一仓库迁移在数据库中保存旧项目资源和工作区仓库配置，基础浏览器验收完成前暂停仓库及其项目关联写入；失败时，`migrate restore-repositories` 恢复旧引用后再启动旧程序。验收完成执行 `migrate accept-repositories` 开放写入，此后拒绝用迁移前备份覆盖新配置。两个命令由发布器在服务切换和验收路径中调用，不能替代常规数据库备份。

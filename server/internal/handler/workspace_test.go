@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -773,39 +772,9 @@ VALUES ($1, $2, 'owner')
 		}
 	})
 
-	t.Run("normalizes valid repos", func(t *testing.T) {
-		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
-			"repos": []map[string]any{
-				{
-					"url":         "  https://github.com/multica-ai/multica.git  ",
-					"description": "  main monorepo  ",
-				},
-				{
-					"url": "https://github.com/multica-ai/multica.git",
-				},
-				{
-					"url": "git@github.com:multica-ai/multica-cloud.git",
-				},
-			},
-		})
-		req = withURLParam(req, "id", wsID)
-		testutil.Call(t, testHandler.UpdateWorkspace, req).Want(http.StatusOK)
-
-		var raw []byte
-		dbfx.QueryRow(t, `SELECT repos FROM workspace WHERE id = $1`, wsID).Scan(&raw)
-		var repos []workspaceRepoRef
-		if err := json.Unmarshal(raw, &repos); err != nil {
-			t.Fatalf("decode repos: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Fatalf("expected duplicate URL to be deduped, got %d repos: %s", len(repos), raw)
-		}
-		if repos[0].URL != "https://github.com/multica-ai/multica.git" || repos[0].Description != "main monorepo" {
-			t.Fatalf("first repo not normalized: %+v", repos[0])
-		}
-		if repos[1].URL != "git@github.com:multica-ai/multica-cloud.git" {
-			t.Fatalf("second repo not preserved: %+v", repos[1])
-		}
+	t.Run("legacy whole-list writes are rejected", func(t *testing.T) {
+		req := withURLParam(newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{"repos": []map[string]any{{"url": "https://github.com/test/repo"}}}), "id", wsID)
+		testutil.Call(t, testHandler.UpdateWorkspace, req).Want(http.StatusBadRequest)
 	})
 }
 

@@ -50,7 +50,6 @@ UPDATE workspace SET
     description = COALESCE(sqlc.narg('description'), description),
     context = COALESCE(sqlc.narg('context'), context),
     settings = COALESCE(sqlc.narg('settings'), settings),
-    repos = COALESCE(sqlc.narg('repos'), repos),
     issue_prefix = COALESCE(sqlc.narg('issue_prefix'), issue_prefix),
     avatar_url = COALESCE(sqlc.narg('avatar_url'), avatar_url),
     updated_at = now()
@@ -96,7 +95,9 @@ SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
 -- tables the DELETE below sweeps — they are not cleaned up implicitly. Remove
 -- their workspace-owned rows here so they commit or roll back atomically with
 -- the workspace row.
-WITH ws_installations AS (
+WITH cleared_repositories AS (DELETE FROM repository WHERE workspace_id=$1),
+cleared_repository_locations AS (DELETE FROM repository_location WHERE workspace_id=$1),
+ws_installations AS (
     SELECT id FROM channel_installation WHERE workspace_id = $1
 ),
 ws_sessions AS (

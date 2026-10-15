@@ -25,7 +25,7 @@ func newRepoRegistryTestCmd(serverURL string) *cobra.Command {
 }
 
 func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
-	initialRepos := []workspaceRepo{{URL: "https://git.example.com/web.git"}}
+	initialRepos := []workspaceRepo{{ID: "web", URL: "https://git.example.com/web.git"}}
 	var patched []workspaceRepo
 	patchCount := 0
 
@@ -33,16 +33,15 @@ func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
 			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/workspaces/ws-1/repos":
 			patchCount++
-			var body struct {
-				Repos []workspaceRepo `json:"repos"`
-			}
+			var body workspaceRepo
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode patch body: %v", err)
+				t.Fatal(err)
 			}
-			patched = body.Repos
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
+			patched = append(initialRepos, body)
+			initialRepos = patched
+			json.NewEncoder(w).Encode(body)
 		default:
 			http.NotFound(w, r)
 		}
@@ -72,22 +71,21 @@ func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
 }
 
 func TestRunRepoAddUpdatesDescriptionForExistingRepo(t *testing.T) {
-	initialRepos := []workspaceRepo{{URL: "https://git.example.com/web.git", Description: "old"}}
+	initialRepos := []workspaceRepo{{ID: "web", URL: "https://git.example.com/web.git", Description: "old"}}
 	var patched []workspaceRepo
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
 			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
-			var body struct {
-				Repos []workspaceRepo `json:"repos"`
-			}
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1/repos/web":
+			var body workspaceRepo
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode patch body: %v", err)
+				t.Fatal(err)
 			}
-			patched = body.Repos
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
+			initialRepos[0].Description = body.Description
+			patched = initialRepos
+			json.NewEncoder(w).Encode(initialRepos[0])
 		default:
 			http.NotFound(w, r)
 		}
@@ -122,9 +120,9 @@ func TestRunRepoAddRejectsDescriptionForMultipleRepos(t *testing.T) {
 
 func TestRunRepoRemoveDeletesExistingRepos(t *testing.T) {
 	initialRepos := []workspaceRepo{
-		{URL: "https://git.example.com/web.git"},
-		{URL: "https://git.example.com/api.git"},
-		{URL: "https://git.example.com/mobile.git"},
+		{ID: "web", URL: "https://git.example.com/web.git"},
+		{ID: "api", URL: "https://git.example.com/api.git"},
+		{ID: "mobile", URL: "https://git.example.com/mobile.git"},
 	}
 	var patched []workspaceRepo
 
@@ -132,15 +130,17 @@ func TestRunRepoRemoveDeletesExistingRepos(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
 			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
-			var body struct {
-				Repos []workspaceRepo `json:"repos"`
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/workspaces/ws-1/repos/"):
+			id := strings.TrimPrefix(r.URL.Path, "/api/workspaces/ws-1/repos/")
+			var remaining []workspaceRepo
+			for _, repo := range initialRepos {
+				if repo.ID != id {
+					remaining = append(remaining, repo)
+				}
 			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode patch body: %v", err)
-			}
-			patched = body.Repos
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
+			initialRepos = remaining
+			patched = remaining
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -168,7 +168,7 @@ func TestRunRepoRemoveRejectsMissingRepoWithoutPatch(t *testing.T) {
 				ID:    "ws-1",
 				Repos: []workspaceRepo{{URL: "https://git.example.com/web.git"}},
 			})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
+		case r.Method != http.MethodGet:
 			patchCount++
 			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1"})
 		default:

@@ -2092,3 +2092,112 @@ func TestIsolatedPrepareKeepsTheReadOnlyBranchDrop(t *testing.T) {
 		t.Error("a turn that changed nothing left its branch behind")
 	}
 }
+
+func TestConfiguredBaseExcludesDirtyCheckoutAndFollowsCommittedBranch(t *testing.T) {
+	remote := newTestRepo(t)
+	root := t.TempDir()
+	gitRun(t, root, "clone", remote, "repo")
+	repo := filepath.Join(root, "repo")
+	gitRun(t, repo, "config", "user.name", "Test User")
+	gitRun(t, repo, "config", "user.email", "test@test.com")
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "uncommitted user change\n")
+	writeFile(t, filepath.Join(repo, "untracked.txt"), "private unfinished work\n")
+	writeFile(t, filepath.Join(remote, "new.txt"), "remote commit\n")
+	gitRun(t, remote, "add", "new.txt")
+	gitRun(t, remote, "commit", "-m", "new remote base")
+	expected := gitRun(t, remote, "rev-parse", "HEAD")
+	wt, err := PrepareLocalWorktree(LocalWorktreeParams{LocalPath: repo, BaseRef: "main", RepositoryURL: remote, EnvRoot: t.TempDir(), AgentName: "test", TaskID: "committed-base"}, worktreeTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gitRun(t, wt.Path, "rev-parse", wt.BaseCommit+"^") != expected {
+		t.Fatalf("base=%s want %s", wt.BaseCommit, expected)
+	}
+	if readFile(t, filepath.Join(wt.Path, "tracked.txt")) != "original\n" {
+		t.Fatal("dirty source leaked")
+	}
+	if _, err = os.Stat(filepath.Join(wt.Path, "untracked.txt")); !os.IsNotExist(err) {
+		t.Fatal("untracked source leaked")
+	}
+	if readFile(t, filepath.Join(repo, "tracked.txt")) != "uncommitted user change\n" {
+		t.Fatal("user checkout changed")
+	}
+	if readFile(t, filepath.Join(wt.Path, "new.txt")) != "remote commit\n" {
+		t.Fatal("remote update missing")
+	}
+}
+
+func TestConfiguredBaseRejectsDivergenceAndMissingBranch(t *testing.T) {
+	remote := newTestRepo(t)
+	root := t.TempDir()
+	gitRun(t, root, "clone", remote, "repo")
+	repo := filepath.Join(root, "repo")
+	gitRun(t, repo, "config", "user.name", "Test User")
+	gitRun(t, repo, "config", "user.email", "test@test.com")
+	writeFile(t, filepath.Join(repo, "local.txt"), "local")
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-m", "local")
+	writeFile(t, filepath.Join(remote, "remote.txt"), "remote")
+	gitRun(t, remote, "add", ".")
+	gitRun(t, remote, "commit", "-m", "remote")
+	if _, err := resolveCommittedBase(repo, "main", remote); err == nil || !strings.Contains(err.Error(), "diverged") {
+		t.Fatalf("expected divergence: %v", err)
+	}
+	if _, err := resolveCommittedBase(repo, "missing", remote); err == nil {
+		t.Fatal("missing branch silently accepted")
+	}
+}
+
+func TestConfiguredBaseParallelTasksAndContinuation(t *testing.T) {
+	remote := newTestRepo(t)
+	root := t.TempDir()
+	gitRun(t, root, "clone", remote, "repo")
+	repo := filepath.Join(root, "repo")
+	gitRun(t, repo, "config", "user.name", "Test User")
+	gitRun(t, repo, "config", "user.email", "test@test.com")
+	params := LocalWorktreeParams{LocalPath: repo, RepositoryURL: remote, EnvRoot: t.TempDir(), AgentName: "test", TaskID: "first", WorkspaceID: testBranchOwner.WorkspaceID, AgentID: testBranchOwner.AgentID, ConversationID: "first-issue-id", ConversationKey: "issue-first"}
+	first, err := PrepareLocalWorktree(params, worktreeTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondParams := params
+	secondParams.TaskID = "second"
+	secondParams.ConversationKey = "issue-second"
+	secondParams.ConversationID = "second-issue-id"
+	secondParams.EnvRoot = t.TempDir()
+	second, err := PrepareLocalWorktree(secondParams, worktreeTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Path == second.Path || first.Branch == second.Branch {
+		t.Fatal("concurrent tasks share a checkout or branch")
+	}
+	writeFile(t, filepath.Join(first.Path, "result.txt"), "first task work\n")
+	if _, err = os.Stat(filepath.Join(second.Path, "result.txt")); !os.IsNotExist(err) {
+		t.Fatal("concurrent task sees another task's uncommitted file")
+	}
+	finalizeOK(t, second)
+	outcome := finalizeOK(t, first)
+	if outcome.Branch == "" {
+		t.Fatal("task work not retained")
+	}
+	writeFile(t, filepath.Join(remote, "later.txt"), "new base\n")
+	gitRun(t, remote, "add", ".")
+	gitRun(t, remote, "commit", "-m", "later base")
+	params.TaskID = "continuation"
+	params.EnvRoot = t.TempDir()
+	continued, err := PrepareLocalWorktree(params, worktreeTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !continued.Continued || continued.Branch != first.Branch {
+		t.Fatal("continuation did not reuse task branch")
+	}
+	if readFile(t, filepath.Join(continued.Path, "result.txt")) != "first task work\n" {
+		t.Fatal("continuation lost task changes")
+	}
+	if _, err = os.Stat(filepath.Join(continued.Path, "later.txt")); !os.IsNotExist(err) {
+		t.Fatal("continuation unexpectedly replaced its base")
+	}
+	finalizeOK(t, continued)
+}

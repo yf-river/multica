@@ -39,6 +39,8 @@ The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
 
 ## Development Delivery
 
+- 本项目主分支为 `personal-studio-upstream`，交付远端为 `origin`；`upstream` 用于同步上游。并发任务使用独立 worktree 和任务分支，最终成果按授权汇入并推送主分支。用户要求交付推送时，以主分支为目标；明确要求仅推送任务分支时按指定范围执行。
+- 默认交付顺序为：整合最新主分支与生产变更 → int 验收 → 按授权汇入并推送主分支 → 同一份已验收程序更新生产 → 清理任务 worktree 和已合入的临时分支。不默认创建 PR、标签或 GitHub Release；具体操作见 `docs/operations/environment-releases.md`。
 - Ordinary feature requests include implementation, focused verification, deployment to existing `int`, feature acceptance, application of the same tested runtime files to `prod`, and real browser acceptance. Explicit requests for analysis only, local changes only, or no deployment override this default.
 - Read `docs/operations/environment-releases.md` before choosing an environment or starting services. Current addresses and identity belong to deployment records and private runtime configuration. Missing int configuration is a blocker, not permission to use prod as a test environment.
 - Only an explicit user request for independent local development permits `MULTICA_LOCAL_DEV=1` on the relevant command. Do not persist this opt-in in environment files.
@@ -255,7 +257,7 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 ## Commits and Releases
 
 - Commits should be atomic and use conventional prefixes: `feat(scope)`, `fix(scope)`, `refactor(scope)`, `docs`, `test(scope)`, `chore(scope)`.
-- Instance deployment uses immutable local release packages and does not require a public tag or a merge to main. Public CLI releases use a `v0.x.x` tag on main and `release.yml` to publish binaries and the Homebrew tap.
+- Instance deployment follows the fixed int/prod workflow above; Git history and the main branch are the delivery record. Public CLI releases use a `v0.x.x` tag on main and `release.yml` to publish binaries and the Homebrew tap.
 - Bump patch by default unless the user specifies a version.
 
 ## Domain Reminders

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,6 +25,9 @@ func repositoryIdentity(raw string) string {
 		return ""
 	}
 	path := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	if strings.EqualFold(u.Hostname(), "git.code.tencent.com") {
+		path = strings.TrimSuffix(strings.SplitN(path, "/-/", 2)[0], ".git")
+	}
 	if path == "" {
 		return ""
 	}
@@ -62,7 +64,7 @@ func (h *Handler) GetWorkspaceRepositoryCenter(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	ws, err := h.Queries.GetWorkspace(r.Context(), id)
+	_, err := h.Queries.GetWorkspace(r.Context(), id)
 	if err != nil {
 		writeError(w, 404, "workspace not found")
 		return
@@ -79,6 +81,21 @@ func (h *Handler) GetWorkspaceRepositoryCenter(w http.ResponseWriter, r *http.Re
 	resources, err := h.Queries.ListProjectResourcesForProjects(r.Context(), ids)
 	if err != nil {
 		writeError(w, 500, "读取项目资源失败")
+		return
+	}
+	resources, err = resolveRepositoryResources(r.Context(), h.Queries, id, resources)
+	if err != nil {
+		writeError(w, 500, "解析仓库关联失败")
+		return
+	}
+	repos, err := repositoryConfigs(r.Context(), h.Queries, id, false)
+	if err != nil {
+		writeError(w, 500, "读取仓库失败")
+		return
+	}
+	configuredLocations, err := h.Queries.ListRepositoryLocations(r.Context(), id)
+	if err != nil {
+		writeError(w, 500, "读取运行位置失败")
 		return
 	}
 	out := make([]repositoryProject, 0, len(projects))
@@ -126,36 +143,5 @@ func (h *Handler) GetWorkspaceRepositoryCenter(w http.ResponseWriter, r *http.Re
 		writeError(w, 500, "读取运行位置失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"repos": json.RawMessage(ws.Repos), "projects": out, "locations": locations})
-}
-
-// checkRemovedRepositoryBindings runs inside the workspace update transaction.
-func checkRemovedRepositoryBindings(current, next []byte, resources []db.ProjectResource) bool {
-	var before, after []workspaceRepoRef
-	if json.Unmarshal(current, &before) != nil || json.Unmarshal(next, &after) != nil {
-		return false
-	}
-	kept := map[string]bool{}
-	for _, repo := range after {
-		kept[repositoryIdentity(repo.URL)] = true
-	}
-	removed := map[string]bool{}
-	for _, repo := range before {
-		key := repositoryIdentity(repo.URL)
-		if key != "" && !kept[key] {
-			removed[key] = true
-		}
-	}
-	for _, res := range resources {
-		if res.ResourceType != "github_repo" && res.ResourceType != "gongfeng_repo" {
-			continue
-		}
-		var ref struct {
-			URL string `json:"url"`
-		}
-		if json.Unmarshal(res.ResourceRef, &ref) == nil && removed[repositoryIdentity(ref.URL)] {
-			return true
-		}
-	}
-	return false
+	writeJSON(w, 200, map[string]any{"repos": repos, "projects": out, "locations": locations, "configured_locations": configuredLocations})
 }

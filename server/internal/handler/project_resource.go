@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -93,6 +92,16 @@ type UpdateProjectResourceRequest struct {
 func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (json.RawMessage, error) {
 	if len(ref) == 0 {
 		return nil, errors.New("resource_ref is required")
+	}
+	if resourceType == "github_repo" || resourceType == "gongfeng_repo" {
+		var binding map[string]any
+		if json.Unmarshal(ref, &binding) == nil && stringField(binding, "repository_id") != "" {
+			var id pgtype.UUID
+			if err := id.Scan(stringField(binding, "repository_id")); err != nil {
+				return nil, errors.New("repository_id 无效")
+			}
+			return ref, nil
+		}
 	}
 	switch resourceType {
 	case "github_repo":
@@ -506,6 +515,9 @@ func (h *Handler) ListProjectResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resources, err := h.Queries.ListProjectResources(r.Context(), project.ID)
+	if err == nil {
+		resources, err = resolveRepositoryResources(r.Context(), h.Queries, project.WorkspaceID, resources)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list project resources")
 		return
@@ -585,6 +597,11 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	normalizedRef, err = bindRepository(r.Context(), qtx, project.WorkspaceID, req.ResourceType, normalizedRef)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 	resource, err := qtx.CreateProjectResource(r.Context(), db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
 		WorkspaceID:  project.WorkspaceID,
@@ -602,11 +619,22 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to create project resource")
 		return
 	}
+	resolved, err := resolveRepositoryResources(r.Context(), qtx, project.WorkspaceID, []db.ProjectResource{resource})
+	if err != nil {
+		writeError(w, 500, "解析项目仓库失败")
+		return
+	}
+	resource = resolved[0]
 	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectResourceDomainEvent(
 		protocol.EventProjectResourceCreated, resource, "member", userID, nil,
 	))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to record project resource event")
+		return
+	}
+	repoEvent, repoEventErr := recordRepositoryChange(r.Context(), qtx, project.WorkspaceID, userID)
+	if repoEventErr != nil {
+		writeError(w, 500, "记录仓库变更失败")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -616,6 +644,7 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 
 	resp := projectResourceToResponse(resource)
 	h.publishEvent(event)
+	h.publishEvent(repoEvent)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -771,6 +800,15 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	if _, err = tx.Exec(r.Context(), "SELECT id FROM workspace WHERE id=$1 FOR UPDATE", project.WorkspaceID); err != nil {
+		writeError(w, 500, "锁定工作区失败")
+		return
+	}
+	nextRef, err = bindRepository(r.Context(), qtx, project.WorkspaceID, existing.ResourceType, nextRef)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 	updated, err := qtx.UpdateProjectResource(r.Context(), db.UpdateProjectResourceParams{
 		ID:          existing.ID,
 		ResourceRef: nextRef,
@@ -785,11 +823,22 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to update project resource")
 		return
 	}
+	resolved, err := resolveRepositoryResources(r.Context(), qtx, project.WorkspaceID, []db.ProjectResource{updated})
+	if err != nil {
+		writeError(w, 500, "解析项目仓库失败")
+		return
+	}
+	updated = resolved[0]
 	event, err := service.RecordDurableEventTx(r.Context(), qtx, buildProjectResourceDomainEvent(
 		protocol.EventProjectResourceUpdated, updated, "member", userID, nil,
 	))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to record project resource event")
+		return
+	}
+	repoEvent, repoEventErr := recordRepositoryChange(r.Context(), qtx, project.WorkspaceID, userID)
+	if repoEventErr != nil {
+		writeError(w, 500, "记录仓库变更失败")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -799,6 +848,7 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 
 	resp := projectResourceToResponse(updated)
 	h.publishEvent(event)
+	h.publishEvent(repoEvent)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -889,11 +939,17 @@ func (h *Handler) DeleteProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to record project resource event")
 		return
 	}
+	repoEvent, repoEventErr := recordRepositoryChange(r.Context(), qtx, project.WorkspaceID, userID)
+	if repoEventErr != nil {
+		writeError(w, 500, "记录仓库变更失败")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project resource")
 		return
 	}
 	h.publishEvent(event)
+	h.publishEvent(repoEvent)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -982,7 +1038,38 @@ func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, wor
 			if resErr != nil {
 				return claimProjectContext{}, fmt.Errorf("list project resources: %w", resErr)
 			}
+			rows, resErr = resolveRepositoryResources(ctx, h.Queries, workspaceID, rows)
+			if resErr != nil {
+				return claimProjectContext{}, resErr
+			}
 			out.Resources, out.Repos = projectResourcesForClaim(rows)
+			locations, locationErr := h.Queries.ListRepositoryLocations(ctx, workspaceID)
+			if locationErr != nil {
+				return claimProjectContext{}, locationErr
+			}
+			// 每台机器以项目排序中的第一个已配置仓库作为主目录；其余仓库按需检出。
+			assigned := map[string]bool{}
+			for _, resource := range rows {
+				if resource.ResourceType == "local_directory" {
+					var local localDirectoryRef
+					if err := json.Unmarshal(resource.ResourceRef, &local); err != nil {
+						return claimProjectContext{}, err
+					}
+					assigned[local.DaemonID] = true
+				}
+			}
+			for _, row := range rows {
+				var config map[string]any
+				_ = json.Unmarshal(row.ResourceRef, &config)
+				for _, location := range locations {
+					if assigned[location.DaemonID] || stringField(config, "repository_id") != uuidToString(location.RepositoryID) {
+						continue
+					}
+					assigned[location.DaemonID] = true
+					local, _ := json.Marshal(map[string]any{"local_path": location.LocalPath, "daemon_id": location.DaemonID, "execution_mode": location.ExecutionMode, "base_ref": stringField(config, "ref"), "repository_url": stringField(config, "url")})
+					out.Resources = append(out.Resources, ProjectResourceData{ID: uuidToString(location.ID), ResourceType: "local_directory", ResourceRef: local, Label: row.Label.String})
+				}
+			}
 		case errors.Is(err, pgx.ErrNoRows):
 			// 引用过期/被删/指向别处：降级为 workspace 背景。
 		default:
@@ -994,28 +1081,19 @@ func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, wor
 		return out, nil
 	}
 
-	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
+	raw, err := repositoryTaskConfig(ctx, h.Queries, workspaceID)
 	if err != nil {
-		return claimProjectContext{}, fmt.Errorf("get workspace: %w", err)
+		return claimProjectContext{}, err
 	}
-	if ws.Repos != nil {
-		var repos []RepoData
-		if jsonErr := json.Unmarshal(ws.Repos, &repos); jsonErr != nil {
-			// 库里 JSON 损坏不是瞬时问题：在这里让认领失败，会把整个 workspace 的
-			// 认领都卡死，直到有人修复该行。改为降级成「没有仓库」并留下日志线索。
-			slog.Error("claim project context: workspace repos are not valid JSON; claiming without repos",
-				"workspace_id", uuidToString(workspaceID), "error", jsonErr)
-		} else if len(repos) > 0 {
-			out.Repos = repos
-		}
+	if err = json.Unmarshal(raw, &out.Repos); err != nil {
+		return claimProjectContext{}, err
 	}
 	return out, nil
 }
 
 // projectResourcesForClaim 把资源行映射成认领协议里的线上结构，并把仓库类资源提升
 // 进 repo 列表，让 `multica repo checkout` 和 meta-skill 把它们当成任务仓库渲染。
-// github_repo 直接取 url；gongfeng_repo 经 canonicalGongfengCloneURL 拼出可克隆
-// 地址后再进列表。
+// 使用统一仓库解析后的 URL 和实际开发分支，不改写克隆协议。
 func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData, []RepoData) {
 	if len(rows) == 0 {
 		return nil, nil
@@ -1038,7 +1116,7 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 			Label:        label,
 		})
 		switch row.ResourceType {
-		case "github_repo":
+		case "github_repo", "gongfeng_repo":
 			var payload struct {
 				URL string `json:"url"`
 				Ref string `json:"ref,omitempty"`
@@ -1046,37 +1124,8 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 			if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 				repos = append(repos, RepoData{URL: payload.URL, Ref: strings.TrimSpace(payload.Ref)})
 			}
-		case "gongfeng_repo":
-			var payload struct {
-				URL         string `json:"url"`
-				ProjectPath string `json:"project_path"`
-				Ref         string `json:"ref,omitempty"`
-				Branch      string `json:"branch,omitempty"`
-			}
-			if json.Unmarshal(row.ResourceRef, &payload) == nil {
-				if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
-					repos = append(repos, RepoData{
-						URL: cloneURL,
-						Ref: firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref)),
-					})
-				}
-			}
+
 		}
 	}
 	return resources, repos
-}
-
-// canonicalGongfengCloneURL 把 gongfeng_repo 拼成规范的可克隆 https URL：去掉
-// project_path 首尾斜杠与 .git 后缀差异，统一为 https://git.code.tencent.com/<path>.git。
-// project_path 为空时先从 rawURL 反推（gongfengProjectPathFromURL）；仍反推不出就
-// 返回空串，表示该行无法形成仓库。
-func canonicalGongfengCloneURL(rawURL, projectPath string) string {
-	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
-	if projectPath == "" {
-		projectPath = gongfengProjectPathFromURL(rawURL)
-	}
-	if projectPath == "" {
-		return ""
-	}
-	return "https://git.code.tencent.com/" + strings.TrimSuffix(projectPath, ".git") + ".git"
 }

@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +74,9 @@ type LocalWorktreeParams struct {
 	// LocalPath 是用户配置的目录。它可以是仓库根，也可以是仓库里任意子目录；
 	// worktree 总是覆盖整个仓库，而 agent 的 cwd 落在 worktree 内与之对应的子目录。
 	LocalPath string
+	// BaseRef 指定提交基线；配置后不捕获用户目录的未提交修改。
+	BaseRef       string
+	RepositoryURL string
 	// EnvRoot 是 daemon 自有的任务 env root。worktree 建在它里面，普通 env-root
 	// GC 就会顺带回收它。
 	EnvRoot string
@@ -316,25 +320,45 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 			"(worktree mode needs at least one commit; make an initial commit or switch the resource back to in_place): %w", gitRoot, err)
 	}
 
-	// 在快照之前就先拒绝「大得无法忠实重现」的未跟踪内容：快照会把那些字节一个
-	// 不落地写进用户自己的对象库，对一屋子未被忽略的构建产物目录来说不能这么随手
-	// 干。
-	if err := checkUntrackedReplayable(gitRoot, logger); err != nil {
-		return nil, err
+	var userState string
+	var plan taskBranchPlan
+	if params.BaseRef != "" || params.RepositoryURL != "" {
+		if _, err = runGit(gitRoot, "check-ref-format", "--branch", params.BaseRef); params.BaseRef != "" && err != nil {
+			return nil, fmt.Errorf("invalid development branch: %w", err)
+		}
+		local, localErr := runGitTrimmed(gitRoot, "rev-parse", "--verify", "refs/heads/"+params.BaseRef)
+		if localErr == nil {
+			headSHA = local
+		}
+		plan = resolveTaskBranch(gitRoot, params, headSHA, logger)
+		if !plan.continues {
+			if params.BaseRef == "" {
+				params.BaseRef, err = remoteDefaultBranch(gitRoot, params.RepositoryURL)
+				if err != nil {
+					return nil, err
+				}
+			}
+			headSHA, err = resolveCommittedBase(gitRoot, params.BaseRef, params.RepositoryURL)
+			if err != nil {
+				return nil, err
+			}
+			plan = resolveTaskBranch(gitRoot, params, headSHA, logger)
+		}
+		userState = headSHA
+		if plan.continues && plan.priorState != "" {
+			userState = plan.priorState
+		}
+	} else {
+		if err := checkUntrackedReplayable(gitRoot, logger); err != nil {
+			return nil, err
+		}
+		userState, err = captureUserSnapshot(gitRoot, params.EnvRoot, headSHA, logger)
+		if err != nil {
+			return nil, fmt.Errorf("execenv: could not capture user directory: %w", err)
+		}
+		plan = resolveTaskBranch(gitRoot, params, headSHA, logger)
 	}
 
-	// 描述「用户目录在本任务眼中」的提交——已跟踪改动与未跟踪文件合为一棵树。
-	// 下面所有对用户状态的推理都经由这一个对象。
-	userState, err := captureUserSnapshot(gitRoot, params.EnvRoot, headSHA, logger)
-	if err != nil {
-		// 关闭即失败。此模式的承诺是 agent 推理的是用户真实拥有的代码；静默地从
-		// HEAD 开始会让它 review 一棵用户从未见过的树，还信心满满地汇报。
-		// 一个不启动的任务可以重来；一个基于错误来源作答的任务则不能。
-		return nil, fmt.Errorf("execenv: could not capture the uncommitted changes in %q, "+
-			"so the worktree would not match what you have on disk: %w", gitRoot, err)
-	}
-
-	plan := resolveTaskBranch(gitRoot, params, headSHA, logger)
 	actualBranch, createdBranch, err := addLocalWorktree(gitRoot, worktreePath, plan, params.TaskID)
 	if err != nil {
 		return nil, err
@@ -1102,7 +1126,7 @@ func planForConversationBranch(gitRoot, name, headSHA string, owner branchOwner,
 	}
 	// 用户已合并它：分支 tip 不携带任何 HEAD 没有的东西，从它续接会让任务滞留于
 	// 用户自己提交的身后。
-	if _, mergedErr := runGit(gitRoot, "merge-base", "--is-ancestor", name, "HEAD"); mergedErr == nil {
+	if _, mergedErr := runGit(gitRoot, "merge-base", "--is-ancestor", name, headSHA); mergedErr == nil {
 		plan.reset = true
 		return plan, true
 	}
@@ -1501,8 +1525,80 @@ func isMulticaSidecarPath(rel string) bool {
 	return false
 }
 
-// runGit 在 dir 里运行 git 并返回合并后的输出。调用方要读输出里的 git 错误文本，
-// 所以 stdout 与 stderr 保持合并。
+// 只读取提交并更新远端跟踪引用，不切换或重置用户 checkout。
+// 仓库的本机路径必须指向登记的远端；SSH 与 HTTPS 地址按仓库身份比较。
+func matchingRemote(root, repositoryURL string) (string, error) {
+	remotes, err := runGitTrimmed(root, "remote")
+	if err != nil {
+		return "", err
+	}
+	identity := func(raw string) string {
+		raw = strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(raw), "/"), ".git")
+		if strings.Contains(raw, "://") {
+			if u, e := url.Parse(raw); e == nil {
+				raw = strings.ToLower(u.Hostname()) + "/" + strings.Trim(u.Path, "/")
+			}
+		} else if at := strings.Index(raw, "@"); at >= 0 {
+			raw = strings.Replace(raw[at+1:], ":", "/", 1)
+		}
+		if strings.HasPrefix(strings.ToLower(raw), "github.com/") {
+			raw = strings.ToLower(raw)
+		}
+		return raw
+	}
+	for _, name := range strings.Fields(remotes) {
+		value, e := runGitTrimmed(root, "remote", "get-url", name)
+		if e == nil && identity(value) == identity(repositoryURL) {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("configured repository has no matching Git remote: %s", repositoryURL)
+}
+
+func remoteDefaultBranch(root, repositoryURL string) (string, error) {
+	remote, err := matchingRemote(root, repositoryURL)
+	if err != nil {
+		return "", err
+	}
+	out, err := runGitEnv(root, []string{"GIT_TERMINAL_PROMPT=0"}, "ls-remote", "--symref", remote, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("read remote default branch: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "ref:" && fields[2] == "HEAD" && strings.HasPrefix(fields[1], "refs/heads/") {
+			return strings.TrimPrefix(fields[1], "refs/heads/"), nil
+		}
+	}
+	return "", errors.New("remote has no default branch; configure a development branch")
+}
+
+func resolveCommittedBase(root, branch, repositoryURL string) (string, error) {
+	remote, err := matchingRemote(root, repositoryURL)
+	if err != nil {
+		return "", err
+	}
+	ref := "refs/remotes/" + remote + "/" + branch
+	if _, err = runGitEnv(root, []string{"GIT_TERMINAL_PROMPT=0"}, "fetch", "--no-tags", remote, "+refs/heads/"+branch+":"+ref); err != nil {
+		return "", fmt.Errorf("fetch development branch %s: %w", branch, err)
+	}
+	remoteSHA, err := runGitTrimmed(root, "rev-parse", "--verify", ref)
+	if err != nil {
+		return "", err
+	}
+	localSHA, err := runGitTrimmed(root, "rev-parse", "--verify", "refs/heads/"+branch)
+	if err != nil {
+		return remoteSHA, nil
+	}
+	if _, err = runGit(root, "merge-base", "--is-ancestor", localSHA, remoteSHA); err == nil {
+		return remoteSHA, nil
+	}
+	if _, err = runGit(root, "merge-base", "--is-ancestor", remoteSHA, localSHA); err == nil {
+		return localSHA, nil
+	}
+	return "", fmt.Errorf("local and remote development branch %s diverged; integrate commits before starting a new task", branch)
+}
+
 func runGit(dir string, args ...string) (string, error) {
 	return runGitEnv(dir, nil, args...)
 }

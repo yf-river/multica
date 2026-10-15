@@ -33,6 +33,8 @@ type localDirectoryRef struct {
 	DaemonID      string `json:"daemon_id"`
 	Label         string `json:"label,omitempty"`
 	ExecutionMode string `json:"execution_mode,omitempty"`
+	BaseRef       string `json:"base_ref,omitempty"`
+	RepositoryURL string `json:"repository_url,omitempty"`
 }
 
 // localDirectoryAssignment 是一个任务的 local_directory 资源解析后的视图：daemon

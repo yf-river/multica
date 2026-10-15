@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -203,9 +204,11 @@ func TestProjectResourceAcceptsSSHRepoURLs(t *testing.T) {
 			if err := json.Unmarshal(created.ResourceRef, &ref); err != nil {
 				t.Fatalf("decode resource_ref: %v", err)
 			}
-			if ref.URL != tc.url {
+			if repositoryIdentity(ref.URL) != repositoryIdentity(tc.url) {
 				t.Errorf("ref.url = %q, want %q", ref.URL, tc.url)
 			}
+			r := withURLParams(newRequest("DELETE", "/api/projects/"+project.ID+"/resources/"+created.ID, nil), "id", project.ID, "resourceId", created.ID)
+			testutil.Call(t, testHandler.DeleteProjectResource, r).Want(http.StatusNoContent)
 		})
 	}
 }
@@ -596,7 +599,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 			workspace_id, creator_type, creator_id, title, status, priority,
 			project_id, number, position
 		)
-		VALUES ($1, 'member', $2, 'Project update stats breadcrumb', 'done', 'none', $3, $4, 0)
+		VALUES ($1, 'member', $2, 'Project update stats breadcrumb', 'done', 'not_important_not_urgent', $3, $4, 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID, project.ID, number).Scan(&issueID); err != nil {
 		t.Fatalf("create project issue: %v", err)

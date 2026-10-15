@@ -3044,6 +3044,7 @@ export const EMPTY_SKILL_IMPORT_RESULT: SkillImportResult = {
  * `transport` 保持普通字符串（而非枚举），新后端的未知值仍能解析——UI 有默认分支。
  */
 export const WorkspaceRepoSchema: z.ZodType<WorkspaceRepo> = z.object({
+  id:z.string().optional(), revision:z.number().optional(),default_for_tasks:z.boolean().optional(),
   url: z.string(),
   description: z.string().optional(),
   provider: z.string().optional(),
@@ -3185,7 +3186,9 @@ export const EMPTY_JOIN_SHARE_LINK_RESPONSE: {
 
 export * from "./schemas-life";
 
+export const RepositoryLocationSchema = z.object({id:z.string(),workspace_id:z.string(),repository_id:z.string(),daemon_id:z.string(),local_path:z.string(),execution_mode:z.enum(["worktree","in_place"])});
 export const WorkspaceRepositoryCenterSchema = z.object({
+ configured_locations:z.array(RepositoryLocationSchema).default([]),
  repos: z.array(WorkspaceRepoSchema),
  projects: z.array(z.object({id:z.string().min(1),title:z.string(),resources:z.array(z.object({
   id:z.string(), project_id:z.string(), workspace_id:z.string(), resource_type:z.string(), resource_ref:z.record(z.string(),z.unknown()),

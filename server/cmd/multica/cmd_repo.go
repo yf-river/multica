@@ -85,6 +85,7 @@ func init() {
 
 // workspaceRepo 是工作区注册表里一条仓库记录。
 type workspaceRepo struct {
+	ID          string `json:"id,omitempty"`
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 }
@@ -139,19 +140,6 @@ func fetchRepoWorkspace(ctx context.Context, client *cli.APIClient, workspaceID 
 	var ws repoWorkspaceResponse
 	if err := client.GetJSON(ctx, "/api/workspaces/"+workspaceID, &ws); err != nil {
 		return repoWorkspaceResponse{}, fmt.Errorf("get workspace: %w", err)
-	}
-	if ws.Repos == nil {
-		ws.Repos = []workspaceRepo{}
-	}
-	return ws, nil
-}
-
-// patchWorkspaceRepos 用 PATCH /api/workspaces/{id} 把整份新注册表写回（server 端
-// 整体替换语义），并返回刷新后的工作区。
-func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID string, repos []workspaceRepo) (repoWorkspaceResponse, error) {
-	var ws repoWorkspaceResponse
-	if err := client.PatchJSON(ctx, "/api/workspaces/"+workspaceID, map[string]any{"repos": repos}, &ws); err != nil {
-		return repoWorkspaceResponse{}, fmt.Errorf("update workspace repos: %w", err)
 	}
 	if ws.Repos == nil {
 		ws.Repos = []workspaceRepo{}
@@ -258,7 +246,19 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(added) > 0 || len(updated) > 0 {
-		ws, err = patchWorkspaceRepos(ctx, client, workspaceID, repos)
+		for _, repo := range added {
+			var saved workspaceRepo
+			if err = client.PostJSON(ctx, "/api/workspaces/"+workspaceID+"/repos", repo, &saved); err != nil {
+				return err
+			}
+		}
+		for _, repo := range updated {
+			var saved workspaceRepo
+			if err = client.PatchJSON(ctx, "/api/workspaces/"+workspaceID+"/repos/"+repo.ID, map[string]any{"description": repo.Description}, &saved); err != nil {
+				return err
+			}
+		}
+		ws, err = fetchRepoWorkspace(ctx, client, workspaceID)
 		if err != nil {
 			return err
 		}
@@ -337,7 +337,12 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("repository not found in workspace registry: %s", strings.Join(missing, ", "))
 	}
 
-	ws, err = patchWorkspaceRepos(ctx, client, workspaceID, repos)
+	for _, repo := range removed {
+		if err = client.DeleteJSON(ctx, "/api/workspaces/"+workspaceID+"/repos/"+repo.ID); err != nil {
+			return err
+		}
+	}
+	ws, err = fetchRepoWorkspace(ctx, client, workspaceID)
 	if err != nil {
 		return err
 	}

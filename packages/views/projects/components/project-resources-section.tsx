@@ -20,7 +20,7 @@ import {
   useUpdateProjectResource,
 } from "@multica/core/projects";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCurrentWorkspace } from "@multica/core/paths";
+import { repositoryCenterOptions,repositoryProvider } from "@multica/core/workspace/repository-queries";
 import type {
   GithubRepoResourceRef,
   GongfengRepoResourceRef,
@@ -46,6 +46,7 @@ import {
 } from "./local-directory-mode-dialog";
 import { localDirectoryLabel } from "./local-directory-label";
 import { useT } from "../../i18n";
+import { ProjectRepositoryBranch } from "../../settings/components/repository-configuration";
 import { githubShortLabel } from "../../common/github-url";
 
 // 项目详情侧栏里的「资源」小节：列出并管理挂在项目上的外部仓库 / 本地目录 /
@@ -101,7 +102,8 @@ type ModeDialogState = {
 export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
-  const workspace = useCurrentWorkspace();
+  const {data:repositoryCenter}=useQuery(repositoryCenterOptions(wsId));
+  const workspace={repos:repositoryCenter?.repos??[]};
   const [open, setOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
@@ -118,7 +120,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const deleteResource = useDeleteProjectResource(wsId, projectId);
 
   const attachedUrls = new Set(
-    resources.filter(isGithubRef).map((r) => r.resource_ref.url),
+    resources.filter(r=>isGithubRef(r)||isGongfengRef(r)).map((r) => (r.resource_ref as GithubRepoResourceRef).url),
   );
 
   const repoQuery = repoSearch.trim().toLowerCase();
@@ -128,8 +130,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const handleAttach = async (url: string) => {
     try {
       await createResource.mutateAsync({
-        resource_type: "github_repo",
-        resource_ref: { url },
+        resource_type: repositoryProvider(workspace.repos.find(r=>r.url===url)??{url})==="gongfeng"?"gongfeng_repo":"github_repo",
+        resource_ref: { url, repository_id:workspace.repos.find(r=>r.url===url)?.id },
       });
       toast.success(t(($) => $.resources.toast_attached));
     } catch (err) {
@@ -251,7 +253,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
           {resources.length > 0 && (
             <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
               {resources.map((resource) => (
-                <ResourceRow
+                <div key={resource.id}><ResourceRow
                   key={resource.id}
                   resource={resource}
                   onRemove={() => handleRemove(resource)}
@@ -267,6 +269,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                     });
                   }}
                 />
+                <ProjectRepositoryBranch key={resource.id+":"+String((resource.resource_ref as GithubRepoResourceRef).project_ref)} wsId={wsId} projectId={projectId} resource={resource}/>
+                </div>
               ))}
             </div>
           )}

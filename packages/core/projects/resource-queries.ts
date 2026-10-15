@@ -46,6 +46,8 @@ export function useCreateProjectResource(wsId: string, projectId: string) {
       );
     },
     onSettled: () => {
+      void qc.invalidateQueries({queryKey:["workspace-repositories",wsId]});
+      void qc.invalidateQueries({queryKey:["workspaces"]});
       qc.invalidateQueries({
         queryKey: projectResourceKeys.list(wsId, projectId),
       });
@@ -79,6 +81,8 @@ export function useUpdateProjectResource(wsId: string, projectId: string) {
       );
     },
     onSettled: () => {
+      void qc.invalidateQueries({queryKey:["workspace-repositories",wsId]});
+      void qc.invalidateQueries({queryKey:["workspaces"]});
       qc.invalidateQueries({
         queryKey: projectResourceKeys.list(wsId, projectId),
       });
@@ -120,6 +124,8 @@ export function useDeleteProjectResource(wsId: string, projectId: string) {
       }
     },
     onSettled: () => {
+      void qc.invalidateQueries({queryKey:["workspace-repositories",wsId]});
+      void qc.invalidateQueries({queryKey:["workspaces"]});
       qc.invalidateQueries({
         queryKey: projectResourceKeys.list(wsId, projectId),
       });
