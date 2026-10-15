@@ -1065,12 +1065,12 @@ func TestBuildPromptCommentTriggered(t *testing.T) {
 		commentContent,
 		"Focus on THIS comment",
 		commentID,
-		"multica issue comment add " + issueID + " --parent " + commentID,
-		"do NOT reuse --parent values from previous turns",
+		"Your final answer is automatically saved as a reply",
+		"this turn’s triggering comment",
 		// MUL-5442 (2026-08-06): with the generic no-reply rule retired,
 		// the reply command is framed as a plain imperative again — the
 		// squad leader's `no_action` block states its own exception.
-		"Post your reply as a comment",
+		"Your final answer is automatically saved as a reply",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q\n---\n%s", want, prompt)
@@ -1153,7 +1153,7 @@ func TestBuildPromptCommentTriggeredByMember(t *testing.T) {
 	if strings.Contains(prompt, "MUST respond") {
 		t.Fatalf("prompt should not contain unconditional \"MUST respond\" language\n---\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Post your reply as a comment") {
+	if !strings.Contains(prompt, "Your final answer is automatically saved as a reply") {
 		t.Fatalf("prompt should carry the imperative reply command\n---\n%s", prompt)
 	}
 }
@@ -5567,7 +5567,7 @@ func TestFreshSessionMayHelp(t *testing.T) {
 // leader prompt and pins the exception's scope relation (MUL-5442 #6493
 // review): the no_action rule and the reply imperative appear in the same
 // prompt, so the imperative must carry the carve-out itself — a bare
-// unconditional "Post your reply as a comment" anywhere in a leader prompt
+// unconditional "Your final answer is automatically saved as a reply" anywhere in a leader prompt
 // re-opens the contradiction the carve-out exists to close.
 func TestBuildPromptSquadLeaderReplyCommandCarvesOutNoAction(t *testing.T) {
 	t.Parallel()

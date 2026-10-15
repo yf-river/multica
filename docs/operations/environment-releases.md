@@ -48,3 +48,11 @@ reset 只允许操作 int 数据库，执行迁移、写入固定种子并重新
 | `ops/multica-release-watchdog.*` | watchdog 的 systemd service/timer 模板 |
 
 缺少 int 配置时停止并报告阻塞，不把 prod 当联调环境，也不创建第三套预览环境。
+
+## 任务执行与提示来源
+
+普通任务直接使用已有目标 checkout，最终回答由完成接口原子写回任务评论；已经通过 CLI 回复的运行不重复写入。代码位置可以作为文字引用。下载附件和 ZIP 只在交付需要时生成。完成目标及必要验证后，Agent 可以设置 `done`；明确需要人工验收时使用 `in_review`，部分完成使用 `in_progress`。
+
+发布切换在 Daemon drain 后，将位于 Multica 源码树内的任务根目录配置到同级 `.multica-runtime/<profile>`。新任务在这个目录执行，避免继承 Multica 仓库规则。原目录及未提交代码保留；旧任务续跑使用新会话，并收到原工作目录的位置。绑定项目目录的任务继续读取目标项目规则。发布失败恢复原 profile 配置。
+
+每次运行在环境根目录生成 `runtime-instructions.json`，记录运行时、平台提示摘要、技能列表、条件块和祖先规则候选路径。它用于定位提示来源，不包含提示正文或凭据，也不代表所有候选文件都被模型读取。每轮触发消息仍由 `server/internal/daemon/prompt.go` 生成，平台固定提示来自 `runtime_config_sections.go`，目标仓库及运行时用户配置由各运行时原生读取。

@@ -196,11 +196,11 @@ func TestStatusRuleIsFactJudgmentAtBothMoments(t *testing.T) {
 		// No assignee gate: the judgment applies to whoever is running.
 		"whoever the assignee is",
 		// Delivery lands in in_review and the ceiling keeps `done` human.
-		"`done` stays human",
+		"necessary verification are complete → `done`",
 		// Assigned deliverables must not be misread as status-neutral
 		// research: stage barriers and parent notifications key off the
 		// delivery write.
-		"stage barriers and parent notifications depend on that signal",
+		"Use `in_review` only when an explicit human acceptance or approval is still required",
 		// Invariant 1: conversation does not move the board. Ancillary is
 		// defined by OUTPUT (no part of the issue's own deliverable), not by
 		// activity words like "research" that also describe real work.
@@ -521,7 +521,7 @@ func TestProtocolHeadingInInstructionsGetsNoLeaderBrief(t *testing.T) {
 			t.Fatalf("ordinary-agent brief leaked leader-only content %q\n---\n%s", banned, out)
 		}
 	}
-	if !strings.Contains(out, "**Post your final results as a comment — this step is mandatory**") {
+	if !strings.Contains(out, "Return your final answer normally") {
 		t.Fatalf("ordinary-agent brief lost the unconditional reply obligation\n---\n%s", out)
 	}
 }
@@ -579,8 +579,8 @@ func TestChatOutputDoesNotRequireIssueComment(t *testing.T) {
 	}
 
 	for _, banned := range []string{
-		"Final results MUST be delivered via `multica issue comment add`",
-		"The user does NOT see your terminal output",
+		"Your final answer is automatically saved as an issue comment",
+		"The user Explicit CLI replies are supported",
 		"do not call `multica issue comment add`",
 		"unless the user explicitly asks",
 	} {
@@ -601,8 +601,8 @@ func TestChatOutputDoesNotRequireIssueComment(t *testing.T) {
 // this rule. Runs both the legacy and slim paths.
 func TestOutputForbidsMidRunProgressComments(t *testing.T) {
 	wantPhrases := []string{
-		"Post exactly ONE comment per run",
-		"Do NOT post progress updates",
+		"Provide one final result",
+		"Use run progress events for brief progress updates",
 	}
 	issueCtxs := map[string]TaskContextForEnv{
 		"assignment": {IssueID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},

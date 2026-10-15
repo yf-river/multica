@@ -6553,6 +6553,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var instructions string
 	agentName = task.Agent.Name
 	skills = task.Agent.Skills
+	if task.SquadID == "" && !taskIsSquadLeader(task) {
+		filtered := make([]SkillData, 0, len(skills))
+		for _, skill := range skills {
+			if skill.Source == "builtin" && skill.Name == "multica-squads" {
+				continue
+			}
+			filtered = append(filtered, skill)
+		}
+		skills = filtered
+	}
 	instructions = task.Agent.Instructions
 
 	// 准备隔离执行环境。
@@ -7121,6 +7131,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
+	if err := execenv.WriteRuntimeProvenance(env.RootDir, env.WorkDir, provider, runtimeBrief, taskCtx); err != nil {
+		d.logger.Warn("write runtime instruction provenance failed", "error", err)
+	}
 	// 豁免轮次在用户目录里运行、却没为它排队，所以现在可能正有一个兄弟编码任务
 	// 在往同一棵树里写。这是它光凭自己的上下文推不出来的唯一一件事——告诉它。
 	// worktree 模式被排除：那里的树是本任务私有的 checkout。
@@ -7135,6 +7148,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		promptOptions = append(promptOptions, WithWorktreeReplayConflicts(env.LocalWorktree.ReplayConflicts))
 	}
 	prompt := BuildPrompt(task, provider, promptOptions...)
+	if task.PriorWorkDir != "" && !envReused && localAssignment == nil {
+		prompt += fmt.Sprintf("\nPrevious work is preserved at %q. Inspect relevant files there before recreating work; this run uses a fresh working directory and session. Do not move or delete the previous directory.\n", task.PriorWorkDir)
+	}
 
 	// 传任务级鉴权凭据与上下文，好让被拉起的 agent CLI 能调 Multica API 与本地
 	// daemon（如 `multica repo checkout`）。MULTICA_TASK_SLOT 从 daemon 级并发池

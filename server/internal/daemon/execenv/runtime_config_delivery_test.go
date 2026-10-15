@@ -62,8 +62,8 @@ func TestBriefDeliveryInvariantIsAlwaysOn(t *testing.T) {
 
 	// Phrases every kind must carry, whatever its surface can or cannot deliver.
 	wantAll := []string{
-		"Runtime-local paths are never deliverables",
-		"NEVER write an absolute path or a `file://` URL as a clickable link",
+		"Local paths are useful references, but are not browser download links",
+		"create an archive only when a bundle is requested or required",
 		"`path/to/file.ts:42`",
 	}
 
@@ -338,7 +338,7 @@ func TestBriefInboundAttachmentIsNotADeliverable(t *testing.T) {
 		}
 	}
 	// The rule the pointer defers to must actually be present in the brief.
-	if !strings.Contains(out, "NEVER write an absolute path or a `file://` URL as a clickable link") {
+	if !strings.Contains(out, "create an archive only when a bundle is requested or required") {
 		t.Errorf("Attachments points at ## Output but the rule is missing\n---\n%s", out)
 	}
 }

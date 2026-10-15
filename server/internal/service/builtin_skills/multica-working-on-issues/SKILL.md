@@ -66,12 +66,11 @@ Related to MUL-2759 in the body (no title/branch)  # links but reference_only �
 
 ### Default for code-changing issue work
 
-When an issue run changes code in a checked-out GitHub repo, the default handoff
-is to open or update a PR before posting the final Multica issue comment, unless
-the user explicitly asked for a local-only change or no PR. This is a default, not
-an unconditional command: if no code changed, say no PR is needed; if PR creation
-is blocked by auth, failing tests, or missing remote state, report that blocker
-instead of pretending the run is complete.
+Work in the target checkout and report the changes and verification. Commit,
+push, PR creation, and deployment follow the user's authorization and applicable
+project rules. Create downloadable files or archives only when needed by the
+requested delivery. The platform saves the final answer as an issue comment;
+explicit CLI replies are for attachments or replies to multiple threads.
 
 Use a routable issue key in the PR title, body, or branch so the webhook can link
 the PR back to the issue. If the PR should close the issue on merge, put the key
@@ -204,7 +203,8 @@ close intent writes the literal `done` key.
   turn that advances the issue's own ask sets `in_progress` as soon as that
   is known, so the board shows the work while it runs; a blocker is recorded
   when it is hit; and the turn must not exit with a stale value — delivered
-  the issue's own ask → `in_review`; work continues beyond the turn
+  the issue's own ask with necessary checks complete → `done`; explicit human
+  acceptance or approval pending → `in_review`; work continues beyond the turn
   (dispatched sub-issues, partial delivery) → `in_progress`; stuck →
   `blocked`. A turn that produces none of the issue's own deliverable —
   answering a question, consulting on work owned elsewhere — writes nothing

@@ -621,6 +621,35 @@ func (q *Queries) GetThreadRoot(ctx context.Context, arg GetThreadRootParams) (C
 	return i, err
 }
 
+const hasAgentCommentedForTask = `-- name: HasAgentCommentedForTask :one
+SELECT EXISTS (
+    SELECT 1 FROM comment
+    WHERE issue_id = $1
+      AND author_type = 'agent'
+      AND author_id = $2
+      AND (source_task_id = $3 OR (source_task_id IS NULL AND created_at >= $4))
+) AS commented
+`
+
+type HasAgentCommentedForTaskParams struct {
+	IssueID  pgtype.UUID        `json:"issue_id"`
+	AuthorID pgtype.UUID        `json:"author_id"`
+	TaskID   pgtype.UUID        `json:"task_id"`
+	Since    pgtype.Timestamptz `json:"since"`
+}
+
+func (q *Queries) HasAgentCommentedForTask(ctx context.Context, arg HasAgentCommentedForTaskParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasAgentCommentedForTask,
+		arg.IssueID,
+		arg.AuthorID,
+		arg.TaskID,
+		arg.Since,
+	)
+	var commented bool
+	err := row.Scan(&commented)
+	return commented, err
+}
+
 const hasAgentCommentedSince = `-- name: HasAgentCommentedSince :one
 SELECT EXISTS (
     SELECT 1 FROM comment

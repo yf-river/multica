@@ -565,6 +565,15 @@ SELECT EXISTS (
       AND created_at >= @since
 ) AS commented;
 
+-- name: HasAgentCommentedForTask :one
+SELECT EXISTS (
+    SELECT 1 FROM comment
+    WHERE issue_id = @issue_id
+      AND author_type = 'agent'
+      AND author_id = @author_id
+      AND (source_task_id = @task_id OR (source_task_id IS NULL AND created_at >= @since))
+) AS commented;
+
 -- name: HasAgentRepliedInThread :one
 -- Returns true if the given agent has posted a reply in the thread rooted at
 -- the specified parent comment. Used to detect agent participation in a

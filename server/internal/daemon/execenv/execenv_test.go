@@ -2297,8 +2297,8 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 				// MUL-5442 cross-channel dedup: the brief states the loop shape; the
 				// ready-to-run commands with real ids live in the per-turn message.
 				// Pin the command NAME and the flag mnemonics, not full templates.
-				"post it with `multica issue comment add` using",
-				"mandatory",
+				"Use explicit CLI comments only for attachments",
+				"Return your final answer normally",
 			}
 			for _, want := range mustContain {
 				if !strings.Contains(s, want) {
@@ -2310,8 +2310,8 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 			// output is not user-visible. This is the second line of defense
 			// in case the agent skips past the workflow steps.
 			for _, want := range []string{
-				"Final results MUST be delivered via `multica issue comment add`",
-				"does NOT see your terminal output",
+				"Your final answer is automatically saved as an issue comment",
+				"Explicit CLI replies are supported",
 			} {
 				if !strings.Contains(s, want) {
 					t.Errorf("%s: Output warning missing %q", tc.name, want)
@@ -2579,7 +2579,7 @@ func TestInjectRuntimeConfigAutopilotRunOnlyNoIssueWorkflow(t *testing.T) {
 
 	for _, absent := range []string{
 		"Run `multica issue get",
-		"Final results MUST be delivered via `multica issue comment add`",
+		"Your final answer is automatically saved as an issue comment",
 	} {
 		if strings.Contains(s, absent) {
 			t.Errorf("autopilot runtime config should not contain %q\n---\n%s", absent, s)
@@ -5427,7 +5427,7 @@ func TestInjectRuntimeConfigMentionLoopHardening(t *testing.T) {
 		// mention-after-work bullet is gone with the block (the discipline
 		// itself stays in `## Mentions`, pinned by the Mentions subtest).
 		for _, want := range []string{
-			"**Post your final results as a comment — this step is mandatory**",
+			"Return your final answer normally",
 			"whose only possible reply is another courtesy",
 		} {
 			if !strings.Contains(s, want) {
@@ -5496,7 +5496,7 @@ func TestInjectRuntimeConfigSquadLeaderCommentTriggeredNoAction(t *testing.T) {
 	}
 	// The unconditional ordinary-agent imperative must not coexist with the
 	// carve-out variant.
-	if strings.Contains(s, "**Post your final results as a comment — this step is mandatory**") {
+	if strings.Contains(s, "Return your final answer normally") {
 		t.Errorf("squad leader CLAUDE.md still carries the unconditional delivery step")
 	}
 
@@ -5846,7 +5846,7 @@ func TestInjectRuntimeConfigBriefKeepsStaticCatchUpRead(t *testing.T) {
 	// MUL-5442 cross-channel dedup: the full command with the real issue id
 	// moved to the per-turn message (every issue variant carries it); the
 	// brief keeps the doctrine and the flag mnemonics.
-	if !strings.Contains(s, "scan every thread cheaply (`--roots-only --summary --compact`)") {
+	if !strings.Contains(s, "scan threads with `--roots-only --summary --compact`") {
 		t.Errorf("brief must keep the bounded catch-up doctrine\n---\n%s", s)
 	}
 	if strings.Contains(s, issueID) {
@@ -5943,9 +5943,9 @@ func TestInjectRuntimeConfigAssignmentTriggerScansRootsFirst(t *testing.T) {
 	// Mandatory comment catch-up must stay, but the required first read is
 	// bounded to recent active threads instead of the full flat timeline.
 	for _, want := range []string{
-		"scan every thread cheaply (`--roots-only --summary --compact`)",
-		"this is mandatory, not optional",
-		"Skipping this step is the most common cause",
+		"scan threads with `--roots-only --summary --compact`",
+		"Use context already supplied in this turn",
+		"do not reread unchanged history",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("assignment Workflow regressed mandatory scan-first catch-up, missing %q\n---\n%s", want, s)
@@ -6010,9 +6010,9 @@ func TestInjectRuntimeConfigCatchUpScansRootsFirst(t *testing.T) {
 		// The cheap scan is the first thing step 3 asks for; the full
 		// command with real ids arrives in the per-turn message (MUL-5442
 		// cross-channel dedup), so the brief pins the flag mnemonics.
-		"scan every thread cheaply (`--roots-only --summary --compact`)",
+		"scan threads with `--roots-only --summary --compact`",
 		// ...followed by an explicit, bounded drill-down.
-		"expand only the threads that matter (`--thread <id> --tail 30 --compact`)",
+		"expand relevant threads with `--thread <id> --tail 30 --compact`",
 		// The headline saturation warning stays in the flag reference; the
 		// deep semantics (per-thread cap, root-thread saturation) moved to the
 		// CLI's own --help (MUL-5442) and are pinned there
@@ -6038,8 +6038,8 @@ func TestInjectRuntimeConfigCatchUpScansRootsFirst(t *testing.T) {
 	// The catch-up stays mandatory — this change is about payload shape, not
 	// about letting agents skip context and act on stale instructions.
 	for _, want := range []string{
-		"this is mandatory, not optional",
-		"Skipping this step is the most common cause",
+		"Use context already supplied in this turn",
+		"do not reread unchanged history",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("step 3 must stay mandatory, missing %q\n---\n%s", want, s)

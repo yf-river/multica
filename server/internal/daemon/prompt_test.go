@@ -483,7 +483,7 @@ func TestBuildPromptProtocolHeadingInInstructionsIsNotALeader(t *testing.T) {
 			t.Fatalf("ordinary agent prompt leaked squad-leader rule %q\n---\n%s", banned, out)
 		}
 	}
-	if !strings.Contains(out, "Post your reply as a comment") {
+	if !strings.Contains(out, "Your final answer is automatically saved as a reply") {
 		t.Fatalf("ordinary agent prompt lost the unconditional reply imperative\n---\n%s", out)
 	}
 }
@@ -1617,7 +1617,7 @@ func TestBuildCommentPromptSameThreadKeepsSingleReply(t *testing.T) {
 	}
 	// The single-parent cookbook is used, threading the one reply under the
 	// trigger comment.
-	if !strings.Contains(out, "--parent c3 --content-file ./reply.md") {
+	if !strings.Contains(out, "Your final answer is automatically saved as a reply") {
 		t.Errorf("same-thread run must keep the single --parent=trigger reply cookbook, got:\n%s", out)
 	}
 }

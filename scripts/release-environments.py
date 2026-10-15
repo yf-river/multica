@@ -232,6 +232,20 @@ def launch(env, release, cfg, m):
     result['daemon']=h['pid']
     return result
 
+def neutralize_task_workspace_root(cfg, metadata):
+    """新任务放在源码树外；旧目录及任务记录原样保留，由续跑提示引用。"""
+    previous = Path(metadata['daemon_workspaces_root']).resolve()
+    if not previous.is_relative_to(ROOT):
+        return
+    target = ROOT.parent / '.multica-runtime' / metadata['daemon_profile']
+    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    metadata['daemon_workspaces_root'] = str(target)
+    cfg['daemon']['MULTICA_WORKSPACES_ROOT'] = str(target)
+    cfg['daemon']['MULTICA_ENV_WRITABLE_ROOT'] = str(target)
+    profile = read(metadata['daemon_profile_path'])
+    profile['workspaces_root'] = str(target)
+    write(metadata['daemon_profile_path'], profile, True)
+
 def deploy(env,release_id,timeout=900):
     require_environment(env)
     if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('任务内请使用 request，不能同步等待自身结束')
@@ -255,6 +269,7 @@ def deploy(env,release_id,timeout=900):
             current=checksums(release)
             if any(current.get(k)!=v for k,v in manifest['files'].items()): raise RuntimeError('已安装版本文件被修改')
         else: copy_tree(artifact,release)
+        prior_profile=read(m['daemon_profile_path'])
         prior=json.loads(json.dumps(m)); oldcfg={r:process_env(pid) for r,pid in m['pids'].items()}
         write(RUN/'env'/f'{env}-before-deploy.json',oldcfg,True)
         old_cwds={r:str(Path(f'/proc/{pid}/cwd').resolve()) for r,pid in m['pids'].items()}
@@ -267,8 +282,10 @@ def deploy(env,release_id,timeout=900):
             if exists(m['pids']['daemon']): raise RuntimeError('Daemon 未退出，拒绝强杀')
             owned_stop(m['pids']['web'],'web',old_cwds['web'])
             owned_stop(m['pids']['server'],'server',old_cwds['server'])
+            neutralize_task_workspace_root(cfg,m)
             m['pids']=launch(env,release,cfg,m)
         except Exception as failure:
+            write(prior['daemon_profile_path'],prior_profile,True)
             # 启动失败时只回收本次创建的进程，并恢复切换前的程序与运行配置。
             for role,pid in list(m['pids'].items()):
                 if pid not in prior['pids'].values() and exists(pid):
@@ -291,6 +308,7 @@ def deploy(env,release_id,timeout=900):
         m.pop('role_release_dirs', None)
         write(RUN/'deployments'/f'{env}-previous.json',prior)
         write(meta_path(env),m)
+        write(config_path(env),cfg,True)
         # 旧审计工具继续读取 .env；它是运行配置的派生产物，不再承担生成真源。
         legacy=RUN/'env'/f'goal-test-{env}.env'
         keys={line.split('=',1)[0] for line in legacy.read_text().splitlines() if '=' in line and not line.startswith('#')} if legacy.exists() else set()

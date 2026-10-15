@@ -116,6 +116,7 @@ func skillFileRow(skillID pgtype.UUID, path, content string) []any {
 	return []any{
 		testUUID(0xF1), skillID, path, content,
 		pgtype.Timestamptz{}, pgtype.Timestamptz{},
+		"text", "", "", int64(0), "", int32(0),
 	}
 }
 
@@ -164,6 +165,13 @@ func TestLoadAgentSkills_GroupsBatchedFilesBySkillID(t *testing.T) {
 		"alpha": {{Path: "docs/one.md", Content: "alpha one"}, {Path: "docs/two.md", Content: "alpha two"}},
 		"beta":  {{Path: "a.md", Content: "beta a"}, {Path: "z.md", Content: "beta z"}},
 		"gamma": nil,
+	}
+	for _, files := range wantFiles {
+		for i := range files {
+			files[i].Kind = "text"
+			files[i].FileID = "f1000000-0000-0000-0000-000000000000"
+			files[i].SHA256 = "sha256:"
+		}
 	}
 	for _, skill := range got {
 		if !reflect.DeepEqual(skill.Files, wantFiles[skill.Name]) {

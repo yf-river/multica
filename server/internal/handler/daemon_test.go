@@ -198,7 +198,7 @@ func createClaimReclaimAgentAndIssue(t *testing.T, ctx context.Context, runtimeI
 	dbfx.QueryRow(t, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
 		VALUES (
-			$1, $2, 'in_progress', 'none', $3, 'member',
+			$1, $2, 'in_progress', 'not_important_not_urgent', $3, 'member',
 			(SELECT COALESCE(MAX(number), 82649) + 1 FROM issue WHERE workspace_id = $1),
 			0
 		)
@@ -2455,6 +2455,16 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 	testHandler.CompleteTask(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 重复完成回调必须保持同一条最终回复。
+	w = httptest.NewRecorder()
+	req = newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete",
+		map[string]any{"output": agentFinalOutput}, testWorkspaceID, "legit-daemon")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	testHandler.CompleteTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("retry complete: %d: %s", w.Code, w.Body.String())
 	}
 
 	// Exactly one agent comment on the issue, threaded under the trigger,

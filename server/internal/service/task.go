@@ -4190,6 +4190,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		}
 	}
 
+	var issueReplyEvents []events.Event
 	var task db.AgentTaskQueue
 	var terminalEvent events.Event
 	var quickActionsPending bool
@@ -4258,6 +4259,12 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			chatAssistantMsg = msg
 			quickActionsPending = s.chatQuickActionsEligibleWithQueries(ctx, qtx, t, msg)
 		}
+		if t.IssueID.Valid {
+			issueReplyEvents, err = s.writeIssueCompletionReply(ctx, qtx, t, result)
+			if err != nil {
+				return fmt.Errorf("write issue completion reply: %w", err)
+			}
+		}
 		if s.TxStarter != nil {
 			var extra map[string]any
 			if t.ChatSessionID.Valid {
@@ -4301,46 +4308,11 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
 
-	// 不变量：每条完成的 issue 任务必须在 issue 上至少留一条 agent 评论，使用户在运行结束时总能看到些什么。
-	// 若 agent 执行中已发过评论（结果、进度 ping 或 CLI 回复），HasAgentCommentedSince 返回 true，这里跳过。
-	// 否则用最终输出合成一条。评论触发的任务经 TriggerCommentID 把兜底评论挂到原评论之下；指派触发的任务
-	// 该值为 NULL，兜底评论置顶。chat 任务没有 IssueID，在下方另行处理。
-	if task.IssueID.Valid {
-		suppressNoActionComment, err := HasSquadLeaderNoActionEvaluationForTask(ctx, s.Queries, task)
-		if err != nil {
-			slog.Warn("checking squad leader no_action evaluation failed",
-				"task_id", util.UUIDToString(task.ID),
-				"issue_id", util.UUIDToString(task.IssueID),
-				"agent_id", util.UUIDToString(task.AgentID),
-				"error", err,
-			)
-		}
-		agentCommented, _ := s.Queries.HasAgentCommentedSince(ctx, db.HasAgentCommentedSinceParams{
-			IssueID:  task.IssueID,
-			AuthorID: task.AgentID,
-			Since:    task.StartedAt,
-		})
-		if !suppressNoActionComment && !agentCommented {
-			var payload protocol.TaskCompletedPayload
-			if err := json.Unmarshal(result, &payload); err == nil {
-				if payload.Output != "" {
-					// 与 CLI 的 --content / --description 行为一致：agent 输出字面 `\n` 四字符序列（Python/JSON 风格）时，
-					// 在评论落库前解码成真实换行。精确契约见 util.UnescapeBackslashEscapes。
-					body := util.UnescapeBackslashEscapes(payload.Output)
-					if task.TriggerCommentID.Valid && isTrivialDoneOutput(body) {
-						slog.Warn("suppressing trivial comment-trigger fallback output",
-							"task_id", util.UUIDToString(task.ID),
-							"issue_id", util.UUIDToString(task.IssueID),
-							"agent_id", util.UUIDToString(task.AgentID),
-						)
-					} else {
-						// 先脱敏、再限长：失控的原始流导出（GH #5455）绝不能到达 issue 线程，哪怕只是截断片段。
-						content := truncateFallbackCommentBody(redact.Text(body), maxSynthesizedFallbackCommentRunes)
-						s.createAgentComment(ctx, task.IssueID, task.AgentID, content, "comment", task.TriggerCommentID, task.ID)
-					}
-				}
-			}
-		}
+	if len(issueReplyEvents) > 0 {
+		s.CancelDeferredEscalationsForIssueAgent(ctx, task.IssueID, task.AgentID)
+	}
+	for _, event := range issueReplyEvents {
+		publishCommittedEvent(s.Bus, event)
 	}
 
 	// quick-create 任务：定位 agent 刚创建的 issue，向请求者推送收件箱确认。agent 没有 issue/chat 链接，因此
@@ -7063,76 +7035,17 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
-	// 与插入同一事务内解析 issue 与线程根。存储的 parent_id 始终是正被回复的那条确切评论。
-	issue, err := qtx.GetIssue(ctx, issueID)
+	replyEvents, err := createAgentCommentTx(ctx, qtx, issueID, agentID, content, commentType, parentID, sourceTaskID)
 	if err != nil {
+		slog.Warn("create agent comment failed", "error", err)
 		return
-	}
-	var rootComment *db.Comment
-	if parentID.Valid {
-		if root, rootErr := qtx.GetThreadRoot(ctx, db.GetThreadRootParams{
-			CommentID:   parentID,
-			WorkspaceID: issue.WorkspaceID,
-		}); rootErr == nil {
-			rootComment = &root
-		}
-	}
-	created, err := qtx.CreateComment(ctx, db.CreateCommentParams{
-		ID:           dbid.NewV7(),
-		IssueID:      issueID,
-		WorkspaceID:  issue.WorkspaceID,
-		AuthorType:   "agent",
-		AuthorID:     agentID,
-		Content:      content,
-		Type:         commentType,
-		ParentID:     parentID,
-		SourceTaskID: sourceTaskID,
-	})
-	if err != nil {
-		return
-	}
-	comment := created.Comment()
-	commentFields := commentEventFields(comment)
-	commentFields["revision"] = comment.Revision
-	createdEvent, err := recordDurableEventTx(ctx, qtx, events.Event{
-		Type:           protocol.EventCommentCreated,
-		IdempotencyKey: "comment:created:" + util.UUIDToString(comment.ID),
-		StreamKey:      "issue:" + util.UUIDToString(issue.ID),
-		WorkspaceID:    util.UUIDToString(issue.WorkspaceID),
-		ActorType:      "agent",
-		ActorID:        util.UUIDToString(agentID),
-		Payload: map[string]any{
-			"comment":        commentFields,
-			"issue_title":    issue.Title,
-			"issue_status":   issue.Status,
-			"issue_revision": created.IssueRevision,
-		},
-	})
-	if err != nil {
-		return
-	}
-	var unresolvedEvent events.Event
-	var reopened bool
-	if rootComment != nil {
-		unresolvedEvent, reopened, err = UnresolveThreadOnReply(ctx, qtx, rootComment,
-			util.UUIDToString(issue.WorkspaceID), "agent", util.UUIDToString(agentID))
-		if err != nil {
-			return
-		}
-		if reopened {
-			unresolvedEvent, err = recordDurableEventTx(ctx, qtx, unresolvedEvent)
-			if err != nil {
-				return
-			}
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return
 	}
 	s.CancelDeferredEscalationsForIssueAgent(ctx, issueID, agentID)
-	publishCommittedEvent(s.Bus, createdEvent)
-	if reopened {
-		publishCommittedEvent(s.Bus, unresolvedEvent)
+	for _, event := range replyEvents {
+		publishCommittedEvent(s.Bus, event)
 	}
 }
 
@@ -7600,4 +7513,106 @@ func agentToMap(a db.Agent) map[string]any {
 		"archived_at":          util.TimestampToPtr(a.ArchivedAt),
 		"archived_by":          util.UUIDToPtr(a.ArchivedBy),
 	}
+}
+
+// createAgentCommentTx 将评论、线程状态和通知事件写入调用者的事务。
+func createAgentCommentTx(ctx context.Context, qtx *db.Queries, issueID, agentID pgtype.UUID, content, commentType string, parentID, sourceTaskID pgtype.UUID) ([]events.Event, error) {
+	// 与插入同一事务内解析 issue 与线程根。存储的 parent_id 始终是正被回复的那条确切评论。
+	issue, err := qtx.GetIssue(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	var rootComment *db.Comment
+	if parentID.Valid {
+		if root, rootErr := qtx.GetThreadRoot(ctx, db.GetThreadRootParams{
+			CommentID:   parentID,
+			WorkspaceID: issue.WorkspaceID,
+		}); rootErr == nil {
+			rootComment = &root
+		}
+	}
+	created, err := qtx.CreateComment(ctx, db.CreateCommentParams{
+		ID:           dbid.NewV7(),
+		IssueID:      issueID,
+		WorkspaceID:  issue.WorkspaceID,
+		AuthorType:   "agent",
+		AuthorID:     agentID,
+		Content:      content,
+		Type:         commentType,
+		ParentID:     parentID,
+		SourceTaskID: sourceTaskID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	comment := created.Comment()
+	commentFields := commentEventFields(comment)
+	commentFields["revision"] = comment.Revision
+	createdEvent, err := recordDurableEventTx(ctx, qtx, events.Event{
+		Type:           protocol.EventCommentCreated,
+		IdempotencyKey: "comment:created:" + util.UUIDToString(comment.ID),
+		StreamKey:      "issue:" + util.UUIDToString(issue.ID),
+		WorkspaceID:    util.UUIDToString(issue.WorkspaceID),
+		ActorType:      "agent",
+		ActorID:        util.UUIDToString(agentID),
+		Payload: map[string]any{
+			"comment":        commentFields,
+			"issue_title":    issue.Title,
+			"issue_status":   issue.Status,
+			"issue_revision": created.IssueRevision,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var unresolvedEvent events.Event
+	var reopened bool
+	if rootComment != nil {
+		unresolvedEvent, reopened, err = UnresolveThreadOnReply(ctx, qtx, rootComment,
+			util.UUIDToString(issue.WorkspaceID), "agent", util.UUIDToString(agentID))
+		if err != nil {
+			return nil, err
+		}
+		if reopened {
+			unresolvedEvent, err = recordDurableEventTx(ctx, qtx, unresolvedEvent)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	result := []events.Event{createdEvent}
+	if reopened {
+		result = append(result, unresolvedEvent)
+	}
+	return result, nil
+}
+
+// writeIssueCompletionReply 与任务完成原子提交，重试不会丢失或重复最终回复。
+func (s *TaskService) writeIssueCompletionReply(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, result []byte) ([]events.Event, error) {
+	suppress, err := HasSquadLeaderNoActionEvaluationForTask(ctx, qtx, task)
+	if err != nil {
+		return nil, err
+	}
+	if suppress {
+		return nil, nil
+	}
+	commented, err := qtx.HasAgentCommentedForTask(ctx, db.HasAgentCommentedForTaskParams{
+		IssueID: task.IssueID, AuthorID: task.AgentID, Since: task.StartedAt, TaskID: task.ID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if commented {
+		return nil, nil
+	}
+	var payload protocol.TaskCompletedPayload
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return nil, err
+	}
+	body := util.UnescapeBackslashEscapes(payload.Output)
+	if strings.TrimSpace(body) == "" || (task.TriggerCommentID.Valid && isTrivialDoneOutput(body)) {
+		return nil, nil
+	}
+	content := truncateFallbackCommentBody(redact.Text(body), maxSynthesizedFallbackCommentRunes)
+	return createAgentCommentTx(ctx, qtx, task.IssueID, task.AgentID, content, "comment", task.TriggerCommentID, task.ID)
 }
