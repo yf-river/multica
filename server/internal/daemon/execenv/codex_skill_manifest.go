@@ -13,11 +13,12 @@ import (
 )
 
 type codexSkillManifestEntry struct {
-	Name         string `json:"name"`
-	Description  string `json:"description,omitempty"`
-	Path         string `json:"path"`
-	ResolvedPath string `json:"resolved_path"`
-	SHA256       string `json:"sha256"`
+	MetadataError string `json:"metadata_error,omitempty"`
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	Path          string `json:"path"`
+	ResolvedPath  string `json:"resolved_path"`
+	SHA256        string `json:"sha256"`
 }
 
 // 清单来自实际铺设的文件，供诊断路径与内容版本；原生 Codex 仍负责技能发现与按需读取。
@@ -56,13 +57,17 @@ func writeCodexSkillManifest(home string) error {
 				Name        string `yaml:"name"`
 				Description string `yaml:"description"`
 			}{Name: child.Name()}
+			metadataError := ""
 			if frontmatter, _, ok := frontmatterParts(string(data)); ok {
 				if err := yaml.Unmarshal([]byte(frontmatter), &metadata); err != nil {
-					return fmt.Errorf("parse installed skill %s: %w", skill, err)
+					// 清单描述装载输入，不能因单个用户技能的 YAML 阻止整轮执行。
+					metadataError = err.Error()
+					metadata.Name = child.Name()
+					metadata.Description = ""
 				}
 			}
 			digest := sha256.Sum256(data)
-			entries = append(entries, codexSkillManifestEntry{Name: metadata.Name, Description: metadata.Description, Path: skill, ResolvedPath: resolved, SHA256: hex.EncodeToString(digest[:])})
+			entries = append(entries, codexSkillManifestEntry{MetadataError: metadataError, Name: metadata.Name, Description: metadata.Description, Path: skill, ResolvedPath: resolved, SHA256: hex.EncodeToString(digest[:])})
 		}
 		return nil
 	}

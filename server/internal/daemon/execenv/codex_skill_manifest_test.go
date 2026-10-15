@@ -46,3 +46,43 @@ func TestCodexSkillManifestReflectsChangedSkills(t *testing.T) {
 		t.Fatal("removed skill remains advertised")
 	}
 }
+
+func TestCodexSkillManifestRecordsInvalidMetadataWithoutBlockingHydration(t *testing.T) {
+	for _, body := range []string{
+		"---\nname: sop-eval\ndescription: [TODO: complete this skill]\n---\n# Skill",
+		"---\nname: [invalid, name]\ndescription: text\n---\n# Skill",
+		"---\nname: broken\ndescription: [unterminated\n---\n# Skill",
+	} {
+		t.Run(body, func(t *testing.T) {
+			shared := t.TempDir()
+			t.Setenv("CODEX_HOME", shared)
+			writeUserSkill(t, filepath.Join(shared, "skills", "invalid"), body)
+			writeUserSkill(t, filepath.Join(shared, "skills", "valid"), "---\nname: valid\ndescription: readable skill\n---\n# Valid")
+			home := t.TempDir()
+			if err := hydrateCodexSkills(home, nil, nil, testLogger()); err != nil {
+				t.Fatalf("user metadata blocked task: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(home, "skills-manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var entries []codexSkillManifestEntry
+			if err := json.Unmarshal(data, &entries); err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 2 {
+				t.Fatalf("entries=%d", len(entries))
+			}
+			if entries[0].Name != "invalid" || entries[0].MetadataError == "" || entries[0].SHA256 == "" {
+				t.Fatalf("missing invalid skill diagnostic: %+v", entries[0])
+			}
+			if entries[1].Name != "valid" || entries[1].Description != "readable skill" || entries[1].MetadataError != "" {
+				t.Fatalf("valid skill damaged: %+v", entries[1])
+			}
+			original, err := os.ReadFile(entries[0].ResolvedPath)
+			if err != nil || string(original) != body {
+				t.Fatal("source skill was modified")
+			}
+		})
+	}
+}
