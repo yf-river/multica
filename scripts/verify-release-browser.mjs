@@ -59,9 +59,20 @@ try {
     if (mika) {
       const entry = page.locator('[data-slot="sidebar"]').getByRole('button', { name: mika.name, exact: true });
       await expect(entry).toBeVisible();
-      const session = sessions.find(item => item.agent_id === mika.id && item.status === 'active');
-      if (session) { await entry.click(); await expect(page).toHaveURL(new RegExp(`session=${session.id}`)); }
-      else unavailable.push('Mika has no existing session; acceptance does not create user chat');
+      const session = sessions.find(item => item.agent_id === mika.id && item.creator_id === me.id && item.status === 'active');
+      if (session) {
+        // 侧栏通过 reuse_existing 获取当前用户的会话，列表第一项并非该接口的选择依据。
+        const opened = page.waitForResponse(response =>
+          new URL(response.url()).pathname === '/api/chat/sessions' && response.request().method() === 'POST');
+        await entry.click();
+        const response = await opened;
+        if (!response.ok()) throw Error(`Mika conversation: ${response.status()}`);
+        const target = await response.json();
+        if (target.agent_id !== mika.id || target.workspace_id !== workspace.id || target.creator_id !== me.id
+            || !sessions.some(item => item.id === target.id)) throw Error('Mika did not reuse an existing conversation belonging to this user');
+        await expect(page).toHaveURL(new RegExp(`session=${target.id}`));
+      }
+      else unavailable.push('Mika has no existing session for this user; acceptance does not create user chat');
     } else unavailable.push('Mika not created in production workspace');
     const websocket = await page.evaluate(slug => new Promise(resolve => {
       const url = new URL('/ws', location.href);url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';url.searchParams.set('workspace_slug', slug);
@@ -88,7 +99,7 @@ try {
   if (errors.length || failures.length) throw Error(JSON.stringify({ page_errors: errors.length, failed_requests: failures }));
   const directory = path.join(repoRoot, `.run/evidence/${environment}-release`, deployment.release_id);
   fs.mkdirSync(directory, { recursive: true });
-  const evidence = { release_id: deployment.release_id, environment, checks, unavailable, page_errors: 0, failed_requests: 0 };
+  const evidence = { release_id: deployment.release_id, source_digest: deployment.source_digest, verified_at: new Date().toISOString(), environment, checks, unavailable, page_errors: 0, failed_requests: 0 };
   fs.writeFileSync(path.join(directory, 'browser.json'), JSON.stringify(evidence, null, 2), { mode: 0o600 });
   console.log(JSON.stringify(evidence));
 } finally { await browser.close(); }

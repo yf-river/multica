@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -13,6 +12,6 @@ for (const [role, pid] of Object.entries(deployment.pids)) {
   try { process.kill(Number(pid), 0); } catch { failures.push(`${role} pid ${pid} missing`); }
 }
 if (!failures.length) { console.log(JSON.stringify({ environment: 'prod', ok: true, release_id: deployment.release_id })); process.exit(0); }
-const result = spawnSync('python3', [path.join(root, 'scripts/release-environments.py'), 'rollback', 'prod'], { cwd: root, encoding: 'utf8' });
-console.log(JSON.stringify({ environment: 'prod', ok: result.status === 0, rolled_back: result.status === 0, failures, output: (result.stdout || '').slice(-1000), error: (result.stderr || '').slice(-1000) }));
-process.exit(result.status === 0 ? 0 : 1);
+// 更新期间的恢复由发布器负责；成功后只保留 Git 历史。
+console.error(JSON.stringify({ environment: 'prod', ok: false, failures, action: '检查服务日志；必要时从已知 Git 提交重新联调发布' }));
+process.exit(1);

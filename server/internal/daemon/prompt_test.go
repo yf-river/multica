@@ -455,8 +455,7 @@ func TestTaskIsSquadLeaderReadsProtocolFields(t *testing.T) {
 // negative regression for MUL-5811: on a current server, a plain agent that
 // happens to document a "## Squad Operating Protocol" section in its own
 // instructions must get the ordinary comment prompt — no squad activity
-// obligation, no silent-exit licence, and the unconditional reply imperative
-// intact.
+// obligation or silent-exit exception; the platform saves the final reply.
 func TestBuildPromptProtocolHeadingInInstructionsIsNotALeader(t *testing.T) {
 	t.Parallel()
 
@@ -484,7 +483,7 @@ func TestBuildPromptProtocolHeadingInInstructionsIsNotALeader(t *testing.T) {
 		}
 	}
 	if !strings.Contains(out, "Your final answer is automatically saved as a reply") {
-		t.Fatalf("ordinary agent prompt lost the unconditional reply imperative\n---\n%s", out)
+		t.Fatalf("ordinary agent prompt lost automatic reply guidance\n---\n%s", out)
 	}
 }
 
@@ -1023,12 +1022,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 	})
 }
 
-// TestBuildPromptDefaultScansRootsFirst pins that the catch-all fallback
-// prompt (no trigger comment, no chat, no autopilot, no quick-create)
-// starts assignment-triggered comment catch-up with a bounded roots scan and
-// only then offers the full-thread read, while still keeping older history
-// available through pagination.
-func TestBuildPromptDefaultScansRootsFirst(t *testing.T) {
+// 指派消息按需补读历史，提供摘要扫描和相关线程读取入口。
+func TestBuildPromptDefaultReadsMissingOrStaleContext(t *testing.T) {
 	out := BuildPrompt(Task{IssueID: "issue-default-1"}, "claude")
 	for _, s := range []string{
 		"multica issue comment list issue-default-1 --roots-only --summary --compact --output json",
@@ -1058,11 +1053,8 @@ func TestBuildPromptDefaultScansRootsFirst(t *testing.T) {
 			t.Errorf("default BuildPrompt must only use the generic --thread <thread-id> placeholder, never a concrete anchor\n--- output ---\n%s", out)
 		}
 	}
-	// The legacy "If you need comment history" soft phrasing conflicts with
-	// the assignment-trigger runtime workflow, which treats reading comments
-	// as mandatory. Guard against it sneaking back in.
-	if strings.Contains(out, "If you need comment history") {
-		t.Errorf("default BuildPrompt still carries the legacy 'If you need' soft phrasing that conflicts with the mandatory workflow\n--- output ---\n%s", out)
+	if !strings.Contains(out, "If comment context is missing or stale") {
+		t.Errorf("default BuildPrompt must make history reads conditional on missing or stale context\n%s", out)
 	}
 	if strings.Contains(out, "multica issue comment list issue-default-1 --output json") {
 		t.Errorf("default BuildPrompt still presents the unbounded flat read as the assignment catch-up command\n--- output ---\n%s", out)
@@ -1615,10 +1607,9 @@ func TestBuildCommentPromptSameThreadKeepsSingleReply(t *testing.T) {
 	if strings.Contains(out, "DISTINCT threads") {
 		t.Errorf("same-thread coalescing must not emit the multi-thread fan-out block, got:\n%s", out)
 	}
-	// The single-parent cookbook is used, threading the one reply under the
-	// trigger comment.
+	// 同一线程的合并消息只需要一个自动回复。
 	if !strings.Contains(out, "Your final answer is automatically saved as a reply") {
-		t.Errorf("same-thread run must keep the single --parent=trigger reply cookbook, got:\n%s", out)
+		t.Errorf("same-thread run must describe automatic reply delivery, got:\n%s", out)
 	}
 }
 

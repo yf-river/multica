@@ -2439,6 +2439,14 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 		"started_at":         testutil.Raw("now()"),
 	})
 
+	// 同一个 Agent 的另一轮回复不能吞掉本轮最终回答。
+	otherTaskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": runtimeID, "issue_id": issueID, "status": "running",
+	})
+	dbfx.Comment(t, issueID, "other task reply", testutil.Cols{
+		"author_type": "agent", "author_id": agentID, "source_task_id": otherTaskID,
+	})
+
 	agentFinalOutput := fmt.Sprintf(
 		"sure, see MUL-3310, issue/MUL-3310, feature/MUL-3310, and [MUL-3310](mention://issue/%s)",
 		issueID,
@@ -2467,13 +2475,13 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 		t.Fatalf("retry complete: %d: %s", w.Code, w.Body.String())
 	}
 
-	// Exactly one agent comment on the issue, threaded under the trigger,
+	// Exactly one comment for this task, threaded under the trigger,
 	// carrying the agent's final output.
 	rows, err := testPool.Query(ctx, `
 		SELECT content, parent_id FROM comment
-		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2
+		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2 AND source_task_id = $3
 		ORDER BY created_at ASC
-	`, issueID, agentID)
+	`, issueID, agentID, taskID)
 	if err != nil {
 		t.Fatalf("query synthesized comments: %v", err)
 	}
@@ -4439,4 +4447,48 @@ func TestBatchIssueGCCheckReadsNoCatalogForBuiltInStatuses(t *testing.T) {
 		t.Fatalf("built-in batch read the catalog (%d entry, %d key), want 0 — a built-in key IS its own category",
 			counter.entryReads, counter.keyReads)
 	}
+}
+
+// 完成事务中的查询失败不能被当作重复回调，否则任务仍在运行但调用者收到成功。
+func TestCompleteTask_ReplyLookupFailureRollsBackCompletion(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var agentID, runtimeID string
+	dbfx.QueryRow(t, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID)
+	issueID := dbfx.Issue(t, "completion transaction missing issue")
+	taskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": runtimeID, "issue_id": issueID, "status": "running", "started_at": testutil.Raw("now()"),
+	})
+	svc := service.NewTaskService(db.New(testPool), completionMissingIssueStarter{testPool}, nil, nil)
+	_, err := svc.CompleteTask(ctx, parseUUID(taskID), []byte(`{"output":"finished"}`), "", "", "", false, "", "")
+	if err == nil {
+		t.Fatal("missing issue must fail completion instead of acknowledging a retry")
+	}
+	var status string
+	dbfx.QueryRow(t, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status)
+	if status != "running" {
+		t.Fatalf("completion did not roll back: %s", status)
+	}
+}
+
+// 仅在完成事务中模拟查询无结果，其他写入使用真实 PostgreSQL 并检查回滚。
+type completionMissingIssueStarter struct{ service.TxStarter }
+
+func (s completionMissingIssueStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return completionMissingIssueTx{tx}, nil
+}
+
+type completionMissingIssueTx struct{ pgx.Tx }
+
+func (tx completionMissingIssueTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if strings.HasPrefix(sql, "-- name: GetIssue :one") {
+		return tx.Tx.QueryRow(ctx, "SELECT * FROM issue WHERE false")
+	}
+	return tx.Tx.QueryRow(ctx, sql, args...)
 }

@@ -338,7 +338,7 @@ func TestBriefInboundAttachmentIsNotADeliverable(t *testing.T) {
 		}
 	}
 	// The rule the pointer defers to must actually be present in the brief.
-	if !strings.Contains(out, "create an archive only when a bundle is requested or required") {
+	if !strings.Contains(out, "Local paths are useful references, but are not browser download links") {
 		t.Errorf("Attachments points at ## Output but the rule is missing\n---\n%s", out)
 	}
 }

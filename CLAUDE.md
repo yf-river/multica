@@ -34,17 +34,17 @@ The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
 - `apps/desktop/` and `apps/mobile/` are frozen source trees. Keep their source, build, routing, and release files, but do not implement Web feature parity or run and repair their checks unless the user explicitly reactivates that client.
 - Frozen-client compatibility is not a delivery constraint for Web changes. Shared code may evolve for the active Web product even when a frozen client no longer compiles.
 - Root `build`, `typecheck`, `test`, and `lint` commands validate `@multica/web` and its shared dependencies. Use `verify:desktop`, `verify:mobile`, or `verify:clients` only for explicit client reactivation or release work.
-- During development, verify the affected Web, Go, page, or runtime path. Ordinary feature requests include int integration delivery, complete evidence, automatic promotion to prod, and browser acceptance; broader verification is proportional to risk.
+- During development, verify the affected Web, Go, page, or runtime path. Ordinary feature requests include int integration delivery, feature acceptance, application of tested runtime files to prod, and browser acceptance; broader verification is proportional to risk.
 - A task stops when its declared user flow passes. Unrelated historical failures are tracked separately unless they block login, companion chat, tasks, Agent execution, run reviews, memory governance, data safety, authorization, or recovery.
 
 ## Development Delivery
 
-- Ordinary feature requests include implementation, focused verification, deployment to existing `int`, complete evidence, automatic promotion of the same release to `prod`, and real browser acceptance. Explicit requests for analysis only, local changes only, or no deployment override this default.
+- Ordinary feature requests include implementation, focused verification, deployment to existing `int`, feature acceptance, application of the same tested runtime files to `prod`, and real browser acceptance. Explicit requests for analysis only, local changes only, or no deployment override this default.
 - Read `docs/operations/environment-releases.md` before choosing an environment or starting services. Current addresses and identity belong to deployment records and private runtime configuration. Missing int configuration is a blocker, not permission to use prod as a test environment.
 - Only an explicit user request for independent local development permits `MULTICA_LOCAL_DEV=1` on the relevant command. Do not persist this opt-in in environment files.
-- Verify incrementally, then build and deploy one reviewable feature unit, not each small edit. Exclude unrelated dirty work from the source snapshot; use the current production source baseline when isolation is necessary.
-- Use existing int/prod release locks, Daemon drain and rollback. Wait for concurrent releases rather than opening another preview. Do not use production accounts or data for integration verification, rotate secrets, or edit installed releases.
-- 联调验收所需的检查和证据全部通过，且没有未解决的问题时，自动将同一个已验收的不可变发布包部署到生产，无需再次询问。联调或发布过程中出现检查失败、证据缺失或运行异常时，暂停后续发布，说明具体问题并询问用户；生产发布失败时先按既有流程安全回滚，再等待用户决定。
+- Verify incrementally. Prepare int from a clean task commit containing the latest published commit; reuse unchanged Go/Web outputs. Production success cleans the task worktree after checking saved changes and process references.
+- Use the fixed int occupancy, Daemon drain and temporary recovery directory. When int is occupied, finish independent work and end the run before retrying; do not block an active run waiting for production updates. Do not use production accounts or data for integration verification, rotate secrets, or edit installed releases.
+- 联调验收所需的检查和证据全部通过，且没有未解决的问题时，将同一份已验收运行产物应用到生产，无需再次询问。联调或发布过程中出现检查失败、证据缺失或运行异常时，暂停后续发布，说明具体问题并询问用户；生产发布失败时先按既有流程安全回滚，再等待用户决定。
 - Commit、push 和数据库删除仍需单独授权。用户明确要求不部署或仅本地修改时，以用户指定范围为准。
 
 ## State Rules

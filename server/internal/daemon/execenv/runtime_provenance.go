@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-// WriteRuntimeProvenance 记录平台生成的提示来源与摘要，不复制可能包含凭据的正文。
+// WriteRuntimeProvenance 记录平台生成的提示来源与指纹，不复制可能包含凭据的正文。
 func WriteRuntimeProvenance(envRoot, workDir, provider, content string, ctx TaskContextForEnv) error {
 	hash := sha256.Sum256([]byte(content))
 	skills := make([]string, 0, len(ctx.AgentSkills))
@@ -37,9 +37,8 @@ func WriteRuntimeProvenance(envRoot, workDir, provider, content string, ctx Task
 	if err != nil {
 		return err
 	}
-	dir := envRoot
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(envRoot, 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "runtime-instructions.json"), append(data, '\n'), 0600)
+	return os.WriteFile(filepath.Join(envRoot, "runtime-instructions.json"), append(data, '\n'), 0600)
 }

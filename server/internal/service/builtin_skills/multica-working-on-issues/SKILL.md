@@ -203,8 +203,8 @@ close intent writes the literal `done` key.
   turn that advances the issue's own ask sets `in_progress` as soon as that
   is known, so the board shows the work while it runs; a blocker is recorded
   when it is hit; and the turn must not exit with a stale value — delivered
-  the issue's own ask with necessary checks complete → `done`; explicit human
-  acceptance or approval pending → `in_review`; work continues beyond the turn
+  the issue's own ask with necessary checks complete → `in_review` for human
+  review; set `done` only when the user explicitly confirms completion. Work continues beyond the turn
   (dispatched sub-issues, partial delivery) → `in_progress`; stuck →
   `blocked`. A turn that produces none of the issue's own deliverable —
   answering a question, consulting on work owned elsewhere — writes nothing

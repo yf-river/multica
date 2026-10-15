@@ -638,6 +638,7 @@ type HasAgentCommentedForTaskParams struct {
 	Since    pgtype.Timestamptz `json:"since"`
 }
 
+// 无任务上下文的 agent 评论仍可由现有接口创建；用时间范围覆盖这类显式回复。
 func (q *Queries) HasAgentCommentedForTask(ctx context.Context, arg HasAgentCommentedForTaskParams) (bool, error) {
 	row := q.db.QueryRow(ctx, hasAgentCommentedForTask,
 		arg.IssueID,
@@ -645,29 +646,6 @@ func (q *Queries) HasAgentCommentedForTask(ctx context.Context, arg HasAgentComm
 		arg.TaskID,
 		arg.Since,
 	)
-	var commented bool
-	err := row.Scan(&commented)
-	return commented, err
-}
-
-const hasAgentCommentedSince = `-- name: HasAgentCommentedSince :one
-SELECT EXISTS (
-    SELECT 1 FROM comment
-    WHERE issue_id = $1
-      AND author_type = 'agent'
-      AND author_id = $2
-      AND created_at >= $3
-) AS commented
-`
-
-type HasAgentCommentedSinceParams struct {
-	IssueID  pgtype.UUID        `json:"issue_id"`
-	AuthorID pgtype.UUID        `json:"author_id"`
-	Since    pgtype.Timestamptz `json:"since"`
-}
-
-func (q *Queries) HasAgentCommentedSince(ctx context.Context, arg HasAgentCommentedSinceParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasAgentCommentedSince, arg.IssueID, arg.AuthorID, arg.Since)
 	var commented bool
 	err := row.Scan(&commented)
 	return commented, err

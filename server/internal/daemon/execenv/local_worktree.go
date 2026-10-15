@@ -77,7 +77,7 @@ type LocalWorktreeParams struct {
 	// GC 就会顺带回收它。
 	EnvRoot string
 	// AgentName 与 TaskID 共同命名「背后没有会话」的任务的分支：
-	// agent/<name>/<short-task-id>。
+	// feature/<name>/<short-task-id>。
 	AgentName string
 	TaskID    string
 	// ConversationKey 命名本任务所属的工作线——它的 issue 或聊天会话。共享同一个
@@ -105,7 +105,7 @@ func (p LocalWorktreeParams) owner() branchOwner {
 // 到同一条分支上（MUL-6881）。
 //
 // 返回两个值，因为二者回答不同的问题。key 是分支「叫什么」——这里优先用 issue
-// 标识符，因为它是用户在 `git branch` 里认得的名字（agent/j/mul-6881 而不是一段
+// 标识符，因为它是用户在 `git branch` 里认得的名字（feature/j/mul-6881 而不是一段
 // uuid 尾巴）。id 是分支「属于谁」，只有它能决定后续任务是否可以续接该分支：
 // identifier 是 per-workspace、由人选择的，两个 workspace 可能为不同 issue 铸出
 // 同一个它。既无 issue 也无聊天会话的任务没有可续接的会话，返回 "", ""。
@@ -1039,7 +1039,7 @@ type taskBranchPlan struct {
 // altName 为「活动兄弟任务已占着」的分支给出消歧名。
 func (p taskBranchPlan) altName(taskID string) string {
 	if p.conversational {
-		// 任务级命名，且要与它分叉来源的会话分支并列可读：agent/j/mul-6881-<task>。
+		// 任务级命名，且要与它分叉来源的会话分支并列可读：feature/j/mul-6881-<task>。
 		return p.name + "-" + taskKey(taskID)
 	}
 	// 已经是任务级，因此只有同一任务的重跑才会在这里撞名。
@@ -1054,21 +1054,21 @@ func (p taskBranchPlan) altName(taskID string) string {
 // 第一轮成果的树开始，而且没有任何信号提示这一点（MUL-6881）。per-task 的 env root
 // 保持原样——兄弟任务仍然并发跑，只是都交付到它们会话拥有的那条分支上。
 //
-// 是否续接一条分支，由它「记录的 OWNER」决定，绝不看名字。`agent/j/mul-6881` 是
+// 是否续接一条分支，由它「记录的 OWNER」决定，绝不看名字。`feature/j/mul-6881` 是
 // 用户能照打的名字、另一个同名展示 agent 也能造出来、第三个 workspace 更可以为另一
 // 个 issue 铸出它；往其中任何一个追加都会静默地混两条工作线。所以一条同名却无法
-// 证明属于我们的分支，会把本任务推到 `agent/j/mul-6881-<fingerprint>`——对这个确切
+// 证明属于我们的分支，会把本任务推到 `feature/j/mul-6881-<fingerprint>`——对这个确切
 // 会话稳定，所以它自己的后续轮次继续它——万一连它也被人占着，就落到一条不续接
 // 任何东西的任务级分支上。
 func resolveTaskBranch(gitRoot string, params LocalWorktreeParams, headSHA string, logger *slog.Logger) taskBranchPlan {
 	agentSegment := sanitizeName(params.AgentName)
-	taskScoped := taskBranchPlan{name: fmt.Sprintf("agent/%s/%s", agentSegment, taskKey(params.TaskID)), base: headSHA}
+	taskScoped := taskBranchPlan{name: fmt.Sprintf("feature/%s/%s", agentSegment, taskKey(params.TaskID)), base: headSHA}
 
 	owner := params.owner()
 	if params.ConversationKey == "" || !owner.valid() {
 		return taskScoped
 	}
-	preferred := fmt.Sprintf("agent/%s/%s", agentSegment, sanitizeName(params.ConversationKey))
+	preferred := fmt.Sprintf("feature/%s/%s", agentSegment, sanitizeName(params.ConversationKey))
 	for _, name := range []string{preferred, preferred + "-" + owner.fingerprint()} {
 		plan, ok := planForConversationBranch(gitRoot, name, headSHA, owner, logger)
 		if ok {

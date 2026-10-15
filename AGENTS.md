@@ -12,13 +12,11 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ### Default Development Delivery
 
-Ordinary feature requests include implementation, focused checks, deployment to the existing **int** environment, complete evidence, automatic promotion of the same release to **prod**, and real browser acceptance. Read `CLAUDE.md` and `docs/operations/environment-releases.md` before choosing an environment or starting services. Read addresses and identity from current deployment records and private runtime configuration; do not create another preview by default.
+Ordinary feature requests include implementation, focused checks, deployment to the existing **int** environment, feature acceptance, application of the same tested runtime files to **prod**, and real browser acceptance. Read `CLAUDE.md` and `docs/operations/environment-releases.md` before choosing an environment or starting services. Read addresses and identity from current deployment records and private runtime configuration; do not create another preview by default.
 
 Independent local environments require an explicit user request and `MULTICA_LOCAL_DEV=1` for that command. Production promotion and exception handling follow `CLAUDE.md`: promote automatically after complete, issue-free int acceptance; pause and ask the user if any check fails, evidence is missing, or a runtime anomaly occurs. Commit, push, and database deletion remain separately authorized actions. Explicit requests for analysis only, local changes only, or no deployment override the default delivery scope.
 
-When an authorized deployment originates inside a Multica task, use `pnpm release request <release-id>` and finish the task normally. The independent publisher waits for tasks to finish; never synchronously wait for the publication from that same task. Inspect its persistent result with `pnpm release request-status <request-id>` outside the initiating task.
-
-The publisher deploys the requested release to int first. Production promotion requires the task to have completed naturally and the persisted int evidence to include deployment identity, browser/API/WebSocket checks, real task completion, artifacts, workspace handoff, and zero fatal logs. A task completion or health response alone is not production evidence.
+Use `pnpm release int --source <task-worktree>` to prepare the fixed integration environment. Validate the changed feature, record the result with `pnpm release accept <candidate> --evidence <file>`, then `pnpm release request <candidate>`. The external updater waits for the requesting run to finish before updating production. Read `docs/operations/environment-releases.md` for evidence format, concurrency, cleanup and recovery. MR approval is not a deployment prerequisite; Git commits and deployment still follow user authorization.
 
 ### Architecture
 

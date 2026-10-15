@@ -1056,10 +1056,7 @@ func TestBuildPromptCommentTriggered(t *testing.T) {
 		Agent:                 &AgentData{Name: "Test"},
 	}, "claude")
 
-	// Prompt should contain the comment content, the trigger comment id, and
-	// the full reply command with --parent. Re-emitting --parent on every turn
-	// is what prevents resumed sessions from reusing the previous turn's
-	// --parent UUID.
+	// 本轮消息提供触发评论及其 ID，平台将最终回答路由到该评论。
 	for _, want := range []string{
 		issueID,
 		commentContent,
@@ -1067,10 +1064,6 @@ func TestBuildPromptCommentTriggered(t *testing.T) {
 		commentID,
 		"Your final answer is automatically saved as a reply",
 		"this turn’s triggering comment",
-		// MUL-5442 (2026-08-06): with the generic no-reply rule retired,
-		// the reply command is framed as a plain imperative again — the
-		// squad leader's `no_action` block states its own exception.
-		"Your final answer is automatically saved as a reply",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q\n---\n%s", want, prompt)
@@ -1154,7 +1147,7 @@ func TestBuildPromptCommentTriggeredByMember(t *testing.T) {
 		t.Fatalf("prompt should not contain unconditional \"MUST respond\" language\n---\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "Your final answer is automatically saved as a reply") {
-		t.Fatalf("prompt should carry the imperative reply command\n---\n%s", prompt)
+		t.Fatalf("prompt should describe automatic reply delivery\n---\n%s", prompt)
 	}
 }
 
@@ -5563,12 +5556,7 @@ func TestFreshSessionMayHelp(t *testing.T) {
 	}
 }
 
-// TestBuildPromptSquadLeaderReplyCommandCarvesOutNoAction renders the COMPLETE
-// leader prompt and pins the exception's scope relation (MUL-5442 #6493
-// review): the no_action rule and the reply imperative appear in the same
-// prompt, so the imperative must carry the carve-out itself — a bare
-// unconditional "Your final answer is automatically saved as a reply" anywhere in a leader prompt
-// re-opens the contradiction the carve-out exists to close.
+// 队长的回复指令需要包含 no_action 例外，避免无动作运行产生重复评论。
 func TestBuildPromptSquadLeaderReplyCommandCarvesOutNoAction(t *testing.T) {
 	t.Parallel()
 

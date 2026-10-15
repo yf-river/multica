@@ -6553,16 +6553,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var instructions string
 	agentName = task.Agent.Name
 	skills = task.Agent.Skills
-	if task.SquadID == "" && !taskIsSquadLeader(task) {
-		filtered := make([]SkillData, 0, len(skills))
-		for _, skill := range skills {
-			if skill.Source == "builtin" && skill.Name == "multica-squads" {
-				continue
-			}
-			filtered = append(filtered, skill)
-		}
-		skills = filtered
-	}
 	instructions = task.Agent.Instructions
 
 	// 准备隔离执行环境。
@@ -7148,8 +7138,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		promptOptions = append(promptOptions, WithWorktreeReplayConflicts(env.LocalWorktree.ReplayConflicts))
 	}
 	prompt := BuildPrompt(task, provider, promptOptions...)
+	if env.LocalWorktree != nil {
+		prompt += fmt.Sprintf("\nThis task's isolated worktree is %q on branch %q, based on %s. Reuse this branch when the task requires SOP or MR delivery.\n", env.WorkDir, env.LocalWorktree.Branch, env.LocalWorktree.BaseCommit)
+	}
 	if task.PriorWorkDir != "" && !envReused && localAssignment == nil {
-		prompt += fmt.Sprintf("\nPrevious work is preserved at %q. Inspect relevant files there before recreating work; this run uses a fresh working directory and session. Do not move or delete the previous directory.\n", task.PriorWorkDir)
+		prompt += fmt.Sprintf("\nThe previous working directory was %q. Check whether relevant work is still available there before recreating it. This run uses a fresh working directory and session.\n", task.PriorWorkDir)
 	}
 
 	// 传任务级鉴权凭据与上下文，好让被拉起的 agent CLI 能调 Multica API 与本地

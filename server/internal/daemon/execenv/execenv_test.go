@@ -2258,14 +2258,8 @@ func TestPrepareWithRepoContextOpencode(t *testing.T) {
 	}
 }
 
-// TestInjectRuntimeConfigRequiresExplicitCommentPost ensures the injected
-// workflow makes "post a comment with results" an explicit, unmissable step in
-// both the assignment- and comment-triggered branches, plus hard-warns in the
-// Output section that terminal/log text is not user-visible. Agents were
-// silently finishing tasks without ever posting their result to the issue; see
-// MUL-1124. Covering this in a test prevents the guidance from decaying back
-// into a nested clause again.
-func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
+// 普通 Issue 运行使用平台自动保存最终回复，附件和多线程回复仍支持 CLI。
+func TestInjectRuntimeConfigDescribesAutomaticCommentDelivery(t *testing.T) {
 	t.Parallel()
 
 	assignmentCtx := TaskContextForEnv{IssueID: "issue-1"}
@@ -2291,12 +2285,7 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 			}
 			s := string(data)
 
-			// The workflow must contain an explicit `multica issue comment add`
-			// invocation for this issue — not just a prose mention of posting.
 			mustContain := []string{
-				// MUL-5442 cross-channel dedup: the brief states the loop shape; the
-				// ready-to-run commands with real ids live in the per-turn message.
-				// Pin the command NAME and the flag mnemonics, not full templates.
 				"Use explicit CLI comments only for attachments",
 				"Return your final answer normally",
 			}
@@ -2306,15 +2295,13 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 				}
 			}
 
-			// The Output section must carry a hard warning that terminal/log
-			// output is not user-visible. This is the second line of defense
-			// in case the agent skips past the workflow steps.
+			// 输出规则需要与工作流描述一致。
 			for _, want := range []string{
 				"Your final answer is automatically saved as an issue comment",
 				"Explicit CLI replies are supported",
 			} {
 				if !strings.Contains(s, want) {
-					t.Errorf("%s: Output warning missing %q", tc.name, want)
+					t.Errorf("%s: Output guidance missing %q", tc.name, want)
 				}
 			}
 		})
@@ -5923,11 +5910,8 @@ func TestInjectRuntimeConfigBriefOmitsResumedThreadAnchor(t *testing.T) {
 	}
 }
 
-// TestInjectRuntimeConfigAssignmentTriggerScansRootsFirst pins that the
-// assignment-triggered Workflow keeps comment catch-up mandatory while bounding
-// the mandatory first read to a roots scan. Older context stays reachable
-// through explicit pagination.
-func TestInjectRuntimeConfigAssignmentTriggerScansRootsFirst(t *testing.T) {
+// 首次接手缺少上下文时，提供有界读取和继续翻页的入口。
+func TestInjectRuntimeConfigAssignmentSupportsContextCatchUp(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -5940,15 +5924,14 @@ func TestInjectRuntimeConfigAssignmentTriggerScansRootsFirst(t *testing.T) {
 	}
 	s := string(data)
 
-	// Mandatory comment catch-up must stay, but the required first read is
-	// bounded to recent active threads instead of the full flat timeline.
+	// 使用已有上下文；需要补读时先查看线程摘要。
 	for _, want := range []string{
 		"scan threads with `--roots-only --summary --compact`",
 		"Use context already supplied in this turn",
 		"do not reread unchanged history",
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("assignment Workflow regressed mandatory scan-first catch-up, missing %q\n---\n%s", want, s)
+			t.Errorf("assignment Workflow missing conditional catch-up guidance %q\n---\n%s", want, s)
 		}
 	}
 	// Older context must remain reachable through pagination. The cursor
@@ -5982,18 +5965,8 @@ func TestInjectRuntimeConfigAssignmentTriggerScansRootsFirst(t *testing.T) {
 	}
 }
 
-// TestInjectRuntimeConfigCatchUpScansRootsFirst locks in MUL-5372: the
-// mandatory step-3 catch-up leads with a bounded `--roots-only --summary` scan
-// and an explicit per-thread drill-down, instead of making `--recent 10` the
-// required first read. `--recent N` caps threads, not comments — it returns every
-// descendant of each thread — so as the mandatory read it handed every run the
-// issue's entire comment history, and duplicated the bounded thread read the
-// per-turn message already points at on comment-triggered turns.
-//
-// It also pins the placement rule: the workflow step names only the reads it
-// mandates, while flag semantics (including the saturation trap) live once in
-// `## Available Commands`. Restating them per step is what bloated the step.
-func TestInjectRuntimeConfigCatchUpScansRootsFirst(t *testing.T) {
+// 按需补读时先看摘要再展开线程；完整参数语义只在命令说明中提供。
+func TestInjectRuntimeConfigCatchUpUsesBoundedReads(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -6007,9 +5980,7 @@ func TestInjectRuntimeConfigCatchUpScansRootsFirst(t *testing.T) {
 	s := string(data)
 
 	for _, want := range []string{
-		// The cheap scan is the first thing step 3 asks for; the full
-		// command with real ids arrives in the per-turn message (MUL-5442
-		// cross-channel dedup), so the brief pins the flag mnemonics.
+		// 需要补读时，先扫描摘要，再展开相关线程。
 		"scan threads with `--roots-only --summary --compact`",
 		// ...followed by an explicit, bounded drill-down.
 		"expand relevant threads with `--thread <id> --tail 30 --compact`",
@@ -6035,14 +6006,13 @@ func TestInjectRuntimeConfigCatchUpScansRootsFirst(t *testing.T) {
 		t.Errorf("Available Commands must still document --recent N\n---\n%s", s)
 	}
 
-	// The catch-up stays mandatory — this change is about payload shape, not
-	// about letting agents skip context and act on stale instructions.
+	// 已有上下文可直接使用，避免每轮重复读取。
 	for _, want := range []string{
 		"Use context already supplied in this turn",
 		"do not reread unchanged history",
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("step 3 must stay mandatory, missing %q\n---\n%s", want, s)
+			t.Errorf("workflow missing context reuse guidance %q\n---\n%s", want, s)
 		}
 	}
 }

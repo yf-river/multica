@@ -4280,7 +4280,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		// 并行 agent 竞态下，本调用执行时任务可能已被完成/取消/失败。此时 UPDATE … WHERE status = 'running'
 		// 匹配不到行。把它当作幂等成功——与 CancelTask 相同的模式。
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, pgx.ErrNoRows) && (existing.Status == "completed" || existing.Status == "failed" || existing.Status == "cancelled") {
 				slog.Info("complete task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,

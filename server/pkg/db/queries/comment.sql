@@ -556,16 +556,8 @@ WHERE id = @id
   AND workspace_id = @workspace_id
 RETURNING *;
 
--- name: HasAgentCommentedSince :one
-SELECT EXISTS (
-    SELECT 1 FROM comment
-    WHERE issue_id = @issue_id
-      AND author_type = 'agent'
-      AND author_id = @author_id
-      AND created_at >= @since
-) AS commented;
-
 -- name: HasAgentCommentedForTask :one
+-- 无任务上下文的 agent 评论仍可由现有接口创建；用时间范围覆盖这类显式回复。
 SELECT EXISTS (
     SELECT 1 FROM comment
     WHERE issue_id = @issue_id

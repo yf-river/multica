@@ -195,12 +195,10 @@ func TestStatusRuleIsFactJudgmentAtBothMoments(t *testing.T) {
 		"the board should show the issue being worked while you work, not only after",
 		// No assignee gate: the judgment applies to whoever is running.
 		"whoever the assignee is",
-		// Delivery lands in in_review and the ceiling keeps `done` human.
-		"necessary verification are complete → `done`",
-		// Assigned deliverables must not be misread as status-neutral
-		// research: stage barriers and parent notifications key off the
-		// delivery write.
-		"Use `in_review` only when an explicit human acceptance or approval is still required",
+		// 目标和必要验证完成后交由用户审核。
+		"necessary verification are complete → `in_review` for human review",
+		// 用户明确确认完成后才标记 done。
+		"Set `done` only when the user explicitly confirms completion",
 		// Invariant 1: conversation does not move the board. Ancillary is
 		// defined by OUTPUT (no part of the issue's own deliverable), not by
 		// activity words like "research" that also describe real work.
@@ -522,7 +520,7 @@ func TestProtocolHeadingInInstructionsGetsNoLeaderBrief(t *testing.T) {
 		}
 	}
 	if !strings.Contains(out, "Return your final answer normally") {
-		t.Fatalf("ordinary-agent brief lost the unconditional reply obligation\n---\n%s", out)
+		t.Fatalf("ordinary-agent brief lost automatic reply guidance\n---\n%s", out)
 	}
 }
 
@@ -580,7 +578,7 @@ func TestChatOutputDoesNotRequireIssueComment(t *testing.T) {
 
 	for _, banned := range []string{
 		"Your final answer is automatically saved as an issue comment",
-		"The user Explicit CLI replies are supported",
+		"Explicit CLI replies are supported for attachments and multiple threads",
 		"do not call `multica issue comment add`",
 		"unless the user explicitly asks",
 	} {
@@ -590,16 +588,8 @@ func TestChatOutputDoesNotRequireIssueComment(t *testing.T) {
 	}
 }
 
-// The Output section for issue tasks must forbid mid-run progress
-// comments and require the single final result comment. Guards the
-// MUL-3605 regression where a review agent surfaced its progress
-// narration as the result instead of posting a conclusion. (The
-// pre-existing "Final results MUST be delivered … invisible without it"
-// and "state the outcome, not the process" lines already carry the
-// mandatory-comment and no-process-dump halves.) Chat / quick-create /
-// autopilot kinds keep their own delivery channels and must NOT inherit
-// this rule. Runs both the legacy and slim paths.
-func TestOutputForbidsMidRunProgressComments(t *testing.T) {
+// Issue 通过运行事件展示进度，以评论交付最终结果；其他任务类型使用各自的交付渠道。
+func TestIssueOutputSeparatesProgressFromFinalReply(t *testing.T) {
 	wantPhrases := []string{
 		"Provide one final result",
 		"Use run progress events for brief progress updates",
@@ -2104,6 +2094,18 @@ func TestEveryBriefThatTeachesJSONOutputAlsoWarnsAgainstMergingStderr(t *testing
 		}
 		if !strings.Contains(brief, wantWhy) {
 			t.Errorf("%s brief states %q without %q; a rule with no reason is the first one dropped under pressure", name, wantRule, wantWhy)
+		}
+	}
+}
+
+// 事实调查与业务决策的边界应同时出现在聊天和任务提示中。
+func TestRuntimeBriefClarifiesFromEvidence(t *testing.T) {
+	for _, ctx := range []TaskContextForEnv{{ChatSessionID: "chat"}, {IssueID: "issue"}} {
+		brief := buildMetaSkillContentSlim("codex", ctx)
+		for _, want := range []string{"Before asking about project facts", "confirmed decisions", "unresolved goals or tradeoffs", "pending investigation as unknown", "latest correction", "Clarification does not authorize implementation"} {
+			if !strings.Contains(brief, want) {
+				t.Errorf("brief missing %q", want)
+			}
 		}
 	}
 }

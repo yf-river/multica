@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""固定版本发布：配置与数据属于环境，发布包只包含代码和构建产物。"""
+"""固定 int 验证后更新 prod；Git 保存历史，运行目录仅在切换期间保留旧副本。"""
 import argparse, contextlib, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 
 ROOT = Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().parent.parent)).resolve()
 RUN = ROOT / '.run'
 ENVS = ('int', 'prod')
+
+class RecoveryRequired(RuntimeError):
+    """自动恢复未完成，禁止后续更新覆盖恢复资料。"""
+
 
 def require_environment(env):
     if env not in ENVS: raise RuntimeError(f'未知环境: {env}')
@@ -60,7 +64,7 @@ def copy_tree(src, dst, excludes=()):
     run(['rsync', '-a', *[f'--exclude={x}' for x in excludes], str(src) + '/', str(dst) + '/'])
 
 def source_digest(root):
-    names = sorted(set(subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=ROOT).decode().split('\0')))
+    names = sorted(set(subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=root).decode().split('\0')))
     h = hashlib.sha256(); files = []
     for name in names:
         p = Path(root) / name
@@ -87,70 +91,130 @@ def checksums(root):
                 result[rel] = h.hexdigest()
     return result
 
-def relocate_dependency_links(stage, source):
-    """构建快照中的依赖只能指向快照，避免加载两份共享包及其单例。"""
-    stage, source = Path(stage).resolve(), Path(source).resolve()
-    for base, dirs, files in os.walk(stage):
-        for name in dirs + files:
-            link = Path(base) / name
-            if not link.is_symlink(): continue
-            target = link.resolve()
-            if target.is_relative_to(stage): continue
-            if not target.is_relative_to(source):
-                raise RuntimeError('构建依赖符号链接越界: ' + str(link))
-            replacement = stage / target.relative_to(source)
-            if not replacement.exists():
-                raise RuntimeError('构建依赖未包含在快照: ' + str(link))
-            link.unlink()
-            link.symlink_to(os.path.relpath(replacement, link.parent))
+def checked_source(source):
+    source = Path(source).resolve()
+    if Path(output(['git', 'rev-parse', '--show-toplevel'], cwd=source)).resolve() != source:
+        raise RuntimeError('必须指定 Git checkout 根目录')
+    if not (source/'server/cmd/server').is_dir() or not (source/'apps/web').is_dir():
+        raise RuntimeError('构建来源不是 Multica 仓库')
+    if output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=source):
+        raise RuntimeError('候选必须是干净提交；先保存改动再联调')
+    for directory in (source, source/'apps/web'):
+        for name in ('.env','.env.local','.env.production','.env.production.local'):
+            if (directory/name).exists():
+                raise RuntimeError('构建目录含本地环境文件，请将环境配置放在固定运行配置中: '+str(directory/name))
+    sha = output(['git', 'rev-parse', 'HEAD'], cwd=source)
+    published = RUN/'published.json'
+    if published.exists():
+        baseline = read(published)['commit']
+        if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
+            raise RuntimeError('候选未包含最新已发布提交，请先整合代码')
+    else:
+        # 首次切换必须证明旧生产记录对应真实 Git 内容，不能以一个 SHA 掩盖脏快照。
+        old = read(meta_path('prod'))
+        baseline = old['commit']
+        if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
+            raise RuntimeError('候选未包含现有生产提交')
+        if git_digest(source, baseline) != old['source_digest']:
+            raise RuntimeError('现有生产包含未提交内容；请先核对并保存生产源码基线')
+    return source, sha
 
-def build():
-    with lock('build'):
-        base_release = read(meta_path("prod")).get("release_id") if meta_path("prod").exists() else None
-        digest, files = source_digest(ROOT)
-        sha = output(['git', 'rev-parse', 'HEAD'], cwd=ROOT)
-        release_id = sha[:12] + '-' + digest[:12]
-        artifact = RUN / 'artifacts' / release_id
-        if artifact.exists():
-            if checksums(artifact) != read(artifact / 'release.json')['files']: raise RuntimeError('发布包校验失败')
-            print(release_id); return
-        stage = RUN / 'build' / release_id
-        if stage.exists(): raise RuntimeError('构建目录已存在，检查上次失败后单独清理: ' + str(stage))
-        stage.mkdir(parents=True)
-        for name in files:
-            dest = stage / name; dest.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(ROOT / name, dest)
-        if source_digest(ROOT)[0] != digest: raise RuntimeError('构建快照期间源码发生变化，请重新构建')
-        copy_tree(ROOT / 'node_modules', stage / 'node_modules')
-        for parent in ('apps', 'packages'):
-            for src in (ROOT / parent).glob('*/node_modules'):
-                copy_tree(src, stage / src.relative_to(ROOT))
-        relocate_dependency_links(stage, ROOT)
-        env = os.environ.copy()
-        for key in list(env):
-            if key.startswith(('NEXT_PUBLIC_', 'MULTICA_', 'GOAL_TEST_')) or key in ('REMOTE_API_URL','FRONTEND_ORIGIN','DATABASE_URL','JWT_SECRET'): env.pop(key)
-        env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=release_id, NEXT_TELEMETRY_DISABLED='1')
+def establish_baseline(source):
+    source=Path(source).resolve()
+    if (RUN/'published.json').exists(): raise RuntimeError('已存在生产源码基线')
+    if output(['git','status','--porcelain','--untracked-files=all'],cwd=source): raise RuntimeError('基线 checkout 必须干净')
+    sha=output(['git','rev-parse','HEAD'],cwd=source)
+    digest=source_digest(source)[0]
+    if digest != read(meta_path('prod'))['source_digest']:
+        raise RuntimeError('基线源码与当前生产构建内容不一致')
+    write(RUN/'published.json',{'commit':sha,'source_digest':digest},True)
+
+def git_digest(source, commit):
+    names = output(['git', 'ls-tree', '-r', '--name-only', commit], cwd=source).splitlines()
+    digest = hashlib.sha256()
+    for name in sorted(names):
+        if name.startswith('.run/'): continue
+        digest.update(name.encode()+b'\0')
+        digest.update(subprocess.check_output(['git', 'show', commit+':'+name], cwd=source))
+    return digest.hexdigest()
+
+def idle_slot(env):
+    current = Path(read(meta_path(env))['release_dir']).resolve()
+    slots = [RUN/'runtime'/env/name for name in ('a', 'b')]
+    target = next(p for p in slots if p.resolve() != current)
+    assert_unused(target)
+    if target.exists(): shutil.rmtree(target)
+    return target
+
+def assert_unused(directory):
+    directory = Path(directory).resolve()
+    for proc in Path('/proc').glob('[0-9]*'):
+        for name in ('cwd', 'exe'):
+            try:
+                resolved = (proc/name).resolve(strict=True)
+                if resolved == directory or directory in resolved.parents:
+                    raise RuntimeError('目录仍被进程使用: '+str(directory))
+            except (FileNotFoundError, PermissionError, ProcessLookupError):
+                pass
+
+
+def build(source, target):
+    source, sha = checked_source(source)
+    digest, files = source_digest(source)
+    groups = {'go': hashlib.sha256(), 'web': hashlib.sha256()}
+    for name in files:
+        if name.startswith(('docs/','apps/docs/','.github/','.agents/')) or ('/' not in name and name.endswith('.md')):
+            continue
+        # 未知根目录输入同时影响两组；宁可多编译，不误复用。
+        selected = ['go'] if name.startswith('server/') else ['web'] if name.startswith(('apps/', 'packages/')) else ['go', 'web']
+        for group in selected:
+            groups[group].update(name.encode()+b'\0'+(source/name).read_bytes())
+    inputs = {name: value.hexdigest() for name, value in groups.items()}
+    current = Path(read(meta_path('int'))['release_dir'])
+    previous = read(current/'release.json') if (current/'release.json').exists() else {}
+    # 运行目录只允许增加缓存，包内源码与程序必须仍然匹配。
+    current_files = checksums(current) if previous.get('inputs') else {}
+    reusable = all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
+    target.mkdir(parents=True)
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith(('NEXT_PUBLIC_', 'MULTICA_', 'GOAL_TEST_')) or key in ('REMOTE_API_URL','FRONTEND_ORIGIN','DATABASE_URL','JWT_SECRET'): env.pop(key)
+    env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=sha[:12], NEXT_TELEMETRY_DISABLED='1')
+    if reusable and previous.get('inputs', {}).get('web') == inputs['web']:
+        copy_tree(current, target, excludes=('/server/', '/release.json', '**/.next/cache/***'))
+    else:
+        run(['pnpm', 'install', '--frozen-lockfile'], cwd=source, env=env)
+        run(['pnpm', '--filter', '@multica/web', 'build'], cwd=source, env=env)
+        copy_tree(source/'apps/web/.next/standalone', target)
+        copy_tree(source/'apps/web/.next/static', target/'apps/web/.next/static')
+        copy_tree(source/'apps/web/public', target/'apps/web/public')
+    if reusable and previous.get('inputs', {}).get('go') == inputs['go']:
+        copy_tree(current/'server/bin', target/'server/bin')
+    else:
+        (target/'server/bin').mkdir(parents=True, exist_ok=True)
         for binary in ('server', 'multica', 'migrate'):
-            run(['go', 'build', '-ldflags', f'-X main.version={release_id} -X main.commit={sha}', '-o', f'bin/{binary}', f'./cmd/{binary}'], cwd=stage/'server', env=env)
-        run(['pnpm', '--filter', '@multica/web', 'build'], cwd=stage, env=env)
-        pending = RUN / 'artifacts' / (release_id + '.pending'); pending.mkdir(parents=True)
-        copy_tree(stage/'apps/web/.next/standalone', pending)
-        copy_tree(stage/'apps/web/.next/static', pending/'apps/web/.next/static')
-        copy_tree(stage/'apps/web/public', pending/'apps/web/public')
-        copy_tree(stage/'server/bin', pending/'server/bin')
-        copy_tree(stage/'server/migrations', pending/'server/migrations')
-        manifest = dict(id=release_id, base_release_id=base_release, source_commit=sha, source_digest=digest, created_at=time.strftime('%FT%TZ',time.gmtime()), files=checksums(pending))
-        write(pending/'release.json', manifest)
-        os.rename(pending, artifact)
-        print('发布包:', release_id)
+            run(['go', 'build', '-ldflags', f'-X main.version={sha[:12]} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
+    copy_tree(source/'server/migrations', target/'server/migrations')
+    if checked_source(source)[1] != sha or source_digest(source)[0] != digest:
+        raise RuntimeError('构建期间源码变化，请重新联调')
+    manifest = dict(id=sha, source_commit=sha, source_directory=str(source), source_digest=digest,
+                    inputs=inputs, files=checksums(target))
+    write(target/'release.json', manifest)
+    for cache in (source/'apps/web/.next/cache', source/'.turbo'):
+        if cache.exists() and sum(p.stat().st_size for p in cache.rglob('*') if p.is_file() and not p.is_symlink()) > 1024**3:
+            shutil.rmtree(cache)
+    return manifest
 
 def health_url(env):
     profile=read(meta_path(env))['daemon_profile']
     port=19514 if not profile else 19515 + sum(profile.encode()) % 1000
     return f'http://127.0.0.1:{port}'
 
-def check_process_ownership(env, metadata):
+def check_process_ownership(env, metadata, allow_unhealthy=False):
     release = Path(metadata.get('release_dir', ROOT)).resolve()
     for role, pid in metadata['pids'].items():
+        if allow_unhealthy and not exists(pid):
+            continue
         role_release = Path(metadata.get('role_release_dirs', {}).get(role, str(release)))
         expected_cwd = role_release / 'apps/web' if role == 'web' else role_release
         actual_cwd = Path(f'/proc/{pid}/cwd').resolve()
@@ -165,11 +229,11 @@ def check_process_ownership(env, metadata):
             binary_root = ROOT if legacy_daemon else release
             if Path(f'/proc/{pid}/exe').resolve() != binary_root / 'server/bin' / binary:
                 raise RuntimeError(f'{env} {role} PID 执行文件不属于记录的版本')
-        else:
+        elif not allow_unhealthy:
             listener = output(['ss', '-ltnp', f"( sport = :{metadata['frontend_port']} )"])
             if f'pid={pid},' not in listener:
                 raise RuntimeError(f'{env} Web PID 未监听记录的端口')
-        if role == 'server':
+        if role == 'server' and not allow_unhealthy:
             listener = output(['ss', '-ltnp', f"( sport = :{metadata['backend_port']} )"])
             if f'pid={pid},' not in listener:
                 raise RuntimeError(f'{env} API PID 未监听记录的端口')
@@ -190,6 +254,12 @@ def owned_stop(pid, role, expected_cwd):
         else: raise RuntimeError(f'{role} 未完成退出，发布终止')
 
 def start(cmd,cwd,env,log):
+    # 服务已停止后才整理日志，避免移动仍被写入的文件。
+    logfile=Path(log)
+    if logfile.exists() and logfile.stat().st_size > 64*1024*1024:
+        with logfile.open('rb') as stream:
+            stream.seek(-16*1024*1024,2); tail=stream.read()
+        logfile.write_bytes(tail)
     with open(log,'ab') as f:
         p=subprocess.Popen([str(x) for x in cmd],cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=f,stderr=f,start_new_session=True)
     return p.pid
@@ -232,28 +302,14 @@ def launch(env, release, cfg, m):
     result['daemon']=h['pid']
     return result
 
-def neutralize_task_workspace_root(cfg, metadata):
-    """新任务放在源码树外；旧目录及任务记录原样保留，由续跑提示引用。"""
-    previous = Path(metadata['daemon_workspaces_root']).resolve()
-    if not previous.is_relative_to(ROOT):
-        return
-    target = ROOT.parent / '.multica-runtime' / metadata['daemon_profile']
-    target.mkdir(parents=True, exist_ok=True, mode=0o700)
-    metadata['daemon_workspaces_root'] = str(target)
-    cfg['daemon']['MULTICA_WORKSPACES_ROOT'] = str(target)
-    cfg['daemon']['MULTICA_ENV_WRITABLE_ROOT'] = str(target)
-    profile = read(metadata['daemon_profile_path'])
-    profile['workspaces_root'] = str(target)
-    write(metadata['daemon_profile_path'], profile, True)
-
-def deploy(env,release_id,timeout=900):
+def deploy(env, release, timeout=900):
     require_environment(env)
-    if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('任务内请使用 request，不能同步等待自身结束')
-    if not re.fullmatch(r'[a-zA-Z0-9_-]+',release_id): raise RuntimeError('非法版本')
+    release = Path(release).resolve()
+    manifest = read(release/'release.json')
+    release_id = manifest['id']
+    actual = checksums(release)
+    if any(actual.get(k) != v for k,v in manifest['files'].items()): raise RuntimeError('运行文件校验失败')
     with lock(env):
-        artifact=RUN/'artifacts'/release_id
-        manifest=read(artifact/'release.json')
-        if checksums(artifact)!=manifest['files']: raise RuntimeError('发布包内容被修改')
         cfg=read(config_path(env)); m=read(meta_path(env))
         check_process_ownership(env,m)
         isolation_check(config_only=True)
@@ -261,18 +317,13 @@ def deploy(env,release_id,timeout=900):
             isolation_check()
             print(env,'版本已运行，无需重启',release_id)
             return
-        if manifest.get('base_release_id') and release_id != m.get('previous_release_id') and read(meta_path('prod')).get('release_id') != manifest['base_release_id']:
-            raise RuntimeError('生产版本已被其他发布更新，请整合最新源码并重新验收后发布')
-        release=RUN/'releases'/env/release_id
-        if release.exists():
-            # 发布目录中的 .next/cache 为环境独立的可变缓存；只核验包内文件。
-            current=checksums(release)
-            if any(current.get(k)!=v for k,v in manifest['files'].items()): raise RuntimeError('已安装版本文件被修改')
-        else: copy_tree(artifact,release)
-        prior_profile=read(m['daemon_profile_path'])
-        prior=json.loads(json.dumps(m)); oldcfg={r:process_env(pid) for r,pid in m['pids'].items()}
+        prior=json.loads(json.dumps(m))
+        if env=='prod':
+            prior['published_before']=read(RUN/'published.json') if (RUN/'published.json').exists() else None
+        oldcfg={r:process_env(pid) for r,pid in m['pids'].items()}
         write(RUN/'env'/f'{env}-before-deploy.json',oldcfg,True)
         old_cwds={r:str(Path(f'/proc/{pid}/cwd').resolve()) for r,pid in m['pids'].items()}
+        write(RUN/'deployments'/f'{env}-previous.json', prior, True)
         drain(env,m,timeout)
         offsets={role:Path(log).stat().st_size if Path(log).exists() else 0 for role,log in m['log_paths'].items()}
         try:
@@ -282,10 +333,8 @@ def deploy(env,release_id,timeout=900):
             if exists(m['pids']['daemon']): raise RuntimeError('Daemon 未退出，拒绝强杀')
             owned_stop(m['pids']['web'],'web',old_cwds['web'])
             owned_stop(m['pids']['server'],'server',old_cwds['server'])
-            neutralize_task_workspace_root(cfg,m)
             m['pids']=launch(env,release,cfg,m)
         except Exception as failure:
-            write(prior['daemon_profile_path'],prior_profile,True)
             # 启动失败时只回收本次创建的进程，并恢复切换前的程序与运行配置。
             for role,pid in list(m['pids'].items()):
                 if pid not in prior['pids'].values() and exists(pid):
@@ -304,11 +353,10 @@ def deploy(env,release_id,timeout=900):
             raise
         m.update(release_id=release_id,release_dir=str(release),previous_release_id=prior.get('release_id') if prior.get('release_id')!=release_id else prior.get('previous_release_id'),commit=manifest['source_commit'],source_digest=manifest['source_digest'],deployed_at=time.strftime('%FT%TZ',time.gmtime()))
         m.update(build_version=release_id,frontend_mode='standalone',runtime_config_file=str(config_path(env)),binary_versions={'multica':output([release/'server/bin/multica','version'])})
-        m['log_offsets']=offsets
+        m['log_offsets']={role: min(offsets[role],16*1024*1024) if offsets[role]>64*1024*1024 and role in ('server','web') else offsets[role] for role in offsets}
         m.pop('role_release_dirs', None)
         write(RUN/'deployments'/f'{env}-previous.json',prior)
         write(meta_path(env),m)
-        write(config_path(env),cfg,True)
         # 旧审计工具继续读取 .env；它是运行配置的派生产物，不再承担生成真源。
         legacy=RUN/'env'/f'goal-test-{env}.env'
         keys={line.split('=',1)[0] for line in legacy.read_text().splitlines() if '=' in line and not line.startswith('#')} if legacy.exists() else set()
@@ -318,7 +366,7 @@ def deploy(env,release_id,timeout=900):
         previous.update({k:values[k] for k in keys if k in values})
         legacy.write_text('# Generated from '+str(config_path(env))+'; edit the service configuration instead.\n'+'\n'.join(k+'='+v for k,v in sorted(previous.items()))+'\n');legacy.chmod(0o600)
         for role,pid in m['pids'].items(): (RUN/f'{env}-{role}.pid').write_text(str(pid)+'\n')
-        print(env,'已发布',release_id)
+        print(env,'已切换',release_id)
 
 def isolation_check(config_only=False):
     cfg={e:read(config_path(e)) for e in ENVS if config_path(e).exists()}
@@ -339,94 +387,301 @@ def isolation_check(config_only=False):
     print(json.dumps(checks,ensure_ascii=False))
     if not all(checks.values()): raise RuntimeError('生产运行检查失败')
 
-def rollback(timeout=900):
-    version=read(meta_path('prod')).get('previous_release_id')
-    if not version or not (RUN/'artifacts'/version).exists(): raise RuntimeError('没有可回滚的发布包')
-    deploy('prod',version,timeout)
-
 def verify_browser(env='prod'):
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
     run(['node',ROOT/'scripts/verify-release-browser.mjs'],cwd=ROOT,env=child_env)
 
-def publish(env, version, timeout=900):
-    prior=read(meta_path(env))['release_id']
-    deploy(env,version,timeout)
+def restore(env, timeout=900):
+    prior = read(RUN/'deployments'/f'{env}-previous.json')
+    current = read(meta_path(env))
+    old = Path(prior['release_dir'])
+    if old.resolve() == Path(current['release_dir']).resolve(): return
+    if not old.exists(): raise RuntimeError('临时恢复目录已删除；请从 Git 重新构建')
+    # 旧安装也可能没有新格式 manifest，恢复只使用切换前的记录与配置。
+    check_process_ownership(env, current, allow_unhealthy=True)
+    daemon_pid=current['pids']['daemon']
+    if exists(daemon_pid):
+        drain(env, current, timeout)
+        http(health_url(env)+'/shutdown', 'POST')
+        deadline=time.monotonic()+60
+        while exists(daemon_pid) and time.monotonic()<deadline: time.sleep(.2)
+        if exists(daemon_pid): raise RuntimeError('Daemon 未退出，无法恢复')
+    for role in ('web', 'server'):
+        cwd=Path(current['release_dir'])/ 'apps/web' if role=='web' else Path(current['release_dir'])
+        owned_stop(current['pids'][role], role, cwd)
+    baseline=prior.pop('published_before',None)
+    prior['pids']=launch(env, old, read(config_path(env)), prior)
+    write(meta_path(env), prior)
+    if env=='prod':
+        if baseline is not None: write(RUN/'published.json',baseline,True)
+        elif (RUN/'published.json').exists(): (RUN/'published.json').unlink()
+    verify_browser(env)
+
+def discard_previous(env):
+    file=RUN/'deployments'/f'{env}-previous.json'
+    if not file.exists(): return
+    prior=Path(read(file)['release_dir']).resolve()
+    current=Path(read(meta_path(env))['release_dir']).resolve()
+    # 首次接管留下的历史目录由单独授权的清理处理。
+    if prior != current and prior.parent == (RUN/'runtime'/env).resolve():
+        assert_unused(prior)
+        if prior.exists(): shutil.rmtree(prior)
+    file.unlink()
+    metadata=read(meta_path(env));metadata.pop('previous_release_id',None);write(meta_path(env),metadata)
+
+def publish(env, directory, timeout=900):
+    try:
+        deploy(env, directory, timeout)
+    except Exception:
+        try:
+            check_process_ownership(env, read(meta_path(env)))
+        except Exception as recovery_error:
+            raise RecoveryRequired(f'{env} 启动或恢复未完成: {recovery_error}') from recovery_error
+        raise
     try:
         verify_browser(env)
+        verify_logs(env)
     except Exception:
-        if prior!=version:
-            deploy(env,prior,timeout)
-            verify_browser(env)
-        raise RuntimeError(f'{env} 业务验收失败；已恢复并复查切换前程序，数据库未回滚')
+        try:
+            restore(env, timeout)
+        except Exception as recovery_error:
+            raise RecoveryRequired(f'{env} 验收失败且恢复未完成: {recovery_error}') from recovery_error
+        raise
+
+def candidate_path(): return RUN/'candidate.json'
+
+def candidate(version=None):
+    record=read(candidate_path())
+    if version and record['id'] != version: raise RuntimeError('int 已由其他候选占用')
+    return record
+
+def prepare_int(source, timeout=900):
+    if os.environ.get('MULTICA_TASK_ID') and os.environ.get('MULTICA_SERVER_URL','').rstrip('/') == read(meta_path('int'))['backend_url'].rstrip('/'):
+        raise RuntimeError('int 中运行的任务不能同步更新自身，请从生产运行时发起')
+    # 生产升级需要等待所有运行退出，不能让其他运行阻塞在联调锁上。
+    try:
+        with lock('publisher'):
+            active=candidate() if candidate_path().exists() else None
+            if active and active['status'] not in ('released','succeeded','failed'):
+                raise RuntimeError('int 正被其他候选占用；结束当前运行后重试，不能同步等待生产发布')
+            source, sha=checked_source(source)
+            version=sha+'-'+str(time.time_ns())
+            record=dict(id=version, commit=sha, source=str(source),
+                        git_common=output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),
+                        branch=output(['git','symbolic-ref','HEAD'],cwd=source), status='building',
+                        task_id=os.environ.get('MULTICA_TASK_ID',''), server_url=os.environ.get('MULTICA_SERVER_URL',''),
+                        workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''))
+            write(candidate_path(), record, True)
+            try:
+                directory=idle_slot('int')
+                manifest=build(source, directory)
+                publish('int', directory, timeout)
+                record.update(status='verifying', release_id=manifest['id'], source_digest=manifest['source_digest'],
+                              deployed_at=read(meta_path('int'))['deployed_at'])
+                discard_previous('int')
+            except Exception as error:
+                record.update(status='recovery_required' if isinstance(error,RecoveryRequired) else 'failed', error=str(error))
+                raise
+            finally: write(candidate_path(), record, True)
+            print(json.dumps(record,ensure_ascii=False));return record
+    except BlockingIOError:
+        raise RuntimeError('其他候选正在构建或发布；结束当前运行后重试') from None
+
+def validate_candidate(record, allow_finalized=False):
+    current=read(meta_path('int'))
+    if any(current.get(k) != record.get(k) for k in ('release_id','source_digest','deployed_at')):
+        raise RuntimeError('int 在验收后发生变化，必须重新验证')
+    if Path(record['source']).exists():
+        source, sha=checked_source(record['source'])
+        if sha != record['commit'] or source_digest(source)[0] != record['source_digest']:
+            raise RuntimeError('候选源码已变化，必须重新联调')
+    elif not allow_finalized:
+        raise RuntimeError('任务源码目录不存在')
+    common=record['git_common']
+    if output(['git','--git-dir',common,'rev-parse',record['branch']]) != record['commit']:
+        raise RuntimeError('候选分支发生变化')
+    published=RUN/'published.json'
+    if published.exists() and subprocess.run(['git','--git-dir',common,'merge-base','--is-ancestor',read(published)['commit'],record['commit']]).returncode:
+        raise RuntimeError('候选未包含最新生产提交')
+    return current
+
+def accept(version, evidence_file):
+    with lock('publisher', wait=True):
+        record=candidate(version)
+        if record['status'] != 'verifying': raise RuntimeError('候选不在功能验证阶段')
+        validate_candidate(record)
+        evidence=read(evidence_file)
+        if evidence.get('candidate') != version or not evidence.get('summary') or not evidence.get('checks'):
+            raise RuntimeError('验收记录需要 candidate、summary 和 checks')
+        if any(not isinstance(c,dict) or not c.get('name') or c.get('status')!='passed' or not c.get('evidence') for c in evidence['checks']):
+            raise RuntimeError('每项功能检查需要 name、passed 状态和实际 evidence')
+        record.update(status='accepted', acceptance=evidence)
+        write(candidate_path(), record, True)
+
+def release_candidate(version):
+    with lock('publisher', wait=True):
+        record=candidate(version)
+        if record['status'] in ('queued','publishing'): raise RuntimeError('生产更新已提交，不能释放')
+        if record['status']=='recovery_required':
+            isolation_check()
+            published=read(RUN/'published.json')
+            current=read(meta_path('prod'))
+            if published['commit'] != current['commit'] or published['source_digest'] != current['source_digest']:
+                raise RuntimeError('生产尚未恢复到已发布基线')
+        record.update(status='released');write(candidate_path(),record,True)
 
 def request_path(request_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',request_id): raise RuntimeError('非法请求编号')
     return RUN/'publish-requests'/f'{request_id}.json'
 
-def request_release(version,timeout=900,retry=False):
-    if not re.fullmatch(r'[a-zA-Z0-9_-]+',version): raise RuntimeError('非法版本')
-    manifest=read(RUN/'artifacts'/version/'release.json')
-    if checksums(RUN/'artifacts'/version)!=manifest['files']: raise RuntimeError('发布包校验失败')
-    with lock('publish-request'):
-        request_id=version
-        target=request_path(request_id)
+def request_release(version,timeout=900):
+    with lock('publisher',wait=True):
+        record=candidate(version)
+        target=request_path(version)
         if target.exists():
-            existing=read(target)
-            if not retry or existing['status'] not in ('failed','rolled_back'):
-                print(json.dumps(existing,ensure_ascii=False));return existing
-        code=Path(__file__).read_bytes()
-        runner=RUN/'publisher'/hashlib.sha256(code).hexdigest()/'release.py'
+            previous=read(target)
+            if previous['status'] in ('queued','publishing','succeeded'):
+                print(json.dumps(previous,ensure_ascii=False));return previous
+            raise RuntimeError('上次生产更新未成功，请重新联调')
+        if record['status'] != 'accepted': raise RuntimeError('先完成本次功能验收并 accept')
+        validate_candidate(record)
+        # 发布来源为提交请求的这轮运行，可能与开始联调的运行不同。
+        record.update(task_id=os.environ.get('MULTICA_TASK_ID',''), server_url=os.environ.get('MULTICA_SERVER_URL',''),
+                      workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''), timeout=timeout,
+                      status='queued', unit='multica-publish-'+version)
+        runner=RUN/'publisher'/version/'release.py'
         runner.parent.mkdir(parents=True,exist_ok=True)
-        if not runner.exists(): runner.write_bytes(code);runner.chmod(0o700)
-        unit='multica-publish-'+request_id+'-'+str(time.time_ns())
-        record=dict(id=request_id,release_id=version,status='queued',stage='int',unit=unit,requested_at=time.strftime('%FT%TZ',time.gmtime()),requested_by_task=os.environ.get('MULTICA_TASK_ID',''),timeout=timeout)
-        write(target,record,True)
+        runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
+        write(target,record,True);write(candidate_path(),record,True)
         try:
-            # systemd owns the publisher independently of the task's process group and cgroup.
-            run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec','--property=KillMode=process',
-                 '--working-directory',ROOT,'--setenv=MULTICA_RELEASE_ROOT='+str(ROOT),
-                 sys.executable,runner,'worker',request_id])
+            run(['systemd-run','--quiet','--collect','--unit',record['unit'],'--property=Type=exec','--property=KillMode=process',
+                 '--working-directory',ROOT,'--setenv=MULTICA_RELEASE_ROOT='+str(ROOT),sys.executable,runner,'worker',version])
         except Exception:
-            record.update(status='failed',error='外部发布进程未启动');write(target,record,True);raise
+            record.update(status='accepted');write(candidate_path(),record,True)
+            target.unlink();raise
         print(json.dumps(record,ensure_ascii=False));return record
 
+def task_api(record, route, body=None):
+    url=record.get('server_url','').rstrip('/')
+    metadata=next((read(meta_path(e)) for e in ENVS if read(meta_path(e))['backend_url'].rstrip('/')==url),None)
+    if not metadata: raise RuntimeError('任务来源不是已配置的 int/prod')
+    token=read(metadata['daemon_profile_path'])['token']
+    headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'}
+    if record.get('workspace_id'): headers['X-Workspace-ID']=record['workspace_id']
+    req=urllib.request.Request(url+'/api/daemon/tasks/'+record['task_id']+'/'+route,
+                               data=None if body is None else json.dumps(body).encode(),headers=headers)
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=15) as response:
+        return json.load(response)
+
+def wait_requested_task(record):
+    if not record.get('task_id'): return
+    deadline=time.monotonic()+record['timeout']
+    while time.monotonic()<deadline:
+        status=task_api(record,'status')['status']
+        if status=='completed': return
+        if status in ('failed','cancelled'): raise RuntimeError('发布来源运行未成功完成: '+status)
+        time.sleep(2)
+    raise RuntimeError('等待发起运行结束超时')
+
+def report_result(record):
+    if not record.get('task_id'): return
+    marker='生产更新 '+record['id']
+    if task_api(record,'status')['status'] not in ('completed','failed','cancelled'):
+        raise RuntimeError('来源运行仍在执行，结果回写待重试')
+    messages=task_api(record,'messages')
+    if isinstance(messages,dict): messages=messages['messages']
+    content=marker+'：'+('成功' if record['status']=='succeeded' else '失败：'+record.get('error',''))
+    if record.get('cleanup_error'): content+='；清理待处理：'+record['cleanup_error']
+    elif record.get('worktree_cleanup'): content+='；工作目录：'+record['worktree_cleanup']
+    if any(content == m.get('content','') for m in messages): return
+    seq=max((m['seq'] for m in messages),default=0)+1
+    task_api(record,'messages',{'messages':[{'seq':seq,'type':'text','content':content}]})
+
+def cleanup_worktree(record):
+    source=Path(record['source']).resolve()
+    if not source.exists(): return 'already_removed'
+    # 普通 checkout、发布控制目录和没有分支引用的目录不属于自动删除对象。
+    gitdir=Path(output(['git','rev-parse','--absolute-git-dir'],cwd=source)).resolve()
+    common=Path(output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source)).resolve()
+    if source==ROOT or gitdir==common: return 'main_checkout_retained'
+    if output(['git','rev-parse','HEAD'],cwd=source)!=record['commit']: raise RuntimeError('worktree 已产生后续提交')
+    branch=output(['git','symbolic-ref','--quiet','HEAD'],cwd=source)
+    if branch != record['branch'] or str(common) != record['git_common']:
+        raise RuntimeError('worktree 归属与发布请求不一致')
+    if not branch.startswith('refs/heads/feature/'): raise RuntimeError('不是任务 feature 分支')
+    if output(['git','status','--porcelain','--untracked-files=all'],cwd=source): raise RuntimeError('worktree 存在未保存成果')
+    published=read(RUN/'published.json')['commit']
+    if subprocess.run(['git','--git-dir',common,'merge-base','--is-ancestor',record['commit'],published]).returncode:
+        raise RuntimeError('提交不在当前已发布历史中')
+    ignored=output(['git','ls-files','--others','--ignored','--exclude-standard'],cwd=source).splitlines()
+    for name in ignored:
+        parts=Path(name).parts
+        if not any(p in ('node_modules','.next','.turbo','__pycache__') for p in parts) and not name.startswith(('server/bin/','server/tmp/')):
+            raise RuntimeError('worktree 存在非构建类忽略文件: '+name)
+    assert_unused(source)
+    run(['git','--git-dir',common,'worktree','remove',source])
+    return 'removed'
+
+def finish_cleanup(record):
+    try:
+        # 清理重试可能晚于下一次发布，只能处理本次发布的恢复目录。
+        if read(RUN/'published.json').get('candidate') == record['id']:
+            discard_previous('prod')
+        record['worktree_cleanup']=cleanup_worktree(record)
+        record.pop('cleanup_error',None)
+        runner=RUN/'publisher'/record['id']
+        if runner.exists(): shutil.rmtree(runner)
+    except Exception as error:
+        record['cleanup_error']=str(error)
+    write(request_path(record['id']),record,True)
+    try:
+        report_result(record)
+        record.pop('report_error',None)
+    except Exception as error:
+        record['report_error']=str(error)
+    write(request_path(record['id']),record,True)
+
+
 def worker(request_id):
-    if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('任务内只能 request；worker 必须由外部进程启动')
+    if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('worker 必须由外部进程启动')
     target=request_path(request_id);record=read(target)
-    log=target.with_suffix('.log')
-    with log.open('a') as stream,contextlib.redirect_stdout(stream),contextlib.redirect_stderr(stream):
+    with target.with_suffix('.log').open('a') as stream,contextlib.redirect_stdout(stream),contextlib.redirect_stderr(stream):
         try:
+            if record['status']!='succeeded':
+                wait_requested_task(record)
             with lock('publisher',wait=True):
-                prior=read(meta_path('prod'))['release_id']
-                record.update(status='running',previous_release_id=prior,publisher_pid=os.getpid())
-                write(target,record,True)
-                version=record['release_id']
-                record.update(stage='deploying_int');write(target,record,True)
-                deploy('int',version,record['timeout'])
-                record.update(stage='verifying_int');write(target,record,True)
-                verify_browser('int')
-                os.environ['MULTICA_TASK_COMPLETED']='1'
-                os.environ['MULTICA_REQUESTED_TASK_ID']=record.get('requested_by_task','') or 'manual-release-request'
-                run(['node',ROOT/'scripts/verify-integration-release.mjs',version],cwd=ROOT)
-                record.update(stage='deploying_prod');write(target,record,True)
-                publish('prod',version,record['timeout'])
-                record.update(status='succeeded',stage='succeeded',result='联调验收及生产发布通过')
+                record=read(target)
+                if record['status']=='succeeded':
+                    finish_cleanup(record);return
+                current_record=candidate(request_id)
+                if current_record['status']!='queued': raise RuntimeError('候选已释放或更新不在队列中')
+                current=validate_candidate(record, allow_finalized=True)
+                record.update(status='publishing');write(target,record,True);write(candidate_path(),record,True)
+                directory=idle_slot('prod')
+                copy_tree(Path(current['release_dir']),directory,excludes=('**/.next/cache/***',))
+                publish('prod',directory,record['timeout'])
+                write(RUN/'published.json',{'commit':record['commit'],'source_digest':record['source_digest'],'candidate':request_id},True)
+                record.update(status='succeeded');write(target,record,True);write(candidate_path(),record,True)
+                finish_cleanup(record)
         except Exception as error:
-            current=read(meta_path('prod'))['release_id']
-            record.update(status='rolled_back' if '业务验收失败；已恢复' in str(error) else 'failed',error=str(error),current_release_id=current)
-        record['finished_at']=time.strftime('%FT%TZ',time.gmtime());write(target,record,True)
+            record.update(status='recovery_required' if isinstance(error,RecoveryRequired) else 'failed',error=str(error))
+            write(target,record,True)
+            with lock('publisher',wait=True):
+                if candidate_path().exists() and candidate()['id']==request_id: write(candidate_path(),record,True)
+            try: report_result(record)
+            except Exception as report_error:
+                record['report_error']=str(report_error);write(target,record,True)
+
 
 def request_status(request_id):
-    target=request_path(request_id);record=read(target)
-    if record['status'] in ('queued','running'):
-        active=subprocess.run(['systemctl','is-active','--quiet',record['unit']]).returncode==0
-        if not active:
-            record.update(status='failed',error='外部发布进程已退出且没有最终结果；检查请求日志后显式重试')
-            write(target,record,True)
+    record=read(request_path(request_id))
+    if record['status'] in ('queued','publishing') and subprocess.run(['systemctl','is-active','--quiet',record['unit']]).returncode:
+        record['warning']='外部更新进程已退出；检查日志和运行目录后恢复，不能自动释放联调占用'
     print(json.dumps(record,ensure_ascii=False))
 
-def verify_logs():
-    env=os.environ.get('GOAL_TEST_ENV','prod'); require_environment(env)
+
+def verify_logs(env='prod'):
+    require_environment(env)
     m=read(meta_path(env));results={}
     for role,path in m['log_paths'].items():
         p=Path(path)
@@ -461,31 +716,46 @@ def backup():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['build','deploy','request','request-status','worker','rollback','verify','status','verify-logs','backup','initialize','reset'])
+    parser.add_argument('command',choices=['baseline','int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset'])
     parser.add_argument('target',nargs='?')
-    parser.add_argument('legacy_release',nargs='?')
+    parser.add_argument('--source')
+    parser.add_argument('--evidence')
     parser.add_argument('--timeout',type=float,default=900)
-    parser.add_argument('--retry',action='store_true')
     parser.add_argument('--env',choices=ENVS,default='prod')
     a=parser.parse_args()
     if a.timeout<=0: parser.error('timeout 必须大于 0')
-    if a.command=='initialize': raise RuntimeError('请使用联调 bootstrap 入口；生产禁止重新初始化')
-    target=a.legacy_release if a.target in ENVS else a.target
-    if a.command=='build': build()
+    if a.command=='baseline':
+        if not a.source: parser.error('baseline 需要 --source 已核对的生产源码')
+        with lock('publisher',wait=True): establish_baseline(a.source)
+    elif a.command=='int':
+        if not a.source: parser.error('int 需要 --source 任务 worktree')
+        prepare_int(a.source,a.timeout)
+    elif a.command=='accept':
+        if not a.target or not a.evidence: parser.error('accept 需要候选编号和 --evidence 文件')
+        accept(a.target,a.evidence)
+    elif a.command in ('request','request-status','worker','release','cleanup'):
+        if not a.target: parser.error('需要候选编号')
+        if a.command=='request': request_release(a.target,a.timeout)
+        elif a.command=='request-status': request_status(a.target)
+        elif a.command=='worker': worker(a.target)
+        elif a.command=='release': release_candidate(a.target)
+        else:
+            with lock('publisher',wait=True):
+                record=read(request_path(a.target))
+                if record['status']!='succeeded': raise RuntimeError('只清理成功发布的任务')
+                finish_cleanup(record)
+                print(json.dumps(record,ensure_ascii=False))
+    elif a.command=='restore':
+        if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('恢复应由运行环境外部执行')
+        with lock('publisher',wait=True): restore(a.env,a.timeout)
     elif a.command=='verify': isolation_check()
     elif a.command=='status':
-        isolation_check();m=read(meta_path('prod'));print(json.dumps({k:m[k] for k in ('release_id','previous_release_id','frontend_url','backend_url','pids','deployed_at')},ensure_ascii=False))
-    elif a.command=='verify-logs': os.environ['GOAL_TEST_ENV']=a.env; verify_logs()
+        print(json.dumps({'environments':{e:{k:read(meta_path(e)).get(k) for k in ('release_id','commit','release_dir')} for e in ENVS},
+                          'candidate':candidate() if candidate_path().exists() else None},ensure_ascii=False))
+    elif a.command=='verify-logs': verify_logs(a.env)
     elif a.command=='backup': backup()
     elif a.command=='reset':
-        if a.env != 'int': raise RuntimeError('只允许重置 int')
+        if a.env!='int': raise RuntimeError('只允许重置 int')
         run(['node',ROOT/'scripts/reset-integration.mjs'],cwd=ROOT)
-    elif a.command=='rollback': rollback(a.timeout);verify_browser('prod')
-    elif a.command in ('deploy','request'):
-        if not target: parser.error('必须指定发布包版本')
-        if a.command=='request': request_release(target,a.timeout,a.retry)
-        else: publish(a.target if a.target in ENVS else 'prod',target,a.timeout)
-    elif a.command=='worker': worker(target)
-    elif a.command=='request-status': request_status(target)
 
 if __name__=='__main__': main()
