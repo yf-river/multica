@@ -82,6 +82,17 @@ class ReleaseTest(unittest.TestCase):
     def test_build_dependencies_do_not_prevent_cleanup(self):
         source=self.worktree();(source/'node_modules').mkdir();(source/'node_modules/a').write_text('cache')
         self.assertEqual(r.cleanup_worktree(self.record(source)),'removed')
+    def test_generated_document_indexes_do_not_prevent_cleanup(self):
+        source=self.worktree()
+        (self.root/'.git/info/exclude').write_text('.source/\n')
+        for name in ('apps/docs/.source/index.ts','apps/web/.source/index.ts','apps/web/.source/source.config.mjs'):
+            path=source/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('// generated')
+        self.assertEqual(r.cleanup_worktree(self.record(source)),'removed')
+    def test_other_source_directory_is_retained(self):
+        source=self.worktree()
+        (self.root/'.git/info/exclude').write_text('.source/\n')
+        path=source/'notes/.source/draft';path.parent.mkdir(parents=True);path.write_text('user work')
+        with self.assertRaisesRegex(RuntimeError,'忽略文件'):r.cleanup_worktree(self.record(source))
     def test_running_process_prevents_worktree_removal(self):
         source=self.worktree()
         process=subprocess.Popen(['sleep','30'],cwd=source)

@@ -616,7 +616,7 @@ def cleanup_worktree(record):
     ignored=output(['git','ls-files','--others','--ignored','--exclude-standard'],cwd=source).splitlines()
     for name in ignored:
         parts=Path(name).parts
-        if not any(p in ('node_modules','.next','.turbo','__pycache__') for p in parts) and not name.startswith(('server/bin/','server/tmp/')):
+        if not any(p in ('node_modules','.next','.turbo','__pycache__') for p in parts) and not name.startswith(('server/bin/','server/tmp/','apps/docs/.source/','apps/web/.source/')):
             raise RuntimeError('worktree 存在非构建类忽略文件: '+name)
     assert_unused(source)
     run(['git','--git-dir',common,'worktree','remove',source])
