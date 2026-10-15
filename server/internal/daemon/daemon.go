@@ -6465,6 +6465,7 @@ func qualifyTaskModel(
 // prepare 阶段受 taskPrepareTimeout 硬性截止约束；执行阶段真正跑在 provider
 // 进程里，由 runCtx（可被服务器侧取消信号中断）与空闲看门狗监督。
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
+	runStartedAt := time.Now()
 	// 认领既在顶层携带任务的 agent id，也在展开的 agent 配置里携带一份。顶层 id
 	// 权威，因为它还被绑进 task 级 token。两个身份不一致时绝不准备或复用 workdir。
 	if err := validateTaskIdentity(task); err != nil {
@@ -7297,7 +7298,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Info("resuming session", "session_id", task.PriorSessionID)
 	}
 
-	taskStart := time.Now()
+	agentStartedAt := time.Now()
+	taskLog.Info("agent preparation completed",
+		"preparation_duration", agentStartedAt.Sub(runStartedAt).Round(time.Millisecond),
+	)
 
 	var customArgs []string
 	// profileFixedArgs 刻意不进这里。它改走 agent.Config.LaunchPrefix，因为
@@ -7476,10 +7480,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 	}
 
-	elapsed := time.Since(taskStart).Round(time.Second)
+	elapsed := time.Since(agentStartedAt).Round(time.Second)
 	taskLog.Info("agent finished",
 		"status", result.Status,
 		"duration", elapsed.String(),
+		"preparation_duration", agentStartedAt.Sub(runStartedAt).Round(time.Millisecond),
+		"total_duration", time.Since(runStartedAt).Round(time.Millisecond),
 		"tools", tools,
 	)
 	taskLog.Debug("agent result detail",
@@ -7862,6 +7868,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// 转换处。
 	d.runningTasks.Add(1)
 	defer d.runningTasks.Add(-1)
+	backendStartedAt := time.Now()
+	var firstEventLogged atomic.Bool
 	taskLog.Debug("backend started, draining messages")
 
 	// 只在有墙上时钟上限时才约束排空循环。opts.Timeout 为正时，给排空一个比
@@ -7916,6 +7924,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var pendingThinking strings.Builder
 		var batch []TaskMessageData
 		callIDToTool := map[string]string{}
+		callIDStartedAt := map[string]time.Time{}
 
 		flush := func() {
 			// 把积累的 thinking/text 与工具消息按序打包上报；失败只记 debug 日志，
@@ -7982,6 +7991,12 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				// 在处理前盖戳，保证慢的下游调用（mu.Lock 争用、batch 扩容）不会被
 				// 误判成 backend 静默。
 				lastActivityAt.Store(time.Now().UnixNano())
+				if firstEventLogged.CompareAndSwap(false, true) {
+					taskLog.Info("backend first event",
+						"first_event_duration", time.Since(backendStartedAt).Round(time.Millisecond),
+						"message_type", msg.Type,
+					)
+				}
 				switch msg.Type {
 				case agent.MessageStatus:
 					// backend 一揭示 session/work_dir 就持久化。没有它，daemon 中途崩溃
@@ -8017,6 +8032,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					if msg.CallID != "" {
 						mu.Lock()
 						callIDToTool[msg.CallID] = msg.Tool
+						callIDStartedAt[msg.CallID] = time.Now()
 						mu.Unlock()
 					}
 					s := msgSeq.Add(1)
@@ -8052,6 +8068,17 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					if toolName == "" && msg.CallID != "" {
 						mu.Lock()
 						toolName = callIDToTool[msg.CallID]
+						mu.Unlock()
+					}
+					if msg.CallID != "" {
+						mu.Lock()
+						if startedAt, ok := callIDStartedAt[msg.CallID]; ok {
+							taskLog.Info("tool completed",
+								"tool", toolName,
+								"tool_duration", time.Since(startedAt).Round(time.Millisecond),
+							)
+							delete(callIDStartedAt, msg.CallID)
+						}
 						mu.Unlock()
 					}
 					taskLog.Info("tool_result observed", "seq", s, "tool", toolName, "call_id", msg.CallID)
