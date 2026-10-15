@@ -45,7 +45,7 @@ func TestRepositoryMigrationAndRecovery(t *testing.T) {
 		}
 	}
 	exec(`CREATE TABLE workspace(id uuid, repos jsonb); CREATE TABLE project_resource(id uuid,workspace_id uuid,resource_type text,resource_ref jsonb);CREATE TABLE schema_migrations(version text);`)
-	exec(`INSERT INTO workspace VALUES ('00000000-0000-0000-0000-000000000001','[{"url":"https://github.com/Test/Same.git","provider":"github","ref":"main"}]');
+	exec(`INSERT INTO workspace VALUES ('00000000-0000-0000-0000-000000000001','[{"url":"https://github.com/Test/Same.git","ref":"main"}]');
  INSERT INTO project_resource VALUES
  ('00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000001','github_repo','{"url":"git@github.com:test/same.git","ref":"feature-a"}'),
  ('00000000-0000-0000-0000-000000000012','00000000-0000-0000-0000-000000000001','github_repo','{"url":"https://github.com/Test/other","branch":"feature-b"}');`)
@@ -77,6 +77,9 @@ func TestRepositoryMigrationAndRecovery(t *testing.T) {
 	var count int
 	if err = pool.QueryRow(ctx, "SELECT count(*) FROM repository").Scan(&count); err != nil || count != 2 {
 		t.Fatalf("deduplicated count=%d error=%v", count, err)
+	}
+	if err = pool.QueryRow(ctx, "SELECT count(*) FROM repository WHERE config->>'provider'='github'").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("inferred providers=%d error=%v", count, err)
 	}
 	if err = pool.QueryRow(ctx, "SELECT count(*) FROM repository WHERE default_for_tasks").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("default count=%d error=%v", count, err)

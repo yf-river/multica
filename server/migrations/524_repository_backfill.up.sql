@@ -27,7 +27,7 @@ BEGIN
 END $$;
 
 INSERT INTO repository(workspace_id,identity,config,default_for_tasks)
-SELECT w.id,pg_temp.repository_identity(r->>'url'),CASE WHEN r->>'url' LIKE '%git.code.tencent.com/%/-/%' THEN jsonb_set(r,'{url}',to_jsonb(regexp_replace(r->>'url','/-/.*$','.git'))) ELSE r END,true
+SELECT w.id,pg_temp.repository_identity(r->>'url'),CASE WHEN r->>'url' LIKE '%git.code.tencent.com/%/-/%' THEN jsonb_set(r,'{url}',to_jsonb(regexp_replace(r->>'url','/-/.*$','.git'))) ELSE r END || jsonb_build_object('provider',COALESCE(NULLIF(r->>'provider',''),CASE WHEN pg_temp.repository_identity(r->>'url') LIKE 'git.code.tencent.com/%' THEN 'gongfeng' ELSE 'github' END)),true
 FROM workspace w CROSS JOIN LATERAL jsonb_array_elements(COALESCE(w.repos,'[]')) r
 WHERE COALESCE(r->>'url','')<>''
 ON CONFLICT (workspace_id,identity) DO NOTHING;
