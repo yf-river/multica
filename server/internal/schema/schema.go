@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,6 +16,11 @@ const (
 	currentVersion  = 1
 	advisoryLockKey = int64(7244554146635925501)
 	sha256HexLength = sha256.Size * 2
+	// legacyLatestMigration is the last migration present when the embedded
+	// schema was introduced. A database that recorded this migration has
+	// already been upgraded by the old, data-preserving migration runner and
+	// can be adopted without replaying the baseline SQL.
+	legacyLatestMigration = "525_repository_migration_guard"
 )
 
 var (
@@ -40,9 +46,11 @@ type rowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// EnsureCurrent initializes an empty database with the embedded schema. It
-// never upgrades or repairs an existing schema: a non-empty unmarked database
-// or a version/hash mismatch is a hard error that requires a database reset.
+// EnsureCurrent initializes an empty database with the embedded schema or
+// adopts a database that was fully upgraded by the legacy migration runner.
+// It never rewrites user tables or data. A non-empty database without a
+// recognized migration history, or a version/hash mismatch, remains a hard
+// error and must be handled by an explicit migration.
 func EnsureCurrent(ctx context.Context, pool *pgxpool.Pool) error {
 	if pool == nil {
 		return errors.New("schema initialization requires a database pool")
@@ -83,6 +91,16 @@ func EnsureCurrent(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("inspect database tables: %w", err)
 	}
 	if hasTables {
+		adopted, err := adoptLegacySchema(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if adopted {
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("commit legacy schema adoption: %w", err)
+			}
+			return nil
+		}
 		return errNonEmptyDatabase
 	}
 
@@ -102,6 +120,52 @@ func EnsureCurrent(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("commit schema initialization: %w", err)
 	}
 	return nil
+}
+
+// adoptLegacySchema records the marker for a database whose schema was
+// completed by the migration runner that preceded the embedded schema. The
+// migration table is the durable evidence that every historical migration
+// completed; requiring the final migration prevents an arbitrary non-empty
+// database from being accepted. This function only creates the bookkeeping
+// marker and never changes application tables or rows.
+func adoptLegacySchema(ctx context.Context, db interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}) (bool, error) {
+	var hasMigration bool
+	if err := db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'schema_migrations'
+		)`).Scan(&hasMigration); err != nil {
+		return false, fmt.Errorf("check legacy migration table: %w", err)
+	}
+	if !hasMigration {
+		return false, nil
+	}
+
+	var completed bool
+	if err := db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.schema_migrations WHERE version = $1
+		)`, legacyLatestMigration).Scan(&completed); err != nil {
+		return false, fmt.Errorf("check legacy migration history: %w", err)
+	}
+	if !completed {
+		return false, nil
+	}
+
+	if _, err := db.Exec(ctx, createMarkerSQL); err != nil {
+		return false, fmt.Errorf("create schema marker for legacy database: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO public.multica_schema (id, version, hash)
+		VALUES (1, $1, $2)
+	`, currentVersion, currentHash); err != nil {
+		return false, fmt.Errorf("record adopted schema: %w", err)
+	}
+	return true, nil
 }
 
 // VerifyCurrent checks that the database was initialized from the exact schema
