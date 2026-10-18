@@ -320,6 +320,7 @@ func (b *CodexBrokerBackend) runTurn(ctx context.Context, proc *codexBrokerProce
 	var usageMap map[string]TokenUsage
 	c.usageMu.Lock()
 	u := c.usage
+	reportedModel := c.model
 	c.usageMu.Unlock()
 	if u.InputTokens == 0 && u.OutputTokens == 0 {
 		if scanned := scanCodexSessionUsage(startTime, cfg.Env["CODEX_HOME"]); scanned != nil {
@@ -331,6 +332,9 @@ func (b *CodexBrokerBackend) runTurn(ctx context.Context, proc *codexBrokerProce
 	}
 	if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
 		model := opts.Model
+		if model == "" {
+			model = reportedModel
+		}
 		if model == "" {
 			model = "unknown"
 		}

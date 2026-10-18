@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
@@ -66,6 +66,8 @@ export function ChatMessageList({
   onLoadOlderMessages,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const didScrollToLatest = useRef(false);
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const setScrollContainerRef = useCallback((node: HTMLDivElement | null) => {
@@ -74,6 +76,15 @@ export function ChatMessageList({
   }, []);
   const fadeStyle = useScrollFade(scrollRef);
   const { t } = useT("chat");
+
+  // The list is remounted when the active session changes. Wait for the
+  // session history to arrive, then place the viewport at the newest message
+  // so switching between tasks never leaves the user at the beginning.
+  useEffect(() => {
+    if (didScrollToLatest.current || messages.length === 0 || isFetchingOlderMessages) return;
+    didScrollToLatest.current = true;
+    requestAnimationFrame(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" }));
+  }, [messages.length, isFetchingOlderMessages]);
 
   const pendingTaskId = pendingTask?.task_id ?? null;
 
@@ -113,6 +124,7 @@ export function ChatMessageList({
         </div>
       ) : (
       <Virtuoso
+        ref={virtuosoRef}
         customScrollParent={scrollContainerEl}
         data={messages}
         firstItemIndex={firstIndex}

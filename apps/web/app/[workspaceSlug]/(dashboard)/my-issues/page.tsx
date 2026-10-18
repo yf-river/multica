@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { MyIssuesPage } from "@multica/views/my-issues";
-
-export default function Page() {
-  return <MyIssuesPage />;
+export default async function Page({ params }: { params: Promise<{ workspaceSlug: string }> }) {
+  const { workspaceSlug } = await params;
+  redirect(`/${encodeURIComponent(workspaceSlug)}/issues`);
 }

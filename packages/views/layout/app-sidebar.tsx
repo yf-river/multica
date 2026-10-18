@@ -29,7 +29,7 @@ import {
   BookOpenText,
   Bug,
   SquarePen,
-  CircleUser,
+  MessageCircle,
   FolderKanban,
   BarChart3,
   ChartNoAxesCombined,
@@ -83,6 +83,8 @@ import type { PinnedItem } from "@multica/core/types";
 import { useLogout } from "../auth";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { useT } from "../i18n";
+import { useChatStore } from "@multica/core/chat";
+import { isWorkspaceMenuVisible, type WorkspaceMenuKey } from "@multica/core/navigation/workspace-menu";
 import {
   DEFAULT_DEBUG_WORKBENCH_VIEW,
   DEFAULT_EVALUATION_WORKBENCH_VIEW,
@@ -116,7 +118,6 @@ const SIDEBAR_NAV_BUTTON_CLASS =
 // Only parameterless paths are valid nav destinations.
 type NavKey =
   | "inbox"
-  | "myIssues"
   | "issues"
   | "projects"
   | "autopilots"
@@ -133,7 +134,7 @@ type NavKey =
 // Static schema (key + icon) — labels resolved at render via useT("layout").
 type NavLabelKey =
   | "inbox"
-  | "my_issues"
+  | "chat"
   | "issues"
   | "projects"
   | "autopilots"
@@ -149,7 +150,6 @@ type NavLabelKey =
 
 const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
   { key: "inbox", labelKey: "inbox", icon: Inbox },
-  { key: "myIssues", labelKey: "my_issues", icon: CircleUser },
 ];
 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
@@ -191,6 +191,15 @@ function SidebarNavButton({
       <Icon />
       <span>{label}</span>
       {children}
+    </SidebarMenuButton>
+  );
+}
+
+function SidebarNavAction({ icon: Icon, label, onClick }: { icon: typeof Inbox; label: string; onClick: () => void }) {
+  return (
+    <SidebarMenuButton onClick={onClick} className={SIDEBAR_NAV_BUTTON_CLASS}>
+      <Icon />
+      <span>{label}</span>
     </SidebarMenuButton>
   );
 }
@@ -594,6 +603,13 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
+                <SidebarMenuItem>
+                  <SidebarNavAction
+                    icon={MessageCircle}
+                    label={t(($) => $.nav.chat)}
+                    onClick={() => useChatStore.getState().setOpen(true)}
+                  />
+                </SidebarMenuItem>
                 {personalNav.map((item) => {
                   const href = p[item.key]();
                   const isActive = isNavActive(pathname, href);
@@ -657,7 +673,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupLabel>{t(($) => $.sidebar.workspace_group)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {workspaceNav.map((item) => {
+                {workspaceNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key as WorkspaceMenuKey)).map((item) => {
                   const href =
                     item.key === "debug"
                       ? debugWorkbenchPath(p.debug(), DEFAULT_DEBUG_WORKBENCH_VIEW)
@@ -723,7 +739,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupLabel>{t(($) => $.sidebar.configure_group)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {configureNav.map((item) => {
+                {configureNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key as WorkspaceMenuKey)).map((item) => {
                   const href = p[item.key]();
                   const isActive = isNavActive(pathname, href);
                   return (

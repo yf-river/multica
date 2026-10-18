@@ -12,7 +12,6 @@ import {
   Plus,
   SearchIcon,
   Inbox,
-  CircleUser,
   ListTodo,
   FolderKanban,
   Bot,
@@ -174,7 +173,6 @@ export function SearchCommand() {
   const navPages: NavPage[] = useMemo(
     () => [
       { key: "inbox", label: t(($) => $.pages.inbox), icon: Inbox, keywords: ["inbox", "notifications", "收件箱"] },
-      { key: "myIssues", label: t(($) => $.pages.my_issues), icon: CircleUser, keywords: ["my", "issues", "assigned", "我的"] },
       { key: "issues", label: t(($) => $.pages.issues), icon: ListTodo, keywords: ["issues", "tasks", "bugs"] },
       { key: "projects", label: t(($) => $.pages.projects), icon: FolderKanban, keywords: ["projects", "kanban", "项目"] },
       { key: "agents", label: t(($) => $.pages.agents), icon: Bot, keywords: ["agents", "bots", "ai"] },
