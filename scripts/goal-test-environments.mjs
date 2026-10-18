@@ -1078,6 +1078,7 @@ const sourceUrl = ${JSON.stringify(sourceDatabaseURL)};
 const targetUrl = ${JSON.stringify(targetDatabaseURL)};
 const avatarUrl = ${JSON.stringify(avatarURL)};
 const account = 'develop';
+const email = 'develop@localhost';
 const workspaceSlug = 'ai-studio';
 const resetWorkspaceRepos = process.env.GOAL_TEST_RESET_WORKSPACE_REPOS === '1';
 
@@ -1111,8 +1112,8 @@ function passwordHash(password) {
 
 async function seedFromScratch(target) {
   const user = await target.query(
-    'INSERT INTO "user" (name, account, avatar_url, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, $3, now(), $4, $5, now(), now()) ON CONFLICT (account) WHERE account <> \\\'\\\' DO UPDATE SET name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
-    ['胡云飞', account, avatarUrl, 'imported', passwordHash('develop123')],
+    'INSERT INTO "user" (name, account, email, avatar_url, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), $5, $6, now(), now()) ON CONFLICT (account) WHERE account <> \\\'\\\' DO UPDATE SET name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
+    ['胡云飞', account, email, avatarUrl, 'imported', passwordHash('develop123')],
   );
   const workspace = await target.query(
     'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, repos = CASE WHEN $7::boolean THEN EXCLUDED.repos ELSE workspace.repos END, updated_at = now() RETURNING id',
