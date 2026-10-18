@@ -552,6 +552,8 @@ function RunReviewDetail({
           />
         )}
 
+        <CodeDiffCard tasks={tasks} />
+
         <div className="grid gap-3 border-t p-4 text-sm md:grid-cols-3">
           <Metric
             label="总耗时"
@@ -1146,6 +1148,91 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
         </span>
       ) : null}
     </div>
+  );
+}
+
+interface TaskCodeDiffFile {
+  path: string;
+  added: number;
+  removed: number;
+  patch?: string;
+  binary?: boolean;
+}
+
+interface TaskCodeDiff {
+  baseline: string;
+  files: TaskCodeDiffFile[];
+}
+
+function taskCodeDiff(task: AgentTask): TaskCodeDiff | null {
+  const result = task.result;
+  if (!result || typeof result !== "object") return null;
+  const diff = (result as { code_diff?: unknown }).code_diff;
+  if (!diff || typeof diff !== "object") return null;
+  const files = (diff as { files?: unknown }).files;
+  if (!Array.isArray(files) || files.length === 0) return null;
+  return {
+    baseline: String((diff as { baseline?: unknown }).baseline || "HEAD"),
+    files: files.filter((file): file is TaskCodeDiffFile => {
+      if (!file || typeof file !== "object") return false;
+      const value = file as Record<string, unknown>;
+      return typeof value.path === "string";
+    }).map((file) => ({
+      path: file.path,
+      added: Number.isFinite(file.added) ? file.added : 0,
+      removed: Number.isFinite(file.removed) ? file.removed : 0,
+      patch: file.patch,
+      binary: file.binary,
+    })),
+  };
+}
+
+function CodeDiffCard({ tasks }: { tasks: AgentTask[] }) {
+  const [open, setOpen] = useState(false);
+  const diff = [...tasks]
+    .sort((a, b) => taskTimeMs(b) - taskTimeMs(a))
+    .map(taskCodeDiff)
+    .find((value): value is TaskCodeDiff => value !== null);
+  if (!diff) return null;
+  const added = diff.files.reduce((sum, file) => sum + file.added, 0);
+  const removed = diff.files.reduce((sum, file) => sum + file.removed, 0);
+  return (
+    <>
+      <button
+        type="button"
+        className="mx-4 mb-4 flex w-[calc(100%-2rem)] items-center justify-between rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-accent"
+        onClick={() => setOpen(true)}
+        data-testid="run-review-code-diff-card"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">已编辑 {diff.files.length} 个文件</span>
+          <span className="mt-1 block text-xs text-muted-foreground">基线 {diff.baseline} · <span className="text-emerald-600">+{added}</span> <span className="text-rose-600">-{removed}</span></span>
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground">查看变更 <ChevronRight className="ml-1 inline size-3.5" /></span>
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[85vh] max-w-5xl overflow-hidden p-0">
+          <DialogTitle className="border-b px-5 py-4 text-base">代码变更 · {diff.files.length} 个文件</DialogTitle>
+          <div className="max-h-[calc(85vh-4rem)] overflow-y-auto p-4">
+            <div className="space-y-4">
+              {diff.files.map((file) => (
+                <section key={file.path} className="overflow-hidden rounded-md border">
+                  <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-2 text-xs">
+                    <span className="truncate font-medium">{file.path}</span>
+                    <span className="shrink-0"><span className="text-emerald-600">+{file.added}</span> <span className="text-rose-600">-{file.removed}</span></span>
+                  </div>
+                  {file.binary ? (
+                    <div className="px-3 py-4 text-xs text-muted-foreground">二进制文件，无法展示逐行 diff。</div>
+                  ) : (
+                    <pre className="overflow-x-auto bg-slate-950 p-3 text-[11px] leading-5 text-slate-100">{file.patch || "（无文本差异）"}</pre>
+                  )}
+                </section>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

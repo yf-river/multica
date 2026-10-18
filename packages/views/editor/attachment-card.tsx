@@ -37,7 +37,21 @@ function AttachmentCardChrome({
   const { t } = useT("editor");
   return (
     <div
-      className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted"
+      className={`flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted ${canPreview && !uploading ? "cursor-pointer" : ""}`}
+      role={canPreview && !uploading ? "button" : undefined}
+      tabIndex={canPreview && !uploading ? 0 : undefined}
+      aria-label={canPreview && !uploading ? `${filename} — ${t(($) => $.attachment.preview)}` : undefined}
+      onClick={canPreview && !uploading ? onPreview : undefined}
+      onKeyDown={
+        canPreview && !uploading
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onPreview();
+              }
+            }
+          : undefined
+      }
       onMouseDown={(e) => e.stopPropagation()}
     >
       {uploading ? (
@@ -63,6 +77,7 @@ function AttachmentCardChrome({
             e.stopPropagation();
             onPreview();
           }}
+          onClick={(e) => e.stopPropagation()}
         >
           <Eye className="size-3.5" />
         </button>
@@ -78,6 +93,7 @@ function AttachmentCardChrome({
             e.stopPropagation();
             onDownload();
           }}
+          onClick={(e) => e.stopPropagation()}
         >
           <Download className="size-3.5" />
         </button>
@@ -93,6 +109,7 @@ function AttachmentCardChrome({
             e.stopPropagation();
             onDelete();
           }}
+          onClick={(e) => e.stopPropagation()}
         >
           <Trash2 className="size-3.5" />
         </button>

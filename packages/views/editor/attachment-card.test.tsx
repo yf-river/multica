@@ -86,6 +86,43 @@ describe("AttachmentCard — chrome row", () => {
 });
 
 describe("AttachmentCard — Eye / Download buttons", () => {
+  it("opens a preview when the previewable card body is clicked", () => {
+    const onPreview = vi.fn();
+    render(
+      <AttachmentCard
+        filename="report.md"
+        contentType="text/markdown"
+        attachmentId="att-1"
+        href="https://cdn.example/report.md"
+        onPreview={onPreview}
+        onDownload={() => {}}
+      />,
+    );
+
+    const card = screen.getByRole("button", { name: "report.md — Preview" });
+    fireEvent.click(card);
+    expect(onPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps download independent from the card preview action", () => {
+    const onPreview = vi.fn();
+    const onDownload = vi.fn();
+    render(
+      <AttachmentCard
+        filename="report.md"
+        contentType="text/markdown"
+        attachmentId="att-1"
+        href="https://cdn.example/report.md"
+        onPreview={onPreview}
+        onDownload={onDownload}
+      />,
+    );
+
+    fireEvent.mouseDown(screen.getByTitle("Download"));
+    expect(onDownload).toHaveBeenCalledTimes(1);
+    expect(onPreview).not.toHaveBeenCalled();
+  });
+
   it("invokes onPreview when Eye is clicked", () => {
     const onPreview = vi.fn();
     render(

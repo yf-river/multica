@@ -236,4 +236,18 @@ type TaskResult struct {
 	EnvRoot       string           `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
 	FailureReason string           `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
 	Usage         []TaskUsageEntry `json:"usage,omitempty"`      // per-model token usage
+	CodeDiff      *TaskCodeDiff    `json:"code_diff,omitempty"`  // captured repository diff for this run
+}
+
+type TaskCodeDiff struct {
+	Baseline string             `json:"baseline"`
+	Files    []TaskCodeDiffFile `json:"files"`
+}
+
+type TaskCodeDiffFile struct {
+	Path    string `json:"path"`
+	Added   int    `json:"added"`
+	Removed int    `json:"removed"`
+	Patch   string `json:"patch,omitempty"`
+	Binary  bool   `json:"binary,omitempty"`
 }

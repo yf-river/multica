@@ -2550,6 +2550,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	artifactCommentOptions := d.persistFinalOutputArtifactIfNeeded(task, result, result.WorkDir, result.ArtifactDir, taskLog)
 	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, result.ArtifactDir, artifactCollectionCutoff, taskLog, artifactCommentOptions)
+	result.CodeDiff = collectTaskCodeDiff(result.WorkDir, taskLog)
 
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
@@ -2580,7 +2581,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
-		err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir)
+		err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, result.CodeDiff)
 		if err == nil {
 			return
 		}
@@ -2636,6 +2637,88 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			taskLog.Error("report failed task failed", "error", err)
 		}
 	}
+}
+
+// collectTaskCodeDiff captures the repository state at task completion. The
+// task worktree is issue-scoped, so HEAD is the stable baseline and the
+// resulting payload remains attached to this task instead of being recomputed
+// from a later workspace state. A dirty worktree is intentionally allowed:
+// the daemon owns the issue worktree and the task result is the historical
+// snapshot shown to reviewers.
+func collectTaskCodeDiff(workDir string, taskLog *slog.Logger) *TaskCodeDiff {
+	if strings.TrimSpace(workDir) == "" {
+		return nil
+	}
+	numstat := runGitOutput(workDir, "diff", "--numstat", "HEAD", "--")
+	patch := runGitOutput(workDir, "diff", "--no-ext-diff", "--unified=40", "HEAD", "--")
+	if numstat == "" || patch == "" {
+		return nil
+	}
+	files := parseTaskCodeDiffFiles(numstat, patch)
+	if len(files) == 0 {
+		return nil
+	}
+	return &TaskCodeDiff{Baseline: "HEAD", Files: files}
+}
+
+func runGitOutput(workDir string, args ...string) string {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workDir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+func parseTaskCodeDiffFiles(numstat, patch string) []TaskCodeDiffFile {
+	stats := make(map[string]TaskCodeDiffFile)
+	for _, line := range strings.Split(strings.TrimSpace(numstat), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		added, removed := 0, 0
+		if parts[0] != "-" {
+			_, _ = fmt.Sscanf(parts[0], "%d", &added)
+		}
+		if parts[1] != "-" {
+			_, _ = fmt.Sscanf(parts[1], "%d", &removed)
+		}
+		stats[parts[2]] = TaskCodeDiffFile{Path: parts[2], Added: added, Removed: removed, Binary: parts[0] == "-" || parts[1] == "-"}
+	}
+	var current *TaskCodeDiffFile
+	var files []TaskCodeDiffFile
+	flush := func() {
+		if current == nil {
+			return
+		}
+		if len(current.Patch) > 120_000 {
+			current.Patch = current.Patch[:120_000] + "\n…（diff 已截断）"
+		}
+		files = append(files, *current)
+		current = nil
+	}
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			flush()
+			parts := strings.Split(line, " ")
+			path := ""
+			if len(parts) >= 4 {
+				path = strings.TrimPrefix(parts[3], "b/")
+			}
+			stat, ok := stats[path]
+			if !ok {
+				stat = TaskCodeDiffFile{Path: path}
+			}
+			current = &stat
+		}
+		if current != nil {
+			current.Patch += line + "\n"
+		}
+	}
+	flush()
+	return files
 }
 
 // gcMetaForTask classifies a finished task and produces a GCMeta of the right
