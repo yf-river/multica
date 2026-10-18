@@ -78,6 +78,7 @@
     "./external-credentials": "./external-credentials/index.ts",
     "./realtime": "./realtime/index.ts",
     "./navigation": "./navigation/index.ts",
+    "./navigation/workspace-menu": "./navigation/workspace-menu.ts",
     "./modals": "./modals/index.ts",
     "./paths": "./paths/index.ts",
     "./hooks": "./hooks.tsx",

@@ -1108,6 +1108,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		var usageMap map[string]TokenUsage
 		c.usageMu.Lock()
 		u := c.usage
+		reportedModel := c.model
 		c.usageMu.Unlock()
 
 		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
@@ -1123,6 +1124,9 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 
 		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
 			model := opts.Model
+			if model == "" {
+				model = reportedModel
+			}
 			if model == "" {
 				model = "unknown"
 			}
@@ -1453,6 +1457,7 @@ type codexClient struct {
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
+	model   string     // model reported by Codex protocol events
 
 	turnErrorMu sync.Mutex
 	turnError   string // captured from turn/completed status=failed or terminal error notifications
@@ -1909,12 +1914,21 @@ func (c *codexClient) extractUsageFromMap(data map[string]any) {
 			break
 		}
 	}
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	for _, key := range []string{"model", "model_slug", "model_name"} {
+		if model, ok := data[key].(string); ok && strings.TrimSpace(model) != "" {
+			c.model = strings.TrimSpace(model)
+			break
+		}
+		if model, ok := usageMap[key].(string); ok && strings.TrimSpace(model) != "" {
+			c.model = strings.TrimSpace(model)
+			break
+		}
+	}
 	if usageMap == nil {
 		return
 	}
-
-	c.usageMu.Lock()
-	defer c.usageMu.Unlock()
 
 	// Codex reports cached input as a prompt-token detail: cached_input_tokens
 	// are included in input_tokens. Persist mutually-exclusive buckets so

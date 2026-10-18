@@ -41,6 +41,8 @@ import type { Workspace } from "@multica/core/types";
 import { useNavigation } from "../../navigation";
 import { DeleteWorkspaceDialog } from "./delete-workspace-dialog";
 import { useT } from "../../i18n";
+import { Switch } from "@multica/ui/components/ui/switch";
+import { WORKSPACE_MENU_KEYS, isWorkspaceMenuVisible, withWorkspaceMenuVisibility, type WorkspaceMenuKey } from "@multica/core/navigation/workspace-menu";
 
 export function WorkspaceTab() {
   const { t } = useT("settings");
@@ -102,6 +104,9 @@ export function WorkspaceTab() {
   const [description, setDescription] = useState(workspace?.description ?? "");
   const [context, setContext] = useState(workspace?.context ?? "");
   const [issuePrefix, setIssuePrefix] = useState(workspace?.issue_prefix ?? "");
+  const [menuVisibility, setMenuVisibility] = useState<Record<WorkspaceMenuKey, boolean>>(() =>
+    Object.fromEntries(WORKSPACE_MENU_KEYS.map((key) => [key, isWorkspaceMenuVisible(workspace?.settings, key)])) as Record<WorkspaceMenuKey, boolean>,
+  );
   const [saving, setSaving] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -132,8 +137,36 @@ export function WorkspaceTab() {
     setDescription(workspace?.description ?? "");
     setContext(workspace?.context ?? "");
     setIssuePrefix(workspace?.issue_prefix ?? "");
+    setMenuVisibility(Object.fromEntries(WORKSPACE_MENU_KEYS.map((key) => [key, isWorkspaceMenuVisible(workspace?.settings, key)])) as Record<WorkspaceMenuKey, boolean>);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on id only; see comment above
   }, [workspace?.id]);
+
+  const menuLabels: Record<WorkspaceMenuKey, string> = {
+    issues: "任务",
+    projects: "项目",
+    autopilots: "自动化",
+    agents: "智能体",
+    squads: "小队",
+    runReviews: "运行复盘",
+    debug: "调试",
+    evaluation: "评估",
+    runtimes: "运行时",
+    skills: "技能",
+    settings: "设置",
+  };
+
+  const saveMenuVisibility = async (key: WorkspaceMenuKey, visible: boolean) => {
+    if (!workspace || !canManageWorkspace) return;
+    const next = withWorkspaceMenuVisibility(workspace.settings, key, visible);
+    setMenuVisibility((current) => ({ ...current, [key]: visible }));
+    try {
+      const updated = await api.updateWorkspace(workspace.id, { settings: next });
+      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) => old?.map((ws) => (ws.id === updated.id ? updated : ws)));
+    } catch (e) {
+      setMenuVisibility((current) => ({ ...current, [key]: !visible }));
+      toast.error(e instanceof Error ? e.message : t(($) => $.workspace.toast_save_failed));
+    }
+  };
 
   // Letters + digits only, uppercase, capped at 10 chars. The backend
   // uppercases and trims on its side too — this is purely a UX guardrail
@@ -374,6 +407,21 @@ export function WorkspaceTab() {
                 {t(($) => $.workspace.manage_hint)}
               </p>
             )}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold">工作区菜单</h2>
+        <Card>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">控制当前工作区侧边栏显示的菜单。聊天入口始终保留。</p>
+            {WORKSPACE_MENU_KEYS.map((key) => (
+              <div key={key} className="flex items-center justify-between gap-4">
+                <Label htmlFor={`workspace-menu-${key}`} className="font-normal">{menuLabels[key]}</Label>
+                <Switch id={`workspace-menu-${key}`} checked={menuVisibility[key]} disabled={!canManageWorkspace} onCheckedChange={(checked) => void saveMenuVisibility(key, checked)} />
+              </div>
+            ))}
           </CardContent>
         </Card>
       </section>
