@@ -330,7 +330,7 @@ func readGit(ctx context.Context, root string, req Request) (string, string, err
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	run := func(args ...string) (string, error) {
-		argv := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.attributesFile=/dev/null"}, args...)
+		argv := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "diff.external=", "-c", "core.attributesFile=/dev/null"}, args...)
 		cmd := exec.CommandContext(ctx, "git", argv...)
 		cmd.Dir = root
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C"}

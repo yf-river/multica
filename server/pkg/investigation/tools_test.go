@@ -1,12 +1,64 @@
 package investigation
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestGitQueriesPreserveIndex(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	git("init", "-q")
+	file := filepath.Join(root, "source.go")
+	if err := os.WriteFile(file, []byte("package fixture\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "source.go")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture")
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = root
+	revision, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟复制来源后内容相同、文件时间变化，diff 默认会刷新索引缓存。
+	stamp := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(file, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, ".git", "index")
+	before, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Session{Roots: []Root{{ID: "project", Path: root}}}
+	for _, query := range []string{"status", "diff", "history", "show"} {
+		_, err := s.Call(context.Background(), "supervision_git", Request{Root: "project", Path: "source.go", Query: query, Revision: strings.TrimSpace(string(revision)), Reason: "核验来源且不改动索引"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.ReadFile(index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(before, after) {
+			t.Fatalf("%s changed the index", query)
+		}
+	}
+}
 
 func TestReadPaginationAndScope(t *testing.T) {
 	root := t.TempDir()
