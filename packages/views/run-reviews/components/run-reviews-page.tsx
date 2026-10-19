@@ -124,9 +124,9 @@ export function RunReviewsPage() {
           const active = qualityTab ? tab.key === "quality" : tab.key === "records";
           return <AppLink key={tab.key} href={`${paths.runReviews()}?${next}`} aria-current={active ? "page" : undefined} className={`border-b-2 py-3 text-body ${active ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>{tab.label}</AppLink>;
         })}
-        {!qualityTab && navigation.searchParams.get("return_supervision") && <AppLink className="ml-auto py-3 text-caption underline" href={(() => { const next = new URLSearchParams(navigation.searchParams); next.set("tab", "quality"); next.set("selected", next.get("return_supervision") ?? ""); for (const key of ["evidence_kind", "evidence_id", "task", "message", "return_supervision"]) next.delete(key); return `${paths.runReviews()}?${next}`; })()}>{t(($) => $.supervision.back_supervision)}</AppLink>}
+        {!qualityTab && navigation.searchParams.get("return_supervision") && <AppLink className="ml-auto py-3 text-caption underline" href={(() => { const next = new URLSearchParams(navigation.searchParams); next.set("tab", "quality"); next.set("selected", next.get("return_supervision") ?? ""); for (const key of ["evidence_kind", "evidence_id", "evidence_batch", "task", "message", "return_supervision"]) next.delete(key); return `${paths.runReviews()}?${next}`; })()}>{t(($) => $.supervision.back_supervision)}</AppLink>}
       </nav>
-      {!qualityTab && <SupervisionEvidencePanel key={`${navigation.searchParams.get("evidence_kind")}:${navigation.searchParams.get("evidence_id")}`} />}
+      {!qualityTab && <SupervisionEvidencePanel key={`${navigation.searchParams.get("evidence_kind")}:${navigation.searchParams.get("evidence_id")}:${navigation.searchParams.get("evidence_batch")}`} />}
       {qualityTab ? <QualitySupervision /> : <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="min-h-0 border-b lg:border-r lg:border-b-0">
           <div className="flex h-10 items-center justify-between border-b px-3">

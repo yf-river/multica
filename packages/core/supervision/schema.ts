@@ -16,7 +16,7 @@ export const supervisionSubjectSchema = z.object({
   gaps: z.array(z.string()), last_checked_at: time, error: z.string(), failures: z.number(), stopped: z.boolean().default(false), running: z.boolean(), open_findings: z.number(),
 }).loose();
 export const supervisionListSchema = z.object({ items: z.array(supervisionSubjectSchema), has_more: z.boolean(), offset: z.number() });
-export const supervisionEvidenceSchema = z.object({ kind: z.string(), id: z.string(), run_id: z.string().optional() });
+export const supervisionEvidenceSchema = z.object({ kind: z.string(), id: z.string(), run_id: z.string().optional(), batch_id: z.string().optional() });
 export const supervisionFindingSchema = z.object({
   id: z.string(), title: z.string(), description: z.string(), impact: z.string(), recommendation: z.string(), confidence: z.string(),
   evidence: z.array(supervisionEvidenceSchema), status: z.string(), human_resolution: z.boolean(),
@@ -47,7 +47,7 @@ export const supervisionFeedbackSchema = z.object({
 }).loose().refine((value) => Boolean(value.id || value.comment_id || value.pending === true));
 export type SupervisionFeedback = z.infer<typeof supervisionFeedbackSchema>;
 
-export const supervisionEvidencePageSchema = z.object({ kind: z.string(), id: z.string(), run_id: z.string().optional(),
+export const supervisionEvidencePageSchema = z.object({ kind: z.string(), id: z.string(), run_id: z.string().optional(), batch_id: z.string().optional(), snapshot: z.boolean().optional(),
   issue_id: z.string(), text: z.string(), offset: z.number(), end: z.number(), length: z.number(), deleted: z.boolean() }).loose();
 export type SupervisionEvidencePage = z.infer<typeof supervisionEvidencePageSchema>;
 

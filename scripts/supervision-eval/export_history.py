@@ -44,7 +44,7 @@ def sanitize(value, salt):
 def visible(payload):
     kind=payload.get('type')
     if kind=='message':
-        if payload.get('channel') in ['analysis','summary']:
+        if payload.get('role') not in ['user','assistant'] or payload.get('channel') in ['analysis','summary']:
             return None
         text='\n'.join(c.get('text','') for c in payload.get('content',[]) if isinstance(c,dict))
         if text.lstrip().startswith(('# AGENTS.md','<environment_context>')):
@@ -63,7 +63,7 @@ def visible(payload):
 def export(selection, output, salt):
     cases=[];provenance=[]
     for spec in selection['cases']:
-        materials=[];history=[];origins=[]
+        materials=[];history=[];origins=[];user_messages=[]
         for window in spec['windows']:
             source=Path(window['source'])
             raw=source.read_bytes();lines=raw.splitlines(keepends=True)
@@ -83,6 +83,10 @@ def export(selection, output, salt):
                 mid=str(uuid.uuid5(uuid.NAMESPACE_URL,str(source)+':'+str(number)))
                 item=dict(kind='trace',id=mid,generation=1,offset=0,end=len(text),length=len(text),text=text)
                 history.append(item)
+                if record.get('role')=='user':
+                    content=sanitize(record['text'],salt)
+                    user_messages.append(dict(id=mid,content=content[:4000],truncated=len(content)>4000,
+                                              created_at=record.get('timestamp'),updated_at=record.get('timestamp')))
                 origins.append(dict(id=mid,source=str(source),line=number,raw_line_sha256=hashlib.sha256(lines[number-1]).hexdigest()))
         # 产品单批材料预算；超出部分只能通过历史工具补查，材料轮须如实保留缺口。
         remaining=48000
@@ -93,7 +97,8 @@ def export(selection, output, salt):
             remaining-=size
         if not materials:raise ValueError('范围没有可见消息或实际工具记录：'+spec['id'])
         cases.append(dict(id=spec['id'],family=spec['family'],track=spec.get('track','materials'),
-                          current=dict(title=spec['title'],description=spec['requirement'],pending_materials=len(history)),
+                          current=dict(title=spec['title'],description=spec['requirement'],pending_materials=len(history),
+                                       latest_user_comments=sorted(user_messages,key=lambda m:m.get('created_at') or '',reverse=True)[:6]),
                           materials=materials,history_materials=history))
         provenance.append(dict(id=spec['id'],family=spec['family'],windows=spec['windows'],events=origins,
                                qualification=spec.get('qualification','unreviewed'),gold=spec.get('gold')))

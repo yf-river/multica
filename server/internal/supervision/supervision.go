@@ -304,12 +304,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 		return tx.Commit(ctx)
 	}
 	batch := util.UUIDToString(dbid.NewV7())
-	refs := make([]Material, len(materials))
-	copy(refs, materials)
-	for i := range refs {
-		refs[i].Text = ""
-	}
-	raw, _ := json.Marshal(refs)
+	raw, _ := json.Marshal(materials)
 	if _, err = tx.Exec(ctx, `INSERT INTO supervision_batch(id,workspace_id,issue_id,target_version,materials,rules_version) VALUES($1,$2,$3,$4,$5,$6)`, batch, ws, issue, version, raw, RulesVersion); err != nil {
 		return err
 	}
@@ -342,6 +337,10 @@ const currentIssueSnapshotSQL = `SELECT jsonb_build_object('title',title,'descri
       'requirement_truncated',length(COALESCE(description,''))>8000 OR length(COALESCE(acceptance_criteria::text,''))>4000,
       'pending_materials',(SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation),
       'previous_attempt_error',(SELECT left(error,1000) FROM supervision_subject WHERE workspace_id=$2 AND issue_id=$1),
+      'finding_decisions',(SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT f.id,f.status,f.human_resolution,left(f.title,300) title,left(a.reason,2000) reason,a.action,a.created_at
+        FROM supervision_finding f JOIN LATERAL (SELECT reason,action,created_at FROM supervision_action WHERE workspace_id=$2 AND finding_id=f.id AND action IN('open','in_progress','resolved','ignored','auto_resolved') ORDER BY created_at DESC,id DESC LIMIT 1) a ON true
+        WHERE f.workspace_id=$2 AND f.issue_id=$1 ORDER BY a.created_at DESC,f.id DESC LIMIT 100)x),
+      'finding_decisions_truncated',(SELECT count(*)>100 FROM supervision_finding f WHERE f.workspace_id=$2 AND f.issue_id=$1 AND EXISTS(SELECT 1 FROM supervision_action a WHERE a.workspace_id=$2 AND a.finding_id=f.id AND a.action IN('open','in_progress','resolved','ignored','auto_resolved'))),
       'latest_user_comments',(SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,left(content,4000) content,length(content)>4000 truncated,created_at,updated_at FROM comment WHERE issue_id=$1 AND author_type='member' ORDER BY GREATEST(updated_at,created_at) DESC,id DESC LIMIT 6)x))
       FROM issue WHERE id=$1 AND workspace_id=$2`
 
@@ -533,7 +532,7 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	}
 	for _, f := range result.Findings {
 		if f.ID != "" {
-			evidence, _ := json.Marshal(f.Evidence)
+			evidence := marshalEvidence(f.Evidence, batch)
 			tag, err := tx.Exec(ctx, `UPDATE supervision_finding SET batch_id=$4,title=$5,description=$6,impact=$7,recommendation=$8,confidence=$9,evidence=$10,last_seen_at=now(),
               status=CASE WHEN status='resolved' THEN 'open' ELSE status END,human_resolution=false
               WHERE workspace_id=$1 AND issue_id=$2 AND id=$3 AND first_seen_at<(SELECT created_at FROM supervision_batch WHERE id=$4)`, ws, issue, f.ID, batch, redact.Text(f.Title), redact.Text(f.Description), redact.Text(f.Impact), redact.Text(f.Recommendation), f.Confidence, evidence)
@@ -546,7 +545,7 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 			continue
 		}
 		hash := sha256.Sum256([]byte(f.Code + ":" + f.Evidence[0].Kind + ":" + f.Evidence[0].ID))
-		evidence, _ := json.Marshal(f.Evidence)
+		evidence := marshalEvidence(f.Evidence, batch)
 		_, err = tx.Exec(ctx, `INSERT INTO supervision_finding(workspace_id,issue_id,fingerprint,batch_id,title,description,impact,recommendation,confidence,evidence)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(workspace_id,issue_id,fingerprint) DO UPDATE
           SET batch_id=EXCLUDED.batch_id,title=EXCLUDED.title,description=EXCLUDED.description,impact=EXCLUDED.impact,recommendation=EXCLUDED.recommendation,
@@ -557,7 +556,7 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 		}
 	}
 	for _, r := range result.Resolutions {
-		evidence, _ := json.Marshal(r.Evidence)
+		evidence := marshalEvidence(r.Evidence, batch)
 		tag, err := tx.Exec(ctx, `UPDATE supervision_finding SET status='resolved',human_resolution=false,last_seen_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND id=$3 AND first_seen_at<(SELECT created_at FROM supervision_batch WHERE id=$4)`, ws, issue, r.ID, batch)
 		if err != nil {
 			return err
@@ -595,17 +594,56 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	return tx.Commit(ctx)
 }
 
+type evidenceSnapshot struct {
+	Evidence
+	BatchID string `json:"batch_id,omitempty"`
+}
+
+func marshalEvidence(evidence []Evidence, batch string) []byte {
+	refs := make([]evidenceSnapshot, len(evidence))
+	for i, ref := range evidence {
+		refs[i].Evidence = ref
+		if ref.Kind != "investigation" {
+			refs[i].BatchID = batch
+		}
+	}
+	raw, _ := json.Marshal(refs)
+	return raw
+}
+
+// ReadBatchEvidence 返回审查时保存的有界片段，编辑后的原文不能替换历史证据。
+func (s *Service) ReadBatchEvidence(ctx context.Context, ws, batch, kind, id string) (EvidencePage, error) {
+	page := EvidencePage{Evidence: Evidence{Kind: kind, ID: id}, BatchID: batch, Snapshot: true}
+	var raw []byte
+	err := s.Pool.QueryRow(ctx, `SELECT b.issue_id::text,m FROM supervision_batch b CROSS JOIN LATERAL jsonb_array_elements(b.materials) m WHERE b.workspace_id=$1 AND b.id=$2 AND m->>'kind'=$3 AND m->>'id'=$4`, ws, batch, kind, id).Scan(&page.IssueID, &raw)
+	if err != nil {
+		return page, err
+	}
+	var material Material
+	if err = json.Unmarshal(raw, &material); err != nil {
+		return page, err
+	}
+	if material.Text == "" && material.End > material.Offset {
+		return page, pgx.ErrNoRows
+	}
+	page.RunID, page.Offset, page.End, page.Length = material.RunID, material.Offset, material.End, material.Length
+	page.Text = redact.Text(material.Text)
+	return page, nil
+}
+
 // PollInterval 仅为后台发现节奏；业务分析合并窗口由工作区配置控制。
 const PollInterval = time.Minute
 
 type EvidencePage struct {
 	Evidence
-	IssueID string `json:"issue_id"`
-	Text    string `json:"text"`
-	Offset  int    `json:"offset"`
-	End     int    `json:"end"`
-	Length  int    `json:"length"`
-	Deleted bool   `json:"deleted"`
+	BatchID  string `json:"batch_id,omitempty"`
+	IssueID  string `json:"issue_id"`
+	Text     string `json:"text"`
+	Offset   int    `json:"offset"`
+	End      int    `json:"end"`
+	Length   int    `json:"length"`
+	Deleted  bool   `json:"deleted"`
+	Snapshot bool   `json:"snapshot"`
 }
 
 // ReadEvidence 只读取已登记的工作区材料，按字符分页，原文不可用时保留明确状态。

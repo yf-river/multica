@@ -776,8 +776,10 @@ export class ApiClient {
     const q = new URLSearchParams({ ...params, offset: String(params.offset) });
     return parseOrThrow<SupervisionList>(await this.fetch<unknown>(`/api/supervision/subjects?${q}`), supervisionListSchema, { endpoint: "GET /api/supervision/subjects", sensitive: true });
   }
-  async getSupervisionEvidence(kind: string, id: string, offset: number) {
-    return parseOrThrow<SupervisionEvidencePage>(await this.fetch<unknown>(`/api/supervision/evidence/${encodeURIComponent(kind)}/${encodeURIComponent(id)}?offset=${offset}`), supervisionEvidencePageSchema, { endpoint: "GET /api/supervision/evidence/:kind/:id", sensitive: true });
+  async getSupervisionEvidence(kind: string, id: string, offset: number, batch?: string) {
+    const query = new URLSearchParams({ offset: String(offset) });
+    if (batch) query.set("batch", batch);
+    return parseOrThrow<SupervisionEvidencePage>(await this.fetch<unknown>(`/api/supervision/evidence/${encodeURIComponent(kind)}/${encodeURIComponent(id)}?${query}`), supervisionEvidencePageSchema, { endpoint: "GET /api/supervision/evidence/:kind/:id", sensitive: true });
   }
   async getSupervisionSubject(id: string) {
     return parseOrThrow<SupervisionDetail>(await this.fetch<unknown>(`/api/supervision/subjects/${encodeURIComponent(id)}`), supervisionDetailSchema, { endpoint: "GET /api/supervision/subjects/:id", sensitive: true });

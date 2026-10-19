@@ -3,12 +3,14 @@ package supervision
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/service"
 	dbfx "github.com/multica-ai/multica/server/internal/testutil"
@@ -103,10 +105,17 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material := Material{Evidence: Evidence{Kind: "comment", ID: note}, Generation: generation, Offset: 0, End: page.End, Length: page.Length}
+	material := Material{Evidence: Evidence{Kind: "comment", ID: note}, Generation: generation, Offset: 0, End: page.End, Length: page.Length, Text: page.Text}
 	refs, _ := json.Marshal([]Material{material})
 	batch := f.Insert(t, "supervision_batch", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issues[0], "target_version": target, "task_id": review, "status": "running", "materials": refs})
 	f.Exec(t, "UPDATE comment SET content=content||' 新要求：按用户最新决定核验。' WHERE id=$1", note)
+	savedPage, err := svc.ReadBatchEvidence(ctx, f.WorkspaceID, batch, "comment", note)
+	if err != nil || !savedPage.Snapshot || savedPage.Text != page.Text || strings.Contains(savedPage.Text, "新要求") {
+		t.Fatalf("edited source replaced the review snapshot: %+v %v", savedPage, err)
+	}
+	if _, err = svc.ReadBatchEvidence(ctx, f.UserID, batch, "comment", note); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("snapshot escaped workspace scope: %v", err)
+	}
 	result := Result{Summary: "旧代次已读，仍有新要求待核验", Efficiency: "clear", Correctness: "uncertain", Gaps: []string{"待核验新要求"}, Covered: []Evidence{material.Evidence}, Findings: []Finding{}, Resolutions: []Resolution{}}
 	if err = svc.Commit(ctx, f.WorkspaceID, batch, review, result); err != nil {
 		t.Fatal(err)
@@ -132,6 +141,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	}
 	material.End = page.End
 	material.Length = page.Length
+	material.Text = page.Text
 	refs, _ = json.Marshal([]Material{material})
 	makeBatch := func() string {
 		return f.Insert(t, "supervision_batch", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issues[0], "target_version": target, "task_id": review, "status": "running", "materials": refs})
@@ -139,10 +149,35 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	finding := Finding{Code: "mapping", Title: "映射待核验", Description: "依据本轮用户备注核验", Impact: "字段取值可能不符", Recommendation: "检查实际字段映射", Confidence: "risk", Evidence: []Evidence{material.Evidence}}
 	result.Findings = []Finding{finding}
 	result.Summary = "首次记录风险"
-	if err = svc.Commit(ctx, f.WorkspaceID, makeBatch(), review, result); err != nil {
+	findingBatch := makeBatch()
+	if err = svc.Commit(ctx, f.WorkspaceID, findingBatch, review, result); err != nil {
 		t.Fatal(err)
 	}
+	var savedEvidence []byte
+	f.QueryRow(t, "SELECT evidence FROM supervision_finding WHERE workspace_id=$1", f.WorkspaceID).Scan(&savedEvidence)
+	var findingReferences []evidenceSnapshot
+	if err = json.Unmarshal(savedEvidence, &findingReferences); err != nil || len(findingReferences) != 1 || findingReferences[0].BatchID != findingBatch {
+		t.Fatalf("finding lost its immutable snapshot binding: %s %v", savedEvidence, err)
+	}
 	f.QueryRow(t, "SELECT id::text FROM supervision_finding WHERE workspace_id=$1", f.WorkspaceID).Scan(&finding.ID)
+	f.Insert(t, "supervision_action", dbfx.Cols{"workspace_id": f.WorkspaceID, "finding_id": finding.ID, "actor_id": f.UserID, "operation_id": util.UUIDToString(dbid.NewV7()), "action": "ignored", "reason": "用户确认本轮只检查接口调用计划，不要求发起网络请求"})
+	f.Exec(t, "UPDATE supervision_finding SET status='ignored' WHERE id=$1", finding.ID)
+	var decisionSnapshot []byte
+	f.QueryRow(t, currentIssueSnapshotSQL, issues[0], f.WorkspaceID).Scan(&decisionSnapshot)
+	var decisions struct {
+		Findings []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		} `json:"finding_decisions"`
+	}
+	if err = json.Unmarshal(decisionSnapshot, &decisions); err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions.Findings) != 1 || decisions.Findings[0].ID != finding.ID || decisions.Findings[0].Status != "ignored" || !strings.Contains(decisions.Findings[0].Reason, "不要求发起网络请求") {
+		t.Fatalf("manual disposition lost before next review: %+v", decisions)
+	}
+	f.Exec(t, "UPDATE supervision_finding SET status='open' WHERE id=$1", finding.ID)
 	finding.Code = "mapping_category_renamed"
 	result.Findings = []Finding{finding}
 	if err = svc.Commit(ctx, f.WorkspaceID, makeBatch(), review, result); err != nil {
@@ -161,6 +196,10 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	}
 	if n := f.Count(t, "SELECT count(*) FROM supervision_finding WHERE workspace_id=$1 AND status='resolved'", f.WorkspaceID); n != 1 {
 		t.Fatal("resolution did not close finding")
+	}
+	f.QueryRow(t, currentIssueSnapshotSQL, issues[0], f.WorkspaceID).Scan(&decisionSnapshot)
+	if err = json.Unmarshal(decisionSnapshot, &decisions); err != nil || len(decisions.Findings) != 1 || decisions.Findings[0].ID != finding.ID || decisions.Findings[0].Status != "resolved" || decisions.Findings[0].Reason != "新证据已核对" {
+		t.Fatalf("resolved finding identity lost before regression review: %+v %v", decisions, err)
 	}
 
 	// 新进程对象从数据库恢复分片位置，不依赖上一轮内存。

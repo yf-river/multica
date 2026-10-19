@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/supervision"
 )
 
 type supervisionFeedbackResponse struct {
@@ -512,7 +513,16 @@ func (h *Handler) GetSupervisionEvidence(w http.ResponseWriter, r *http.Request)
 		writeError(w, 503, "监督读取服务尚未就绪")
 		return
 	}
-	page, err := h.Supervision.ReadEvidence(r.Context(), ws, chi.URLParam(r, "kind"), uuidToString(id), offset)
+	var page supervision.EvidencePage
+	if batch := r.URL.Query().Get("batch"); batch != "" {
+		batchID, valid := parseUUIDOrBadRequest(w, batch, "batch_id")
+		if !valid {
+			return
+		}
+		page, err = h.Supervision.ReadBatchEvidence(r.Context(), ws, uuidToString(batchID), chi.URLParam(r, "kind"), uuidToString(id))
+	} else {
+		page, err = h.Supervision.ReadEvidence(r.Context(), ws, chi.URLParam(r, "kind"), uuidToString(id), offset)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "证据不存在或已不可访问")
 		return

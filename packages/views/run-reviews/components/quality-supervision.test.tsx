@@ -6,17 +6,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithI18n } from "../../test/i18n";
 import { EMPTY_SUPERVISION } from "@multica/core/supervision/schema";
 
-const mocks = vi.hoisted(() => ({ snapshot: vi.fn(), list: vi.fn(), check: vi.fn(), detail: vi.fn(), params: new URLSearchParams() }));
+const mocks = vi.hoisted(() => ({ snapshot: vi.fn(), list: vi.fn(), check: vi.fn(), detail: vi.fn(), evidence: vi.fn(), params: new URLSearchParams() }));
 vi.mock("@multica/core/paths", () => ({ useWorkspaceId: () => "ws", useWorkspacePaths: () => ({ runReviews: () => "/ws/run-reviews", issueDetail: (id: string) => `/ws/issues/${id}` }) }));
 vi.mock("../../navigation", () => ({ useNavigation: () => ({ pathname: "/ws/run-reviews", searchParams: mocks.params, replace: vi.fn() }), AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
-vi.mock("@multica/core/api", () => ({ api: { getSupervision: mocks.snapshot, listSupervision: mocks.list, checkSupervision: mocks.check, getSupervisionSubject: mocks.detail, listProjects: async () => ({ projects: [] }), listAgents: async () => [] } }));
-import { QualitySupervision } from "./quality-supervision";
+vi.mock("@multica/core/api", () => ({ api: { getSupervision: mocks.snapshot, listSupervision: mocks.list, checkSupervision: mocks.check, getSupervisionSubject: mocks.detail, getSupervisionEvidence: mocks.evidence, listProjects: async () => ({ projects: [] }), listAgents: async () => [] } }));
+import { QualitySupervision, SupervisionEvidencePanel } from "./quality-supervision";
 
 function renderPage() {
   return renderWithI18n(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><QualitySupervision /></QueryClientProvider>);
 }
 beforeEach(() => { vi.clearAllMocks(); mocks.params = new URLSearchParams(); mocks.snapshot.mockResolvedValue({ ...EMPTY_SUPERVISION, can_manage: true }); mocks.list.mockResolvedValue({ items: [], has_more: false, offset: 0 }); });
 describe("quality supervision", () => {
+  it("opens the cited batch snapshot without paging into edited live content", async () => {
+    mocks.params = new URLSearchParams({ evidence_kind: "trace", evidence_id: "source", evidence_batch: "batch-snapshot" });
+    mocks.evidence.mockResolvedValue({ kind: "trace", id: "source", issue_id: "issue", snapshot: true, batch_id: "batch-snapshot", text: "审查当时的片段", offset: 20000, end: 28000, length: 100000, deleted: false });
+    renderWithI18n(<QueryClientProvider client={new QueryClient()}><SupervisionEvidencePanel /></QueryClientProvider>);
+    expect(await screen.findByText("审查当时的片段")).toBeInTheDocument();
+    expect(mocks.evidence).toHaveBeenCalledWith("trace", "source", 0, "batch-snapshot");
+    expect(screen.getByText("20000–28000 / 100000")).toBeInTheDocument();
+    expect(screen.getByText("Saved review excerpt. Unsaved portions are not shown here.")).toBeInTheDocument();
+    for (const button of screen.getAllByRole("button")) expect(button).toBeDisabled();
+  });
   it("does not enable or create execution when the page is opened", async () => {
     renderPage();
     expect(await screen.findByRole("button", { name: "配置并启用" })).toBeInTheDocument();

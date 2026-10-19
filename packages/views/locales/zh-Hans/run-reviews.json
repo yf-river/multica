@@ -237,6 +237,8 @@
     "investigation_index": "查看材料索引",
     "investigation_read_range": "原文 {{start}}–{{end}} / {{total}} 字符",
     "investigation_result_range": "结果 {{start}}–{{end}} / {{total}} 字符",
-    "investigation_index_range": "索引 {{start}}–{{end}} / {{total}} 条"
+    "investigation_index_range": "索引 {{start}}–{{end}} / {{total}} 条",
+    "evidence_snapshot": "审查时保存的片段；未保存的部分不在此处展示。",
+    "evidence_current": "当前原文，可能已在审查后编辑。"
   }
 }

@@ -237,6 +237,8 @@
     "investigation_index": "List material index",
     "investigation_read_range": "Source {{start}}–{{end}} / {{total}} characters",
     "investigation_result_range": "Result {{start}}–{{end}} / {{total}} characters",
-    "investigation_index_range": "Index {{start}}–{{end}} / {{total}} entries"
+    "investigation_index_range": "Index {{start}}–{{end}} / {{total}} entries",
+    "evidence_snapshot": "Saved review excerpt. Unsaved portions are not shown here.",
+    "evidence_current": "Current source. It may have been edited since review."
   }
 }

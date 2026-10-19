@@ -13,5 +13,7 @@ describe("supervision response contracts", () => {
     const page = supervisionEvidencePageSchema.parse({ kind: "message", id: "m1", issue_id: "i1", text: "", offset: 0, end: 0, length: 0, deleted: true });
     expect(page.deleted).toBe(true);
     expect(supervisionEvidencePageSchema.safeParse({ ...page, offset: "0" }).success).toBe(false);
+    expect(supervisionEvidencePageSchema.safeParse({ ...page, snapshot: "true" }).success).toBe(false);
+    expect(supervisionEvidencePageSchema.parse({ ...page, snapshot: true, batch_id: "batch" }).batch_id).toBe("batch");
   });
 });
