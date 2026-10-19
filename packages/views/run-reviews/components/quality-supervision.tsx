@@ -19,8 +19,9 @@ import { AgentTranscriptDialog, buildTimeline } from "../../common/task-transcri
 import { taskMessagesOptions } from "@multica/core/chat/queries";
 import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import { blockedReasonLabel } from "../../issues/blocked-trigger-copy";
+import { formatDateTime, statusLabel } from "./run-review-format";
 
-function date(value?: string | null) { return value ? new Date(value).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"; }
+function date(value?: string | null) { return value ? formatDateTime(value) : "—"; }
 function errorText(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
 export function QualitySupervision() {
@@ -73,7 +74,7 @@ export function QualitySupervision() {
       {list.isError ? <div role="alert" className="p-4">{errorText(list.error)} <Button variant="outline" onClick={() => void list.refetch()}>{t(($) => $.supervision.retry)}</Button></div> : <div className="overflow-hidden rounded-lg border">
         <div className="hidden grid-cols-[minmax(0,1fr)_170px_150px_120px] gap-4 border-b bg-muted/30 px-4 py-3 text-caption text-muted-foreground md:grid"><span>{t(($) => $.supervision.task)}</span><span>{t(($) => $.supervision.progress)}</span><span>{t(($) => $.supervision.conclusion)}</span><span>{t(($) => $.supervision.last_check)}</span></div>
         {list.isPending ? <div className="p-6" role="status">{t(($) => $.supervision.loading)}</div> : list.data?.items.length === 0 ? <div className="p-8 text-center text-muted-foreground">{t(($) => $.supervision.empty)}<Button variant="ghost" onClick={() => route({ search: null, filter: null, project: null, offset: null })}>{t(($) => $.supervision.clear_filters)}</Button></div> : list.data?.items.map((item) => <button key={item.issue_id} type="button" onClick={() => route({ selected: item.issue_id })} className="grid min-h-16 w-full gap-2 border-b px-4 py-3 text-left text-body last:border-b-0 hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-ring md:grid-cols-[minmax(0,1fr)_170px_150px_120px] md:items-center md:gap-4">
-          <span className="min-w-0"><span className="block truncate font-medium">{item.identifier} {item.title}</span><span className="text-caption text-muted-foreground">{item.business_status}</span></span>
+          <span className="min-w-0"><span className="block truncate font-medium">{item.identifier} {item.title}</span><span className="text-caption text-muted-foreground">{statusLabel(item.business_status)}</span></span>
           <span className="text-caption">{item.run_count === 0 ? t(($) => $.supervision.status_no_runs) : item.running ? t(($) => $.supervision.status_running) : item.failures >= 3 ? t(($) => $.supervision.status_failed) : item.desired_version > item.reviewed_version ? item.last_checked_at ? t(($) => $.supervision.status_changed) : t(($) => $.supervision.status_pending) : t(($) => $.supervision.status_covered)}</span>
           <span className={`text-caption ${item.open_findings ? "text-warning" : "text-muted-foreground"}`}>{item.open_findings ? t(($) => $.supervision.problem_count, { count: item.open_findings }) : item.gaps.length ? t(($) => $.supervision.incomplete) : item.last_checked_at ? t(($) => $.supervision.no_findings) : t(($) => $.supervision.no_conclusion)}</span><span className="text-caption tabular-nums text-muted-foreground">{date(item.last_checked_at)}</span>
         </button>)}
@@ -117,7 +118,7 @@ function SupervisionDetail({ issueId, canManage, close }: { issueId: string; can
       <section><h3 className="mb-3 font-semibold">{t(($) => $.supervision.findings)}</h3>{data.findings.length === 0 ? <p className="text-body text-muted-foreground">{data.subject.last_checked_at ? t(($) => $.supervision.no_findings_scope) : t(($) => $.supervision.no_conclusion)}</p> : <div className="space-y-3">{data.findings.map((f) => <FindingCard key={f.id} finding={f} canManage={canManage} evidenceHref={evidenceHref} issueId={issueId} assigneeType={data.assignee_type} assigneeId={data.assignee_id} />)}</div>}</section>
       {data.subject.gaps.length > 0 && <section><h3 className="font-semibold">{t(($) => $.supervision.gaps)}</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-body">{data.subject.gaps.map((gap, i) => <li key={i}>{gap}</li>)}</ul></section>}
       <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">{t(($) => $.supervision.actions)}</summary><div className="mt-3 space-y-3">{data.actions.map((a) => <div key={a.id} className="text-caption"><p>{date(a.created_at)} · {a.action === "auto_resolved" ? t(($) => $.supervision.auto_resolved) : a.action === "feedback" ? t(($) => $.supervision.feedback) : a.action === "resolved" ? t(($) => $.supervision.resolved) : a.action === "ignored" ? t(($) => $.supervision.ignored) : a.action === "in_progress" ? t(($) => $.supervision.in_progress) : t(($) => $.supervision.reopen)}</p><p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{a.reason}</p>{a.receipt?.evidence?.map((e) => <AppLink key={`${e.kind}:${e.id}`} href={evidenceHref(e.run_id, e.id, e.kind)} className="mr-2 underline">{e.kind} · {e.id.slice(0, 8)}</AppLink>)}</div>)}</div></details>
-      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">{t(($) => $.supervision.history)}</summary><div className="mt-3 space-y-3">{data.batches.map((b) => <div key={b.id} className="text-caption"><p>{date(b.created_at)} · {b.status} · {b.rules_version}</p>{b.error && <p className="mt-1 break-words text-destructive">{b.error}</p>}{b.task_id && <SupervisionRunTranscript batchId={b.id} />}</div>)}</div></details>
+      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">{t(($) => $.supervision.history)}</summary><div className="mt-3 space-y-3">{data.batches.map((b) => <div key={b.id} className="text-caption"><p>{date(b.created_at)} · {statusLabel(b.status)} · {b.rules_version}</p>{b.error && <p className="mt-1 break-words text-destructive">{b.error}</p>}{b.task_id && <SupervisionRunTranscript batchId={b.id} />}</div>)}</div></details>
     </div>}
   </SheetContent></Sheet>;
 }
@@ -137,8 +138,12 @@ function FindingCard({ finding: f, canManage, evidenceHref, issueId, assigneeTyp
 function FeedbackDialog({ open, close, finding, issueId, assigneeType, assigneeId }: { open: boolean; close: () => void; finding: SupervisionFinding; issueId: string; assigneeType: string | null; assigneeId: string | null }) {
   const { t } = useT("run-reviews");
   const { t: issuesT } = useT("issues");
+  const paths = useWorkspacePaths();
   const mention = assigneeId && (assigneeType === "agent" || assigneeType === "squad") ? `[@负责人](mention://${assigneeType}/${assigneeId})\n\n` : "";
-  const [content, setContent] = useState(`${mention}${finding.title}\n\n${finding.description}\n\n影响：${finding.impact}\n\n预期结果：${finding.recommendation}`);
+  const [content, setContent] = useState(() => {
+    const references = finding.evidence.map((e) => { const query = new URLSearchParams({ tab: "records", issue: issueId, evidence_kind: e.kind, evidence_id: e.id }); if (e.run_id) query.set("task", e.run_id); return `[${e.kind} · ${e.id.slice(0, 8)}](${paths.runReviews()}?${query})`; }).join("\n");
+    return `${mention}${finding.title}\n\n${finding.description}\n\n证据：\n${references}\n\n影响：${finding.impact}\n\n预期结果：${finding.recommendation}`;
+  });
   const [operation, setOperation] = useState(createSafeId);
   const [previewedContent, setPreviewedContent] = useState("");
   const preview = useMutation({ mutationFn: () => api.previewCommentTriggers(issueId, content), onSuccess: () => setPreviewedContent(content), onError: (e) => toast.error(errorText(e)) });
