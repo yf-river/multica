@@ -180,7 +180,7 @@ func supervisionMCPTools() []map[string]any {
 		{"supervision_git", "查询授权仓库；query为status、diff、history或show。diff/history须指定path；show还须完整40位revision。"},
 		{"supervision_material", "列出或补读当前业务任务历史。path=index列来源索引，offset为条目偏移；path=kind/UUID读取原文，offset为字符偏移。kind为issue、comment、task、message或trace。root填materials。"},
 	} {
-		tools = append(tools, map[string]any{"name": entry.name, "description": entry.description, "inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"root": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "query": map[string]any{"type": "string"}, "offset": map[string]any{"type": "integer", "minimum": 0}, "revision": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}}, "required": []string{"root", "reason"}}})
+		tools = append(tools, map[string]any{"name": entry.name, "description": entry.description, "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}, "inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"root": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "query": map[string]any{"type": "string"}, "offset": map[string]any{"type": "integer", "minimum": 0}, "revision": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}}, "required": []string{"root", "reason"}}})
 	}
 	return tools
 }

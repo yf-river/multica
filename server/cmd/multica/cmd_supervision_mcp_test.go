@@ -8,6 +8,19 @@ import (
 	"github.com/multica-ai/multica/server/pkg/investigation"
 )
 
+func TestSupervisionToolsAdvertiseReadOnlyClosedWorld(t *testing.T) {
+	tools := supervisionMCPTools()
+	if len(tools) != 4 {
+		t.Fatalf("unexpected investigation tool set: %d", len(tools))
+	}
+	for _, tool := range tools {
+		annotations, ok := tool["annotations"].(map[string]any)
+		if !ok || annotations["readOnlyHint"] != true || annotations["destructiveHint"] != false || annotations["openWorldHint"] != false {
+			t.Fatalf("scoped read requires interactive approval: %v", tool["name"])
+		}
+	}
+}
+
 func TestOfflineSupervisionMaterialPaginationAndScope(t *testing.T) {
 	body := strings.Repeat("租", 9001)
 	materials := []supervision.Material{{Evidence: supervision.Evidence{Kind: "trace", ID: "owned", RunID: "run"}, Text: body, End: 9001, Length: 9001}}
