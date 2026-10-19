@@ -3,13 +3,45 @@ package investigation
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestSearchHitCanBeReadAtSourceOffset(t *testing.T) {
+	root := t.TempDir()
+	prefix := strings.Repeat("心跳正常\n", 2000)
+	line := strings.Repeat("租", 3000) + "FINAL: mapping failed"
+	if err := os.WriteFile(filepath.Join(root, "trace.log"), []byte(prefix+line), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := Session{Roots: []Root{{ID: "project", Path: root}}}
+	hit, err := s.Call(context.Background(), "supervision_search", Request{Root: "project", Path: "trace.log", Query: "FINAL", Reason: "定位业务失败"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`source_offset=(\d+)`).FindStringSubmatch(hit.Text)
+	if len(match) != 2 {
+		t.Fatalf("search hit has no readable source position: %s", hit.Text)
+	}
+	offset, err := strconv.Atoi(match[1])
+	if err != nil || offset != len([]rune(prefix))+2800 {
+		t.Fatalf("offset is not the character position of the excerpt: %s", match[1])
+	}
+	if !strings.Contains(hit.Text, fmt.Sprintf("trace.log:2001: [source_offset=%d]", offset)) {
+		t.Fatal(hit.Text)
+	}
+	page, err := s.Call(context.Background(), "supervision_read", Request{Root: "project", Path: "trace.log", Offset: offset, Reason: "按搜索位置核验上下文"})
+	if err != nil || !strings.Contains(page.Text, "FINAL: mapping failed") {
+		t.Fatalf("cannot read matched context: %+v %v", page, err)
+	}
+}
 
 func TestGitQueriesPreserveIndex(t *testing.T) {
 	root := t.TempDir()

@@ -264,15 +264,19 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 			if strings.Contains(string(data), "\x00") {
 				return nil
 			}
+			lineOffset := 0
 			for n, line := range strings.Split(string(data), "\n") {
+				sourceOffset := lineOffset
+				lineOffset += utf8.RuneCountInString(line) + 1
 				if strings.Contains(line, req.Query) {
 					r := []rune(line)
 					if len(r) > 500 {
 						start := max(0, utf8.RuneCountInString(line[:strings.Index(line, req.Query)])-200)
+						sourceOffset += start
 						line = string(r[start:min(start+500, len(r))])
 						out.Truncated = true
 					}
-					lines = append(lines, fmt.Sprintf("%s:%d:%s", name, n+1, line))
+					lines = append(lines, fmt.Sprintf("%s:%d: [source_offset=%d] %s", name, n+1, sourceOffset, line))
 					if len(lines) >= 200 {
 						out.Truncated = true
 						return fs.SkipAll
