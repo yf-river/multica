@@ -7,14 +7,24 @@ import pg from "pg";
 const config = JSON.parse(fs.readFileSync("/data/ida/multica/.run/env/int-services.json", "utf8"));
 assert.equal(config.server.MULTICA_ENV_ID, "int");
 const client = new pg.Client({ connectionString: config.server.DATABASE_URL });
+const fresh = process.argv.includes("--fresh");
 await client.connect();
 try {
   await client.query("BEGIN");
   await client.query("SET LOCAL lock_timeout='3s'");
-  const exists = await client.query("SELECT to_regclass('supervision_config') AS table_name");
+  let schema = "public";
+  if (fresh) {
+    schema = `supervision_migration_${randomUUID().replaceAll("-", "")}`;
+    await client.query(`CREATE SCHEMA "${schema}"`);
+    await client.query(`SET LOCAL search_path="${schema}",public`);
+    for (const table of ["issue", "comment", "agent_task_queue", "task_message", "task_trace_event"]) {
+      await client.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING DEFAULTS)`);
+    }
+  }
+  const exists = await client.query("SELECT to_regclass($1) AS table_name", [`${schema}.supervision_config`]);
   if (!exists.rows[0].table_name) {
     await client.query(fs.readFileSync("server/migrations/526_quality_supervision.up.sql", "utf8"));
-    for (const name of fs.readdirSync("server/migrations").filter((x) => /^5(27|28|29|30|31)_.*\.up\.sql$/.test(x)).sort()) {
+    for (const name of fs.readdirSync("server/migrations").filter((x) => /^5(2[7-9]|3[0-8])_.*\.up\.sql$/.test(x)).sort()) {
       // 事务夹具中的索引无需发布迁移的并发创建方式；真实迁移仍执行原文件。
       await client.query(fs.readFileSync(`server/migrations/${name}`, "utf8").replace(" CONCURRENTLY", ""));
     }
@@ -65,7 +75,7 @@ try {
       await client.query(`PREPARE supervision_contract_${++prepared} AS ${sql}`);
     }
   }
-  console.log(JSON.stringify({ environment: "int", passed: true, prepared, checks: ["100 task inventory", "supervisor note registration", "comment edits", "out-of-order message IDs", "single active batch", "changes during review", "deleted source invalidation", "all static supervision SQL contracts"], rollback: true }));
+  console.log(JSON.stringify({ environment: "int", fresh_schema: fresh, passed: true, prepared, checks: ["100 task inventory", "supervisor note registration", "comment edits", "out-of-order message IDs", "single active batch", "changes during review", "deleted source invalidation", "all static supervision SQL contracts"], rollback: true }));
 } finally {
   await client.query("ROLLBACK");
   await client.end();

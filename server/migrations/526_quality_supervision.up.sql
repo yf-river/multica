@@ -1,5 +1,5 @@
 CREATE TABLE supervision_config (
-    workspace_id uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL,
     agent_id uuid,
     owner_id uuid NOT NULL,
     enabled boolean NOT NULL DEFAULT false,
@@ -26,8 +26,7 @@ CREATE TABLE supervision_subject (
     next_attempt_at timestamptz NOT NULL DEFAULT now(),
     failures integer NOT NULL DEFAULT 0,
     error text NOT NULL DEFAULT '',
-    changed_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY(workspace_id, issue_id)
+    changed_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE supervision_material (
     workspace_id uuid NOT NULL,
@@ -38,11 +37,10 @@ CREATE TABLE supervision_material (
     generation bigint NOT NULL DEFAULT 1,
     reviewed_generation bigint NOT NULL DEFAULT 0,
     reviewed_offset integer NOT NULL DEFAULT 0,
-    changed_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY(workspace_id, kind, source_id)
+    changed_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE supervision_batch (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
     workspace_id uuid NOT NULL,
     issue_id uuid NOT NULL,
     target_version bigint NOT NULL,
@@ -56,7 +54,7 @@ CREATE TABLE supervision_batch (
     completed_at timestamptz
 );
 CREATE TABLE supervision_finding (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
     workspace_id uuid NOT NULL,
     issue_id uuid NOT NULL,
     fingerprint text NOT NULL,
@@ -74,7 +72,7 @@ CREATE TABLE supervision_finding (
     last_seen_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE supervision_action (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
     workspace_id uuid NOT NULL,
     finding_id uuid NOT NULL,
     actor_id uuid NOT NULL,
