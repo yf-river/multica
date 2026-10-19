@@ -4,9 +4,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { toast } from "sonner";
-import { useHealthReportUpload } from "@multica/core/health";
-import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
@@ -175,10 +172,6 @@ export function ChatInput({
   editorKeyOverride,
 }: ChatInputProps) {
   const { t } = useT("chat");
-  const { t: healthT } = useT("health");
-  const healthWorkspaceId = useWorkspaceId();
-  const healthPaths = useWorkspacePaths();
-  const healthUpload = useHealthReportUpload(healthWorkspaceId);
   const { t: tEditor } = useT("editor");
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
@@ -664,13 +657,6 @@ export function ChatInput({
           <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1">
             {(uploadEnabled || projectSelectionEnabled) && (
               <ChatAddMenu
-                onSelectHealthReport={uploadEnabled && !healthUpload.isPending ? (file) => {
-                  void healthUpload.mutateAsync(file).then(async (report) => {
-                    const prompt = healthT(($) => $.assistant.send, { id: report.id }) + `\n[${healthT(($) => $.assistant.upload)}](${healthPaths.healthReport(report.id)})`;
-                    const sent = await onSend(prompt, undefined, () => {}, [], [report.id]);
-                    if (sent === false) throw new Error(healthT(($) => $.assistant.saved));
-                  }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : healthT(($) => $.assistant.saved)));
-                } : undefined}
                 onSelectFile={uploadEnabled
                   ? (file) => editorRef.current?.uploadFile(file)
                   : undefined}
