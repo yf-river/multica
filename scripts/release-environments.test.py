@@ -137,6 +137,22 @@ class ReleaseTests(unittest.TestCase):
             deploy.assert_called_once_with('prod','new',900)
             restore.assert_called_once_with('prod',900)
 
+    def test_database_failure_does_not_drain_or_stop_services(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(r,'RUN',Path(d)):
+            artifact=Path(d)/'candidate';artifact.mkdir()
+            r.write(artifact/'release.json',{'id':'new','files':{}})
+            r.write(r.meta_path('prod'),{'release_id':'old'})
+            r.write(r.config_path('prod'),{})
+            with patch.object(r,'check_process_ownership'), patch.object(r,'isolation_check'), patch.object(r,'check_live_environment'), patch.object(r,'check_database',side_effect=RuntimeError('schema mismatch')), patch.object(r,'drain') as drain, patch.object(r,'owned_stop') as stop:
+                with self.assertRaisesRegex(RuntimeError,'schema mismatch'): r.deploy('prod',artifact)
+                drain.assert_not_called();stop.assert_not_called()
+                self.assertFalse((r.RUN/'deployments/prod-previous.json').exists())
+
+    def test_database_identity_mismatch_rejects_before_switch(self):
+        with patch.object(r,'process_env',return_value={'DATABASE_URL':'other','PORT':'80'}):
+            with self.assertRaisesRegex(RuntimeError,'运行配置'):
+                r.check_live_environment('int',{'pids':{'server':1}}, {'server':{'DATABASE_URL':'expected','PORT':'80'}})
+
     def test_startup_failure_restores_old_program_and_config(self):
         original=r.RUN
         with tempfile.TemporaryDirectory() as d:
