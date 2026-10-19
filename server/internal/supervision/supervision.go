@@ -198,7 +198,8 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string) ([
 	rows, err := tx.Query(ctx, `SELECT kind,source_id::text,COALESCE(run_id::text,''),generation,
       CASE WHEN generation<>reviewed_generation THEN reviewed_offset ELSE 0 END
       FROM supervision_material WHERE workspace_id=$1 AND issue_id=$2 AND generation>reviewed_generation
-      ORDER BY CASE kind WHEN 'issue' THEN 0 WHEN 'comment' THEN 1 WHEN 'task' THEN 2 ELSE 3 END,changed_at,source_id LIMIT 24`, ws, issue)
+      ORDER BY CASE kind WHEN 'issue' THEN 0 WHEN 'comment' THEN 1 WHEN 'task' THEN 2 ELSE 3 END,
+        CASE WHEN kind='comment' THEN changed_at END DESC,changed_at,source_id LIMIT 24`, ws, issue)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +228,7 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string) ([
 		if size <= 0 {
 			break
 		}
-		err = tx.QueryRow(ctx, `SELECT length(body),substring(body from $3 for $4) FROM (`+query+`) source(body)`, m.ID, ws, m.Offset+1, size).Scan(&m.Length, &m.Text)
+		err = tx.QueryRow(ctx, `SELECT length(body),substring(body from $3::integer for $4::integer) FROM (`+query+`) source(body)`, m.ID, ws, m.Offset+1, size).Scan(&m.Length, &m.Text)
 		if errors.Is(err, pgx.ErrNoRows) {
 			m.Text = "原始材料已删除，不能确认其原有内容。"
 			m.Length = m.Offset + len([]rune(m.Text))

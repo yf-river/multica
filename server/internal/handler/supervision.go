@@ -65,12 +65,12 @@ func (h *Handler) FeedbackSupervisionFinding(w http.ResponseWriter, r *http.Requ
 	}
 	if tag.RowsAffected() == 0 {
 		var receipt json.RawMessage
-		var priorFinding, priorContent string
-		if h.DB.QueryRow(r.Context(), `SELECT finding_id::text,reason,receipt FROM supervision_action WHERE workspace_id=$1 AND operation_id=$2`, ws, operation).Scan(&priorFinding, &priorContent, &receipt) != nil {
+		var priorFinding, priorContent, priorAction string
+		if h.DB.QueryRow(r.Context(), `SELECT finding_id::text,reason,action,receipt FROM supervision_action WHERE workspace_id=$1 AND operation_id=$2`, ws, operation).Scan(&priorFinding, &priorContent, &priorAction, &receipt) != nil {
 			writeError(w, 500, "读取反馈回执失败")
 			return
 		}
-		if priorFinding != uuidToString(finding) || priorContent != body.Content {
+		if priorFinding != uuidToString(finding) || priorContent != body.Content || priorAction != "feedback" {
 			writeError(w, 409, "同一操作编号不能更换反馈内容")
 			return
 		}
@@ -96,7 +96,12 @@ func (h *Handler) FeedbackSupervisionFinding(w http.ResponseWriter, r *http.Requ
 	response := &supervisionFeedbackResponse{header: make(http.Header)}
 	h.CreateComment(response, forwarded)
 	if response.status < 200 || response.status >= 300 {
-		// 保留操作意图，避免评论部分成功时被重复发送。
+		if response.status >= 400 && response.status < 500 {
+			// 评论的 4xx 在事务提交前返回；仅在确认没有评论时释放失败意图。
+			_, _ = h.DB.Exec(r.Context(), `DELETE FROM supervision_action WHERE workspace_id=$1 AND operation_id=$2 AND receipt IS NULL
+              AND NOT EXISTS(SELECT 1 FROM comment WHERE issue_id=$3 AND position($4 in content)>0)`, ws, operation, issue, marker)
+		}
+		// 无法确认提交结果的失败保留操作意图，避免重复发送。
 		w.WriteHeader(response.status)
 		_, _ = w.Write(response.Bytes())
 		return
@@ -432,10 +437,10 @@ func (h *Handler) UpdateSupervisionFinding(w http.ResponseWriter, r *http.Reques
 		writeError(w, 404, "问题不存在")
 		return
 	}
-	tag, err := tx.Exec(r.Context(), `INSERT INTO supervision_action(workspace_id,finding_id,actor_id,operation_id,action,reason) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, ws, id, user, body.OperationID, body.Status, body.Reason)
+	tag, err := tx.Exec(r.Context(), `INSERT INTO supervision_action(workspace_id,finding_id,actor_id,operation_id,action,reason,receipt) VALUES($1,$2,$3,$4,$5,$6,jsonb_build_object('snoozed_until',$7::timestamptz)) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, ws, id, user, body.OperationID, body.Status, body.Reason, body.SnoozedUntil)
 	if err == nil && tag.RowsAffected() == 0 {
 		var same bool
-		err = tx.QueryRow(r.Context(), `SELECT finding_id=$3::uuid AND action=$4 AND reason=$5 FROM supervision_action WHERE workspace_id=$1 AND operation_id=$2`, ws, body.OperationID, id, body.Status, body.Reason).Scan(&same)
+		err = tx.QueryRow(r.Context(), `SELECT finding_id=$3::uuid AND action=$4 AND reason=$5 AND (receipt->>'snoozed_until')::timestamptz IS NOT DISTINCT FROM $6::timestamptz FROM supervision_action WHERE workspace_id=$1 AND operation_id=$2`, ws, body.OperationID, id, body.Status, body.Reason, body.SnoozedUntil).Scan(&same)
 		if err == nil && !same {
 			writeError(w, 409, "同一操作编号不能更换问题或处理内容")
 			return
