@@ -36,6 +36,7 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => workspaceRef.current,
   useHasOnboarded: () => true,
+  WORKSPACE_PAGES: Object.fromEntries(["inbox", "issues", "projects", "autopilots", "agents", "squads", "usage", "runReviews", "runtimes", "skills", "mcp", "quickActions", "health", "meals", "goals", "life"].map(key => [key, { navKey: key }])),
   resolvePostAuthDestination: () => "/",
 }));
 
@@ -54,6 +55,7 @@ vi.mock("@multica/core/issues/queries", () => ({
 }));
 
 vi.mock("@multica/core/workspace/mutations", () => ({
+  useUpdateWorkspaceMenu: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useLeaveWorkspace: () => ({ mutateAsync: vi.fn() }),
   useDeleteWorkspace: () => ({ mutateAsync: vi.fn() }),
 }));

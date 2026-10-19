@@ -699,7 +699,9 @@
     "deleting": "删除中...",
     "toast_delete_failed": "删除工作区失败",
     "confirm_cancel": "取消",
-    "confirm_action": "确认"
+    "confirm_action": "确认",
+    "menu_title": "工作区菜单",
+    "menu_hint": "选择此工作区显示的菜单。聊天和设置始终保留。隐藏菜单不改变成员权限，已有链接仍可访问。"
   },
   "delete_workspace_dialog": {
     "title": "删除工作区",

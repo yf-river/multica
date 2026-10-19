@@ -14,6 +14,7 @@ type UseIssueDetailScrollRestoreArgs = {
    * 下面的重试循环会用过期值覆盖备忘里更新的偏移量。
    */
   overrideTop?: number;
+  startAtBottom?: boolean;
 };
 
 const scrollPositions = new Map<string, number>();
@@ -33,6 +34,7 @@ export function useIssueDetailScrollRestore({
   ready,
   disabled = false,
   overrideTop,
+  startAtBottom = false,
 }: UseIssueDetailScrollRestoreArgs) {
   const restoredKeyRef = useRef<string | null>(null);
 
@@ -65,6 +67,28 @@ export function useIssueDetailScrollRestore({
 
     restoredKeyRef.current = restoreKey;
 
+    if (startAtBottom) {
+      // Follow initial asynchronous layout only; user input immediately takes control.
+      const jump = () => { scrollContainerEl.scrollTop = scrollContainerEl.scrollHeight; };
+      jump();
+      const observer = new ResizeObserver(jump);
+      for (const child of scrollContainerEl.children) observer.observe(child);
+      const stop = () => observer.disconnect();
+      scrollContainerEl.addEventListener("wheel", stop, { passive: true, once: true });
+      scrollContainerEl.addEventListener("touchstart", stop, { passive: true, once: true });
+      scrollContainerEl.addEventListener("keydown", stop, { once: true });
+      scrollContainerEl.addEventListener("pointerdown", stop, { once: true });
+      const timer = window.setTimeout(stop, 1500);
+      return () => {
+        stop();
+        window.clearTimeout(timer);
+        scrollContainerEl.removeEventListener("wheel", stop);
+        scrollContainerEl.removeEventListener("touchstart", stop);
+        scrollContainerEl.removeEventListener("keydown", stop);
+        scrollContainerEl.removeEventListener("pointerdown", stop);
+      };
+    }
+
     const target = overrideTop ?? scrollPositions.get(restoreKey) ?? 0;
     if (target <= 1) {
       scrollContainerEl.scrollTop = target;
@@ -72,7 +96,7 @@ export function useIssueDetailScrollRestore({
     }
 
     return restoreScrollTopWithRetry(scrollContainerEl, target);
-  }, [scrollContainerEl, restoreKey, ready, disabled, overrideTop]);
+  }, [scrollContainerEl, restoreKey, ready, disabled, overrideTop, startAtBottom]);
 }
 
 function saveScrollPosition(restoreKey: string, scrollTop: number) {

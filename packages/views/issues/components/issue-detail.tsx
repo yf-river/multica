@@ -131,8 +131,6 @@ import { useIssueSubscribers } from "../hooks/use-issue-subscribers";
 import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
 import { useLocale, useTimeAgo } from "../../i18n";
 import {
-  useRestoredScrollOffset,
-  useRestoredScrollRef,
   useRestoredViewState,
   useViewStateWriter,
 } from "../../platform";
@@ -1214,16 +1212,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // 底部评论输入框。在把刚发布的评论滚进视野时测量它的高度，
   // 好让评论底部落在输入框上方而不是被它挡住。
   const composerRef = useRef<HTMLDivElement | null>(null);
-  // 基于拉取的滚动恢复（MUL-4741）：平台提供上一次离开该路由时记录的偏移量。
-  // ref 挂载赋值覆盖扁平渲染模式（提交时高度就是真实的）；虚拟化浏览模式
-  // 则把偏移量喂给下方 Virtuoso 的 initialScrollTop，让列表首次渲染就先把周边行物化出来。
-  //
-  // 容器 key 带上 issue id：在 issue 路由里这和路由作用域是冗余的，
-  // 但在收件箱里选中项存在于 query string，而 memento 记录按 pathname 作键——
-  // 如果只写 "main"，就会把通知 A 的偏移量恢复到通知 B 的详情里。
+  // 每次打开任务都展示最新消息；评论深链仍交给高亮逻辑定位。
   const scrollContainerKey = `main:${id}`;
-  const restoredScrollTop = useRestoredScrollOffset(scrollContainerKey);
-  const restoreScrollRef = useRestoredScrollRef(scrollContainerKey);
   // 这个 issue 的评论高亮深链是否已经在这里落地过（能跨标签页卸载存活，
   // 与下方 didHighlightRef 不同）：一次只是恢复视图的重新挂载，不能再重跑跳转。
   //
@@ -1241,9 +1231,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     (el: HTMLDivElement | null) => {
       rightSidebarShortcutTargetRef.current = el;
       setScrollContainerEl(el);
-      restoreScrollRef(el);
     },
-    [restoreScrollRef],
+    [],
   );
   const [pendingPostedCommentId, setPendingPostedCommentId] = useState<string | null>(null);
   const scrollToTimelineBottom = useCallback((commentId: string) => {
@@ -2151,9 +2140,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     //（比如切标签页回来），本 hook 的重试循环本身就是恢复逻辑：一次性 ref 附着所赋的值
     // 会被一个"异步内容（markdown、图片）还没长到捕获高度"的容器截断。
     disabled: !!highlightCommentId && consumedHighlightId !== highlightCommentId,
-    // 平台若提供标签页 memento 的偏移量，则必须以它为准，压过本 hook 的模块级映射
-    // ——详见参数文档。
-    overrideTop: restoredScrollTop,
+    startAtBottom: true,
   });
 
   // 让身份值在与 issue 详情无关的更新里保持稳定，这样 context 消费者只会在
@@ -3330,7 +3317,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       ref={virtuosoRef}
                       customScrollParent={scrollContainerEl}
                       data={items}
-                      initialScrollTop={restoredScrollTop}
+                      initialTopMostItemIndex={{ index: Math.max(0, items.length - 1), align: "end" }}
                       increaseViewportBy={{ top: 800, bottom: 800 }}
                       computeItemKey={(_i, item) => `${item.kind}:${item.id}`}
                       skipAnimationFrameInResizeObserver

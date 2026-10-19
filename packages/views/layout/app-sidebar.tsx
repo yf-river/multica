@@ -81,7 +81,8 @@ import {
   useShortcut,
 } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
-import { MikaSidebarEntry } from "./mika-sidebar-entry";
+import { isWorkspaceMenuVisible } from "@multica/core/workspace";
+import { MessageSquare } from "lucide-react";
 
 /**
  * 布局模块：应用主侧边栏。
@@ -148,7 +149,6 @@ type NavLabelKey =
 // 导航界面都一致。见 route-icon-components.tsx。
 const personalNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "inbox", labelKey: "inbox" },
-  { key: "myIssues", labelKey: "my_issues" },
 ];
 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
@@ -340,7 +340,7 @@ function PinRow({
           : "workspace";
     const viewPath =
       scopeType === "my"
-        ? p.myIssues()
+        ? p.issues()
         : scopeType === "project"
           ? p.projectDetail(view.scope_id!)
           : p.issues();
@@ -738,7 +738,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {personalNav.map((item) => {
+                {personalNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key)).map((item) => {
                   const href = p[item.key]();
                   const Icon = routeIconForPath(href);
                   const isActive = isNavActive(pathname, href);
@@ -805,8 +805,12 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupLabel>{t(($) => $.sidebar.workspace_group)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {workspace && userId && <MikaSidebarEntry key={`${workspace.id}:${userId}`} workspaceId={workspace.id} workspaceSlug={workspace.slug} />}
-                {workspaceNav.map((item) => {
+                <SidebarMenuItem>
+                  <SidebarMenuButton render={<AppLink href={p.chat()} />} isActive={isNavActive(pathname, p.chat())}>
+                    <MessageSquare aria-hidden="true" /><span>{t(($) => $.nav.chat)}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                {workspaceNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key)).map((item) => {
                   const href = p[item.key]();
                   const Icon = routeIconForPath(href);
                   const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
@@ -831,7 +835,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupLabel>{t(($) => $.sidebar.configure_group)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {configureNav.map((item) => {
+                {configureNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key)).map((item) => {
                   const href = p[item.key]();
                   const Icon = routeIconForPath(href);
                   const isActive = isNavActive(pathname, href);
@@ -856,7 +860,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupLabel>{t(($) => $.nav.living)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {livingNav.map((key) => {
+                {livingNav.filter((key) => isWorkspaceMenuVisible(workspace?.settings, key)).map((key) => {
                   const href = p[key]();
                   const Icon = routeIconForPath(href);
                   const isActive = isNavActive(pathname, href) ||
@@ -878,7 +882,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupLabel>{t(($) => $.nav.life)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {lifeNav.map((item) => {
+                {lifeNav.filter(() => isWorkspaceMenuVisible(workspace?.settings, "life")).map((item) => {
                   const href = p.lifeTab(item.tab);
                   const Icon = routeIconForPath(href);
                   const isActive = pathname.startsWith(p.life());
