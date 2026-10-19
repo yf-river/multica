@@ -82,10 +82,9 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		// 字符串一条都匹配不上——尽管 CLI 自己的帮助文本声称可以。
 		"--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
 	}
-	if opts.LifeCognition {
-		// 「生命认知」任务不是编码任务。禁用全部内置工具、只挂任务范围的 Life MCP
-		// 服务器；这样即使 agent 的常规 profile 授权了 shell/文件系统访问，这里也
-		// 一概不可用。
+	if opts.LifeCognition || opts.AnalysisOnly {
+		// 后台认知和监督通过服务端材料分析。禁用内置工具及用户 MCP；
+		// 认知任务只加载其专用 MCP，监督任务使用空 MCP 配置。
 		args = append(args, "--tools", "", "--strict-mcp-config", "--no-session-persistence")
 	}
 	// 注意：--strict-mcp-config 在常规路径上刻意永不传。它的含义是「只用 --mcp-config

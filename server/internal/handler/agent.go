@@ -454,12 +454,13 @@ type AgentTaskResponse struct {
 	LifeJobID                string          `json:"life_job_id,omitempty"`
 	LifeJobType              string          `json:"life_job_type,omitempty"`
 	LifeJobInput             json.RawMessage `json:"life_job_input,omitempty"`
-	AutopilotRunID           string          `json:"autopilot_run_id,omitempty"`            // autopilot 派生的任务非空
-	AutopilotID              string          `json:"autopilot_id,omitempty"`                // 派生本任务的 autopilot
-	AutopilotTitle           string          `json:"autopilot_title,omitempty"`             // 用作任务上下文的 autopilot 标题
-	AutopilotDescription     string          `json:"autopilot_description,omitempty"`       // 用作任务提示词的 autopilot 描述
-	AutopilotSource          string          `json:"autopilot_source,omitempty"`            // manual、schedule、webhook 或 api
-	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"`   // webhook/api 运行的可选触发负载
+	AutopilotRunID           string          `json:"autopilot_run_id,omitempty"`          // autopilot 派生的任务非空
+	AutopilotID              string          `json:"autopilot_id,omitempty"`              // 派生本任务的 autopilot
+	AutopilotTitle           string          `json:"autopilot_title,omitempty"`           // 用作任务上下文的 autopilot 标题
+	AutopilotDescription     string          `json:"autopilot_description,omitempty"`     // 用作任务提示词的 autopilot 描述
+	AutopilotSource          string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
+	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发负载
+	SupervisionPrompt        string          `json:"supervision_prompt,omitempty"`
 	QuickCreatePrompt        string          `json:"quick_create_prompt,omitempty"`         // quick-create 任务的用户自然语言输入
 	QuickCreatePriority      string          `json:"quick_create_priority,omitempty"`       // quick-create 显式选择的优先级
 	QuickCreateDueDate       string          `json:"quick_create_due_date,omitempty"`       // quick-create 显式选择的日历截止日期

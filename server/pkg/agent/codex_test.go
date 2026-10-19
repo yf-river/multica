@@ -1893,6 +1893,23 @@ func TestCodexStartOrResumeThreadStartsFresh(t *testing.T) {
 	}
 }
 
+func TestCodexStartOrResumeThreadAnalysisOnly(t *testing.T) {
+	t.Parallel()
+	c, fs, _ := newTestCodexClient(t)
+	wait := drainRPCScript(t, c, fs, []rpcResponse{{
+		method: "thread/start", result: json.RawMessage(`{"thread":{"id":"thr_review"}}`),
+		assertFn: func(t *testing.T, params map[string]any) {
+			if params["sandbox"] != "read-only" || params["approvalPolicy"] != "never" || params["includeApplyPatchTool"] != false {
+				t.Fatalf("supervision thread is not read-only: %v", params)
+			}
+		},
+	}})
+	defer wait()
+	if _, _, err := c.startOrResumeThread(context.Background(), ExecOptions{AnalysisOnly: true}, slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCodexStartOrResumeThreadSetsNameOnFreshThread(t *testing.T) {
 	t.Parallel()
 

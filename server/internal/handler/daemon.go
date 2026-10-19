@@ -3018,6 +3018,26 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// Quick-create task: no issue / chat / autopilot link — workspace and
 	// prompt come from the task's context JSONB. Resolve workspace from
 	// there so the isolation check below has something to compare.
+	var supervision service.SupervisionContext
+	if json.Unmarshal(task.Context, &supervision) == nil && supervision.Type == "quality_supervision" {
+		var owner string
+		var valid bool
+		err := h.DB.QueryRow(r.Context(), `SELECT c.owner_id::text,
+		  b.status='running' AND b.task_id=$3 AND c.agent_id=$4
+		  FROM supervision_batch b JOIN supervision_config c USING(workspace_id)
+		  WHERE b.workspace_id=$1 AND b.id=$2`, supervision.WorkspaceID, supervision.BatchID, task.ID, task.AgentID).Scan(&owner, &valid)
+		if err != nil || !valid || !h.CanUseSupervisionAgent(r.Context(), supervision.WorkspaceID, owner, uuidToString(task.AgentID)) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "监督批次或负责人权限已失效。", taskfailure.ReasonAgentUnknown,
+				"error_supervision_fence", http.StatusConflict, "supervision batch or owner permission invalid")
+		}
+		resp.WorkspaceID = supervision.WorkspaceID
+		resp.SupervisionPrompt = supervision.Prompt
+		resp.ThreadName = "任务质量监督"
+		if failure := h.rejectClaimOnWorkspaceMismatch(r.Context(), task, resp.WorkspaceID, runtimeID, runtimeWorkspaceID, true); failure != nil {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
+		}
+	}
 	hasQuickCreate := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext

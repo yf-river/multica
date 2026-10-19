@@ -73,8 +73,8 @@ export function parseOrThrow<T>(data: unknown, schema: ZodType, opts: ParseOptio
   if (result.success) return result.data as T;
   schemaLogger.warn(`API response failed schema validation: ${opts.endpoint}`, {
     endpoint: opts.endpoint,
-    issues: result.error.issues,
-    received: data,
+    issues: opts.sensitive ? result.error.issues.map((issue) => ({ code: issue.code, path: issue.path })) : result.error.issues,
+    received: opts.sensitive ? "[redacted]" : data,
   });
   throw new Error(`API response format invalid: ${opts.endpoint}`);
 }

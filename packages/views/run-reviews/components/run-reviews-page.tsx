@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@multi
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
+import { QualitySupervision, SupervisionEvidencePanel } from "./quality-supervision";
 import { TranscriptButton } from "../../common/task-transcript/transcript-button";
 import { useT } from "../../i18n";
 import {
@@ -95,7 +96,8 @@ export function RunReviewsPage() {
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const selectedIssueId = navigation.searchParams.get("issue");
-  const issuesQuery = useQuery(issueListOptions(wsId, { sort_by: "created_at", sort_direction: "desc" }));
+  const qualityTab = navigation.searchParams.get("tab") === "quality";
+  const issuesQuery = useQuery({ ...issueListOptions(wsId, { sort_by: "created_at", sort_direction: "desc" }), enabled: !qualityTab });
   const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
   const selectedIssue = useMemo(
     () => issues.find((issue) => issue.id === selectedIssueId) ?? issues[0] ?? null,
@@ -103,7 +105,7 @@ export function RunReviewsPage() {
   );
   const treeQuery = useQuery({
     ...issueExecutionTreeOptions(selectedIssue?.id ?? ""),
-    enabled: Boolean(selectedIssue?.id),
+    enabled: !qualityTab && Boolean(selectedIssue?.id),
   });
 
   return (
@@ -114,7 +116,16 @@ export function RunReviewsPage() {
         </div>
       </PageHeader>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[360px_minmax(0,1fr)]">
+      <nav aria-label={t(($) => $.page_title)} className="flex shrink-0 gap-5 border-b px-4 sm:px-6">
+        {[{ key: "records", label: t(($) => $.supervision.records_tab) }, { key: "quality", label: t(($) => $.supervision.quality_tab) }].map((tab) => {
+          const next = new URLSearchParams(navigation.searchParams); next.set("tab", tab.key);
+          const active = qualityTab ? tab.key === "quality" : tab.key === "records";
+          return <AppLink key={tab.key} href={`${paths.runReviews()}?${next}`} aria-current={active ? "page" : undefined} className={`border-b-2 py-3 text-body ${active ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>{tab.label}</AppLink>;
+        })}
+        {!qualityTab && navigation.searchParams.get("return_supervision") && <AppLink className="ml-auto py-3 text-caption underline" href={(() => { const next = new URLSearchParams(navigation.searchParams); next.set("tab", "quality"); next.set("selected", next.get("return_supervision") ?? ""); for (const key of ["evidence_kind", "evidence_id", "task", "message", "return_supervision"]) next.delete(key); return `${paths.runReviews()}?${next}`; })()}>{t(($) => $.supervision.back_supervision)}</AppLink>}
+      </nav>
+      {!qualityTab && <SupervisionEvidencePanel key={`${navigation.searchParams.get("evidence_kind")}:${navigation.searchParams.get("evidence_id")}`} />}
+      {qualityTab ? <QualitySupervision /> : <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="min-h-0 border-b lg:border-r lg:border-b-0">
           <div className="flex h-10 items-center justify-between border-b px-3">
             <div className="text-caption font-medium text-muted-foreground">{t(($) => $.issue_runs)}</div>
@@ -158,7 +169,7 @@ export function RunReviewsPage() {
             </div>
           )}
         </main>
-      </div>
+      </div>}
     </div>
   );
 }

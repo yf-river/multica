@@ -1659,6 +1659,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			// 任务消息（面向用户，非 daemon 认证）
+			r.Route("/api/supervision", func(r chi.Router) {
+				r.Get("/", h.GetSupervision)
+				r.Put("/", h.UpdateSupervision)
+				r.Get("/subjects", h.ListSupervisionSubjects)
+				r.Get("/evidence/{kind}/{sourceId}", h.GetSupervisionEvidence)
+				r.Get("/subjects/{issueId}", h.GetSupervisionSubject)
+				r.Post("/check", h.CheckSupervision)
+				r.Patch("/findings/{findingId}", h.UpdateSupervisionFinding)
+				r.Post("/findings/{findingId}/feedback", h.FeedbackSupervisionFinding)
+			})
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 

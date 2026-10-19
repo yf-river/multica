@@ -208,6 +208,9 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 }
 
 func buildPromptBody(task Task, provider string) string {
+	if task.SupervisionPrompt != "" {
+		return task.SupervisionPrompt
+	}
 	if task.LifeJobID != "" {
 		return buildLifeJobPrompt(task)
 	}

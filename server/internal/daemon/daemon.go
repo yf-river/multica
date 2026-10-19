@@ -7333,6 +7333,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
 	execOpts := agent.ExecOptions{
+		AnalysisOnly:               task.SupervisionPrompt != "",
 		Cwd:                        env.WorkDir,
 		Model:                      model,
 		ThreadName:                 deriveTaskThreadName(task),
@@ -7360,6 +7361,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ServiceTier:            serviceTier,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
+	}
+	if task.SupervisionPrompt != "" {
+		execOpts.Timeout = 10 * time.Minute
+		execOpts.McpConfig = json.RawMessage(`{}`)
 	}
 	// 有些 provider 无法可靠地加载我们写进任务 workdir 的每任务 runtime 配置文件。
 	// Kimi 套在自己 CLI 后面、其 cwd 处理不透明，连基于文件的路径也不可信。

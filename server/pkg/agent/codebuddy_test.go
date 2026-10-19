@@ -43,6 +43,25 @@ func TestBuildCodebuddyArgs_Basic(t *testing.T) {
 	}
 }
 
+func TestBuildCodebuddyArgs_AnalysisOnly(t *testing.T) {
+	t.Parallel()
+	args := buildCodebuddyArgs(ExecOptions{AnalysisOnly: true}, slog.Default())
+	for _, flag := range []string{"--tools", "--strict-mcp-config", "--no-session-persistence"} {
+		found := false
+		for i, value := range args {
+			if value == flag {
+				found = true
+				if flag == "--tools" && (i+1 >= len(args) || args[i+1] != "") {
+					t.Fatalf("supervisor unexpectedly has tools: %v", args)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("supervisor missing %s: %v", flag, args)
+		}
+	}
+}
+
 // --strict-mcp-config must never be passed, with or without a managed config.
 // It means "only use servers from --mcp-config" and drops CodeBuddy's user,
 // project and local scopes; measured against the real CLI, strict + a managed
