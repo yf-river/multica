@@ -1553,8 +1553,3 @@ describe("ChatInput revoked-access placeholder", () => {
     expect(editorProps.last?.placeholder).toBe("Message Multica…");
   });
 });
-vi.mock("@multica/core/health", () => ({ useHealthReportUpload: () => ({ isPending: false, mutateAsync: vi.fn() }) }));
-vi.mock("@multica/core/paths", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@multica/core/paths")>();
-  return { ...actual, useWorkspaceId: () => "ws-test", useWorkspacePaths: () => actual.paths.workspace("ws-test") };
-});
