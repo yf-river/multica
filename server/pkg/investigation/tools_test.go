@@ -77,8 +77,18 @@ func TestGitQueriesPreserveIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := Session{Roots: []Root{{ID: "project", Path: root}}}
+	for _, query := range []string{"status", "diff", "history"} {
+		_, err := s.Call(context.Background(), "supervision_git", Request{Root: "project", Path: "source.go", Query: query, Revision: strings.TrimSpace(string(revision)), Reason: "核对不适用的历史参数不会被忽略"})
+		if err == nil || !strings.Contains(err.Error(), "revision仅用于show") {
+			t.Fatalf("%s silently accepted an unused revision: %v", query, err)
+		}
+	}
 	for _, query := range []string{"status", "diff", "history", "show"} {
-		_, err := s.Call(context.Background(), "supervision_git", Request{Root: "project", Path: "source.go", Query: query, Revision: strings.TrimSpace(string(revision)), Reason: "核验来源且不改动索引"})
+		req := Request{Root: "project", Path: "source.go", Query: query, Reason: "核验来源且不改动索引"}
+		if query == "show" {
+			req.Revision = strings.TrimSpace(string(revision))
+		}
+		_, err := s.Call(context.Background(), "supervision_git", req)
 		if err != nil {
 			t.Fatal(err)
 		}

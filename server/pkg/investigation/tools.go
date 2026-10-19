@@ -331,6 +331,9 @@ func (s *Session) capture(ctx context.Context, req Request, out Result, err erro
 
 // Git 参数均由工具生成；禁用配置、外部 diff、textconv、分页器和网络对象补取。
 func readGit(ctx context.Context, root string, req Request) (string, string, error) {
+	if req.Revision != "" && req.Query != "show" {
+		return "", "", fmt.Errorf("revision仅用于show；diff比较当前工作区与HEAD，历史文件请分别show后比较")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	run := func(args ...string) (string, error) {
