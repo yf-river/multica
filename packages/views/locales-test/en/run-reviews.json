@@ -229,7 +229,14 @@
     "investigation_history": "Investigation",
     "investigation_history_hint": "Latest 100 independent reads. Original execution records remain available in review history.",
     "investigation_empty": "No investigation records yet",
-    "investigation_partial": "Some content remains unread",
-    "investigation_evidence": "View captured evidence"
+    "investigation_partial": "Results are truncated or coverage is incomplete",
+    "investigation_evidence": "View captured evidence",
+    "investigation_read": "Read source",
+    "investigation_search": "Search content",
+    "investigation_git": "Inspect Git",
+    "investigation_index": "List material index",
+    "investigation_read_range": "Source {{start}}–{{end}} / {{total}} characters",
+    "investigation_result_range": "Result {{start}}–{{end}} / {{total}} characters",
+    "investigation_index_range": "Index {{start}}–{{end}} / {{total}} entries"
   }
 }

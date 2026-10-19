@@ -341,6 +341,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 const currentIssueSnapshotSQL = `SELECT jsonb_build_object('title',title,'description',left(description,8000),'acceptance_criteria',left(acceptance_criteria::text,4000),'status',status,
       'requirement_truncated',length(COALESCE(description,''))>8000 OR length(COALESCE(acceptance_criteria::text,''))>4000,
       'pending_materials',(SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation),
+      'previous_attempt_error',(SELECT left(error,1000) FROM supervision_subject WHERE workspace_id=$2 AND issue_id=$1),
       'latest_user_comments',(SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,left(content,4000) content,length(content)>4000 truncated,created_at,updated_at FROM comment WHERE issue_id=$1 AND author_type='member' ORDER BY GREATEST(updated_at,created_at) DESC,id DESC LIMIT 6)x))
       FROM issue WHERE id=$1 AND workspace_id=$2`
 

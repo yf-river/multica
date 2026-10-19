@@ -1,7 +1,7 @@
 """回放器只验证状态转移，模型是否找对问题由独立事实评分。"""
 import unittest
 
-from run_v2 import advance_ledger, merge_pending
+from run_v2 import advance_ledger, advance_pending, merge_pending, select_batch
 
 
 class ReplayTests(unittest.TestCase):
@@ -30,6 +30,24 @@ class ReplayTests(unittest.TestCase):
         ledger=advance_ledger({},dict(findings=[a],resolutions=[]),'story')
         ledger=advance_ledger(ledger,dict(findings=[b],resolutions=[]),'story')
         self.assertEqual(len(ledger),2)
+
+    def test_valid_first_page_keeps_unread_tail(self):
+        full=dict(kind='trace',id='long',generation=1,offset=0,end=9001,length=9001,text='租'*9001)
+        first=select_batch([full])
+        self.assertEqual(first[0]['end'],8000)
+        tail=advance_pending([full],first,{('trace','long'):full})
+        self.assertEqual(tail[0]['offset'],8000)
+        self.assertEqual(tail[0]['text'],'租'*1001)
+        self.assertEqual(advance_pending(tail,select_batch(tail),{('trace','long'):full}),[])
+
+    def test_failed_or_undelivered_material_is_not_consumed(self):
+        rows=[dict(kind='trace',id=str(i),generation=1,offset=0,end=8000,length=8000,text='x'*8000) for i in range(9)]
+        first=select_batch(rows)
+        self.assertEqual(len(first),6)
+        self.assertEqual(len(advance_pending(rows,first,{})),3)
+        self.assertEqual(len(select_batch([dict(r,text='',end=0,length=0) for r in rows]*4)),24)
+        with self.assertRaisesRegex(ValueError,'缺少未读原文'):
+            advance_pending([rows[0]],[dict(rows[0],end=1000)],{})
 
 
 if __name__=='__main__':

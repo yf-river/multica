@@ -165,6 +165,10 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 		if err != nil {
 			break
 		}
+		if !os.SameFile(infoBefore, info) {
+			err = fmt.Errorf("来源在打开期间发生变化，请重新核验")
+			break
+		}
 		if !info.Mode().IsRegular() || info.Size() > 16*1024*1024 {
 			err = fmt.Errorf("仅支持16MiB以内的普通文本文件")
 			break

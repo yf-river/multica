@@ -221,18 +221,23 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	}
 	f.Exec(t, "UPDATE comment SET content='最新决定：生产前须确认',updated_at=now()+interval '1 second' WHERE id=$1", old)
 	var current struct {
-		Comments []struct {
+		PreviousAttemptError string `json:"previous_attempt_error"`
+		Comments             []struct {
 			ID      string `json:"id"`
 			Content string `json:"content"`
 		} `json:"latest_user_comments"`
 	}
 	var snapshot []byte
+	f.Exec(t, "UPDATE supervision_subject SET error='覆盖引用未知或重复' WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[99])
 	f.QueryRow(t, currentIssueSnapshotSQL, issues[99], f.WorkspaceID).Scan(&snapshot)
 	if err := json.Unmarshal(snapshot, &current); err != nil {
 		t.Fatal(err)
 	}
 	if len(current.Comments) != 6 || current.Comments[0].ID != old || current.Comments[0].Content != "最新决定：生产前须确认" {
 		t.Fatalf("edited decision omitted: %+v", current)
+	}
+	if current.PreviousAttemptError != "覆盖引用未知或重复" {
+		t.Fatal("retry lost the previous validation failure")
 	}
 	t.Log("PASS: 100-task inventory; note generation race; duplicate callbacks; independent restart; 10MB bounded reads and tail; late seq; task fence; edited user decision")
 }

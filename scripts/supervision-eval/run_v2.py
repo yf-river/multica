@@ -75,16 +75,23 @@ def run_case(model, case, repeat, args):
         raw = (dest/'stdout.jsonl').read_text()
         answer_text,usage,actual,credits = extract('codebuddy',raw,'',True,parse_result=False)
         status.update(usage=usage,reported_models=actual,credits=credits)
-        answer=parse_json(answer_text)
+        (dest/'answer-text.txt').write_text(answer_text)
         captures = [json.loads(l)['result'] for l in audit.read_text().splitlines()] if audit.exists() else []
         refs = [dict(kind='investigation',id=c['id'],run_id=c.get('run_id','')) for c in captures]
-        validation = dict(output=json.dumps(answer,ensure_ascii=False),materials=case['materials'],
+        validation = dict(output=answer_text,materials=case['materials'],
                           investigations=[dict(**r,generation=1,offset=0,end=0,length=0) for r in refs],
                           known_findings=case.get('known_findings',[]))
         write_json(dest/'validation.json',validation)
         check = subprocess.run([str(args.binary),'supervision-validate',str(dest/'validation.json')],capture_output=True,text=True,timeout=15)
         (dest/'validation.log').write_text(check.stdout+check.stderr)
-        write_json(dest/'answer.json',answer)
+        if check.returncode==0:
+            write_json(dest/'answer.json',json.loads(check.stdout))
+        else:
+            # 语义复核可查看失败回答，但不能把提取到的JSON冒充线上可保存的结果。
+            try:
+                write_json(dest/'unvalidated-answer.json',parse_json(answer_text))
+            except ValueError:
+                pass
         status.update(valid=check.returncode==0,usage=usage,reported_models=actual,credits=credits,
                       investigation_reads=len(captures),successful_reads=sum(not c.get('error') for c in captures),
                       error=None if check.returncode==0 else (check.stdout+check.stderr)[:1000])
@@ -140,15 +147,51 @@ def advance_ledger(ledger, answer, namespace):
     return updated
 
 
+def select_batch(pending):
+    batch=[]
+    remaining=48000
+    for material in pending:
+        if len(batch)>=24 or remaining<=0:
+            break
+        size=min(8000,len(material.get('text','')),remaining)
+        batch.append(dict(material,text=material.get('text','')[:size],end=material['offset']+size))
+        remaining-=size
+    return batch
+
+
+def advance_pending(pending, delivered, history):
+    """覆盖一页不等于读完原文；与产品逐段模式一样保留尚未消费的尾部。"""
+    remaining={(m['kind'],m['id']):dict(m) for m in pending}
+    for material in delivered:
+        key=(material['kind'],material['id'])
+        if material['end']>=material['length']:
+            remaining.pop(key,None)
+            continue
+        source=history.get(key)
+        if source is None or source['generation']!=material['generation'] or source['offset']!=0 or len(source.get('text',''))<source['length']:
+            raise ValueError('冻结材料缺少未读原文，不能推进回放：'+material['id'])
+        start=material['end'];end=min(start+8000,source['length'])
+        remaining[key]=dict(source,offset=start,end=end,text=source['text'][start:end])
+    return list(remaining.values())
+
+
 def run_story(model, story, repeat, args):
     ledger={f['id']:dict(f) for f in story.get('initial_findings',[])}
     pending=[]
     summary=story.get('previous_summary','')
+    previous_error=''
     history={}
     for stage in story['stages']:
         case=dict(stage,id=story['id']+'/'+stage['id'],family=story['family'])
+        deleted={(m['kind'],m['id']) for m in stage.get('deleted_materials',[])}
+        pending=[m for m in pending if (m['kind'],m['id']) not in deleted]
+        for key in deleted:
+            history.pop(key,None)
         pending=merge_pending(pending,stage['materials'])
-        case['materials']=pending
+        case['materials']=select_batch(pending)
+        case['current']=dict(stage['current'],pending_materials=len(pending))
+        if previous_error:
+            case['current']['previous_attempt_error']=previous_error
         case['previous_summary']=stage.get('summary_override',summary)
         case['open_findings']=[f for f in ledger.values() if f.get('status','open')!='resolved']
         case['known_findings']=list(ledger)
@@ -161,7 +204,10 @@ def run_story(model, story, repeat, args):
             answer=json.loads((dest/'answer.json').read_text())
             ledger=advance_ledger(ledger,answer,story['id'])
             summary=answer['summary']
-            pending=[]
+            pending=advance_pending(pending,case['materials'],history)
+            previous_error=''
+        else:
+            previous_error=result.get('error','')
         audit=dest/'audit.jsonl'
         if audit.exists():
             for line in audit.read_text().splitlines():

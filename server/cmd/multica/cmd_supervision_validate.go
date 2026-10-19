@@ -35,8 +35,7 @@ var supervisionValidateCmd = &cobra.Command{Use: "supervision-validate <bundle>"
 	if err = validateSupervisionFindingIDs(result, bundle.KnownFindings); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(cmd.OutOrStdout(), "validated")
-	return err
+	return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 }}
 
 func validateSupervisionFindingIDs(result supervision.Result, known []string) error {
