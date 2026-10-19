@@ -10,6 +10,11 @@ try {
   await client.query('BEGIN READ ONLY');
   await client.query("SET LOCAL statement_timeout='15s'");
   const failures = [];
+  // 事件写入依赖数据库生成序号；PREPARE 不会验证 INSERT 时的默认值。
+  const identity = await client.query("SELECT attidentity FROM pg_attribute WHERE attrelid=to_regclass('public.domain_event_outbox') AND attname='sequence_no'");
+  if (identity.rows[0]?.attidentity !== 'a') failures.push({ query: 'domain_event_outbox.sequence_no', message: '缺少 GENERATED ALWAYS AS IDENTITY' });
+  const invalid = await client.query("SELECT indexrelid::regclass::text AS name FROM pg_index WHERE NOT indisvalid OR NOT indisready");
+  for (const index of invalid.rows) failures.push({ query: index.name, message: '索引未完成或无效' });
   for (const [index, query] of queries.entries()) {
     await client.query('SAVEPOINT contract_check');
     try {
