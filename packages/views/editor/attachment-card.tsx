@@ -38,7 +38,9 @@ function AttachmentCardChrome({
     <div
       className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted"
       onMouseDown={(e) => e.stopPropagation()}
+      onClick={() => { if (canPreview && !uploading) onPreview(); }}
     >
+      <button type="button" disabled={!canPreview || uploading} className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {uploading ? (
         <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
       ) : (
@@ -51,16 +53,17 @@ function AttachmentCardChrome({
             : filename}
         </p>
       </div>
+      </button>
       {!uploading && canPreview && (
         <button
           type="button"
           className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           title={t(($) => $.attachment.preview)}
           aria-label={t(($) => $.attachment.preview)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onPreview();
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onPreview(); }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onPreview(); }
           }}
         >
           <Eye className="size-3.5" />
@@ -72,10 +75,10 @@ function AttachmentCardChrome({
           className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           title={t(($) => $.image.download)}
           aria-label={t(($) => $.image.download)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDownload();
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDownload(); }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onDownload(); }
           }}
         >
           <Download className="size-3.5" />
@@ -87,10 +90,10 @@ function AttachmentCardChrome({
           className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
           title={t(($) => $.attachment.remove)}
           aria-label={t(($) => $.attachment.remove)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDelete();
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onDelete(); }
           }}
         >
           <Trash2 className="size-3.5" />

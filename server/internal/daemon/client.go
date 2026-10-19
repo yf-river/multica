@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/codediff"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
@@ -478,8 +479,11 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 }
 
 // CompleteTask 上报任务成功完成及结果。
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff) error {
 	body := map[string]any{"output": output}
+	if codeDiff != nil {
+		body["code_diff"] = codeDiff
+	}
 	if branchName != "" {
 		body["branch_name"] = branchName
 	}

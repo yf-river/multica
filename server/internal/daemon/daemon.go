@@ -39,6 +39,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/codediff"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
@@ -210,6 +211,7 @@ type terminalTaskReport struct {
 	kind           terminalTaskReportKind
 	taskID         string
 	output         string
+	codeDiff       *codediff.Diff
 	branchName     string
 	errorMessage   string
 	sessionID      string
@@ -5335,6 +5337,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			kind:                  terminalTaskReportComplete,
 			taskID:                taskID,
 			output:                result.Comment,
+			codeDiff:              result.CodeDiff,
 			branchName:            result.BranchName,
 			sessionID:             result.SessionID,
 			workDir:               result.WorkDir,
@@ -5423,7 +5426,7 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff)
 	case terminalTaskReportFail:
 		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir)
 	default:
@@ -7298,6 +7301,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Info("resuming session", "session_id", task.PriorSessionID)
 	}
 
+	// Capture after runtime configuration injection and before the agent starts.
+	// Shared in-place directories cannot provide reliable run attribution.
+	if !env.LocalDirectory {
+		before, snapshotErr := codediff.Snapshot(ctx, env.WorkDir)
+		if snapshotErr == nil {
+			defer func() {
+				captureCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				diff, captureErr := codediff.Collect(captureCtx, env.WorkDir, before)
+				if captureErr != nil {
+					taskLog.Warn("code diff capture unavailable", "error", captureErr)
+					taskResult.CodeDiff = &codediff.Diff{Unavailable: true, Files: []codediff.File{}}
+				} else {
+					taskResult.CodeDiff = diff
+				}
+			}()
+		}
+	}
 	agentStartedAt := time.Now()
 	taskLog.Info("agent preparation completed",
 		"preparation_duration", agentStartedAt.Sub(runStartedAt).Round(time.Millisecond),

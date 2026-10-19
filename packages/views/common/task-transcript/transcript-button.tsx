@@ -22,6 +22,7 @@ import {
 } from "@multica/core/chat/queries";
 import type { AgentTask } from "@multica/core/types/agent";
 import type { TaskMessagePayload } from "@multica/core/types/events";
+import { CodeDiffCard } from "./code-diff-card";
 import { AgentTranscriptDialog } from "./agent-transcript-dialog";
 import { buildTimeline, type TimelineItem } from "./build-timeline";
 
@@ -187,7 +188,7 @@ export function TranscriptButton({
             agentName={agentName}
             isLive={isLive}
             onOpenChange={setOpen}
-            headerSlot={headerSlot}
+            headerSlot={<>{headerSlot}<CodeDiffCard result={task.result} /></>}
           />
         ) : (
           <AgentTranscriptDialog
@@ -197,7 +198,7 @@ export function TranscriptButton({
             items={items}
             agentName={agentName}
             isLive={isLive}
-            headerSlot={headerSlot}
+            headerSlot={<>{headerSlot}<CodeDiffCard result={task.result} /></>}
           />
         ))}
     </>

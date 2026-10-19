@@ -16,6 +16,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
+import { CodeDiffCard } from "../../common/task-transcript/code-diff-card";
 import { TranscriptButton } from "../../common/task-transcript";
 import { cancelReasonLabel, failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { useT } from "../../i18n";
@@ -491,6 +492,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   };
 
   return (
+    <div className="min-w-0 space-y-1">
     <RowShell task={task} title={rowTitle}>
       <TriggerText text={trigger} />
       <TaskCommentCoverage task={task} />
@@ -531,6 +533,8 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
         )}
       </RowActions>
     </RowShell>
+    <CodeDiffCard result={task.result} />
+    </div>
   );
 }
 

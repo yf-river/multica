@@ -139,3 +139,17 @@ describe("AttachmentCard — Eye / Download buttons", () => {
     expect(screen.getByText("Uploading {{filename}}")).toBeTruthy();
   });
 });
+
+describe("AttachmentCard — whole card preview", () => {
+  it("opens from the filename and keeps download isolated", () => {
+    const onPreview = vi.fn();
+    const onDownload = vi.fn();
+    render(<AttachmentCard filename="notes.md" contentType="text/markdown" attachmentId="att-1" href="/file" onPreview={onPreview} onDownload={onDownload} />);
+    fireEvent.click(screen.getByRole("button", { name: "notes.md" }));
+    expect(onPreview).toHaveBeenCalledTimes(1);
+    fireEvent.mouseDown(screen.getByTitle("Download"));
+    fireEvent.click(screen.getByTitle("Download"));
+    expect(onDownload).toHaveBeenCalledTimes(1);
+    expect(onPreview).toHaveBeenCalledTimes(1);
+  });
+});

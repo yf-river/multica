@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/codediff"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
@@ -3810,10 +3811,11 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	PRURL     string `json:"pr_url"`
-	Output    string `json:"output"`
-	SessionID string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	CodeDiff  *codediff.Diff `json:"code_diff,omitempty"`
+	PRURL     string         `json:"pr_url"`
+	Output    string         `json:"output"`
+	SessionID string         `json:"session_id"` // Claude session ID for future resumption
+	WorkDir   string         `json:"work_dir"`   // working directory used during execution
 	// DurableWorkDir is the configured project directory that replaces a
 	// disposable task worktree after the daemon confirms the worktree is gone.
 	DurableWorkDir string `json:"durable_work_dir,omitempty"`
@@ -3840,6 +3842,15 @@ type TaskCompleteRequest struct {
 // durable_work_dir, branch_name, session_id) are all TEXT, and result is
 // JSONB; neither tolerates a NUL.
 func sanitizeTaskCompleteRequest(req *TaskCompleteRequest) {
+	if req.CodeDiff != nil {
+		req.CodeDiff.Before = util.SanitizeTextForPostgres(req.CodeDiff.Before)
+		req.CodeDiff.After = util.SanitizeTextForPostgres(req.CodeDiff.After)
+		for i := range req.CodeDiff.Files {
+			req.CodeDiff.Files[i].Path = util.SanitizeTextForPostgres(req.CodeDiff.Files[i].Path)
+			req.CodeDiff.Files[i].Patch = util.SanitizeTextForPostgres(req.CodeDiff.Files[i].Patch)
+		}
+	}
+
 	req.PRURL = util.SanitizeTextForPostgres(req.PRURL)
 	req.Output = util.SanitizeTextForPostgres(req.Output)
 	req.SessionID = util.SanitizeTextForPostgres(req.SessionID)

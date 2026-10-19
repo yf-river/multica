@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/internal/codediff"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
@@ -308,12 +309,13 @@ type TaskUsageEntry struct {
 
 // TaskResult 是一次任务执行的结果。
 type TaskResult struct {
-	Status     string `json:"status"`
-	Comment    string `json:"comment"`
-	BranchName string `json:"branch_name,omitempty"`
-	EnvType    string `json:"env_type,omitempty"`
-	SessionID  string `json:"session_id,omitempty"` // 供将来续接用的 Claude 会话 ID
-	WorkDir    string `json:"work_dir,omitempty"`   // 执行期间使用的工作目录
+	CodeDiff   *codediff.Diff `json:"code_diff,omitempty"`
+	Status     string         `json:"status"`
+	Comment    string         `json:"comment"`
+	BranchName string         `json:"branch_name,omitempty"`
+	EnvType    string         `json:"env_type,omitempty"`
+	SessionID  string         `json:"session_id,omitempty"` // 供将来续接用的 Claude 会话 ID
+	WorkDir    string         `json:"work_dir,omitempty"`   // 执行期间使用的工作目录
 	// DurableWorkDir 仅在“一次性本地 worktree 被定稿并确认已删除”后取代 WorkDir。
 	// 为空时 WorkDir 依然权威。
 	DurableWorkDir string `json:"durable_work_dir,omitempty"`

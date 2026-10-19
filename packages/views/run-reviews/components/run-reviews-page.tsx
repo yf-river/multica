@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@multi
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
+import { CodeDiffCard } from "../../common/task-transcript/code-diff-card";
 import { TranscriptButton } from "../../common/task-transcript/transcript-button";
 import { useT } from "../../i18n";
 import {
@@ -535,6 +536,8 @@ function RunReviewDetail({
           )}
         </div>
       </section>
+
+      {tasks.map((task) => <CodeDiffCard key={task.id} result={task.result} runLabel={`运行 ${shortId(task.id)}`} />)}
 
       <section className="rounded-md border bg-card">
         <SectionTitle
