@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY supervision_investigation_key;

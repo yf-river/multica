@@ -785,7 +785,7 @@ export class ApiClient {
   async getSupervisionBatchTask(id: string): Promise<AgentTask> {
     return parseOrThrow<AgentTask>(await this.fetch<unknown>(`/api/supervision/batches/${encodeURIComponent(id)}/task`), AgentTaskSchema, { endpoint: "GET /api/supervision/batches/:id/task", sensitive: true });
   }
-  async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds">) {
+  async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds"> & { investigation_enabled?: boolean }) {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/", { method: "PUT", body: JSON.stringify(config) }), supervisionSnapshotSchema, { endpoint: "PUT /api/supervision", sensitive: true, mayHaveCommitted: true });
   }
   async checkSupervision(body: { issue_id?: string; full?: boolean; stop?: boolean }) {

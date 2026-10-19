@@ -223,6 +223,13 @@
     "feedback_coalesced": "已合并进负责人的现有待办",
     "feedback_deferred": "已登记，等待派发",
     "interval_hint": "运行中按此间隔检查新增内容；结束后尽快复查。",
-    "status_stopped": "本轮已停止"
+    "status_stopped": "本轮已停止",
+    "investigation_enable": "Allow read-only investigation",
+    "investigation_hint": "Read task history, search linked project code and inspect Git changes when evidence needs checking. Investigation records appear in task details.",
+    "investigation_history": "Investigation",
+    "investigation_history_hint": "Latest 100 independent reads. Original execution records remain available in review history.",
+    "investigation_empty": "No investigation records yet",
+    "investigation_partial": "Some content remains unread",
+    "investigation_evidence": "View captured evidence"
   }
 }

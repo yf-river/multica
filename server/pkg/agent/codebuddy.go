@@ -87,6 +87,9 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		// 认知任务只加载其专用 MCP，监督任务使用空 MCP 配置。
 		args = append(args, "--tools", "", "--strict-mcp-config", "--no-session-persistence")
 	}
+	if opts.AnalysisOnly {
+		args = append(args, "--setting-sources", "")
+	}
 	// 注意：--strict-mcp-config 在常规路径上刻意永不传。它的含义是「只用 --mcp-config
 	// 里的服务器」，会把 CodeBuddy 的用户级、项目级和本地级配置全部丢掉。对照
 	// CodeBuddy 2.x、每一级各注册一个真实 MCP 服务器、用进程启动做基准实测的结果：
@@ -175,7 +178,17 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	env := make(map[string]string, len(b.cfg.Env)+3)
+	for key, value := range b.cfg.Env {
+		env[key] = value
+	}
+	if opts.AnalysisOnly {
+		// 专用 MCP 必须直接注入：禁用内置工具时没有延迟工具发现和执行器。
+		env["CODEBUDDY_DEFER_TOOL_LOADING"] = "false"
+		env["CODEBUDDY_DISABLE_AUTO_MEMORY"] = "1"
+		env["CODEBUDDY_CODE_DISABLE_AUTO_MEMORY"] = "1"
+	}
+	cmd.Env = buildEnv(env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

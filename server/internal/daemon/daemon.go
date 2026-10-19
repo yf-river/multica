@@ -7365,6 +7365,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.SupervisionPrompt != "" {
 		execOpts.Timeout = 10 * time.Minute
 		execOpts.McpConfig = json.RawMessage(`{}`)
+		if len(task.SupervisionInvestigation) > 0 {
+			config, sourcePrompt, setupErr := supervisionMCPConfig(task, env.RootDir, d.cfg.WorkspacesRoot)
+			if setupErr != nil {
+				return TaskResult{}, fmt.Errorf("prepare supervision investigation: %w", setupErr)
+			}
+			execOpts.McpConfig = config
+			execOpts.MaxTurns = 40
+			prompt += sourcePrompt
+		}
 	}
 	// 有些 provider 无法可靠地加载我们写进任务 workdir 的每任务 runtime 配置文件。
 	// Kimi 套在自己 CLI 后面、其 cwd 处理不透明，连基于文件的路径也不可信。

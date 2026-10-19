@@ -14,14 +14,15 @@ import (
 
 // SupervisionContext 将无 issue 的监督运行绑定到服务端审查批次。
 type SupervisionContext struct {
-	Type        string `json:"type"`
-	WorkspaceID string `json:"workspace_id"`
-	BatchID     string `json:"batch_id"`
-	Prompt      string `json:"prompt"`
+	Type          string `json:"type"`
+	WorkspaceID   string `json:"workspace_id"`
+	BatchID       string `json:"batch_id"`
+	Prompt        string `json:"prompt"`
+	Investigation bool   `json:"investigation"`
 }
 
 // EnqueueSupervisionTaskTx 与调用方的批次认领共用事务，避免重复创建运行。
-func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Queries, ws, owner, agentID, batch pgtype.UUID, prompt string) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Queries, ws, owner, agentID, batch pgtype.UUID, prompt string, investigation bool) (db.AgentTaskQueue, error) {
 	agent, err := q.GetAgent(ctx, agentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, err
@@ -43,7 +44,7 @@ func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Querie
 	if !ready.Ready() {
 		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 暂不可用：%s", ready.Detail)
 	}
-	raw, err := json.Marshal(SupervisionContext{Type: "quality_supervision", WorkspaceID: util.UUIDToString(ws), BatchID: util.UUIDToString(batch), Prompt: prompt})
+	raw, err := json.Marshal(SupervisionContext{Type: "quality_supervision", WorkspaceID: util.UUIDToString(ws), BatchID: util.UUIDToString(batch), Prompt: prompt, Investigation: investigation})
 	if err != nil {
 		return db.AgentTaskQueue{}, err
 	}

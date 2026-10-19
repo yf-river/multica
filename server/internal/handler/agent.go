@@ -461,6 +461,7 @@ type AgentTaskResponse struct {
 	AutopilotSource          string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
 	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发负载
 	SupervisionPrompt        string          `json:"supervision_prompt,omitempty"`
+	SupervisionInvestigation json.RawMessage `json:"supervision_investigation,omitempty"`
 	QuickCreatePrompt        string          `json:"quick_create_prompt,omitempty"`         // quick-create 任务的用户自然语言输入
 	QuickCreatePriority      string          `json:"quick_create_priority,omitempty"`       // quick-create 显式选择的优先级
 	QuickCreateDueDate       string          `json:"quick_create_due_date,omitempty"`       // quick-create 显式选择的日历截止日期

@@ -1758,6 +1758,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		startParams["sandbox"] = "read-only"
 		startParams["approvalPolicy"] = "never"
 		startParams["includeApplyPatchTool"] = false
+		startParams["config"] = map[string]any{"features.shell_tool": false, "features.unified_exec": false, "web_search": "disabled"}
 	}
 	applyCodexReasoningEffort(startParams, opts.ThinkingLevel)
 	applyCodexServiceTier(startParams, opts.ServiceTier)

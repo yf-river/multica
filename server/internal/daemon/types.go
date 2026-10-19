@@ -164,6 +164,7 @@ type Task struct {
 	AutopilotSource           string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
 	AutopilotTriggerPayload   json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发载荷
 	SupervisionPrompt         string          `json:"supervision_prompt,omitempty"`
+	SupervisionInvestigation  json.RawMessage `json:"supervision_investigation,omitempty"`
 	QuickCreatePrompt         string          `json:"quick_create_prompt,omitempty"`         // 快速创建任务时用户输入的自然语言
 	QuickCreatePriority       string          `json:"quick_create_priority,omitempty"`       // 快速创建时显式选的优先级
 	QuickCreateDueDate        string          `json:"quick_create_due_date,omitempty"`       // 快速创建时显式选的日历截止日

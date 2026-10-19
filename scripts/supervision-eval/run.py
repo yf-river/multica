@@ -45,7 +45,7 @@ def parse_json(text):
     return json.loads(text)
 
 
-def extract(runtime, raw, answer, allow_tools=False):
+def extract(runtime, raw, answer, allow_tools=False, parse_result=True):
     usage, actual, credits, api_errors = [], [], 0.0, []
     if runtime == 'codebuddy':
         events = json.loads(raw)
@@ -86,7 +86,7 @@ def extract(runtime, raw, answer, allow_tools=False):
                 raise ValueError('材料轮禁止调用工具，实际发生工具调用')
         if api_errors:
             raise ValueError(str(api_errors)[:400])
-    return parse_json(answer), usage, actual, credits if runtime == 'codebuddy' else None
+    return parse_json(answer) if parse_result else answer, usage, actual, credits if runtime == 'codebuddy' else None
 
 
 def execute(job, args):

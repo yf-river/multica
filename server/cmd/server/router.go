@@ -1661,6 +1661,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// 任务消息（面向用户，非 daemon 认证）
 			r.Route("/api/supervision", func(r chi.Router) {
 				r.Get("/", h.GetSupervision)
+				r.Post("/investigation", h.SaveSupervisionInvestigation)
+				r.Get("/investigation/material", h.ReadSupervisionInvestigationMaterial)
 				r.Put("/", h.UpdateSupervision)
 				r.Get("/subjects", h.ListSupervisionSubjects)
 				r.Get("/evidence/{kind}/{sourceId}", h.GetSupervisionEvidence)

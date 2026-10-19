@@ -3033,6 +3033,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.WorkspaceID = supervision.WorkspaceID
 		resp.SupervisionPrompt = supervision.Prompt
+		if supervision.Investigation {
+			roots, loadErr := h.supervisionRoots(r.Context(), supervision.WorkspaceID, supervision.BatchID, uuidToString(task.RuntimeID))
+			if loadErr != nil {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{outcome: "error_supervision_sources", status: 500, message: "failed to load investigation sources"}
+			}
+			resp.SupervisionInvestigation, _ = json.Marshal(roots)
+		}
 		resp.ThreadName = "任务质量监督"
 		if failure := h.rejectClaimOnWorkspaceMismatch(r.Context(), task, resp.WorkspaceID, runtimeID, runtimeWorkspaceID, true); failure != nil {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure

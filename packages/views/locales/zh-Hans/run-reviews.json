@@ -223,6 +223,13 @@
     "feedback_coalesced": "已合并进负责人的现有待办",
     "feedback_deferred": "已登记，等待派发",
     "interval_hint": "运行中按此间隔检查新增内容；结束后尽快复查。",
-    "status_stopped": "本轮已停止"
+    "status_stopped": "本轮已停止",
+    "investigation_enable": "允许主动只读调查",
+    "investigation_hint": "遇到疑点时补读任务历史，搜索关联项目代码并核对 Git 差异。调查过程和证据会记录在任务详情中。",
+    "investigation_history": "调查过程",
+    "investigation_history_hint": "最近 100 条独立读取记录；轨迹中的原有记载可在审查历史中查看。",
+    "investigation_empty": "尚无主动调查记录",
+    "investigation_partial": "本次读取仍有未覆盖内容",
+    "investigation_evidence": "查看本次读取的原始证据"
   }
 }

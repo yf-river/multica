@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY supervision_investigation_batch ON supervision_investigation(workspace_id,batch_id,created_at);

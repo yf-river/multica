@@ -52,3 +52,24 @@ func TestPromptPreservesSupervisorNotesAndIncompleteSlice(t *testing.T) {
 		t.Fatal("accepted arbitrary query kind")
 	}
 }
+
+func TestInvestigationCitationDoesNotReplaceInitialCoverage(t *testing.T) {
+	m := Material{Evidence: Evidence{Kind: "message", ID: "m1", RunID: "run-A"}}
+	capture := Material{Evidence: Evidence{Kind: "investigation", ID: "capture", RunID: "run-A"}}
+	r := Result{Summary: "核对代码", Efficiency: "clear", Correctness: "problem", Gaps: []string{}, Covered: []Evidence{m.Evidence}, Resolutions: []Resolution{}, Findings: []Finding{{Code: "mapping", Title: "字段错误", Description: "实际取用户ID", Impact: "租户错误", Recommendation: "核对租户字段", Confidence: "confirmed", Evidence: []Evidence{capture.Evidence}}}}
+	if err := ValidateResult(r, []Material{m}, capture); err != nil {
+		t.Fatal(err)
+	}
+	if ValidateResult(r, []Material{m}) == nil {
+		t.Fatal("accepted capture from another batch")
+	}
+	r.Covered = []Evidence{capture.Evidence}
+	if ValidateResult(r, []Material{m}, capture) == nil {
+		t.Fatal("investigation replaced unread initial material")
+	}
+	r.Covered = []Evidence{m.Evidence}
+	r.Findings[0].Evidence[0].RunID = "foreign"
+	if ValidateResult(r, []Material{m}, capture) == nil {
+		t.Fatal("accepted capture from another source run")
+	}
+}

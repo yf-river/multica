@@ -144,7 +144,7 @@ func (h *Handler) GetSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var config json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('enabled',enabled,'agent_id',agent_id,'interval_seconds',interval_seconds,'inventory_complete',inventory_complete,'last_scan_at',last_scan_at,'last_success_at',last_success_at,'error',error) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&config)
+	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('enabled',enabled,'agent_id',agent_id,'interval_seconds',interval_seconds,'investigation_enabled',investigation_enabled,'inventory_complete',inventory_complete,'last_scan_at',last_scan_at,'last_success_at',last_success_at,'error',error) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&config)
 	if errors.Is(err, pgx.ErrNoRows) {
 		config = json.RawMessage(`{"enabled":false,"agent_id":null,"interval_seconds":300,"inventory_complete":false,"error":""}`)
 	} else if err != nil {
@@ -176,9 +176,10 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		AgentID  string `json:"agent_id"`
-		Enabled  bool   `json:"enabled"`
-		Interval int    `json:"interval_seconds"`
+		AgentID       string `json:"agent_id"`
+		Enabled       bool   `json:"enabled"`
+		Interval      int    `json:"interval_seconds"`
+		Investigation bool   `json:"investigation_enabled"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body) != nil {
 		writeError(w, 400, "配置格式错误")
@@ -214,8 +215,8 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "请选择监督 Agent")
 		return
 	}
-	_, err := h.DB.Exec(r.Context(), `INSERT INTO supervision_config(workspace_id,agent_id,owner_id,enabled,interval_seconds)
-      VALUES($1,NULLIF($2,'')::uuid,$3,$4,$5) ON CONFLICT(workspace_id) DO UPDATE SET agent_id=EXCLUDED.agent_id,owner_id=EXCLUDED.owner_id,enabled=EXCLUDED.enabled,interval_seconds=EXCLUDED.interval_seconds,error='',updated_at=now()`, ws, body.AgentID, user, body.Enabled, body.Interval)
+	_, err := h.DB.Exec(r.Context(), `INSERT INTO supervision_config(workspace_id,agent_id,owner_id,enabled,interval_seconds,investigation_enabled)
+      VALUES($1,NULLIF($2,'')::uuid,$3,$4,$5,$6) ON CONFLICT(workspace_id) DO UPDATE SET agent_id=EXCLUDED.agent_id,owner_id=EXCLUDED.owner_id,enabled=EXCLUDED.enabled,interval_seconds=EXCLUDED.interval_seconds,investigation_enabled=EXCLUDED.investigation_enabled,error='',updated_at=now()`, ws, body.AgentID, user, body.Enabled, body.Interval, body.Investigation)
 	if err != nil {
 		writeError(w, 500, "保存监督配置失败")
 		return
@@ -300,11 +301,12 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 404, "任务尚未登记")
 		return
 	}
-	var findings, batches, notes, actions json.RawMessage
+	var findings, batches, notes, actions, investigations json.RawMessage
 	for _, query := range []struct {
 		sql  string
 		dest *json.RawMessage
 	}{
+		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,batch_id,created_at,request,result-'text' result FROM supervision_investigation WHERE workspace_id=$1 AND issue_id=$2 ORDER BY created_at DESC LIMIT 100)x`, &investigations},
 		{`SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.last_seen_at DESC),'[]') FROM supervision_finding f WHERE workspace_id=$1 AND issue_id=$2`, &findings},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,task_id,status,error,rules_version,created_at,completed_at,jsonb_array_length(materials) material_count FROM supervision_batch WHERE workspace_id=$1 AND issue_id=$2 ORDER BY created_at DESC LIMIT 30)x`, &batches},
 		{`SELECT COALESCE(jsonb_agg(x ORDER BY x.created_at),'[]') FROM (SELECT id,content,created_at FROM comment WHERE issue_id=$2 AND author_type='member' AND lower(ltrim(content))~'^/note([[:space:]]|$)' AND EXISTS(SELECT 1 FROM issue WHERE id=$2 AND workspace_id=$1))x`, &notes},
@@ -321,7 +323,7 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 500, "读取覆盖范围失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"subject": subject, "title": issue.Title, "description": issue.Description.String, "assignee_type": textToPtr(issue.AssigneeType), "assignee_id": uuidToPtr(issue.AssigneeID), "findings": findings, "batches": batches, "notes": notes, "actions": actions, "coverage": coverage})
+	writeJSON(w, 200, map[string]any{"subject": subject, "title": issue.Title, "description": issue.Description.String, "assignee_type": textToPtr(issue.AssigneeType), "assignee_id": uuidToPtr(issue.AssigneeID), "findings": findings, "batches": batches, "notes": notes, "actions": actions, "investigations": investigations, "coverage": coverage})
 }
 
 func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
@@ -462,6 +464,7 @@ func (h *Handler) UpdateSupervisionFinding(w http.ResponseWriter, r *http.Reques
 // deleteSupervisionData 与既有删除事务共同清理任务或工作区的监督记录。
 func deleteSupervisionData(ctx context.Context, tx pgx.Tx, ws string, issue string) error {
 	for _, query := range []string{
+		`DELETE FROM supervision_investigation WHERE workspace_id=$1 AND ($2='' OR issue_id::text=$2)`,
 		`DELETE FROM supervision_action WHERE workspace_id=$1 AND ($2='' OR finding_id IN(SELECT id FROM supervision_finding WHERE workspace_id=$1 AND issue_id=NULLIF($2,'')::uuid))`,
 		`DELETE FROM supervision_finding WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
 		`DELETE FROM supervision_material WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
