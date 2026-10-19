@@ -52,6 +52,7 @@ def generate(root):
                 verdict_correct=answer.get('verdict')==exp['verdict'],expected_verdict=exp['verdict'],predicted_verdict=answer.get('verdict'),
                 code_tp=len(positive&predicted),code_fp=len(predicted-positive),code_fn=len(positive-predicted),
                 critical=exp['critical'],critical_caught=confirmed and positive<=predicted and answer.get('verdict')=='problem',
+                critical_problem_detected=confirmed and answer.get('verdict')=='problem' and bool(predicted),
                 false_alarm=exp['verdict']=='clear' and (bool(predicted) or answer.get('verdict') in ['problem','risk']),
                 clear=exp['verdict']=='clear',evidence_coverage=set(exp['citations'])<=evidence,
                 missing_codes=sorted(positive-predicted),extra_codes=sorted(predicted-positive))
@@ -73,6 +74,7 @@ def generate(root):
             verdict_accuracy=sum(r['verdict_correct'] for r in rows)/len(rows),precision=precision,recall=recall,
             f2=5*precision*recall/(4*precision+recall) if precision+recall else 0,
             critical_recall=sum(r['critical_caught'] for r in critical)/len(critical) if critical else None,
+            critical_problem_detection=sum(r['critical_problem_detected'] for r in critical)/len(critical) if critical else None,
             false_alarm_rate=sum(r['false_alarm'] for r in clean)/len(clean) if clean else None,
             repeat_stability=sum(stable)/len(stable) if stable else None,
             harness_corrections=sum('harness_correction' in c for c in calls),
@@ -81,7 +83,7 @@ def generate(root):
             median_credits=statistics.median(credits) if credits else None))
     summary.sort(key=lambda s:(s['f2'],s['critical_recall'] or 0,-(s['false_alarm_rate'] or 0)),reverse=True)
     report=dict(stage='readonly-tool' if manifest.get('tool_mode') else 'frozen-evidence',complete=all(s['calls']==manifest['groups']*manifest['repeats'] for s in summary) and len(summary)==len(manifest['models']),
-        limitations=['构造的监督材料题，不是通用模型榜单','尚不代表实际工具使用和生产监督质量','重复采样用于稳定性，不增加独立案例数','错误类型匹配为客观指标，原因分析还需审阅','积分是该账号本次回执，美元0不表示免费'],models=summary,cases=case_rows)
+        limitations=['构造的监督案例，不是通用模型榜单','工具轮代表该轮只读工具表现，不代替实际监督任务验收','重复采样用于稳定性，不增加独立案例数','F2和完整关键召回要求全部code匹配，近义类别和合理证据缺口需结合原文复核','关键案例问题识别率只衡量有证据引用的问题判定，不保证每项根因完整正确','积分统计以能解析的成功回执为准，失败调用消耗可能未计入；美元0不表示免费','耗时包含运行时和并发影响，同名模型不保证供应商底层版本完全相同'],models=summary,cases=case_rows)
     (root/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
     lines=['# 监督模型材料轮实测榜单','',f'状态：{"完整" if report["complete"] else "进行中，禁止据此决定最终模型"}。',
         '', '| 模型 / 运行时 | 独立题数 | 成功调用 | F2 | 关键问题召回 | 无问题误报率 | 结论准确率 | 中位耗时s | 中位积分/组 |',

@@ -83,11 +83,10 @@ func (h *Handler) FeedbackSupervisionFinding(w http.ResponseWriter, r *http.Requ
 			writeJSON(w, 200, map[string]any{"comment_id": commentID, "reconciled": true, "trigger_status": "unknown"})
 			return
 		}
-		writeJSON(w, 202, map[string]any{"pending": true, "message": "反馈已登记，尚无发送回执；不会重复派发"})
-		return
 	}
 	raw, _ := json.Marshal(CreateCommentRequest{Content: body.Content + "\n\n" + marker, Type: "comment"})
 	forwarded := r.Clone(r.Context())
+	forwarded = forwarded.WithContext(context.WithValue(forwarded.Context(), commentIDContextKey{}, operation))
 	forwarded.Body = http.NoBody
 	forwarded.Body = readCloser{Reader: bytes.NewReader(raw)}
 	route := chi.NewRouteContext()
@@ -96,12 +95,12 @@ func (h *Handler) FeedbackSupervisionFinding(w http.ResponseWriter, r *http.Requ
 	response := &supervisionFeedbackResponse{header: make(http.Header)}
 	h.CreateComment(response, forwarded)
 	if response.status < 200 || response.status >= 300 {
-		if response.status >= 400 && response.status < 500 {
-			// 评论的 4xx 在事务提交前返回；仅在确认没有评论时释放失败意图。
-			_, _ = h.DB.Exec(r.Context(), `DELETE FROM supervision_action WHERE workspace_id=$1 AND operation_id=$2 AND receipt IS NULL
-              AND NOT EXISTS(SELECT 1 FROM comment WHERE issue_id=$3 AND position($4 in content)>0)`, ws, operation, issue, marker)
+		var commentID string
+		if h.DB.QueryRow(r.Context(), `SELECT id::text FROM comment WHERE issue_id=$1 AND id=$2 AND position($3 in content)>0`, issue, operation, marker).Scan(&commentID) == nil {
+			writeJSON(w, 200, map[string]any{"comment_id": commentID, "reconciled": true, "trigger_status": "unknown"})
+			return
 		}
-		// 无法确认提交结果的失败保留操作意图，避免重复发送。
+		// 评论编号由操作号固定，重试时主键约束阻止重复评论与重复派发。
 		w.WriteHeader(response.status)
 		_, _ = w.Write(response.Bytes())
 		return
@@ -519,4 +518,28 @@ func (h *Handler) GetSupervisionEvidence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, 200, page)
+}
+
+// GetSupervisionBatchTask 为已有实录组件提供监督运行的真实任务元数据。
+func (h *Handler) GetSupervisionBatchTask(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	ws, _, ok := h.supervisionScope(w, r, false)
+	if !ok {
+		return
+	}
+	batch, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "batchId"), "batch_id")
+	if !ok {
+		return
+	}
+	var taskID string
+	if h.DB.QueryRow(r.Context(), `SELECT task_id::text FROM supervision_batch WHERE workspace_id=$1 AND id=$2 AND task_id IS NOT NULL`, ws, batch).Scan(&taskID) != nil {
+		writeError(w, 404, "审查运行不存在")
+		return
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), parseUUID(taskID))
+	if err != nil || h.TaskService.ResolveTaskWorkspaceID(r.Context(), task) != ws {
+		writeError(w, 404, "审查运行已不可访问")
+		return
+	}
+	writeJSON(w, 200, taskToResponse(task, ws))
 }

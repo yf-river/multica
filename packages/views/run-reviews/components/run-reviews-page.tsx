@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { isActiveAgentTaskStatus } from "@multica/core/agents";
-import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
+import { issueDetailOptions, issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type {
@@ -23,6 +23,7 @@ import type { TaskMessagePayload } from "@multica/core/types/events";
 import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Button } from "@multica/ui/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { PageHeader } from "../../layout/page-header";
@@ -99,9 +100,10 @@ export function RunReviewsPage() {
   const qualityTab = navigation.searchParams.get("tab") === "quality";
   const issuesQuery = useQuery({ ...issueListOptions(wsId, { sort_by: "created_at", sort_direction: "desc" }), enabled: !qualityTab });
   const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
+  const requestedIssue = useQuery({ ...issueDetailOptions(wsId, selectedIssueId ?? ""), enabled: !qualityTab && Boolean(selectedIssueId) && !issues.some((issue) => issue.id === selectedIssueId) });
   const selectedIssue = useMemo(
-    () => issues.find((issue) => issue.id === selectedIssueId) ?? issues[0] ?? null,
-    [issues, selectedIssueId],
+    () => selectedIssueId ? issues.find((issue) => issue.id === selectedIssueId) ?? requestedIssue.data ?? null : issues[0] ?? null,
+    [issues, selectedIssueId, requestedIssue.data],
   );
   const treeQuery = useQuery({
     ...issueExecutionTreeOptions(selectedIssue?.id ?? ""),
@@ -156,7 +158,7 @@ export function RunReviewsPage() {
         </aside>
 
         <main className="min-h-0 overflow-y-auto">
-          {selectedIssue ? (
+          {selectedIssueId && requestedIssue.isError && !selectedIssue ? <div role="alert" className="p-6 text-body">{t(($) => $.supervision.load_failed)}<Button variant="outline" onClick={() => void requestedIssue.refetch()}>{t(($) => $.supervision.retry)}</Button></div> : selectedIssue ? (
             <RunReviewDetail
               issue={selectedIssue}
               tree={treeQuery.data}

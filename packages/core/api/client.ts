@@ -782,6 +782,9 @@ export class ApiClient {
   async getSupervisionSubject(id: string) {
     return parseOrThrow<SupervisionDetail>(await this.fetch<unknown>(`/api/supervision/subjects/${encodeURIComponent(id)}`), supervisionDetailSchema, { endpoint: "GET /api/supervision/subjects/:id", sensitive: true });
   }
+  async getSupervisionBatchTask(id: string): Promise<AgentTask> {
+    return parseOrThrow<AgentTask>(await this.fetch<unknown>(`/api/supervision/batches/${encodeURIComponent(id)}/task`), AgentTaskSchema, { endpoint: "GET /api/supervision/batches/:id/task", sensitive: true });
+  }
   async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds">) {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/", { method: "PUT", body: JSON.stringify(config) }), supervisionSnapshotSchema, { endpoint: "PUT /api/supervision", sensitive: true, mayHaveCommitted: true });
   }

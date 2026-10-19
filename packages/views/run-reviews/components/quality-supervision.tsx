@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, Search, Settings2 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { createSafeId } from "@multica/core/utils";
 import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import { supervisionSnapshotOptions, supervisionListOptions, supervisionDetailOptions, supervisionKeys } from "@multica/core/supervision/queries";
@@ -15,6 +15,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@multica/ui/components/ui/dialog";
 import { useNavigation, AppLink } from "../../navigation";
 import { useT } from "../../i18n";
+import { AgentTranscriptDialog, buildTimeline } from "../../common/task-transcript";
+import { taskMessagesOptions } from "@multica/core/chat/queries";
+import { isActiveAgentTaskStatus } from "@multica/core/agents";
+import { blockedReasonLabel } from "../../issues/blocked-trigger-copy";
 
 function date(value?: string | null) { return value ? new Date(value).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"; }
 function errorText(error: unknown) { return error instanceof Error ? error.message : String(error); }
@@ -113,7 +117,7 @@ function SupervisionDetail({ issueId, canManage, close }: { issueId: string; can
       <section><h3 className="mb-3 font-semibold">{t(($) => $.supervision.findings)}</h3>{data.findings.length === 0 ? <p className="text-body text-muted-foreground">{data.subject.last_checked_at ? t(($) => $.supervision.no_findings_scope) : t(($) => $.supervision.no_conclusion)}</p> : <div className="space-y-3">{data.findings.map((f) => <FindingCard key={f.id} finding={f} canManage={canManage} evidenceHref={evidenceHref} issueId={issueId} assigneeType={data.assignee_type} assigneeId={data.assignee_id} />)}</div>}</section>
       {data.subject.gaps.length > 0 && <section><h3 className="font-semibold">{t(($) => $.supervision.gaps)}</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-body">{data.subject.gaps.map((gap, i) => <li key={i}>{gap}</li>)}</ul></section>}
       <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">{t(($) => $.supervision.actions)}</summary><div className="mt-3 space-y-3">{data.actions.map((a) => <div key={a.id} className="text-caption"><p>{date(a.created_at)} · {a.action === "auto_resolved" ? t(($) => $.supervision.auto_resolved) : a.action === "feedback" ? t(($) => $.supervision.feedback) : a.action === "resolved" ? t(($) => $.supervision.resolved) : a.action === "ignored" ? t(($) => $.supervision.ignored) : a.action === "in_progress" ? t(($) => $.supervision.in_progress) : t(($) => $.supervision.reopen)}</p><p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{a.reason}</p>{a.receipt?.evidence?.map((e) => <AppLink key={`${e.kind}:${e.id}`} href={evidenceHref(e.run_id, e.id, e.kind)} className="mr-2 underline">{e.kind} · {e.id.slice(0, 8)}</AppLink>)}</div>)}</div></details>
-      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">{t(($) => $.supervision.history)}</summary><div className="mt-3 space-y-3">{data.batches.map((b) => <div key={b.id} className="text-caption"><p>{date(b.created_at)} · {b.status} · {b.rules_version}</p>{b.error && <p className="mt-1 break-words text-destructive">{b.error}</p>}{b.task_id && <AppLink href={evidenceHref(b.task_id)} className="underline">{t(($) => $.supervision.view_run)}</AppLink>}</div>)}</div></details>
+      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">{t(($) => $.supervision.history)}</summary><div className="mt-3 space-y-3">{data.batches.map((b) => <div key={b.id} className="text-caption"><p>{date(b.created_at)} · {b.status} · {b.rules_version}</p>{b.error && <p className="mt-1 break-words text-destructive">{b.error}</p>}{b.task_id && <SupervisionRunTranscript batchId={b.id} />}</div>)}</div></details>
     </div>}
   </SheetContent></Sheet>;
 }
@@ -132,16 +136,17 @@ function FindingCard({ finding: f, canManage, evidenceHref, issueId, assigneeTyp
 
 function FeedbackDialog({ open, close, finding, issueId, assigneeType, assigneeId }: { open: boolean; close: () => void; finding: SupervisionFinding; issueId: string; assigneeType: string | null; assigneeId: string | null }) {
   const { t } = useT("run-reviews");
+  const { t: issuesT } = useT("issues");
   const mention = assigneeId && (assigneeType === "agent" || assigneeType === "squad") ? `[@负责人](mention://${assigneeType}/${assigneeId})\n\n` : "";
   const [content, setContent] = useState(`${mention}${finding.title}\n\n${finding.description}\n\n影响：${finding.impact}\n\n预期结果：${finding.recommendation}`);
-  const [operation] = useState(createSafeId);
+  const [operation, setOperation] = useState(createSafeId);
   const [previewedContent, setPreviewedContent] = useState("");
   const preview = useMutation({ mutationFn: () => api.previewCommentTriggers(issueId, content), onSuccess: () => setPreviewedContent(content), onError: (e) => toast.error(errorText(e)) });
   const send = useMutation({ mutationFn: () => api.sendSupervisionFeedback(finding.id, { content, operation_id: operation }), onError: (e) => toast.error(errorText(e)) });
   return <Dialog open={open} onOpenChange={(value) => { if (!value && !send.isPending) close(); }}><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogTitle>{t(($) => $.supervision.feedback)}</DialogTitle><DialogDescription>{t(($) => $.supervision.feedback_hint)}</DialogDescription>
-    <label className="space-y-2 text-body"><span>{t(($) => $.supervision.feedback_content)}</span><textarea className="min-h-52 w-full rounded-md border bg-background p-3" value={content} disabled={send.isPending || send.isSuccess || send.isError} onChange={(e) => setContent(e.target.value)} /></label>
-    {preview.data && previewedContent === content && <div className="text-caption"><p>{t(($) => $.supervision.feedback_targets, { count: preview.data.agents.length })}</p>{preview.data.blocked && preview.data.blocked.length > 0 && <p className="text-warning">{t(($) => $.supervision.trigger_blocked)}</p>}</div>}
-    {send.data && <div role="status" className="text-body"><p>{send.data.pending ? t(($) => $.supervision.feedback_pending) : send.data.reconciled ? t(($) => $.supervision.feedback_unknown) : t(($) => $.supervision.feedback_sent)}</p>{send.data.trigger_outcomes?.map((outcome) => <p key={outcome.target_id} className="mt-1 text-caption">{outcome.status} · {outcome.reason_code}</p>)}</div>}
+    <label className="space-y-2 text-body"><span>{t(($) => $.supervision.feedback_content)}</span><textarea className="min-h-52 w-full rounded-md border bg-background p-3" value={content} disabled={send.isPending || send.isSuccess || (send.isError && !(send.error instanceof ApiError && send.error.status >= 400 && send.error.status < 500))} onChange={(e) => { setContent(e.target.value); if (send.isError) { send.reset(); setOperation(createSafeId()); } }} /></label>
+    {preview.data && previewedContent === content && <div className="text-caption"><p>{t(($) => $.supervision.feedback_targets, { count: preview.data.agents.length })}</p><ul className="mt-1 space-y-1">{preview.data.agents.map((agent) => <li key={agent.id}>{agent.name}</li>)}</ul>{preview.data.blocked && preview.data.blocked.length > 0 && <p className="text-warning">{t(($) => $.supervision.trigger_blocked)}</p>}</div>}
+    {send.data && <div role="status" className="text-body"><p>{send.data.pending ? t(($) => $.supervision.feedback_pending) : send.data.reconciled ? t(($) => $.supervision.feedback_unknown) : t(($) => $.supervision.feedback_sent)}</p>{send.data.trigger_outcomes?.map((outcome) => <p key={outcome.target_id} className="mt-1 text-caption">{outcome.status === "queued" ? t(($) => $.supervision.feedback_queued) : outcome.status === "coalesced" ? t(($) => $.supervision.feedback_coalesced) : outcome.status === "deferred" ? t(($) => $.supervision.feedback_deferred) : outcome.status === "blocked" ? blockedReasonLabel(outcome.reason_code, issuesT) : t(($) => $.supervision.feedback_unknown)}</p>)}</div>}
     {send.isError && <p role="alert" className="text-destructive">{errorText(send.error)}</p>}
     <div className="flex flex-wrap justify-end gap-2"><Button variant="ghost" disabled={send.isPending} onClick={close}>{t(($) => $.supervision.cancel)}</Button><Button variant="outline" disabled={preview.isPending || send.isPending || send.isSuccess} onClick={() => preview.mutate()}>{t(($) => $.supervision.preview_feedback)}</Button><Button disabled={!content.trim() || previewedContent !== content || send.isPending || (send.isSuccess && !send.data.pending)} onClick={() => send.mutate()}>{send.data?.pending ? t(($) => $.supervision.query_receipt) : t(($) => $.supervision.send_feedback)}</Button></div>
   </DialogContent></Dialog>;
@@ -157,4 +162,13 @@ export function SupervisionEvidencePanel() {
     <h2 className="text-body font-medium">{t(($) => $.supervision.evidence_panel)}</h2><p className="mt-1 break-all font-mono text-caption text-muted-foreground">{kind} · {id}{evidence.data?.run_id && ` · ${evidence.data.run_id}`}</p>
     {evidence.isPending ? <p role="status" className="mt-3">{t(($) => $.supervision.loading)}</p> : evidence.isError ? <div role="alert" className="mt-3"><p>{t(($) => $.supervision.evidence_unavailable)}</p><p className="text-caption">{errorText(evidence.error)}</p></div> : evidence.data?.deleted ? <p role="status" className="mt-3">{t(($) => $.supervision.evidence_unavailable)}</p> : <><pre className="mt-3 whitespace-pre-wrap break-all text-caption">{evidence.data?.text}</pre><div className="mt-3 flex flex-wrap items-center gap-2 text-caption tabular-nums"><span>{offset}–{evidence.data?.end} / {evidence.data?.length}</span><Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 8000))}>{t(($) => $.supervision.previous)}</Button><Button variant="outline" size="sm" disabled={!evidence.data || evidence.data.end >= evidence.data.length} onClick={() => setOffset(evidence.data?.end ?? offset)}>{t(($) => $.supervision.next)}</Button></div></>}
   </section>;
+}
+
+function SupervisionRunTranscript({ batchId }: { batchId: string }) {
+  const { t } = useT("run-reviews"); const wsId = useWorkspaceId(); const [open, setOpen] = useState(false);
+  const task = useQuery({ queryKey: [...supervisionKeys.all(wsId), "batch-task", batchId], queryFn: () => api.getSupervisionBatchTask(batchId), enabled: open, refetchInterval: (query) => open && query.state.data && isActiveAgentTaskStatus(query.state.data.status) ? 5000 : false });
+  const messages = useQuery({ ...taskMessagesOptions(task.data?.id ?? ""), enabled: open && Boolean(task.data), refetchInterval: open && task.data && isActiveAgentTaskStatus(task.data.status) ? 3000 : false });
+  const items = useMemo(() => buildTimeline(messages.data ?? []), [messages.data]);
+  const failed = task.error ?? messages.error;
+  return <><Button variant="link" size="sm" onClick={() => setOpen(true)} disabled={open && (task.isPending || messages.isPending)}>{t(($) => $.supervision.view_run)}</Button>{open && failed && <p role="alert" className="text-destructive">{errorText(failed)}<Button variant="ghost" onClick={() => { void task.refetch(); void messages.refetch(); }}>{t(($) => $.supervision.retry)}</Button></p>}{task.data && messages.data && <AgentTranscriptDialog task={task.data} agentName={t(($) => $.supervision.agent)} items={items} open={open} onOpenChange={setOpen} isLive={isActiveAgentTaskStatus(task.data.status)} />}</>;
 }

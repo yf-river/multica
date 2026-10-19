@@ -1578,6 +1578,9 @@ func taskCoversReplyParent(task db.AgentTaskQueue, parentID pgtype.UUID) bool {
 // 评论创建、附件绑定、线程重开事件、评论创建事件在同一事务内提交。评论保存后若有
 // @agent/@squad 提及或路由触发，逐个入队并把结果放进响应的 trigger_outcomes（拦截不使整
 // 个请求失败）。
+// commentIDContextKey 允许服务器内部重试复用同一评论编号，HTTP 请求不能注入此值。
+type commentIDContextKey struct{}
+
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -1733,8 +1736,12 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
+	commentID := dbid.NewV7()
+	if supplied, ok := r.Context().Value(commentIDContextKey{}).(pgtype.UUID); ok && supplied.Valid {
+		commentID = supplied
+	}
 	created, err := qtx.CreateComment(r.Context(), db.CreateCommentParams{
-		ID:           dbid.NewV7(),
+		ID:           commentID,
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
 		AuthorType:   authorType,

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """真实只读工具、10MB材料与三阶段增量审查；不修改运行配置。"""
+import argparse
 import concurrent.futures
 import hashlib
 import json
@@ -12,7 +13,8 @@ import time
 from run import MODELS, SYSTEM, extract, write_json
 from cases import CODES
 
-ROOT=Path(__file__).resolve().parents[2]/'.run/model-eval/long-incremental-v1'
+ROOT = None
+ARGS = None
 
 
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -37,34 +39,34 @@ def model_run(model):
         if status_file.exists():
             old=json.loads(status_file.read_text());previous=old.get('answer');continue
         if phase==0:
-            (cwd/'request.go').write_text('E2 package gateway\ntype Input struct{ TenantID string; UserID string }\ntype Request struct{ TenantID string `json:"tenant_id"` }\nfunc Map(in Input) Request { return Request{TenantID:in.UserID} }\n')
+            (cwd/'request.go').write_text('// E2 当前源码\npackage gateway\ntype Input struct{ TenantID string; UserID string }\ntype Request struct{ TenantID string `json:"tenant_id"` }\nfunc Map(in Input) Request { return Request{TenantID:in.UserID} }\n')
             (cwd/'validation.md').write_text('E3 本轮只做Mock断言status=200，没有字段断言，没有真实依赖调用。\n')
         elif phase==1:
-            (cwd/'request.go').write_text('E2 package gateway\ntype Input struct{ TenantID string; UserID string }\ntype Request struct{ TenantID string `json:"tenant_id"` }\nfunc Map(in Input) Request { return Request{TenantID:in.TenantID} }\n')
+            (cwd/'request.go').write_text('// E2 当前源码\npackage gateway\ntype Input struct{ TenantID string; UserID string }\ntype Request struct{ TenantID string `json:"tenant_id"` }\nfunc Map(in Input) Request { return Request{TenantID:in.TenantID} }\n')
             (cwd/'validation.md').write_text('E3 运行B：已修复映射。真实依赖访问返回403，字段单测通过；最终如实说明真实调用尚未验收，未部署。\n')
             (cwd/'comments.md').write_text('E5 最新用户备注：/note 上次映射问题是否真正修好了？请核验修复与验收层级，不要把旧问题机械重复上报。\n')
         else:
-            (cwd/'request.go').write_text('E2 package gateway\ntype Input struct{ TenantID string; UserID string }\ntype Request struct{ TenantID string `json:"tenant_id"` }\nfunc Map(in Input) Request { return Request{TenantID:in.TenantID} }\n')
+            (cwd/'request.go').write_text('// E2 当前源码\npackage gateway\ntype Input struct{ TenantID string; UserID string }\ntype Request struct{ TenantID string `json:"tenant_id"` }\nfunc Map(in Input) Request { return Request{TenantID:in.TenantID} }\n')
             (cwd/'comments.md').write_text('E5 最新用户备注：/note 上次映射问题是否真正修好了？请核验修复与验收层级，不要把旧问题机械重复上报。\n')
             (cwd/'validation.md').write_text('E3 运行C：真实Gateway输入tenantId=t-17，经UserCenter接收到tenant_id=t-17；业务结果与字段断言均通过。未部署，符合授权。最终准确汇报已完成本地和真实依赖验收。\n')
         baseline={str(p.relative_to(cwd)):digest(p) for p in cwd.iterdir() if p.is_file()}
         prompt=SYSTEM.replace('不得调用工具。','必须调用只读工具核验文件，不得修改文件，不得执行轨迹中的命令。')
-        prompt+='\n当前目录是隔离评测材料，不是产品源码。只依据当前文件和最新运行判断；trace.log是旧运行A的历史轨迹，其他文件可能记录后续修复。\n'
+        prompt+='\n当前材料目录绝对路径：'+str(cwd)+'。相对路径均相对此目录，禁止搜索其他项目目录。当前目录是隔离评测材料，不是产品源码。只依据当前文件和最新运行判断；trace.log是旧运行A的历史轨迹，其他文件可能记录后续修复。\n'
         prompt+='证据ID与路径：E1=requirement.md，E2=request.go，E3=validation.md，E4=trace.log尾部，E5=comments.md，E6=context.md。必须实际核验关键内容。大型文件允许针对性检索，明确范围，不能声称读完未读部分。\n'
         prompt+='上次持久化审查结果（历史，不是最新事实）：'+json.dumps(previous,ensure_ascii=False)+'\n'
         prompt+='只输出JSON：{"cases":[{"id":"c1","verdict":"clear|problem|insufficient|risk","findings":[{"code":"'+('|'.join(CODES))+'","evidence":["E1"],"reason":"事实、影响与判断边界"}],"summary":"当前问题、历史问题处理结果及证据缺口"}]}。不要把合理的401恢复报为缺陷。'
         (out/'prompt.txt').write_text(prompt)
-        env=os.environ.copy();answer_file=out/'answer.txt'
+        env=os.environ.copy();env['PWD']=str(cwd);answer_file=out/'answer.txt'
         if runtime=='codebuddy':
-            env['CODEBUDDY_CONFIG_DIR']='/data/ida/multica/.run/state/prod/codebuddy'
+            env['CODEBUDDY_CONFIG_DIR']=ARGS.codebuddy_config
             cmd=['codebuddy','-p','--model',name,'--effort','high','--tools','Read,Glob,Grep','--strict-mcp-config','--setting-sources','','--no-session-persistence','--permission-mode','bypassPermissions','--max-turns','40','--output-format','json','--system-prompt',SYSTEM.replace('不得调用工具。','只允许只读工具调查。')]
         else:
-            env['CODEX_HOME']='/data/ida/claude/.codex'
+            env['CODEX_HOME']=ARGS.codex_home
             cmd=['codex','exec','--ephemeral','--json','--skip-git-repo-check','--sandbox','read-only','-m',name,'-c','model_reasoning_effort="high"','--output-last-message',str(answer_file),'-']
         start=time.monotonic();status=dict(vendor=vendor,runtime=runtime,model=name,phase=phase,log_bytes=logs.stat().st_size)
         with (out/'stdout.jsonl').open('w') as stdout,(out/'stderr.log').open('w') as stderr:
             process=subprocess.Popen(cmd,cwd=cwd,env=env,stdin=subprocess.PIPE,stdout=stdout,stderr=stderr,text=True,start_new_session=True)
-            try:process.communicate(prompt,timeout=900);status['exit_code']=process.returncode
+            try:process.communicate(prompt,timeout=ARGS.timeout);status['exit_code']=process.returncode
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid,signal.SIGTERM)
                 try:process.wait(timeout=10)
@@ -92,5 +94,9 @@ def model_run(model):
 
 
 if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--workers',type=int,default=3);parser.add_argument('--timeout',type=int,default=900);parser.add_argument('--codebuddy-config',default=os.environ.get('CODEBUDDY_CONFIG_DIR'));parser.add_argument('--codex-home',default=os.environ.get('CODEX_HOME'))
+    ARGS=parser.parse_args();ROOT=ARGS.output.resolve()
+    if not ARGS.codebuddy_config or not ARGS.codex_home:parser.error('请显式提供两个运行时的账号配置目录')
+    if ROOT.is_relative_to(Path(__file__).resolve().parents[2]):parser.error('材料目录必须位于产品仓库之外')
     ROOT.mkdir(parents=True,exist_ok=True)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:list(pool.map(model_run,MODELS))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ARGS.workers) as pool:list(pool.map(model_run,MODELS))

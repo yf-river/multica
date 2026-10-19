@@ -119,6 +119,46 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if saved == result.Summary {
 		t.Fatal("duplicate callback overwrote result")
 	}
+
+	// 同一问题复查复用原编号，即使模型调整类别名称，也只保留一条待处理记录。
+	f.QueryRow(t, "SELECT generation FROM supervision_material WHERE workspace_id=$1 AND source_id=$2 AND kind='comment'", f.WorkspaceID, note).Scan(&material.Generation)
+	page, err = svc.ReadEvidence(ctx, f.WorkspaceID, "comment", note, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material.End = page.End
+	material.Length = page.Length
+	refs, _ = json.Marshal([]Material{material})
+	makeBatch := func() string {
+		return f.Insert(t, "supervision_batch", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issues[0], "target_version": target, "task_id": review, "status": "running", "materials": refs})
+	}
+	finding := Finding{Code: "mapping", Title: "映射待核验", Description: "依据本轮用户备注核验", Impact: "字段取值可能不符", Recommendation: "检查实际字段映射", Confidence: "risk", Evidence: []Evidence{material.Evidence}}
+	result.Findings = []Finding{finding}
+	result.Summary = "首次记录风险"
+	if err = svc.Commit(ctx, f.WorkspaceID, makeBatch(), review, result); err != nil {
+		t.Fatal(err)
+	}
+	f.QueryRow(t, "SELECT id::text FROM supervision_finding WHERE workspace_id=$1", f.WorkspaceID).Scan(&finding.ID)
+	finding.Code = "mapping_category_renamed"
+	result.Findings = []Finding{finding}
+	if err = svc.Commit(ctx, f.WorkspaceID, makeBatch(), review, result); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_finding WHERE workspace_id=$1", f.WorkspaceID); n != 1 {
+		t.Fatalf("duplicate finding after recheck: %d", n)
+	}
+	result.Findings = []Finding{}
+	result.Resolutions = []Resolution{{ID: finding.ID, Reason: "新证据已核对", Evidence: []Evidence{material.Evidence}}}
+	if err = svc.Commit(ctx, f.WorkspaceID, makeBatch(), review, result); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_action WHERE workspace_id=$1 AND action='auto_resolved' AND reason='新证据已核对'", f.WorkspaceID); n != 1 {
+		t.Fatal("resolution audit missing")
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_finding WHERE workspace_id=$1 AND status='resolved'", f.WorkspaceID); n != 1 {
+		t.Fatal("resolution did not close finding")
+	}
+
 	// 新进程对象从数据库恢复分片位置，不依赖上一轮内存。
 	restarted := New(pool, nil)
 	first, err := restarted.ReadEvidence(ctx, f.WorkspaceID, "message", large, 0)

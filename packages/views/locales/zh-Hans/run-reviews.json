@@ -218,6 +218,9 @@
     "auto_resolved": "复查确认已解决",
     "query_receipt": "查询发送回执",
     "stopped": "已停止本轮检查；新增材料或手动检查后继续。",
-    "snoozed_until": "已暂缓至"
+    "snoozed_until": "已暂缓至",
+    "feedback_queued": "已排队，等待负责人领取",
+    "feedback_coalesced": "已合并进负责人的现有待办",
+    "feedback_deferred": "已登记，等待派发"
   }
 }

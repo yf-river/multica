@@ -1665,6 +1665,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/subjects", h.ListSupervisionSubjects)
 				r.Get("/evidence/{kind}/{sourceId}", h.GetSupervisionEvidence)
 				r.Get("/subjects/{issueId}", h.GetSupervisionSubject)
+				r.Get("/batches/{batchId}/task", h.GetSupervisionBatchTask)
 				r.Post("/check", h.CheckSupervision)
 				r.Patch("/findings/{findingId}", h.UpdateSupervisionFinding)
 				r.Post("/findings/{findingId}/feedback", h.FeedbackSupervisionFinding)

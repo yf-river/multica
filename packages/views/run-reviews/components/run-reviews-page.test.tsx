@@ -12,9 +12,12 @@ const mockState = vi.hoisted(() => ({
   getExecutionTree: vi.fn(),
   listTasks: vi.fn(),
   rerunIssue: vi.fn(),
+  getIssue: vi.fn(),
+  params: new URLSearchParams(),
 }));
 
 vi.mock("@multica/core/issues/queries", () => ({
+  issueDetailOptions: (_ws: string, id: string) => ({ queryKey: ["issues", "detail", id], queryFn: () => mockState.getIssue(id) }),
   issueListOptions: () => ({
     queryKey: ["issues", "list"],
     queryFn: mockState.listIssues,
@@ -55,7 +58,7 @@ vi.mock("../../navigation", () => ({
   AppLink: ({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) => (
     <a href={href} {...props}>{children}</a>
   ),
-  useNavigation: () => ({ searchParams: new URLSearchParams() }),
+  useNavigation: () => ({ searchParams: mockState.params }),
 }));
 
 vi.mock("../../common/task-transcript", () => ({
@@ -104,9 +107,19 @@ beforeEach(() => {
   mockState.listIssues.mockResolvedValue([]);
   mockState.getExecutionTree.mockResolvedValue(executionTree);
   mockState.listTasks.mockResolvedValue([]);
+  mockState.params = new URLSearchParams();
 });
 
 describe("RunReviewsPage", () => {
+  it("loads the linked issue outside the first page without choosing another issue", async () => {
+    mockState.params = new URLSearchParams({ issue: "older-issue" });
+    mockState.listIssues.mockResolvedValue([issue]);
+    mockState.getIssue.mockResolvedValue({ ...issue, id: "older-issue", title: "首屏之外的原任务" });
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "首屏之外的原任务" })).toBeInTheDocument();
+    expect(mockState.getExecutionTree).toHaveBeenCalledWith("older-issue");
+    expect(mockState.getExecutionTree).not.toHaveBeenCalledWith("issue-1");
+  });
   it("renders the current empty state without historical fixtures", async () => {
     renderPage();
 
