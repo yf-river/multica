@@ -159,7 +159,7 @@
     "select_agent": "选择监督 Agent",
     "scope": "监督范围",
     "scope_description": "当前工作区全部业务任务及关联运行；不包含私人聊天。",
-    "interval": "新增内容合并间隔",
+    "interval": "检查间隔",
     "minute_five": "5 分钟（推荐）",
     "minute_fifteen": "15 分钟",
     "feedback_manual": "问题默认仅在页面记录，由你决定是否反馈给负责人。",
@@ -221,6 +221,8 @@
     "snoozed_until": "已暂缓至",
     "feedback_queued": "已排队，等待负责人领取",
     "feedback_coalesced": "已合并进负责人的现有待办",
-    "feedback_deferred": "已登记，等待派发"
+    "feedback_deferred": "已登记，等待派发",
+    "interval_hint": "运行中按此间隔检查新增内容；结束后尽快复查。",
+    "status_stopped": "本轮已停止"
   }
 }

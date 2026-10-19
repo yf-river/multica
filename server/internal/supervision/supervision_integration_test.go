@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/service"
 	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
@@ -47,12 +49,14 @@ func TestIntPersistenceAndResume(t *testing.T) {
 		issues[i] = f.Issue(t, fmt.Sprintf("监督持久化验收 %03d", i))
 	}
 	svc := New(pool, nil)
-	if err = svc.Tick(ctx); err != nil {
+	if err = svc.inventory(ctx, f.WorkspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if n := f.Count(t, "SELECT count(*) FROM supervision_subject WHERE workspace_id=$1", f.WorkspaceID); n != 100 {
 		t.Fatalf("inventory=%d", n)
 	}
+	// 将其余任务设为已登记，后续竞态与调度验证只操作目标任务。
+	f.Exec(t, "UPDATE supervision_subject SET reviewed_version=desired_version WHERE workspace_id=$1", f.WorkspaceID)
 	if n := f.Count(t, "SELECT count(*) FROM supervision_subject WHERE workspace_id=$1 AND reviewed_version=desired_version AND last_checked_at IS NULL", f.WorkspaceID); n != 100 {
 		t.Fatalf("no-run accounting=%d", n)
 	}
@@ -190,5 +194,24 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err = svc.Commit(ctx, f.WorkspaceID, batch, util.UUIDToString(dbid.NewV7()), result); err == nil {
 		t.Fatal("foreign task accepted")
 	}
-	t.Log("PASS: 100-task inventory; no-run distinction; note generation race; duplicate callbacks; independent restart; 10MB bounded reads and tail; late seq; task fence")
+
+	// 持续新增日志不能让运行中任务无限等待安静窗口。
+	f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issues[0], "status": "running", "started_at": dbfx.Raw("now()")})
+	f.Exec(t, "UPDATE supervision_config SET agent_id=$2,interval_seconds=60 WHERE workspace_id=$1", f.WorkspaceID, agent)
+	f.Exec(t, "UPDATE supervision_subject SET last_checked_at=now()-interval '10 minutes',changed_at=now(),desired_version=reviewed_version+1,force_review=false WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[0])
+	svc.Tasks = service.NewTaskService(db.New(pool), pool, nil, nil)
+	svc.Authorize = func(context.Context, string, string, string) bool { return true }
+	// 不支持的夹具 provider 在选中待审任务后拒绝派发，不会启动用户 CLI。
+	if err = svc.dispatch(ctx, f.WorkspaceID); err == nil || !strings.Contains(err.Error(), "首版监督支持") {
+		t.Fatalf("continuous updates starved review: %v", err)
+	}
+	// 用户点选的重新审查先于首轮队列中的其他任务。
+	f.Exec(t, "UPDATE supervision_subject SET reviewed_version=0,last_checked_at=NULL WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[1])
+	f.Exec(t, "UPDATE supervision_material SET reviewed_generation=generation WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[1])
+	f.Exec(t, "UPDATE supervision_subject SET force_review=true WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[0])
+	if err = svc.dispatch(ctx, f.WorkspaceID); err == nil || !strings.Contains(err.Error(), "首版监督支持") {
+		t.Fatalf("manual recheck lost priority: %v", err)
+	}
+
+	t.Log("PASS: 100-task inventory; note generation race; duplicate callbacks; independent restart; 10MB bounded reads and tail; late seq; task fence")
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,7 +45,7 @@ func (h *Handler) FeedbackSupervisionFinding(w http.ResponseWriter, r *http.Requ
 		Content     string `json:"content"`
 		OperationID string `json:"operation_id"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body) != nil || body.Content == "" {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body) != nil || strings.TrimSpace(body.Content) == "" {
 		writeError(w, 400, "反馈内容不能为空")
 		return
 	}
@@ -243,7 +244,7 @@ func (h *Handler) ListSupervisionSubjects(w http.ResponseWriter, r *http.Request
 	rows, err := h.DB.Query(r.Context(), `SELECT jsonb_build_object('issue_id',i.id,'title',i.title,'identifier',w.issue_prefix||'-'||i.number,'business_status',i.status,'project_id',i.project_id,
       'desired_version',s.desired_version,'reviewed_version',s.reviewed_version,'summary',s.summary,'efficiency',s.efficiency,'correctness',s.correctness,'gaps',s.gaps,'last_checked_at',s.last_checked_at,'error',s.error,'failures',s.failures,
       'run_count',(SELECT count(*) FROM agent_task_queue t WHERE t.issue_id=i.id),
-      'running',EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=i.id AND b.status IN('preparing','running')),
+      'stopped',s.next_attempt_at='infinity'::timestamptz,'running',EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=i.id AND b.status IN('preparing','running')),
       'open_findings',(SELECT count(*) FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress')))
       FROM supervision_subject s JOIN issue i ON i.id=s.issue_id JOIN workspace w ON w.id=i.workspace_id
       WHERE s.workspace_id=$1 AND COALESCE(i.origin_type,'')<>'health_report'
@@ -294,7 +295,7 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var subject json.RawMessage
-	err = h.DB.QueryRow(r.Context(), `SELECT to_jsonb(s) FROM supervision_subject s WHERE workspace_id=$1 AND issue_id=$2`, ws, id).Scan(&subject)
+	err = h.DB.QueryRow(r.Context(), `SELECT to_jsonb(s)||jsonb_build_object('stopped',s.next_attempt_at='infinity'::timestamptz) FROM supervision_subject s WHERE workspace_id=$1 AND issue_id=$2`, ws, id).Scan(&subject)
 	if err != nil {
 		writeError(w, 404, "任务尚未登记")
 		return
@@ -418,7 +419,7 @@ func (h *Handler) UpdateSupervisionFinding(w http.ResponseWriter, r *http.Reques
 		writeError(w, 400, "处理状态无效")
 		return
 	}
-	if body.Status == "ignored" && body.Reason == "" {
+	if body.Status == "ignored" && strings.TrimSpace(body.Reason) == "" {
 		writeError(w, 400, "忽略问题需要填写理由")
 		return
 	}

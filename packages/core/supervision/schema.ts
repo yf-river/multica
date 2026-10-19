@@ -13,7 +13,7 @@ export const supervisionSnapshotSchema = z.object({
 export const supervisionSubjectSchema = z.object({
   issue_id: z.string(), title: z.string(), identifier: z.string(), business_status: z.string(), project_id: z.string().nullable(),
   desired_version: z.number(), reviewed_version: z.number(), summary: z.string(), efficiency: z.string(), correctness: z.string(), run_count: z.number(),
-  gaps: z.array(z.string()), last_checked_at: time, error: z.string(), failures: z.number(), running: z.boolean(), open_findings: z.number(),
+  gaps: z.array(z.string()), last_checked_at: time, error: z.string(), failures: z.number(), stopped: z.boolean().default(false), running: z.boolean(), open_findings: z.number(),
 }).loose();
 export const supervisionListSchema = z.object({ items: z.array(supervisionSubjectSchema), has_more: z.boolean(), offset: z.number() });
 export const supervisionEvidenceSchema = z.object({ kind: z.string(), id: z.string(), run_id: z.string().optional() });
@@ -24,7 +24,7 @@ export const supervisionFindingSchema = z.object({
 }).loose();
 export const supervisionDetailSchema = z.object({
   subject: z.object({ summary: z.string(), efficiency: z.string(), correctness: z.string(), gaps: z.array(z.string()),
-    desired_version: z.number(), reviewed_version: z.number(), last_checked_at: time, failures: z.number(), error: z.string() }).loose(),
+    desired_version: z.number(), reviewed_version: z.number(), last_checked_at: time, failures: z.number(), stopped: z.boolean().default(false), error: z.string() }).loose(),
   title: z.string(), description: z.string(), findings: z.array(supervisionFindingSchema),
   assignee_type: z.string().nullable(), assignee_id: z.string().nullable(),
   notes: z.array(z.object({ id: z.string(), content: z.string(), created_at: z.string() })),
