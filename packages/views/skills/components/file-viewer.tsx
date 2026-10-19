@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { parseFrontmatter } from "@multica/core/skills/frontmatter";
+import { resolveSkillFileLink } from "@multica/core/skills";
 import { RichContent } from "../../rich-content";
 import { useT } from "../../i18n";
 
@@ -36,6 +37,8 @@ export function FileViewer({
   autoFocus,
   onChange,
   onFocusHandled,
+  filePaths,
+  onSelectPath,
 }: {
   path: string;
   content: string;
@@ -46,6 +49,8 @@ export function FileViewer({
   onChange: (content: string) => void;
   /** 光标落位后回调一次，保证这个请求不会被重放。 */
   onFocusHandled?: () => void;
+  filePaths: readonly string[];
+  onSelectPath: (path: string) => void;
 }) {
   const { t } = useT("skills");
   const isMd = isMarkdownPath(path);
@@ -74,7 +79,20 @@ export function FileViewer({
   // 非 markdown 文件没有可预览的内容，永远走原文态。
   if (isMd && mode === "preview") {
     return (
-      <div className="h-full overflow-y-auto">
+      <div
+        className="h-full overflow-y-auto"
+        onClickCapture={(event) => {
+          if (!(event.target instanceof Element)) return;
+          const href = event.target.closest("a")?.getAttribute("href");
+          if (!href) return;
+          const destination = resolveSkillFileLink(path, href, filePaths);
+          if (!destination) return;
+          // Capture before RichContent hands the relative URL to the browser.
+          event.preventDefault();
+          event.stopPropagation();
+          onSelectPath(destination);
+        }}
+      >
         {/* pb-24：给浮动的「保存」胶囊底下留出空间，让最后几行不至于被遮住。 */}
         <div className="mx-auto max-w-[68ch] px-6 pb-24 pt-7 sm:px-8">
           <RichContent
