@@ -7366,7 +7366,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		execOpts.Timeout = 10 * time.Minute
 		execOpts.McpConfig = json.RawMessage(`{}`)
 		if len(task.SupervisionInvestigation) > 0 {
-			config, sourcePrompt, setupErr := supervisionMCPConfig(task, env.RootDir, d.cfg.WorkspacesRoot)
+			config, sourcePrompt, setupErr := supervisionMCPConfig(task, env.RootDir, d.cfg.WorkspacesRoot, provider)
 			if setupErr != nil {
 				return TaskResult{}, fmt.Errorf("prepare supervision investigation: %w", setupErr)
 			}

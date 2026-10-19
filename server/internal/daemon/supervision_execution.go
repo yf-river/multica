@@ -19,7 +19,7 @@ func withinInvestigationRoot(root, candidate string) bool {
 }
 
 // supervisionMCPConfig 仅挂载服务器授权的当前任务来源；源任务目录不承载监督运行。
-func supervisionMCPConfig(task Task, envRoot, workspacesRoot string) (json.RawMessage, string, error) {
+func supervisionMCPConfig(task Task, envRoot, workspacesRoot, provider string) (json.RawMessage, string, error) {
 	var roots []investigation.Root
 	if err := json.Unmarshal(task.SupervisionInvestigation, &roots); err != nil {
 		return nil, "", err
@@ -49,7 +49,12 @@ func supervisionMCPConfig(task Task, envRoot, workspacesRoot string) (json.RawMe
 	if err != nil {
 		return nil, "", err
 	}
-	config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"supervision": map[string]any{"command": executable, "args": []string{"supervision-mcp", manifest}}}})
+	server := map[string]any{"command": executable, "args": []string{"supervision-mcp", manifest}}
+	if provider == "codex" {
+		// Codex 的 MCP 子进程仅继承白名单变量；这里只传任务鉴权所需的变量名。
+		server["env_vars"] = []string{"MULTICA_TOKEN", "MULTICA_SERVER_URL", "MULTICA_WORKSPACE_ID", "MULTICA_AGENT_ID", "MULTICA_TASK_ID", "MULTICA_TASK_CONFIG_ROOT"}
+	}
+	config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"supervision": server}})
 	var descriptions []string
 	for _, root := range roots {
 		availability := "可只读调查"

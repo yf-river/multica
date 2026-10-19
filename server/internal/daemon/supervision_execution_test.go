@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestSupervisionSourceScopeDoesNotBroadenRunDirectories(t *testing.T) {
 	roots := []investigation.Root{{ID: "run:local", Path: filepath.Join(workspace, "task", "workdir")}, {ID: "run:foreign", Path: t.TempDir()}, {ID: "resource:project", Path: project}, {ID: "run:project", Path: filepath.Join(project, "subdir")}}
 	raw, _ := json.Marshal(roots)
 	task := Task{ID: "review", SupervisionInvestigation: raw}
-	config, prompt, err := supervisionMCPConfig(task, env, workspace)
+	config, prompt, err := supervisionMCPConfig(task, env, workspace, "codex")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,5 +46,21 @@ func TestSupervisionSourceScopeDoesNotBroadenRunDirectories(t *testing.T) {
 	info, _ := os.Stat(filepath.Join(env, "supervision-investigation.json"))
 	if info.Mode().Perm()&0077 != 0 {
 		t.Fatal("manifest not private")
+	}
+	var mcp struct {
+		Servers map[string]struct {
+			EnvVars []string `json:"env_vars"`
+		} `json:"mcpServers"`
+	}
+	if err = json.Unmarshal(config, &mcp); err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"MULTICA_TOKEN", "MULTICA_SERVER_URL", "MULTICA_WORKSPACE_ID", "MULTICA_AGENT_ID", "MULTICA_TASK_ID", "MULTICA_TASK_CONFIG_ROOT"}
+	if !slices.Equal(mcp.Servers["supervision"].EnvVars, expected) {
+		t.Fatal("native MCP lost scoped authentication or inherited unrelated credentials")
+	}
+	other, _, err := supervisionMCPConfig(task, env, workspace, "codebuddy")
+	if err != nil || strings.Contains(string(other), "env_vars") {
+		t.Fatal("Codex-specific MCP options leaked into another runtime")
 	}
 }
