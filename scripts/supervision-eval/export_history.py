@@ -11,8 +11,8 @@ import uuid
 from run import write_json
 
 
-SECRET_KEY = re.compile(r'(?i)^(?:password|passwd|secret|token|access_token|refresh_token|authorization|api_key|private_key)$')
-INLINE_SECRET = re.compile(r'''(?ix)(\bBearer\s+)([a-z0-9._~+/=-]{12,})|((?:["']?(?:password|passwd|access_token|refresh_token|api_key|secret_key)["']?\s*[:=]\s*)["']?)([^\s,"'\\}]{4,})''')
+SECRET_KEY = re.compile(r'(?i)(?:password|passwd|secret|token|authorization|api_?key|private_?key|captcha_?(?:answer|code|s))$')
+INLINE_SECRET = re.compile(r'''(?ix)(\bBearer\s+)([a-z0-9._~+/=-]{12,})|((?:["']?(?:password|passwd|access_?token|refresh_?token|api_?key|secret_?key|captcha_?(?:answer|code|s))["']?\s*[:=]\s*)["']?)([^\s,"'\\}]{4,})''')
 PRIVATE_KEY = re.compile(r'-----BEGIN[^\n]*PRIVATE KEY-----.*?-----END[^\n]*PRIVATE KEY-----', re.S)
 
 
@@ -20,7 +20,7 @@ def sanitize(value, salt):
     def mask(text):
         return '[private-'+hmac.new(salt,text.encode(),hashlib.sha256).hexdigest()[:16]+']'
     if isinstance(value,dict):
-        return {key:mask(str(item)) if SECRET_KEY.match(key) and item else sanitize(item,salt) for key,item in value.items()}
+        return {key:mask(str(item)) if SECRET_KEY.search(key) and item else sanitize(item,salt) for key,item in value.items()}
     if isinstance(value,list):
         return [sanitize(item,salt) for item in value]
     if not isinstance(value,str):
@@ -35,6 +35,7 @@ def sanitize(value, salt):
     text=PRIVATE_KEY.sub(lambda m:mask(m[0]),value)
     text=INLINE_SECRET.sub(lambda m:(m[1] or m[3])+mask(m[2] or m[4]),text)
     text=re.sub(r'\b(?:ghp_|glpat-|sk-)[A-Za-z0-9_-]{20,}',lambda m:mask(m[0]),text)
+    text=re.sub(r'\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',lambda m:mask(m[0]),text)
     text=re.sub(r'(?i)((?:postgresql|postgres|mysql|redis)://[^:\s]+:)([^@\s]+)(@)',lambda m:m[1]+mask(m[2])+m[3],text)
     text=re.sub(r'(?i)(\b[^\s:]+:)([^\s@]+)(@tcp\()',lambda m:m[1]+mask(m[2])+m[3],text)
     return text

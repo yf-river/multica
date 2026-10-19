@@ -11,6 +11,10 @@ class HistoryExportTests(unittest.TestCase):
         self.assertNotIn('second-secret-value',str(a))
         self.assertIn(a['password'],a['text'])
         self.assertNotEqual(sanitize({'password':'different'},salt)['password'],a['password'])
+        wrapped=sanitize({'superPassword':'first-secret','accessToken':'second-secret-value','captchaAnswer':'third-secret'},salt)
+        self.assertNotIn('first-secret',str(wrapped))
+        self.assertNotIn('second-secret-value',str(wrapped))
+        self.assertNotIn('third-secret',str(wrapped))
 
     def test_only_visible_messages_and_actual_tools_enter_dataset(self):
         for channel in ['analysis','summary']:

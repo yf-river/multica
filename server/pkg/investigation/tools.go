@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
@@ -214,7 +215,7 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 				return nil
 			}
 			visited++
-			if visited > 2000 || scanned > 16*1024*1024 || len(lines) >= 200 {
+			if visited > 2000 || scanned >= 16*1024*1024 || len(lines) >= 200 {
 				out.Truncated = true
 				return fs.SkipAll
 			}
@@ -222,25 +223,50 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 				lines = append(lines, name)
 				return nil
 			}
+			info, e := entry.Info()
+			if e != nil {
+				out.Truncated = true
+				return nil
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			remaining := 16*1024*1024 - scanned
+			if info.Size() > remaining {
+				out.Truncated = true
+				return nil
+			}
 			f, e := root.Open(name)
 			if e != nil {
+				out.Truncated = true
 				return nil
 			}
 			defer f.Close()
-			info, e := f.Stat()
-			if e != nil || !info.Mode().IsRegular() || info.Size() > 1024*1024 {
+			opened, e := f.Stat()
+			if e != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+				out.Truncated = true
 				return nil
 			}
-			data, e := io.ReadAll(io.LimitReader(f, 1024*1024+1))
+			data, e := io.ReadAll(io.LimitReader(f, remaining+1))
+			if int64(len(data)) > remaining {
+				data = data[:remaining]
+				out.Truncated = true
+			}
 			scanned += int64(len(data))
-			if e != nil || strings.Contains(string(data), "\x00") {
+			if e != nil {
+				out.Truncated = true
+				return nil
+			}
+			if strings.Contains(string(data), "\x00") {
 				return nil
 			}
 			for n, line := range strings.Split(string(data), "\n") {
 				if strings.Contains(line, req.Query) {
 					r := []rune(line)
 					if len(r) > 500 {
-						line = string(r[:500])
+						start := max(0, utf8.RuneCountInString(line[:strings.Index(line, req.Query)])-200)
+						line = string(r[start:min(start+500, len(r))])
+						out.Truncated = true
 					}
 					lines = append(lines, fmt.Sprintf("%s:%d:%s", name, n+1, line))
 					if len(lines) >= 200 {

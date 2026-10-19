@@ -1902,6 +1902,18 @@ func TestCodexStartOrResumeThreadAnalysisOnly(t *testing.T) {
 			if params["sandbox"] != "read-only" || params["approvalPolicy"] != "never" || params["includeApplyPatchTool"] != false {
 				t.Fatalf("supervision thread is not read-only: %v", params)
 			}
+			config, ok := params["config"].(map[string]any)
+			if !ok {
+				t.Fatal("analysis-only tool configuration missing")
+			}
+			for _, feature := range []string{"shell_tool", "unified_exec", "browser_use", "in_app_browser", "computer_use", "view_image", "image_generation", "apps", "skill_search", "multi_agent", "plugins"} {
+				if config["features."+feature] != false {
+					t.Errorf("analysis-only feature %s must be disabled", feature)
+				}
+			}
+			if config["web_search"] != "disabled" {
+				t.Fatal("analysis-only web search enabled")
+			}
 		},
 	}})
 	defer wait()
