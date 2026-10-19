@@ -213,5 +213,26 @@ func TestIntPersistenceAndResume(t *testing.T) {
 		t.Fatalf("manual recheck lost priority: %v", err)
 	}
 
-	t.Log("PASS: 100-task inventory; note generation race; duplicate callbacks; independent restart; 10MB bounded reads and tail; late seq; task fence")
+	// 创建时间较早的评论被编辑后，必须进入最近决定清单，而非被六条新评论挤掉。
+	old := f.Comment(t, issues[99], "最初允许发布")
+	f.Exec(t, "UPDATE comment SET created_at=now()-interval '1 day',updated_at=now()-interval '1 day' WHERE id=$1", old)
+	for i := 0; i < 7; i++ {
+		f.Comment(t, issues[99], fmt.Sprintf("后续普通评论%d", i))
+	}
+	f.Exec(t, "UPDATE comment SET content='最新决定：生产前须确认',updated_at=now()+interval '1 second' WHERE id=$1", old)
+	var current struct {
+		Comments []struct {
+			ID      string `json:"id"`
+			Content string `json:"content"`
+		} `json:"latest_user_comments"`
+	}
+	var snapshot []byte
+	f.QueryRow(t, currentIssueSnapshotSQL, issues[99], f.WorkspaceID).Scan(&snapshot)
+	if err := json.Unmarshal(snapshot, &current); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Comments) != 6 || current.Comments[0].ID != old || current.Comments[0].Content != "最新决定：生产前须确认" {
+		t.Fatalf("edited decision omitted: %+v", current)
+	}
+	t.Log("PASS: 100-task inventory; note generation race; duplicate callbacks; independent restart; 10MB bounded reads and tail; late seq; task fence; edited user decision")
 }

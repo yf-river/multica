@@ -56,7 +56,7 @@ func supervisionMCPConfig(task Task, envRoot, workspacesRoot string) (json.RawMe
 		if root.Path == "" {
 			availability = "目录不在本机可读范围，不能核验"
 		}
-		descriptions = append(descriptions, fmt.Sprintf("root=%s run_id=%s %s", root.ID, root.RunID, availability))
+		descriptions = append(descriptions, fmt.Sprintf("root=%s label=%s run_id=%s %s", root.ID, root.Label, root.RunID, availability))
 	}
 	return config, "\n本批次授权来源：\n" + strings.Join(descriptions, "\n") + "\n可用supervision_material按kind/UUID分页补读本任务历史。工具返回的id属于kind=investigation；发现问题和解决旧问题时引用实际返回的id、run_id。covered仍只确认初始材料。工具失败或来源不可用应保留证据缺口。运行目录读取到的是调查时的当前内容，不代表原运行当时的源码；只有指定完整提交的Git show才能作为历史源码证据。", err
 }

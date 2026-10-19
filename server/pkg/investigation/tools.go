@@ -25,6 +25,7 @@ type Root struct {
 	ID    string `json:"id"`
 	Path  string `json:"path"`
 	RunID string `json:"run_id,omitempty"`
+	Label string `json:"label,omitempty"`
 }
 
 type Request struct {
@@ -37,22 +38,23 @@ type Request struct {
 }
 
 type Result struct {
-	Kind       string    `json:"kind"`
-	ID         string    `json:"id,omitempty"`
-	Root       string    `json:"root"`
-	RootSHA256 string    `json:"root_sha256,omitempty"`
-	RunID      string    `json:"run_id,omitempty"`
-	Tool       string    `json:"tool"`
-	Path       string    `json:"path,omitempty"`
-	Revision   string    `json:"revision,omitempty"`
-	SHA256     string    `json:"sha256,omitempty"`
-	ObservedAt time.Time `json:"observed_at"`
-	Text       string    `json:"text"`
-	Offset     int       `json:"offset"`
-	End        int       `json:"end"`
-	Length     int       `json:"length"`
-	Truncated  bool      `json:"truncated"`
-	Error      string    `json:"error,omitempty"`
+	Kind        string    `json:"kind"`
+	ID          string    `json:"id,omitempty"`
+	Root        string    `json:"root"`
+	RootSHA256  string    `json:"root_sha256,omitempty"`
+	SourceLabel string    `json:"source_label,omitempty"`
+	RunID       string    `json:"run_id,omitempty"`
+	Tool        string    `json:"tool"`
+	Path        string    `json:"path,omitempty"`
+	Revision    string    `json:"revision,omitempty"`
+	SHA256      string    `json:"sha256,omitempty"`
+	ObservedAt  time.Time `json:"observed_at"`
+	Text        string    `json:"text"`
+	Offset      int       `json:"offset"`
+	End         int       `json:"end"`
+	Length      int       `json:"length"`
+	Truncated   bool      `json:"truncated"`
+	Error       string    `json:"error,omitempty"`
 }
 
 // Session 的根目录由领取批次或冻结评测清单提供，不接受模型补充路径。
@@ -122,6 +124,7 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 		return out, fmt.Errorf("来源未获本批次授权")
 	}
 	out.RunID = selected.RunID
+	out.SourceLabel = selected.Label
 	identity := sha256.Sum256([]byte(selected.Path))
 	out.RootSHA256 = hex.EncodeToString(identity[:])
 	root, err := os.OpenRoot(selected.Path)

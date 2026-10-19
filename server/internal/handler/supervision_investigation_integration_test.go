@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/supervision"
 	dbfixture "github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/investigation"
 )
 
 func TestIntSupervisionInvestigationScopeAndPersistentBudget(t *testing.T) {
@@ -46,9 +47,15 @@ func TestIntSupervisionInvestigationScopeAndPersistentBudget(t *testing.T) {
 	runtime := f.Runtime(t, "调查夹具", dbfixture.Cols{"status": "offline", "daemon_id": "investigation-" + stamp})
 	agent := f.Agent(t, "调查夹具", runtime)
 	f.InsertNoID(t, "supervision_config", dbfixture.Cols{"workspace_id": f.WorkspaceID, "owner_id": f.UserID, "agent_id": agent, "enabled": true, "investigation_enabled": true}, "workspace_id=$1", f.WorkspaceID)
-	issue := f.Issue(t, "调查目标")
+	project := f.Project(t, "调查项目")
+	issue := f.Issue(t, "调查目标", dbfixture.Cols{"project_id": project})
+	directory := t.TempDir()
+	resource := f.Insert(t, "project_resource", dbfixture.Cols{"project_id": project, "workspace_id": f.WorkspaceID, "resource_type": "local_directory", "label": "关联源码", "resource_ref": map[string]any{"daemon_id": "investigation-" + stamp, "local_path": directory}})
+	repository := f.Insert(t, "repository", dbfixture.Cols{"workspace_id": f.WorkspaceID, "identity": "fixture-" + stamp, "config": map[string]any{}})
+	f.Insert(t, "repository_location", dbfixture.Cols{"workspace_id": f.WorkspaceID, "repository_id": repository, "daemon_id": "investigation-" + stamp, "local_path": directory + "/repo"})
+	repoResource := f.Insert(t, "project_resource", dbfixture.Cols{"project_id": project, "workspace_id": f.WorkspaceID, "resource_type": "gongfeng_repo", "label": "项目代码仓库", "resource_ref": map[string]any{"repository_id": repository}})
 	other := f.Issue(t, "另一业务任务")
-	source := f.Task(t, agent, dbfixture.Cols{"runtime_id": runtime, "issue_id": issue, "status": "completed", "completed_at": dbfixture.Raw("now()")})
+	source := f.Task(t, agent, dbfixture.Cols{"runtime_id": runtime, "issue_id": issue, "status": "completed", "completed_at": dbfixture.Raw("now()"), "work_dir": directory + "/run"})
 	message := f.Insert(t, "task_message", dbfixture.Cols{"task_id": source, "seq": 1, "type": "text", "content": "mapping evidence"})
 	foreign := f.Task(t, agent, dbfixture.Cols{"runtime_id": runtime, "issue_id": other, "status": "completed", "completed_at": dbfixture.Raw("now()")})
 	foreignMessage := f.Insert(t, "task_message", dbfixture.Cols{"task_id": foreign, "seq": 1, "type": "text", "content": "foreign issue"})
@@ -64,6 +71,25 @@ func TestIntSupervisionInvestigationScopeAndPersistentBudget(t *testing.T) {
 		}
 	})
 	h := &Handler{DB: pool, TxStarter: pool, Queries: db.New(pool), Supervision: supervision.New(pool, nil)}
+	roots, err := h.supervisionRoots(ctx, f.WorkspaceID, batch, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wanted := map[string]investigation.Root{
+		"run:" + source:            {Path: directory + "/run", RunID: source, Label: "运行目录当前内容"},
+		"resource:" + resource:     {Path: directory, Label: "关联源码"},
+		"resource:" + repoResource: {Path: directory + "/repo", Label: "项目代码仓库"},
+	}
+	for _, root := range roots {
+		expected, ok := wanted[root.ID]
+		if !ok || root.Path != expected.Path || root.RunID != expected.RunID || root.Label != expected.Label {
+			t.Fatalf("unexpected root: %+v", root)
+		}
+		delete(wanted, root.ID)
+	}
+	if len(wanted) != 0 {
+		t.Fatalf("missing roots: %+v", wanted)
+	}
 	call := func(path string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		setTaskTokenActor(r, agent, review)

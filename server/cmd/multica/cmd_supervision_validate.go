@@ -19,6 +19,7 @@ var supervisionValidateCmd = &cobra.Command{Use: "supervision-validate <bundle>"
 		Output         string                 `json:"output"`
 		Materials      []supervision.Material `json:"materials"`
 		Investigations []supervision.Material `json:"investigations"`
+		KnownFindings  []string               `json:"known_findings"`
 	}
 	if err = json.Unmarshal(data, &bundle); err != nil {
 		return err
@@ -30,9 +31,31 @@ var supervisionValidateCmd = &cobra.Command{Use: "supervision-validate <bundle>"
 	if err = supervision.ValidateResult(result, bundle.Materials, bundle.Investigations...); err != nil {
 		return err
 	}
+	// 线上提交还会校验问题归属；离线回放只能引用启动器保存的本任务问题。
+	if err = validateSupervisionFindingIDs(result, bundle.KnownFindings); err != nil {
+		return err
+	}
 	_, err = fmt.Fprintln(cmd.OutOrStdout(), "validated")
 	return err
 }}
+
+func validateSupervisionFindingIDs(result supervision.Result, known []string) error {
+	ids := make(map[string]bool, len(known))
+	for _, id := range known {
+		ids[id] = true
+	}
+	for _, finding := range result.Findings {
+		if finding.ID != "" && !ids[finding.ID] {
+			return fmt.Errorf("复查问题未指向已有记录")
+		}
+	}
+	for _, resolution := range result.Resolutions {
+		if !ids[resolution.ID] {
+			return fmt.Errorf("解决记录未指向已有问题")
+		}
+	}
+	return nil
+}
 
 func init() { rootCmd.AddCommand(supervisionValidateCmd) }
 

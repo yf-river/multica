@@ -83,8 +83,7 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		"--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
 	}
 	if opts.LifeCognition || opts.AnalysisOnly {
-		// 后台认知和监督通过服务端材料分析。禁用内置工具及用户 MCP；
-		// 认知任务只加载其专用 MCP，监督任务使用空 MCP 配置。
+		// 后台认知和监督禁用内置工具及用户 MCP，只加载本轮专用 MCP。
 		args = append(args, "--tools", "", "--strict-mcp-config", "--no-session-persistence")
 	}
 	if opts.AnalysisOnly {

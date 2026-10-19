@@ -18,7 +18,7 @@ import (
 
 func (h *Handler) supervisionRoots(ctx context.Context, ws, batch, runtime string) ([]investigation.Root, error) {
 	roots := []investigation.Root{}
-	rows, err := h.DB.Query(ctx, `SELECT 'run:'||t.id::text,t.work_dir,t.id::text FROM supervision_batch b
+	rows, err := h.DB.Query(ctx, `SELECT 'run:'||t.id::text,t.work_dir,t.id::text,'运行目录当前内容' FROM supervision_batch b
  JOIN agent_task_queue t ON t.issue_id=b.issue_id JOIN agent_runtime original ON original.id=t.runtime_id
  JOIN agent_runtime current ON current.id=$3::uuid AND original.daemon_id=current.daemon_id
  WHERE b.workspace_id=$1 AND b.id=$2 AND COALESCE(t.work_dir,'')<>'' ORDER BY t.created_at DESC LIMIT 12`, ws, batch, runtime)
@@ -27,7 +27,7 @@ func (h *Handler) supervisionRoots(ctx context.Context, ws, batch, runtime strin
 	}
 	for rows.Next() {
 		var root investigation.Root
-		if err = rows.Scan(&root.ID, &root.Path, &root.RunID); err != nil {
+		if err = rows.Scan(&root.ID, &root.Path, &root.RunID, &root.Label); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -38,7 +38,7 @@ func (h *Handler) supervisionRoots(ctx context.Context, ws, batch, runtime strin
 	if err != nil {
 		return nil, err
 	}
-	rows, err = h.DB.Query(ctx, `SELECT p.id::text,p.resource_ref FROM supervision_batch b JOIN issue i ON i.id=b.issue_id AND i.workspace_id=b.workspace_id
+	rows, err = h.DB.Query(ctx, `SELECT p.id::text,p.resource_ref,COALESCE(p.label,'关联项目目录') FROM supervision_batch b JOIN issue i ON i.id=b.issue_id AND i.workspace_id=b.workspace_id
  JOIN project_resource p ON p.project_id=i.project_id AND p.workspace_id=b.workspace_id
  JOIN agent_runtime r ON r.id=$3::uuid WHERE b.workspace_id=$1 AND b.id=$2 AND p.resource_type='local_directory' AND p.resource_ref->>'daemon_id'=r.daemon_id`, ws, batch, runtime)
 	if err != nil {
@@ -48,7 +48,8 @@ func (h *Handler) supervisionRoots(ctx context.Context, ws, batch, runtime strin
 		var id string
 		var ref localDirectoryRef
 		var raw []byte
-		if err = rows.Scan(&id, &raw); err != nil {
+		var label string
+		if err = rows.Scan(&id, &raw, &label); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -56,14 +57,14 @@ func (h *Handler) supervisionRoots(ctx context.Context, ws, batch, runtime strin
 			rows.Close()
 			return nil, err
 		}
-		roots = append(roots, investigation.Root{ID: "resource:" + id, Path: ref.LocalPath})
+		roots = append(roots, investigation.Root{ID: "resource:" + id, Path: ref.LocalPath, Label: label})
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	rows, err = h.DB.Query(ctx, `SELECT 'resource:'||p.id::text,l.local_path FROM supervision_batch b JOIN issue i ON i.id=b.issue_id AND i.workspace_id=b.workspace_id
+	rows, err = h.DB.Query(ctx, `SELECT 'resource:'||p.id::text,l.local_path,COALESCE(p.label,'项目仓库') FROM supervision_batch b JOIN issue i ON i.id=b.issue_id AND i.workspace_id=b.workspace_id
  JOIN project_resource p ON p.project_id=i.project_id AND p.workspace_id=b.workspace_id
  JOIN repository_location l ON l.workspace_id=b.workspace_id AND l.repository_id::text=p.resource_ref->>'repository_id'
  JOIN agent_runtime r ON r.id=$3::uuid AND r.daemon_id=l.daemon_id
@@ -74,7 +75,7 @@ func (h *Handler) supervisionRoots(ctx context.Context, ws, batch, runtime strin
 	defer rows.Close()
 	for rows.Next() {
 		var root investigation.Root
-		if err = rows.Scan(&root.ID, &root.Path); err != nil {
+		if err = rows.Scan(&root.ID, &root.Path, &root.Label); err != nil {
 			return nil, err
 		}
 		roots = append(roots, root)
@@ -167,6 +168,7 @@ func (h *Handler) SaveSupervisionInvestigation(w http.ResponseWriter, r *http.Re
 	for _, root := range roots {
 		identity := sha256.Sum256([]byte(root.Path))
 		if root.ID == body.Request.Root && body.Result.Root == root.ID && body.Result.RunID == root.RunID && body.Result.RootSHA256 == hex.EncodeToString(identity[:]) {
+			body.Result.SourceLabel = root.Label
 			authorized = true
 			break
 		}

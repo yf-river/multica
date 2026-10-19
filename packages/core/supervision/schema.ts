@@ -29,7 +29,7 @@ export const supervisionDetailSchema = z.object({
   assignee_type: z.string().nullable(), assignee_id: z.string().nullable(),
   notes: z.array(z.object({ id: z.string(), content: z.string(), created_at: z.string() })),
   actions: z.array(z.object({ id: z.string(), finding_id: z.string(), actor_id: z.string(), action: z.string(), reason: z.string(), created_at: z.string(), receipt: z.object({ evidence: z.array(supervisionEvidenceSchema).optional() }).loose().nullable() })),
-  investigations: z.array(z.object({ id:z.string(), batch_id:z.string(), created_at:z.string(), request:z.object({ reason:z.string(), path:z.string().optional() }).loose(), result:z.object({ tool:z.string(), path:z.string().optional(), error:z.string().optional(), offset:z.number(), end:z.number(), length:z.number(), truncated:z.boolean() }).loose() })).default([]),
+  investigations: z.array(z.object({ id:z.string(), batch_id:z.string(), created_at:z.string(), request:z.object({ reason:z.string(), path:z.string().optional() }).loose(), result:z.object({ tool:z.string(), source_label:z.string().optional(), path:z.string().optional(), error:z.string().optional(), offset:z.number(), end:z.number(), length:z.number(), truncated:z.boolean() }).loose() })).default([]),
   batches: z.array(z.object({ id: z.string(), task_id: z.string().nullable(), status: z.string(), error: z.string(), rules_version: z.string(),
     created_at: z.string(), completed_at: time, material_count: z.number() })),
   coverage: z.object({ materials: z.number(), covered: z.number(), runs: z.number() }),

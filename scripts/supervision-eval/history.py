@@ -24,6 +24,8 @@ def candidates(file):
             continue
         text = '\n'.join(x.get('text', '') for x in p.get('content', []) if isinstance(x, dict))
         if p.get('role') == 'assistant':
+            if p.get('channel') in ['analysis','summary']:
+                continue
             previous = text
             continue
         if p.get('role') != 'user' or len(text) > 5000 or text.lstrip().startswith(('# AGENTS.md', '# Browser comments:', '<environment_context>', '<send_user_message')):

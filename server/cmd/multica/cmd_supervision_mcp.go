@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/supervision"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/redact"
 	"net/url"
 	"os"
 	"strings"
@@ -22,9 +26,10 @@ var supervisionMCPCmd = &cobra.Command{
 			return err
 		}
 		var manifest struct {
-			Roots      []investigation.Root `json:"roots"`
-			TaskID     string               `json:"task_id"`
-			LocalAudit string               `json:"local_audit,omitempty"`
+			Roots      []investigation.Root   `json:"roots"`
+			TaskID     string                 `json:"task_id"`
+			LocalAudit string                 `json:"local_audit,omitempty"`
+			Materials  []supervision.Material `json:"materials,omitempty"`
 		}
 		if err = json.Unmarshal(data, &manifest); err != nil {
 			return err
@@ -49,6 +54,17 @@ var supervisionMCPCmd = &cobra.Command{
 				query := url.Values{"kind": {parts[0]}, "id": {parts[1]}, "offset": {fmt.Sprint(req.Offset)}, "reason": {req.Reason}}
 				err = client.GetJSON(ctx, "/api/supervision/investigation/material?"+query.Encode(), &out)
 				return out, err
+			}
+		} else if manifest.LocalAudit != "" {
+			session.ReadMaterial = func(ctx context.Context, req investigation.Request) (investigation.Result, error) {
+				out, err := offlineSupervisionMaterial(manifest.Materials, req)
+				if err != nil {
+					return out, err
+				}
+				if err = session.Save(ctx, req, &out); err != nil {
+					return investigation.Result{}, err
+				}
+				return out, nil
 			}
 		}
 		session.Save = func(ctx context.Context, req investigation.Request, result *investigation.Result) error {
@@ -110,6 +126,51 @@ var supervisionMCPCmd = &cobra.Command{
 }
 
 func init() { rootCmd.AddCommand(supervisionMCPCmd) }
+
+// 离线评测回放冻结材料；与联调一样，模型不能用任意文件路径取得未授权历史。
+func offlineSupervisionMaterial(materials []supervision.Material, req investigation.Request) (investigation.Result, error) {
+	out := investigation.Result{Kind: "investigation", Root: "materials", Tool: "supervision_material", Path: req.Path, Offset: req.Offset, ObservedAt: time.Now().UTC()}
+	if req.Offset < 0 {
+		return out, fmt.Errorf("读取位置无效")
+	}
+	if req.Path == "index" {
+		var refs []supervision.Evidence
+		for _, m := range materials {
+			if m.Kind != "investigation" {
+				refs = append(refs, m.Evidence)
+			}
+		}
+		start := min(req.Offset, len(refs))
+		end := min(start+20, len(refs))
+		raw, _ := json.Marshal(refs[start:end])
+		out.Text = string(raw)
+		out.Length = len(refs)
+		out.End = end
+		out.Truncated = end < len(refs)
+		return out, nil
+	}
+	for _, m := range materials {
+		if req.Path != m.Kind+"/"+m.ID {
+			continue
+		}
+		if m.Offset != 0 || m.End < m.Length {
+			return out, fmt.Errorf("冻结快照缺少完整原文，不能声称已补读")
+		}
+		body := []rune(m.Text)
+		start := min(req.Offset, len(body))
+		end := min(start+investigation.PageSize, len(body))
+		out.Text = redact.Text(string(body[start:end]))
+		out.Length = len(body)
+		out.Offset = start
+		out.End = end
+		out.Truncated = end < len(body)
+		out.RunID = m.RunID
+		sum := sha256.Sum256([]byte(m.Text))
+		out.SHA256 = hex.EncodeToString(sum[:])
+		return out, nil
+	}
+	return out, fmt.Errorf("本任务冻结材料中没有此来源")
+}
 
 func supervisionMCPTools() []map[string]any {
 	var tools []map[string]any
