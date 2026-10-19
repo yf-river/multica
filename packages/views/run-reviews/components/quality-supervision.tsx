@@ -36,7 +36,7 @@ export function QualitySupervision() {
   const projects = useQuery({ queryKey: [...supervisionKeys.all(wsId), "projects"], queryFn: () => api.listProjects() });
   const data = snapshot.data;
   const invalidate = () => queryClient.invalidateQueries({ queryKey: supervisionKeys.all(wsId) });
-  const check = useMutation({ mutationFn: api.checkSupervision.bind(api), onSuccess: (_, variables) => { void invalidate(); toast.success(variables.stop ? t(($) => $.supervision.stopped) : t(($) => $.supervision.scheduled)); }, onError: (e) => toast.error(errorText(e)) });
+  const check = useMutation({ mutationFn: (body: Parameters<typeof api.checkSupervision>[0]) => api.checkSupervision(body), onSuccess: (_, variables) => { void invalidate(); toast.success(variables.stop ? t(($) => $.supervision.stopped) : t(($) => $.supervision.scheduled)); }, onError: (e) => toast.error(errorText(e)) });
   const route = (change: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
     for (const [key, value] of Object.entries(change)) { if (value) next.set(key, value); else next.delete(key); }
