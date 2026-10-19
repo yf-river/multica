@@ -102,6 +102,82 @@ func TestGitQueriesPreserveIndex(t *testing.T) {
 	}
 }
 
+func TestGitDoesNotUseConfiguredExternalWorktree(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(root, "source.txt"), []byte("authorized source\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "source.txt")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture")
+	if err := os.WriteFile(filepath.Join(outside, "source.txt"), []byte("outside-only sentinel\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("config", "core.worktree", outside)
+	s := Session{Roots: []Root{{ID: "project", Path: root}}}
+	result, err := s.Call(context.Background(), "supervision_git", Request{Root: "project", Path: "source.txt", Query: "diff", Reason: "核验Git仅使用授权来源"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "" {
+		t.Fatalf("Git read a worktree outside the authorized root: %s", result.Text)
+	}
+}
+
+func TestGitDoesNotRunRepositoryFilters(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	git("init", "-q")
+	for name, body := range map[string]string{"source.txt": "original\n", ".gitattributes": "source.txt filter=fixture\n"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", ".")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture")
+	marker := filepath.Join(outside, "filter-ran")
+	git("config", "filter.fixture.clean", "touch '"+strings.ReplaceAll(marker, "'", "'\\''")+"'; cat")
+	if err := os.WriteFile(filepath.Join(root, "source.txt"), []byte("changed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := Session{Roots: []Root{{ID: "project", Path: root}}}
+	for _, query := range []string{"status", "diff"} {
+		_, err := s.Call(context.Background(), "supervision_git", Request{Root: "project", Path: "source.txt", Query: query, Reason: "核验只读Git不执行仓库过滤程序"})
+		if err == nil || !strings.Contains(err.Error(), "仓库配置了可执行过滤器") {
+			t.Fatalf("%s did not report its read-only limitation: %v", query, err)
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("Git ran a configured filter: %v", err)
+	}
+	history, err := s.Call(context.Background(), "supervision_git", Request{Root: "project", Path: "source.txt", Query: "history", Reason: "获取可安全读取的历史版本"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := s.Call(context.Background(), "supervision_git", Request{Root: "project", Path: "source.txt", Query: "show", Revision: history.Revision, Reason: "核验原始历史文件，不运行过滤器"})
+	if err != nil || file.Text != "original\n" {
+		t.Fatalf("raw history fallback failed: %+v %v", file, err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("history fallback ran a filter: %v", err)
+	}
+}
+
 func TestReadPaginationAndScope(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

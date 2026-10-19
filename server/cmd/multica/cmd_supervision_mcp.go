@@ -177,7 +177,7 @@ func supervisionMCPTools() []map[string]any {
 	for _, entry := range []struct{ name, description string }{
 		{"supervision_read", "分页读取授权来源内的文本；offset为字符偏移，使用sha256核对补读期间来源是否变化。"},
 		{"supervision_search", "列出或按字面值搜索授权来源；命中格式为文件:行号: [source_offset=字符偏移] 片段，可将source_offset直接用于supervision_read的offset补读该片段。结果有上限，注意truncated；本工具offset用于搜索结果分页。query为空时列文件。"},
-		{"supervision_git", "查询授权仓库；query为status、diff、history或show。diff比较当前工作区与HEAD，history列文件历史，二者须指定path；revision仅用于show，须提供完整40位提交及文件path。比较历史版本时分别show读取文件，不支持提交范围diff或用show列目录；列当前文件请使用supervision_search。"},
+		{"supervision_git", "查询授权仓库；query为status、diff、history或show。diff比较当前工作区与HEAD，history列文件历史，二者须指定path；revision仅用于show，须提供完整40位提交及文件path。比较历史版本时分别show读取文件，不支持提交范围diff或用show列目录；列当前文件请使用supervision_search。含可执行过滤器的仓库不运行status/diff，可用supervision_read和Git show核验文件。"},
 		{"supervision_material", "列出或补读当前业务任务历史。path=index列来源索引，offset为条目偏移；path=kind/UUID读取原文，offset为字符偏移。kind为issue、comment、task、message或trace。root填materials。"},
 	} {
 		tools = append(tools, map[string]any{"name": entry.name, "description": entry.description, "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}, "inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"root": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "query": map[string]any{"type": "string"}, "offset": map[string]any{"type": "integer", "minimum": 0}, "revision": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}}, "required": []string{"root", "reason"}}})

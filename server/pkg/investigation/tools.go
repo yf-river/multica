@@ -329,7 +329,7 @@ func (s *Session) capture(ctx context.Context, req Request, out Result, err erro
 	return out, nil
 }
 
-// Git 参数均由工具生成；禁用配置、外部 diff、textconv、分页器和网络对象补取。
+// Git 参数均由工具生成；禁用外部 diff、textconv、分页器和网络对象补取。
 func readGit(ctx context.Context, root string, req Request) (string, string, error) {
 	if req.Revision != "" && req.Query != "show" {
 		return "", "", fmt.Errorf("revision仅用于show；diff比较当前工作区与HEAD，历史文件请分别show后比较")
@@ -337,7 +337,7 @@ func readGit(ctx context.Context, root string, req Request) (string, string, err
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	run := func(args ...string) (string, error) {
-		argv := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "diff.external=", "-c", "core.attributesFile=/dev/null"}, args...)
+		argv := append([]string{"--no-pager", "--no-optional-locks", "--work-tree=" + root, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "diff.external=", "-c", "core.attributesFile=/dev/null"}, args...)
 		cmd := exec.CommandContext(ctx, "git", argv...)
 		cmd.Dir = root
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C"}
@@ -369,6 +369,19 @@ func readGit(ctx context.Context, root string, req Request) (string, string, err
 		return "", "", err
 	}
 	head = strings.TrimSpace(head)
+	if req.Query == "status" || req.Query == "diff" {
+		// 工作区比较会调用 clean/process 过滤器；只读调查不能执行仓库配置的程序。
+		keys, e := run("config", "--null", "--list", "--name-only")
+		if e != nil {
+			return "", head, e
+		}
+		for _, key := range strings.Split(keys, "\x00") {
+			key = strings.ToLower(key)
+			if strings.HasPrefix(key, "filter.") && (strings.HasSuffix(key, ".clean") || strings.HasSuffix(key, ".process")) {
+				return "", head, fmt.Errorf("仓库配置了可执行过滤器，不能安全执行status/diff；请用supervision_read读取当前文件，或show读取历史文件后比较")
+			}
+		}
+	}
 	if req.Path != "" && !safePath(req.Path) {
 		return "", head, fmt.Errorf("Git路径无效")
 	}
