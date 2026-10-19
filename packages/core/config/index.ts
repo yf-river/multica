@@ -128,3 +128,5 @@ export function useFeatureEnabled(key: string, defaultValue = false): boolean {
     featureFlagEnabled(state.featureFlags, key, defaultValue),
   );
 }
+
+export { BuildInfoContext, type BuildInfo } from "./build-info";

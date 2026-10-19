@@ -63,7 +63,7 @@ class ReleaseTest(unittest.TestCase):
     def test_clean_source_and_digest(self):
         source=self.worktree()
         self.assertEqual(r.checked_source(source)[1],self.sha)
-        self.assertEqual(r.source_digest(source)[0],r.git_digest(source,self.sha))
+        self.assertEqual(r.source_digest(source)[0],r.source_digest(self.root)[0])
     def test_dirty_source_is_rejected(self):
         (self.root/'new.txt').write_text('unsaved')
         with self.assertRaisesRegex(RuntimeError,'干净'):r.checked_source(self.root)
@@ -73,10 +73,10 @@ class ReleaseTest(unittest.TestCase):
         self.commit()
         r.write(self.run/'published.json',{'commit':self.git('rev-parse','HEAD')})
         with self.assertRaisesRegex(RuntimeError,'最新已发布'):r.checked_source(source)
-    def test_uncommitted_legacy_baseline_blocks_migration(self):
+    def test_missing_published_record_blocks_build(self):
         (self.run/'published.json').unlink()
         r.write(r.meta_path('prod'),{'commit':self.sha,'source_digest':'dirty-snapshot'})
-        with self.assertRaisesRegex(RuntimeError,'未提交内容'):r.checked_source(self.root)
+        with self.assertRaisesRegex(RuntimeError,'缺少已发布'):r.checked_source(self.root)
     def test_only_clean_linked_worktree_is_removed(self):
         source=self.worktree();record=self.record(source)
         self.assertEqual(r.cleanup_worktree(record),'removed')

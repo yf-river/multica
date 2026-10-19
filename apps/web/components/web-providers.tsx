@@ -5,6 +5,8 @@
  * 与 Web 专属的导航、滚动恢复 Provider 组合成整棵树，供根布局引用。
  */
 import { EnvironmentContext } from "@/platform/environment";
+import { BuildInfoProvider } from "@/platform/build-info-provider";
+import type { BuildInfo } from "@multica/core/config";
 import { useMemo } from "react";
 import { CoreProvider } from "@multica/core/platform";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
@@ -60,6 +62,7 @@ export function WebProviders({
   locale,
   resources,
   apiBaseUrl,
+  buildInfo = null,
   environmentId = "",
   wsUrl,
 }: {
@@ -67,6 +70,7 @@ export function WebProviders({
   locale: SupportedLocale;
   resources: Record<string, LocaleResources>;
   apiBaseUrl?: string;
+  buildInfo?: BuildInfo | null;
   environmentId?: string;
   wsUrl?: string;
 }) {
@@ -96,10 +100,12 @@ export function WebProviders({
       locale={locale}
       resources={resources}
     >
+      <BuildInfoProvider initialBuild={buildInfo}>
       <WebNavigationProvider>
         <EnvironmentDocumentTitle />
         <WebScrollRestorationProvider>{children}</WebScrollRestorationProvider>
       </WebNavigationProvider>
+      </BuildInfoProvider>
       </CoreProvider>
     </EnvironmentContext.Provider>
   );

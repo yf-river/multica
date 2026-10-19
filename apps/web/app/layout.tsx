@@ -16,6 +16,7 @@ import {
   resolveBrowserApiBaseUrl,
   resolveBrowserWsUrl,
 } from "@/config/runtime-urls";
+import { readBuildInfo } from "@/platform/build-info";
 import "./globals.css";
 
 // Inter 是拉丁字母正文使用的 UI 字体。next/font 会生成一个带哈希的字体族名（`__Inter_xxx`）
@@ -157,6 +158,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const buildInfo = await readBuildInfo();
   const locale = await getRequestLocale();
   const resources = { "zh-Hans": RESOURCES["zh-Hans"] };
   const apiBaseUrl = resolveBrowserApiBaseUrl(process.env);
@@ -185,6 +187,7 @@ export default async function RootLayout({
         )}
         <ThemeProvider>
           <WebProviders
+            buildInfo={buildInfo}
             locale={locale}
             resources={resources}
             apiBaseUrl={apiBaseUrl}

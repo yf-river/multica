@@ -105,38 +105,11 @@ def checked_source(source):
                 raise RuntimeError('构建目录含本地环境文件，请将环境配置放在固定运行配置中: '+str(directory/name))
     sha = output(['git', 'rev-parse', 'HEAD'], cwd=source)
     published = RUN/'published.json'
-    if published.exists():
-        baseline = read(published)['commit']
-        if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
-            raise RuntimeError('候选未包含最新已发布提交，请先整合代码')
-    else:
-        # 首次切换必须证明旧生产记录对应真实 Git 内容，不能以一个 SHA 掩盖脏快照。
-        old = read(meta_path('prod'))
-        baseline = old['commit']
-        if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
-            raise RuntimeError('候选未包含现有生产提交')
-        if git_digest(source, baseline) != old['source_digest']:
-            raise RuntimeError('现有生产包含未提交内容；请先核对并保存生产源码基线')
+    if not published.exists(): raise RuntimeError('缺少已发布源码记录，停止构建并检查运行配置')
+    baseline = read(published)['commit']
+    if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
+        raise RuntimeError('候选未包含最新已发布提交，请先整合代码')
     return source, sha
-
-def establish_baseline(source):
-    source=Path(source).resolve()
-    if (RUN/'published.json').exists(): raise RuntimeError('已存在生产源码基线')
-    if output(['git','status','--porcelain','--untracked-files=all'],cwd=source): raise RuntimeError('基线 checkout 必须干净')
-    sha=output(['git','rev-parse','HEAD'],cwd=source)
-    digest=source_digest(source)[0]
-    if digest != read(meta_path('prod'))['source_digest']:
-        raise RuntimeError('基线源码与当前生产构建内容不一致')
-    write(RUN/'published.json',{'commit':sha,'source_digest':digest},True)
-
-def git_digest(source, commit):
-    names = output(['git', 'ls-tree', '-r', '--name-only', commit], cwd=source).splitlines()
-    digest = hashlib.sha256()
-    for name in sorted(names):
-        if name.startswith('.run/'): continue
-        digest.update(name.encode()+b'\0')
-        digest.update(subprocess.check_output(['git', 'show', commit+':'+name], cwd=source))
-    return digest.hexdigest()
 
 def idle_slot(env):
     current = Path(read(meta_path(env))['release_dir']).resolve()
@@ -197,8 +170,13 @@ def build(source, target):
     copy_tree(source/'server/migrations', target/'server/migrations')
     if checked_source(source)[1] != sha or source_digest(source)[0] != digest:
         raise RuntimeError('构建期间源码变化，请重新联调')
-    manifest = dict(id=sha, source_commit=sha, source_directory=str(source), source_digest=digest,
-                    inputs=inputs, files=checksums(target))
+    queries = []
+    for file in sorted((source/'server/pkg/db/generated').glob('*.sql.go')):
+        for name, sql in re.findall(r'^const (\w+) = `(.*?)`\n', file.read_text(), re.M | re.S):
+            queries.append(dict(name=name, sql=sql.replace('` + "`" + `', '`')))
+    write(target/'server/queries.json', queries)
+    manifest = dict(id=sha+'-'+str(time.time_ns()), source_commit=sha, source_directory=str(source), source_digest=digest,
+                    inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     write(target/'release.json', manifest)
     for cache in (source/'apps/web/.next/cache', source/'.turbo'):
         if cache.exists() and sum(p.stat().st_size for p in cache.rglob('*') if p.is_file() and not p.is_symlink()) > 1024**3:
@@ -218,16 +196,11 @@ def check_process_ownership(env, metadata, allow_unhealthy=False):
         role_release = Path(metadata.get('role_release_dirs', {}).get(role, str(release)))
         expected_cwd = role_release / 'apps/web' if role == 'web' else role_release
         actual_cwd = Path(f'/proc/{pid}/cwd').resolve()
-        # 首次接管旧 daemon 的目录仍为开发工作区，profile 与 health PID 另行核验。
-        legacy_daemon = role == 'daemon' and not config_path(env).exists()
-        if role == 'daemon' and metadata.get('release_id', '').startswith('baseline-'):
-            legacy_daemon = True
-        if actual_cwd != expected_cwd and not (legacy_daemon and actual_cwd == ROOT):
+        if actual_cwd != expected_cwd:
             raise RuntimeError(f'{env} {role} PID 工作目录不属于记录的版本')
         if role != 'web':
             binary = 'multica' if role == 'daemon' else 'server'
-            binary_root = ROOT if legacy_daemon else release
-            if Path(f'/proc/{pid}/exe').resolve() != binary_root / 'server/bin' / binary:
+            if Path(f'/proc/{pid}/exe').resolve() != role_release / 'server/bin' / binary:
                 raise RuntimeError(f'{env} {role} PID 执行文件不属于记录的版本')
         elif not allow_unhealthy:
             listener = output(['ss', '-ltnp', f"( sport = :{metadata['frontend_port']} )"])
@@ -238,7 +211,7 @@ def check_process_ownership(env, metadata, allow_unhealthy=False):
             if f'pid={pid},' not in listener:
                 raise RuntimeError(f'{env} API PID 未监听记录的端口')
         identity = process_env(pid).get('MULTICA_ENV_ID')
-        if identity and identity != env:
+        if identity != env:
             raise RuntimeError(f'{env} {role} PID 环境身份不匹配')
 
 def owned_stop(pid, role, expected_cwd):
@@ -290,17 +263,13 @@ def migrate(release, cfg, action='up', previous=None):
         args.extend(['--versions', ','.join(versions)])
     run(args, cwd=Path(release)/'server', env=cfg['server'])
 
-def repository_transition_needed(previous, target):
-    migration='server/migrations/525_repository_migration_guard.up.sql'
-    return (Path(target)/migration).exists() and not (Path(previous)/migration).exists()
-
 def launch(env, release, cfg, m):
     result={}
     m['pids']=result
     result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
     ready(m['backend_url']+'/health')
     webcmd=['node',release/'apps/web/server.js'] if (release/'apps/web/server.js').exists() else ['node',release/'apps/web/node_modules/next/dist/bin/next','start','-p',str(m['frontend_port']),'-H','0.0.0.0']
-    result['web']=start(webcmd,release/'apps/web',cfg['web'],m['log_paths']['web'])
+    result['web']=start(webcmd,release/'apps/web',{**cfg['web'], 'MULTICA_RELEASE_MANIFEST': str(release/'release.json')},m['log_paths']['web'])
     ready(m['frontend_url']+'/login')
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
@@ -316,8 +285,24 @@ def launch(env, release, cfg, m):
     result['daemon']=h['pid']
     return result
 
+def check_database(release, cfg):
+    run(['node', ROOT/'scripts/check-release-database.mjs', Path(release)/'server/queries.json'],
+        env={**os.environ, **cfg['server']})
+
+
+def check_live_environment(env, metadata, cfg):
+    for role, keys in {'server': ('DATABASE_URL', 'PORT'), 'web': ('REMOTE_API_URL', 'PORT')}.items():
+        actual = process_env(metadata['pids'][role])
+        if any(actual.get(key) != cfg[role].get(key) for key in keys):
+            raise RuntimeError(f'{env} {role} 运行配置与目标环境不一致，拒绝停止服务')
+    if http(metadata['frontend_url']+'/api/config').get('environment_id') != env:
+        raise RuntimeError('Web/API 环境身份不一致，拒绝停止服务')
+
+
 def deploy(env, release, timeout=900):
     require_environment(env)
+    if env == 'prod' and os.environ.get('MULTICA_TASK_ID'):
+        raise RuntimeError('任务只能通过 pnpm release request 请求生产更新')
     release = Path(release).resolve()
     manifest = read(release/'release.json')
     release_id = manifest['id']
@@ -327,6 +312,8 @@ def deploy(env, release, timeout=900):
         cfg=read(config_path(env)); m=read(meta_path(env))
         check_process_ownership(env,m)
         isolation_check(config_only=True)
+        check_live_environment(env, m, cfg)
+        check_database(release, cfg)
         if m.get('release_id')==release_id:
             isolation_check()
             print(env,'版本已运行，无需重启',release_id)
@@ -337,8 +324,6 @@ def deploy(env, release, timeout=900):
         oldcfg={r:process_env(pid) for r,pid in m['pids'].items()}
         write(RUN/'env'/f'{env}-before-deploy.json',oldcfg,True)
         old_cwds={r:str(Path(f'/proc/{pid}/cwd').resolve()) for r,pid in m['pids'].items()}
-        write(RUN/'deployments'/f'{env}-previous.json', prior, True)
-        prior['repository_transition']=repository_transition_needed(old_cwds['server'],release)
         write(RUN/'deployments'/f'{env}-previous.json', prior, True)
         drain(env,m,timeout)
         offsets={role:Path(log).stat().st_size if Path(log).exists() else 0 for role,log in m['log_paths'].items()}
@@ -363,7 +348,6 @@ def deploy(env, release, timeout=900):
                 oldrelease=Path(old_cwds['server'])
                 for role in ('web','server'):
                     if exists(prior['pids'][role]): owned_stop(prior['pids'][role],role,old_cwds[role])
-                if prior.get('repository_transition'): migrate(release,cfg,'restore-repositories')
                 prior['pids']=launch(env,oldrelease,oldcfg,prior)
             write(meta_path(env),prior)
             isolation_check()
@@ -375,14 +359,6 @@ def deploy(env, release, timeout=900):
         m.pop('role_release_dirs', None)
         write(RUN/'deployments'/f'{env}-previous.json',prior)
         write(meta_path(env),m)
-        # 旧审计工具继续读取 .env；它是运行配置的派生产物，不再承担生成真源。
-        legacy=RUN/'env'/f'goal-test-{env}.env'
-        keys={line.split('=',1)[0] for line in legacy.read_text().splitlines() if '=' in line and not line.startswith('#')} if legacy.exists() else set()
-        values={**cfg['web'],**cfg['server'], 'MULTICA_ENV_ID':env,'CODEBUDDY_CONFIG_DIR':cfg['daemon']['CODEBUDDY_CONFIG_DIR']}
-        keys.update(['MULTICA_ENV_ID','CODEBUDDY_CONFIG_DIR'])
-        previous={line.split('=',1)[0]:line.split('=',1)[1] for line in legacy.read_text().splitlines() if '=' in line and not line.startswith('#')} if legacy.exists() else {}
-        previous.update({k:values[k] for k in keys if k in values})
-        legacy.write_text('# Generated from '+str(config_path(env))+'; edit the service configuration instead.\n'+'\n'.join(k+'='+v for k,v in sorted(previous.items()))+'\n');legacy.chmod(0o600)
         for role,pid in m['pids'].items(): (RUN/f'{env}-{role}.pid').write_text(str(pid)+'\n')
         print(env,'已切换',release_id)
 
@@ -410,12 +386,14 @@ def verify_browser(env='prod'):
     run(['node',ROOT/'scripts/verify-release-browser.mjs'],cwd=ROOT,env=child_env)
 
 def restore(env, timeout=900):
+    require_environment(env)
+    if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('恢复应由运行环境外部执行')
     prior = read(RUN/'deployments'/f'{env}-previous.json')
     current = read(meta_path(env))
     old = Path(prior['release_dir'])
     if old.resolve() == Path(current['release_dir']).resolve(): return
     if not old.exists(): raise RuntimeError('临时恢复目录已删除；请从 Git 重新构建')
-    # 旧安装也可能没有新格式 manifest，恢复只使用切换前的记录与配置。
+    # 恢复使用切换前保存的运行目录与配置。
     check_process_ownership(env, current, allow_unhealthy=True)
     daemon_pid=current['pids']['daemon']
     if exists(daemon_pid):
@@ -427,7 +405,6 @@ def restore(env, timeout=900):
     for role in ('web', 'server'):
         cwd=Path(current['release_dir'])/ 'apps/web' if role=='web' else Path(current['release_dir'])
         owned_stop(current['pids'][role], role, cwd)
-    if prior.get('repository_transition'): migrate(Path(current['release_dir']),read(config_path(env)),'restore-repositories')
     baseline=prior.pop('published_before',None)
     prior['pids']=launch(env, old, read(config_path(env)), prior)
     write(meta_path(env), prior)
@@ -460,8 +437,6 @@ def publish(env, directory, timeout=900):
     try:
         verify_browser(env)
         verify_logs(env)
-        if read(RUN/'deployments'/f'{env}-previous.json').get('repository_transition'):
-            migrate(directory,read(config_path(env)),'accept-repositories')
     except Exception:
         try:
             restore(env, timeout)
@@ -735,9 +710,17 @@ def backup():
         run(args,env=env,stdout=stream)
     print(json.dumps(dict(database=database,backup=str(destination),bytes=destination.stat().st_size)))
 
+def require_control_directory():
+    control = Path('/data/ida/multica').resolve()
+    script = Path(__file__).resolve()
+    if ROOT != control or (script != control/'scripts/release-environments.py' and
+                           control/'.run/publisher' not in script.parents):
+        raise RuntimeError('请通过 pnpm --dir /data/ida/multica release 调用固定发布入口；任务目录只用作 --source')
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['baseline','int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset'])
+    parser.add_argument('command',choices=['int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset'])
     parser.add_argument('target',nargs='?')
     parser.add_argument('--source')
     parser.add_argument('--evidence')
@@ -745,10 +728,8 @@ def main():
     parser.add_argument('--env',choices=ENVS,default='prod')
     a=parser.parse_args()
     if a.timeout<=0: parser.error('timeout 必须大于 0')
-    if a.command=='baseline':
-        if not a.source: parser.error('baseline 需要 --source 已核对的生产源码')
-        with lock('publisher',wait=True): establish_baseline(a.source)
-    elif a.command=='int':
+    require_control_directory()
+    if a.command=='int':
         if not a.source: parser.error('int 需要 --source 任务 worktree')
         prepare_int(a.source,a.timeout)
     elif a.command=='accept':

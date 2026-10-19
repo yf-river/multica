@@ -5,14 +5,17 @@ import process from 'node:process';
 export const repoRoot = path.resolve(process.env.MULTICA_RELEASE_ROOT || path.join(import.meta.dirname, '../..'));
 
 export function loadProductionDeployment() {
-  const environment = process.env.GOAL_TEST_ENV === 'int' ? 'int' : 'prod';
+  const environment = process.env.GOAL_TEST_ENV || 'prod';
+  if (!['int', 'prod'].includes(environment)) throw Error('未知运行环境: ' + environment);
   return JSON.parse(readFileSync(path.join(repoRoot, `.run/deployments/goal-test-${environment}.json`), 'utf8'));
 }
 
 export function loadGoalTestEnv() {
   const deployment = loadProductionDeployment();
-  const config = JSON.parse(readFileSync(deployment.runtime_config_file || path.join(repoRoot, '.run/env/prod-services.json'), 'utf8'));
-  const environment = process.env.GOAL_TEST_ENV === 'int' ? 'int' : 'prod';
+  if (!deployment.runtime_config_file) throw Error('部署记录缺少 runtime_config_file');
+  const config = JSON.parse(readFileSync(deployment.runtime_config_file, 'utf8'));
+  const environment = process.env.GOAL_TEST_ENV || 'prod';
+  if (!['int', 'prod'].includes(environment)) throw Error('未知运行环境: ' + environment);
   return { ...process.env, ...config.server, ...config.web, GOAL_TEST_ENV: environment,
     FRONTEND_ORIGIN: deployment.frontend_url, FRONTEND_PORT: deployment.frontend_port,
     REMOTE_API_URL: deployment.backend_url };

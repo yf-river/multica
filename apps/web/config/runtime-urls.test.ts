@@ -211,6 +211,9 @@ describe("browser runtime URLs", () => {
 });
 
 describe("runtimeRewriteDestination", () => {
+  it("serves build identity from Web instead of forwarding to the API", () => {
+    expect(runtimeRewriteDestination("/api/version", { REMOTE_API_URL: "http://api:8080" })).toBeUndefined();
+  });
   it("keeps same-origin fallback when no runtime upstreams are configured", () => {
     expect(runtimeRewriteDestination("/api/config", {})).toBeUndefined();
     expect(runtimeRewriteDestination("/v1/context", {})).toBeUndefined();

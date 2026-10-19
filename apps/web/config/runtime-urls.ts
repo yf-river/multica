@@ -146,6 +146,8 @@ export function runtimeRewriteDestination(
     return docsUrl ? appendPath(docsUrl, pathname) : undefined;
   }
 
+  if (pathname === "/api/version") return undefined;
+
   const remoteApiUrl = resolveRemoteApiUrl(env);
   if (!remoteApiUrl) return undefined;
 

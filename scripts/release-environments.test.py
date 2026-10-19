@@ -8,15 +8,38 @@ spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name(
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
 class ReleaseTests(unittest.TestCase):
-    def test_snapshot_relocates_absolute_workspace_links(self):
-        with tempfile.TemporaryDirectory() as d:
-            source=Path(d)/'source';stage=Path(d)/'stage'
-            for root in (source,stage):
-                (root/'packages/core').mkdir(parents=True)
-            modules=stage/'packages/views/node_modules/@multica';modules.mkdir(parents=True)
-            link=modules/'core';link.symlink_to(source/'packages/core')
-            r.relocate_dependency_links(stage,source)
-            self.assertEqual(link.resolve(),stage/'packages/core')
+    def test_task_cannot_restore_or_switch_production(self):
+        with patch.dict(r.os.environ, {'MULTICA_TASK_ID':'task'}), patch.object(r,'read') as read, patch.object(r,'owned_stop') as stop:
+            with self.assertRaisesRegex(RuntimeError,'request'): r.deploy('prod','missing')
+            with self.assertRaisesRegex(RuntimeError,'外部'): r.restore('prod')
+            read.assert_not_called(); stop.assert_not_called()
+
+    def test_checkout_cannot_select_its_own_control_directory(self):
+        with patch.object(r,'ROOT',Path('/tmp/task')):
+            with self.assertRaisesRegex(RuntimeError,'固定发布入口'): r.require_control_directory()
+
+    def test_copied_script_cannot_use_control_state(self):
+        with patch.object(r,'__file__','/tmp/task/scripts/release-environments.py'):
+            with self.assertRaisesRegex(RuntimeError,'固定发布入口'): r.require_control_directory()
+
+    def test_reused_components_get_a_new_artifact_identity_and_build_time(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(r.time,'time_ns',side_effect=[1,2]):
+            root=Path(d); current=root/'current'; source=root/'source'
+            (current/'server/bin').mkdir(parents=True)
+            (current/'apps/web').mkdir(parents=True)
+            (source/'server/migrations').mkdir(parents=True)
+            (current/'server/bin/server').write_text('compiled server')
+            (current/'apps/web/server.js').write_text('compiled web')
+            inputs={key:r.hashlib.sha256().hexdigest() for key in ('go','web')}
+            r.write(current/'release.json',{'inputs':inputs,'files':r.checksums(current)})
+            with patch.object(r,'RUN',root/'state'), patch.object(r,'checked_source',return_value=(source,'a'*40)), patch.object(r,'source_digest',return_value=('b'*64,[])):
+                r.write(r.meta_path('int'),{'release_dir':str(current)})
+                first=r.build(source,root/'first'); second=r.build(source,root/'second')
+            self.assertNotEqual(first['id'],second['id'])
+            r.time.strptime(first['built_at'],'%Y-%m-%dT%H:%M:%SZ')
+            self.assertEqual(first['source_commit'],'a'*40)
+            self.assertEqual((root/'first/apps/web/server.js').read_text(),'compiled web')
+            self.assertEqual(r.read(root/'first/release.json')['built_at'],first['built_at'])
 
     def test_both_environments_are_required_for_isolation(self):
         original=r.RUN
@@ -96,30 +119,29 @@ class ReleaseTests(unittest.TestCase):
         original=r.RUN
         with tempfile.TemporaryDirectory() as d:
             r.RUN=Path(d)
-            artifact=r.RUN/'artifacts'/'v';artifact.mkdir(parents=True)
-            r.write(artifact/'release.json',{'files':{}})
+            r.write(r.candidate_path(),{'id':'v','status':'accepted'})
             try:
-                with patch.object(r,'run') as launch:
+                with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'):
                     first=r.request_release('v');second=r.request_release('v')
                     self.assertEqual(first['id'],second['id']);launch.assert_called_once()
                     self.assertEqual(launch.call_args.args[0][0],'systemd-run')
                 failed=r.read(r.request_path('v'));failed['status']='failed';r.write(r.request_path('v'),failed)
-                with patch.object(r,'run') as launch:
-                    r.request_release('v',retry=True);r.request_release('v',retry=True)
-                    launch.assert_called_once()
+                with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'):
+                    with self.assertRaisesRegex(RuntimeError,'重新联调'): r.request_release('v')
+                    launch.assert_not_called()
             finally:r.RUN=original
 
     def test_business_failure_restores_exact_previous_program(self):
-        with patch.object(r,'read',return_value={'release_id':'old'}),patch.object(r,'deploy') as deploy,patch.object(r,'verify_browser',side_effect=[RuntimeError('bad page'),None]):
-            with self.assertRaisesRegex(RuntimeError,'数据库未回滚'):r.publish('prod','new')
-            self.assertEqual(deploy.call_args_list[0].args,('prod','new',900))
-            self.assertEqual(deploy.call_args_list[1].args,('prod','old',900))
+        with patch.object(r,'deploy') as deploy, patch.object(r,'restore') as restore, patch.object(r,'verify_browser',side_effect=RuntimeError('bad page')):
+            with self.assertRaisesRegex(RuntimeError,'bad page'): r.publish('prod','new')
+            deploy.assert_called_once_with('prod','new',900)
+            restore.assert_called_once_with('prod',900)
 
     def test_startup_failure_restores_old_program_and_config(self):
         original=r.RUN
         with tempfile.TemporaryDirectory() as d:
             r.RUN=Path(d);artifact=r.RUN/'artifacts/new';artifact.mkdir(parents=True)
-            r.write(artifact/'release.json',{'files':{},'source_commit':'sha','source_digest':'digest'})
+            r.write(artifact/'release.json',{'id':'new','files':{},'source_commit':'sha','source_digest':'digest'})
             old=r.RUN/'releases/prod/old';old.mkdir(parents=True)
             m={'release_id':'old','release_dir':str(old),'daemon_profile':'p','pids':{'server':11,'web':12,'daemon':13},'log_paths':{}}
             r.write(r.meta_path('prod'),m);r.write(r.config_path('prod'),{'config':'unchanged'})
@@ -128,8 +150,8 @@ class ReleaseTests(unittest.TestCase):
                     metadata['pids']={'server':21};raise RuntimeError('startup failed')
                 return {'server':31,'web':32,'daemon':33}
             try:
-                with patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
-                    with self.assertRaisesRegex(RuntimeError,'startup failed'):r.deploy('prod','new')
+                with patch.object(r,'check_database'),patch.object(r,'check_live_environment'),patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
+                    with self.assertRaisesRegex(RuntimeError,'startup failed'):r.deploy('prod',artifact)
                 restored=r.read(r.meta_path('prod'))
                 self.assertEqual(restored['release_id'],'old');self.assertEqual(restored['pids']['daemon'],33)
                 self.assertEqual(r.read(r.config_path('prod')),{'config':'unchanged'})
