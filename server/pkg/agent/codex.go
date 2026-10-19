@@ -1606,15 +1606,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		u := c.usage
 		c.usageMu.Unlock()
 
-		// 兜底：JSON-RPC 拿不到用量时，扫描 codex 的会话 JSONL 日志。codex 会把
+		// 会话日志提供完整累计用量和实际模型，优先于可能仅上报部分用量的通知。Codex 会把
 		// token_count 事件写到 $CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl；这里扫的是
 		// 本后端任务专属的 CODEX_HOME——会话在该目录里隔离，而不是共享的
 		// ~/.codex/sessions（MUL-4424）。
-		if u.InputTokens == 0 && u.OutputTokens == 0 {
+		{
 			taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 			if scanned := scanCodexSessionUsage(startTime, taskCodexHome, threadID, resumed); scanned != nil {
 				u = scanned.usage
-				if scanned.model != "" && opts.Model == "" {
+				if scanned.model != "" {
 					opts.Model = scanned.model
 				}
 			}
@@ -2059,8 +2059,10 @@ type codexClient struct {
 	notificationProtocol string // "unknown"、"legacy"、"raw"
 	turnCompleted        bool
 
-	usageMu sync.Mutex
-	usage   TokenUsage // 由回合事件累积而来
+	usageMu        sync.Mutex
+	usage          TokenUsage // 由回合事件累积而来
+	modernUsage    bool
+	lastUsageTotal int64
 
 	turnErrorMu sync.Mutex
 	turnError   string // 从 turn/completed status=failed 或终态错误通知里捕获
@@ -2544,7 +2546,7 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	// 原始 v2 通知
 	if c.notificationProtocol != "legacy" {
 		if c.notificationProtocol == "unknown" &&
-			(method == "turn/started" || method == "turn/completed" ||
+			(method == "turn/started" || method == "turn/completed" || method == "thread/tokenUsage/updated" ||
 				method == "thread/started" || method == "error" || strings.HasPrefix(method, "item/")) {
 			c.notificationProtocol = "raw"
 		}
@@ -2967,6 +2969,28 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	}
 
 	switch method {
+	case "thread/tokenUsage/updated":
+		usage, _ := params["tokenUsage"].(map[string]any)
+		last, _ := usage["last"].(map[string]any)
+		total, _ := usage["total"].(map[string]any)
+		if last == nil || total == nil {
+			return
+		}
+		c.usageMu.Lock()
+		defer c.usageMu.Unlock()
+		// Notifications may repeat the same cumulative snapshot (e.g. rate-limit updates).
+		snapshot := codexInt64(total, "totalTokens")
+		if snapshot <= c.lastUsageTotal {
+			return
+		}
+		c.lastUsageTotal = snapshot
+		c.modernUsage = true
+		cached := codexInt64(last, "cachedInputTokens")
+		c.usage.InputTokens += codexUncachedInputTokens(codexInt64(last, "inputTokens"), cached)
+		c.usage.CacheReadTokens += cached
+		c.usage.OutputTokens += codexInt64(last, "outputTokens")
+		c.usage.CacheWriteTokens += codexInt64(last, "cacheWriteInputTokens")
+
 	case "turn/started":
 		if turnID := extractNestedString(params, "turn", "id"); turnID != "" {
 			c.turnID = turnID
@@ -2997,7 +3021,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		}
 
 		// turn/completed 若带用量则提取（例如 params.turn.usage）。
-		if turn, ok := params["turn"].(map[string]any); ok {
+		if turn, ok := params["turn"].(map[string]any); ok && !c.modernUsage {
 			c.extractUsageFromMap(turn)
 		}
 
@@ -3177,7 +3201,7 @@ func (c *codexClient) extractUsageFromMap(data map[string]any) {
 	c.usage.InputTokens += codexUncachedInputTokens(inputTokens, cacheReadTokens)
 	c.usage.OutputTokens += codexInt64(usageMap, "output_tokens", "output", "completion_tokens")
 	c.usage.CacheReadTokens += cacheReadTokens
-	c.usage.CacheWriteTokens += codexInt64(usageMap, "cache_write_tokens", "cache_creation_input_tokens")
+	c.usage.CacheWriteTokens += codexInt64(usageMap, "cache_write_tokens", "cache_creation_input_tokens", "cache_write_input_tokens")
 }
 
 func codexUncachedInputTokens(inputTokens, cachedInputTokens int64) int64 {
@@ -3373,6 +3397,7 @@ type codexRawTokenUsage struct {
 	InputTokens           int64 `json:"input_tokens"`
 	OutputTokens          int64 `json:"output_tokens"`
 	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
 	CacheReadInputTokens  int64 `json:"cache_read_input_tokens"`
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 }
@@ -3414,11 +3439,12 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 	finalUsageFound := false
 	afterStartBoundary := false
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	reader := bufio.NewReaderSize(f, 256*1024)
+	for {
+		line, err := readCodexUsageLine(reader)
+		if err != nil && len(line) == 0 {
+			break
+		}
 
 		// 快速预筛，避免对每一行都做完整 JSON 解析。
 		if !bytesContainsStr(line, "token_count") && !bytesContainsStr(line, "turn_context") {
@@ -3474,9 +3500,10 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 	}
 	cachedTokens := finalUsage.CachedInputTokens
 	result.usage = TokenUsage{
-		InputTokens:     codexUncachedInputTokens(finalUsage.InputTokens, cachedTokens),
-		OutputTokens:    finalUsage.OutputTokens + finalUsage.ReasoningOutputTokens,
-		CacheReadTokens: cachedTokens,
+		InputTokens:      codexUncachedInputTokens(finalUsage.InputTokens, cachedTokens),
+		OutputTokens:     finalUsage.OutputTokens,
+		CacheReadTokens:  cachedTokens,
+		CacheWriteTokens: finalUsage.CacheWriteInputTokens,
 	}
 	return &result
 }
@@ -3489,6 +3516,7 @@ func subtractCodexRawTokenUsage(total, baseline codexRawTokenUsage) codexRawToke
 	return codexRawTokenUsage{
 		InputTokens:           nonNegativeTokenDelta(total.InputTokens, baseline.InputTokens),
 		OutputTokens:          nonNegativeTokenDelta(total.OutputTokens, baseline.OutputTokens),
+		CacheWriteInputTokens: nonNegativeTokenDelta(total.CacheWriteInputTokens, baseline.CacheWriteInputTokens),
 		CachedInputTokens:     nonNegativeTokenDelta(total.CachedInputTokens, baseline.CachedInputTokens),
 		ReasoningOutputTokens: nonNegativeTokenDelta(total.ReasoningOutputTokens, baseline.ReasoningOutputTokens),
 	}
@@ -3506,6 +3534,7 @@ func addCodexRawTokenUsage(a, b codexRawTokenUsage) codexRawTokenUsage {
 	return codexRawTokenUsage{
 		InputTokens:           a.InputTokens + b.InputTokens,
 		OutputTokens:          a.OutputTokens + b.OutputTokens,
+		CacheWriteInputTokens: a.CacheWriteInputTokens + b.CacheWriteInputTokens,
 		CachedInputTokens:     a.CachedInputTokens + b.CachedInputTokens,
 		ReasoningOutputTokens: a.ReasoningOutputTokens + b.ReasoningOutputTokens,
 	}
@@ -3556,4 +3585,25 @@ func nilIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// Tool results and image records can exceed Scanner's limit. Discard oversized
+// records in bounded chunks while continuing to the small accounting records.
+func readCodexUsageLine(reader *bufio.Reader) ([]byte, error) {
+	var line []byte
+	oversized := false
+	for {
+		part, more, err := reader.ReadLine()
+		if !oversized {
+			if len(line)+len(part) > 1024*1024 {
+				oversized = true
+				line = nil
+			} else {
+				line = append(line, part...)
+			}
+		}
+		if !more || err != nil {
+			return line, err
+		}
+	}
 }
