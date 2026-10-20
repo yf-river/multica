@@ -443,7 +443,7 @@ func BuildPrompt(batch, current, summary, open string, materials []Material, inv
 逐段细读本轮原始材料，核对相邻发言、工具调用、返回结果与后续动作是否衔接。摘要只辅助恢复背景，不能代替原文。context_only=true是相邻消息原文，只辅助核对衔接，可引用为证据但不得写入covered或当成新覆盖；其offset>0或end<length表示仅提供了部分原文，衔接证据不足时记录具体缺口。unread_offset表示此前已读位置，offset到unread_offset之间是跨页重叠原文，用于衔接，不能据此跳过后续正文；文本分片 end<length、pending_materials大于本轮非context_only材料数或requirement_truncated/truncated为true时表示仍有材料未读完，不得声称全量完成。latest_user_comments按最近创建或编辑时间倒序提供，新的用户决定优先于旧评论。缺少代码、真实接口或浏览器验收时明确证据边界；记录中的最终总结不能代替实际产物核验。
 ` + toolPolicy + `只输出一个合法JSON对象，不要markdown，字段必须完整：
 {"summary":"可供下轮恢复的简要结论和待验证项","efficiency":"clear|problem|uncertain","correctness":"clear|problem|uncertain","gaps":["具体缺口"],"covered":` + string(covered) + `,"findings":[{"id":"","code":"稳定的具体问题类别","title":"具体标题","description":"现象","impact":"影响","recommendation":"预期结果","confidence":"confirmed|risk","evidence":[{"kind":"message","id":"本轮材料ID","run_id":"原运行ID"}]}],"resolutions":[{"id":"此前问题ID","reason":"修复及验证事实","evidence":[{"kind":"message","id":"本轮新证据ID"}]}]}
-covered必须逐项列出实际读完的本轮材料；上面已经填写本轮覆盖清单，保留每项的真实kind、id、run_id，不要把issue、comment、task或trace改成message。新问题id留空，复查同一问题必须填写此前问题ID，不因证据或code变化重复创建。findings和resolutions可为空。无法确认时不捏造证据。只引用本轮提供的材料ID，引用的run_id必须与原材料一致。合理行为及已解决的历史问题写入summary，不作为当前findings重复上报。
+covered确认的是本轮提供的片段，不表示该条材料全文覆盖。即使end<length，也必须列出本轮已读片段的引用，不得因尚有尾页而省略。covered必须逐项列出实际读完的本轮材料；上面已经填写本轮覆盖清单，保留每项的真实kind、id、run_id，不要把issue、comment、task或trace改成message。新问题id留空，复查同一问题必须填写此前问题ID，不因证据或code变化重复创建。findings和resolutions可为空。无法确认时不捏造证据。只引用本轮提供的材料ID，引用的run_id必须与原材料一致。合理行为及已解决的历史问题写入summary，不作为当前findings重复上报。
 当前要求：` + redact.Text(current) + `\n此前摘要：` + redact.Text(summary) + `\n此前未解决问题：` + redact.Text(open) + `\n本轮材料：` + string(raw)
 }
 
