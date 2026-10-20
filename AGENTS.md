@@ -12,11 +12,9 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ### Default Development Delivery
 
-Ordinary feature requests include implementation, focused checks, deployment to the existing **int** environment, feature acceptance, application of the same tested runtime files to **prod**, and real browser acceptance. Read `CLAUDE.md` and `docs/operations/environment-releases.md` before choosing an environment or starting services. Read addresses and identity from current deployment records and private runtime configuration; do not create another preview by default.
+Ordinary feature requests proceed through confirmed plan, isolated task branch, focused checks, fixed **int** acceptance and **in_review**. Production deployment requires separate user confirmation for the delivery. Unapproved changes remain on task branches. Read `CLAUDE.md` and `docs/operations/environment-releases.md` for the authoritative workflow.
 
-Independent local environments require an explicit user request and `MULTICA_LOCAL_DEV=1` for that command. Production promotion and exception handling follow `CLAUDE.md`: promote automatically after complete, issue-free int acceptance; pause and ask the user if any check fails, evidence is missing, or a runtime anomaly occurs. Commit, push, and database deletion remain separately authorized actions. Explicit requests for analysis only, local changes only, or no deployment override the default delivery scope.
-
-Use `pnpm release int --source <task-worktree>` to prepare the fixed integration environment. Validate the changed feature, record the result with `pnpm release accept <candidate> --evidence <file>`, then `pnpm release request <candidate>`. The external updater waits for the requesting run to finish before updating production. Read `docs/operations/environment-releases.md` for evidence format, concurrency, cleanup and recovery. MR approval is not a deployment prerequisite; Git commits and deployment still follow user authorization.
+Use persisted delivery records and the existing external publisher for queueing, recovery, integration and production updates. Build from pinned commits rather than ephemeral task directories. Only explicit user requests allow independent environments with `MULTICA_LOCAL_DEV=1`. Explicit local-only or no-deployment boundaries take precedence.
 
 ### Architecture
 

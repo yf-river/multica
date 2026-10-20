@@ -39,15 +39,15 @@ The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
 
 ## Development Delivery
 
-- 本项目主分支为 `personal-studio-upstream`，交付远端为 `origin`；`upstream` 用于同步上游。并发任务使用独立 worktree 和任务分支，最终成果按授权汇入并推送主分支。用户要求交付推送时，以主分支为目标；明确要求仅推送任务分支时按指定范围执行。
-- 默认交付顺序为：整合最新主分支与生产变更 → int 验收 → 按授权汇入并推送主分支 → 同一份已验收程序更新生产 → 清理任务 worktree 和已合入的临时分支。不默认创建 PR、标签或 GitHub Release；具体操作见 `docs/operations/environment-releases.md`。
-- Ordinary feature requests include implementation, focused verification, deployment to existing `int`, feature acceptance, application of the same tested runtime files to `prod`, and real browser acceptance. Explicit requests for analysis only, local changes only, or no deployment override this default.
-- Read `docs/operations/environment-releases.md` before choosing an environment or starting services. Current addresses and identity belong to deployment records and private runtime configuration. Missing int configuration is a blocker, not permission to use prod as a test environment.
-- Only an explicit user request for independent local development permits `MULTICA_LOCAL_DEV=1` on the relevant command. Do not persist this opt-in in environment files.
-- Verify incrementally. Prepare int from a clean task commit containing the latest published commit; reuse unchanged Go/Web outputs. Production success cleans the task worktree after checking saved changes and process references.
-- Use the fixed int occupancy, Daemon drain and temporary recovery directory. When int is occupied, finish independent work and end the run before retrying; do not block an active run waiting for production updates. Do not use production accounts or data for integration verification, rotate secrets, or edit installed releases.
-- 联调验收所需的检查和证据全部通过，且没有未解决的问题时，将同一份已验收运行产物应用到生产，无需再次询问。联调或发布过程中出现检查失败、证据缺失或运行异常时，暂停后续发布，说明具体问题并询问用户；生产发布失败时先按既有流程安全回滚，再等待用户决定。
-- Commit、push 和数据库删除仍需单独授权。用户明确要求不部署或仅本地修改时，以用户指定范围为准。
+- 主分支为 `personal-studio-upstream`，交付远端为 `origin`；`upstream` 用于同步上游。新任务基于最新主分支创建独立任务分支，已有任务续接原分支，不覆盖主工作区或其他任务的未提交改动。
+- 需求澄清后先输出编号行动摘要和完整计划，用户确认计划后执行其明确包含的开发、提交任务分支、推送和 int 验证。用户已确认的事项不重复询问；新增范围或业务取舍需要重新确认。
+- 并行开发、串行联调。交付记录固定提交、方案版本和证据；从干净构建工作区执行联调，不依赖已结束运行的临时路径，不要求 Agent 手动搬走运行时注入文件。
+- int 业务验收通过后进入 `in_review`，提供简短测试清单，释放联调环境，代码留在任务分支。生产发布必须有用户对该交付版本的独立确认；正常发布入口校验审核记录。
+- 用户同意生产发布后，整合最新主分支及生产基线，完成必要的重新验收，再合入并推送主分支，由外部发布器应用同一份验收程序。合并冲突或实质修改返回开发与审核，不能夹带未批准任务。
+- 生产发布允许短暂维护。停止服务前核对环境身份、源码、产物和数据库结构；数据库变更要兼容恢复旧程序。启动或验收失败先安全恢复旧程序与配置，保留数据并报告。
+- 发布成功并完成真实浏览器验收后记录结果，任务等待用户最终确认，不自动标记 done。清理交付工作区和已合入临时分支；不默认创建 PR、标签或 GitHub Release。
+- 读 `docs/operations/environment-releases.md` 后选择环境。使用固定 int；仅用户明确要求时才允许 `MULTICA_LOCAL_DEV=1` 的独立环境。不得使用生产账号或数据作联调测试，不编辑已安装制品、不清库或重置数据。
+- 明确的分析、仅本地修改、禁止部署等范围优先。Commit、push、数据库删除须有对应授权；确认包含具体提交和推送动作的计划可覆盖该任务，无需重复索取。
 
 ## State Rules
 

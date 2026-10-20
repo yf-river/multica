@@ -3961,6 +3961,9 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLsWithEvents(ctx context.Con
 		if reviewTask.Valid {
 			supervisionTasks = append(supervisionTasks, reviewTask)
 		}
+		if err := deleteDeliveryData(ctx, tx, uuidToString(issue.WorkspaceID), uuidToString(issue.ID)); err != nil {
+			return issueDeleteResult{}, nil, err
+		}
 		if err := deleteSupervisionData(ctx, tx, uuidToString(issue.WorkspaceID), uuidToString(issue.ID)); err != nil {
 			return issueDeleteResult{}, nil, err
 		}

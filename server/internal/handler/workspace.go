@@ -1192,6 +1192,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	// DELETE；旧级联只作为展开阶段的兜底安全网，直到未来的 schema 合约替换它。
 	ctx := r.Context()
 	var workspaceDeletedEvent events.Event
+	if err := deleteDeliveryData(ctx, tx, workspaceID, ""); err != nil {
+		failWorkspaceDelete(w, r, workspaceID, "delete delivery data", err)
+		return
+	}
 	if err := deleteSupervisionData(ctx, tx, workspaceID, ""); err != nil {
 		failWorkspaceDelete(w, r, workspaceID, "delete supervision data", err)
 		return

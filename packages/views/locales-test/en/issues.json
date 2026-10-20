@@ -899,5 +899,39 @@
       "pending_mcp_fetch": "等待读取",
       "unread": "尚未读取"
     }
+  },
+  "delivery": {
+    "title": "Plan and delivery",
+    "load_failed": "交付记录读取失败。",
+    "retry": "重试",
+    "plan_stale": "方案已修改，需要重新登记并确认。",
+    "plan_confirmed": "计划已确认，可按计划执行。",
+    "plan_pending": "等待你确认计划。",
+    "view_plan": "查看完整计划",
+    "confirm_plan": "Confirm plan and start",
+    "queue": "前面还有 {{count}} 项等待处理。",
+    "tested_version": "已登记联调版本：",
+    "environment_hint": "联调环境会供其他任务使用，当前环境不一定仍是此版本。",
+    "tests": "测试与验证摘要",
+    "approve_production": "Approve production",
+    "published_hint": "已发布生产，等待你确认任务完成。",
+    "history": "历史交付",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "submitting": "提交中…",
+    "changed": "Version changed; close and review again.",
+    "plan_confirmation_hint": "确认后开始开发、提交任务分支和联调验证。生产发布仍需单独确认。",
+    "production_confirmation_hint": "同意发布提交 {{commit}} 的任务改动。系统会整合最新主分支并核验，切换期间可能短暂维护；出现冲突或验收失败会停止。",
+    "phases": {
+      "waiting_int": "等待联调",
+      "testing": "正在联调验证",
+      "awaiting_review": "联调通过，等待生产确认",
+      "approved": "已确认，等待发布",
+      "preparing_release": "整合并复核发布版本",
+      "publishing": "正在更新生产",
+      "published": "生产更新成功",
+      "needs_changes": "需要处理问题",
+      "cancelled": "已取消交付"
+    }
   }
 }
