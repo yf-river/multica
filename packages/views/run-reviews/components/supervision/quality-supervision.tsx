@@ -273,7 +273,14 @@ export function QualitySupervision() {
                     >
                       <span className="min-w-0">
                         <span className="block truncate font-medium">{item.identifier} {item.title}</span>
-                        <span className="block truncate text-caption text-muted-foreground">{statusLabel(item.business_status)}</span>
+                        <span className="hidden truncate text-caption text-muted-foreground md:block">{statusLabel(item.business_status)}</span>
+                        <span className="mt-1 flex flex-wrap items-center gap-x-2 text-caption md:hidden">
+                          <span className="text-muted-foreground">{statusLabel(item.business_status)}</span>
+                          <span aria-hidden className="text-muted-foreground">·</span>
+                          <span className={cn(item.open_findings > 0 ? "font-medium text-warning" : "text-muted-foreground")}>{conclusion}</span>
+                          <span aria-hidden className="text-muted-foreground">·</span>
+                          <span className="tabular-nums text-muted-foreground">{moment(item.last_checked_at)}</span>
+                        </span>
                       </span>
                       <span className="justify-self-end md:justify-self-start">
                         <Badge variant="outline" className={stateTones[state]}>
@@ -283,13 +290,13 @@ export function QualitySupervision() {
                       </span>
                       <span
                         className={cn(
-                          "text-caption",
+                          "hidden text-caption md:block",
                           item.open_findings > 0 ? "font-medium text-warning" : "text-muted-foreground",
                         )}
                       >
                         {conclusion}
                       </span>
-                      <span className="justify-self-end text-caption tabular-nums text-muted-foreground md:justify-self-start">
+                      <span className="hidden text-caption tabular-nums text-muted-foreground md:block">
                         {moment(item.last_checked_at)}
                       </span>
                     </button>
