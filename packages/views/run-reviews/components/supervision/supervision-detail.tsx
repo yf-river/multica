@@ -412,10 +412,10 @@ function FindingCard({ finding, canManage, issueId, assigneeType, assigneeId, op
       {snoozed && <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.supervision.snoozed_until)} {moment(finding.snoozed_until)}</p>}
       {canManage && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" aria-expanded={editing} onClick={() => setEditing((value) => !value)}>
+          <Button variant="outline" aria-expanded={editing} onClick={() => setEditing((value) => !value)}>
             {editing ? t(($) => $.supervision.finding_actions_hide) : t(($) => $.supervision.finding_actions)}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setFeedback(true)}>{t(($) => $.supervision.feedback)}</Button>
+          <Button variant="outline" onClick={() => setFeedback(true)}>{t(($) => $.supervision.feedback)}</Button>
         </div>
       )}
       {canManage && editing && (
