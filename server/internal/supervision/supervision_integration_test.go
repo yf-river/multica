@@ -86,6 +86,15 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
+	messageOrder := []string{}
+	for _, m := range chunks {
+		if m.Kind == "message" {
+			messageOrder = append(messageOrder, m.ID)
+		}
+	}
+	if len(messageOrder) != 2 || messageOrder[0] != late || messageOrder[1] != large {
+		t.Fatalf("messages did not follow source sequence: %v", messageOrder)
+	}
 	noteFound := false
 	for _, m := range chunks {
 		if len([]rune(m.Text)) > 8000 {
@@ -212,6 +221,35 @@ func TestIntPersistenceAndResume(t *testing.T) {
 		t.Fatalf("invalid bounded page: end=%d length=%d", first.End, first.Length)
 	}
 	f.Exec(t, "UPDATE supervision_material SET reviewed_offset=$3 WHERE workspace_id=$1 AND source_id=$2", f.WorkspaceID, large, first.End)
+	afterLarge := f.Insert(t, "task_message", dbfx.Cols{"task_id": sourceTask, "seq": 21, "type": "text", "content": "必须等待前一条全文审查"})
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0])
+	_ = tx.Rollback(ctx)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	foundResume := false
+	for _, m := range resumed {
+		if m.ID == afterLarge {
+			t.Fatal("later message overtook unread source tail")
+		}
+		if m.ID != large {
+			continue
+		}
+		foundResume = true
+		if m.UnreadOffset != first.End || m.Offset != first.End-1000 || m.End <= first.End {
+			t.Fatalf("resume skipped overlap or failed to advance: %+v", m.Evidence)
+		}
+		if m.Text[:1000] != first.Text[len(first.Text)-1000:] {
+			t.Fatal("overlap differs from original text")
+		}
+	}
+	if !foundResume {
+		t.Fatal("resumed source missing")
+	}
 	next, err := restarted.ReadEvidence(ctx, f.WorkspaceID, "message", large, first.End)
 	if err != nil {
 		t.Fatal(err)
@@ -226,8 +264,32 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if !strings.Contains(tail.Text, "END-OF-EVIDENCE") {
 		t.Fatal("long evidence tail lost")
 	}
-	if n := f.Count(t, "SELECT count(*) FROM supervision_material WHERE workspace_id=$1 AND kind='message' AND run_id=$2", f.WorkspaceID, sourceTask); n != 2 {
+	if n := f.Count(t, "SELECT count(*) FROM supervision_material WHERE workspace_id=$1 AND kind='message' AND run_id=$2", f.WorkspaceID, sourceTask); n != 3 {
 		t.Fatalf("late-message coverage=%d", n)
+	}
+	// 旧消息已审查后插入更早的消息，后继原文仍进入这一轮上下文。
+	f.Exec(t, "UPDATE supervision_material SET reviewed_generation=generation WHERE workspace_id=$1 AND source_id=$2", f.WorkspaceID, late)
+	lateEarlier := f.Insert(t, "task_message", dbfx.Cols{"task_id": sourceTask, "seq": 18, "type": "text", "content": "更迟到的工具请求"})
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withLate, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0])
+	_ = tx.Rollback(ctx)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	seenEarlier, seenNeighbor := false, false
+	for _, m := range withLate {
+		if m.ID == lateEarlier && !m.ContextOnly {
+			seenEarlier = true
+		}
+		if m.ID == late && m.ContextOnly && strings.Contains(m.Text, "迟到的较小序号") {
+			seenNeighbor = true
+		}
+	}
+	if !seenEarlier || !seenNeighbor {
+		t.Fatal("late insertion lost original neighboring text")
 	}
 	// 运行ID绑定验证独立于 JSON 结构校验。
 	if err = svc.Commit(ctx, f.WorkspaceID, batch, util.UUIDToString(dbid.NewV7()), result); err == nil {

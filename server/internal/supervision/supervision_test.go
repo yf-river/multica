@@ -73,3 +73,20 @@ func TestInvestigationCitationDoesNotReplaceInitialCoverage(t *testing.T) {
 		t.Fatal("accepted capture from another source run")
 	}
 }
+
+func TestAdjacentContextIsEvidenceButNeverCoverage(t *testing.T) {
+	primary := Material{Evidence: Evidence{Kind: "message", ID: "new", RunID: "run"}}
+	previous := Material{Evidence: Evidence{Kind: "message", ID: "old", RunID: "run"}, ContextOnly: true, Text: "tool failed"}
+	r := Result{Covered: []Evidence{primary.Evidence}, Findings: []Finding{{Code: "ignored_error", Title: "错误未处理", Description: "工具失败后继续", Impact: "结果不可信", Recommendation: "核对工具失败", Confidence: "confirmed", Evidence: []Evidence{primary.Evidence, previous.Evidence}}}}
+	if err := ValidateResult(r, []Material{primary, previous}); err != nil {
+		t.Fatal(err)
+	}
+	r.Covered = append(r.Covered, previous.Evidence)
+	if ValidateResult(r, []Material{primary, previous}) == nil {
+		t.Fatal("context incorrectly counted as new coverage")
+	}
+	prompt := BuildPrompt("batch", "{}", "", "[]", []Material{primary, previous})
+	if !strings.Contains(prompt, `"covered":[{"kind":"message","id":"new","run_id":"run"}]`) || !strings.Contains(prompt, "tool failed") {
+		t.Fatal("context or primary coverage missing")
+	}
+}
