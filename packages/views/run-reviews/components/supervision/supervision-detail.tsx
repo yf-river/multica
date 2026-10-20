@@ -300,7 +300,7 @@ export function SupervisionDetail({ issueId, canManage, close }: { issueId: stri
         ) : null}
       </SheetContent>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent className="sm:max-w-[440px]">
+        <AlertDialogContent className="sm:!max-w-[440px]">
           <AlertDialogHeader>
             <AlertDialogMedia className="bg-info/10 text-info"><RotateCw /></AlertDialogMedia>
             <AlertDialogTitle>{t(($) => $.supervision.recheck_title)}</AlertDialogTitle>

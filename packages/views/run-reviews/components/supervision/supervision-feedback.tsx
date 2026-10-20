@@ -59,7 +59,7 @@ export function SupervisionFeedbackDialog({ open, close, finding, issueId, assig
   const agents = previewReady ? preview.data?.agents ?? [] : [];
   return (
     <Dialog open={open} onOpenChange={(value) => { if (!value && !send.isPending) close(); }}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-[600px]">
         <DialogHeader className="pr-8">
           <DialogTitle className="leading-6">{t(($) => $.supervision.feedback)}</DialogTitle>
           <DialogDescription>{t(($) => $.supervision.feedback_hint)}</DialogDescription>
@@ -72,7 +72,7 @@ export function SupervisionFeedbackDialog({ open, close, finding, issueId, assig
             </label>
             <Textarea
               id={contentId}
-              className="max-h-[40dvh] min-h-44 resize-y bg-surface-hover/60 p-3 leading-6"
+              className="max-h-[34dvh] min-h-40 resize-y bg-surface-hover/60 p-3 leading-6"
               value={content}
               disabled={locked}
               onChange={(e) => {
