@@ -27,7 +27,7 @@ func TestSupervisionSourceScopeDoesNotBroadenRunDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(config), "supervision-mcp") || !strings.Contains(prompt, "不代表原运行当时的源码") {
+	if !strings.Contains(string(config), "supervision-mcp") || !strings.Contains(prompt, `"investigation_sources"`) {
 		t.Fatal("missing governed entry or source identity")
 	}
 	manifest, err := os.ReadFile(filepath.Join(env, "supervision-investigation.json"))

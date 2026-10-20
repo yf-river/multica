@@ -180,6 +180,8 @@
     "no_findings_scope": "已检查范围内未发现实质问题。",
     "gaps": "证据缺口",
     "history": "审查历史",
+    "agent_instructions": "本次使用的 Agent 指令",
+    "instructions_missing": "未记录",
     "view_run": "查看运行记录",
     "open": "待处理",
     "in_progress": "处理中",

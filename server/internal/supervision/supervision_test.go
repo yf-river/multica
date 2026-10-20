@@ -42,11 +42,21 @@ func TestResultRequiresStructuredFieldsAndRealResolutionEvidence(t *testing.T) {
 }
 
 func TestPromptPreservesSupervisorNotesAndIncompleteSlice(t *testing.T) {
-	prompt := BuildPrompt("b1", `{"title":"修复接口"}`, "此前只验证本地", "[]", []Material{{Evidence: Evidence{Kind: "comment", ID: "c1"}, Text: "/note 用户体验不完整，请核验", Offset: 0, End: 10, Length: 100, Note: true}})
-	for _, want := range []string{"/note 用户体验不完整", "不能直接当作开发指令", "不得声称全量完成", "即使end<length，也必须列出本轮已读片段的引用", "\"supervisor_note\":true", "此前只验证本地", `"covered":[{"kind":"comment","id":"c1"}]`} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("missing %q", want)
-		}
+	prompt, err := BuildPrompt("b1", `{"title":"修复接口"}`, "此前只验证本地", "[]", []Material{{Evidence: Evidence{Kind: "comment", ID: "c1"}, Text: "/note 用户体验不完整，请核验", Offset: 0, End: 10, Length: 100, Note: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input struct {
+		Current         map[string]string `json:"current"`
+		PreviousSummary string            `json:"previous_summary"`
+		Materials       []Material        `json:"materials"`
+		Covered         []Evidence        `json:"covered"`
+	}
+	if err := json.Unmarshal([]byte(prompt), &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.Current["title"] != "修复接口" || input.PreviousSummary != "此前只验证本地" || len(input.Materials) != 1 || !input.Materials[0].Note || input.Materials[0].End != 10 || input.Materials[0].Length != 100 || len(input.Covered) != 1 || input.Covered[0].Kind != "comment" {
+		t.Fatalf("lost batch input: %+v", input)
 	}
 	if _, err := sourceSQL("message; DROP TABLE issue"); err == nil {
 		t.Fatal("accepted arbitrary query kind")
@@ -85,8 +95,17 @@ func TestAdjacentContextIsEvidenceButNeverCoverage(t *testing.T) {
 	if ValidateResult(r, []Material{primary, previous}) == nil {
 		t.Fatal("context incorrectly counted as new coverage")
 	}
-	prompt := BuildPrompt("batch", "{}", "", "[]", []Material{primary, previous})
+	prompt, err := BuildPrompt("batch", "{}", "", "[]", []Material{primary, previous})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(prompt, `"covered":[{"kind":"message","id":"new","run_id":"run"}]`) || !strings.Contains(prompt, "tool failed") {
 		t.Fatal("context or primary coverage missing")
+	}
+}
+
+func TestBatchInputRejectsInvalidJSON(t *testing.T) {
+	if _, err := BuildPrompt("batch", "invalid-json", "", "[]", nil); err == nil {
+		t.Fatal("invalid structured input accepted")
 	}
 }

@@ -203,6 +203,10 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 403, "无法使用所选监督 Agent")
 			return
 		}
+		if body.Enabled && strings.TrimSpace(agent.Instructions) == "" {
+			writeError(w, 400, "监督 Agent 的指令为空，请先在 Agent 设置中填写监督提示词")
+			return
+		}
 		if !agent.RuntimeID.Valid {
 			writeError(w, 400, "所选 Agent 尚未绑定运行时")
 			return
@@ -302,6 +306,11 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 404, "任务尚未登记")
 		return
 	}
+	member, allowed := h.requireWorkspaceMember(w, r, ws, "工作区不存在")
+	if !allowed {
+		return
+	}
+	canManage := member.Role == "owner" || member.Role == "admin"
 	var findings, batches, notes, actions, investigations json.RawMessage
 	for _, query := range []struct {
 		sql  string
@@ -309,12 +318,23 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 	}{
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,batch_id,created_at,request,result-'text' result FROM supervision_investigation WHERE workspace_id=$1 AND issue_id=$2 ORDER BY created_at DESC LIMIT 100)x`, &investigations},
 		{`SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.last_seen_at DESC),'[]') FROM supervision_finding f WHERE workspace_id=$1 AND issue_id=$2`, &findings},
-		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,task_id,status,error,rules_version,created_at,completed_at,jsonb_array_length(materials) material_count FROM supervision_batch WHERE workspace_id=$1 AND issue_id=$2 ORDER BY created_at DESC LIMIT 30)x`, &batches},
+		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,jsonb_array_length(b.materials) material_count FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, &batches},
 		{`SELECT COALESCE(jsonb_agg(x ORDER BY x.created_at),'[]') FROM (SELECT id,content,created_at FROM comment WHERE issue_id=$2 AND author_type='member' AND lower(ltrim(content))~'^/note([[:space:]]|$)' AND EXISTS(SELECT 1 FROM issue WHERE id=$2 AND workspace_id=$1))x`, &notes},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT a.id,a.finding_id,a.actor_id,a.action,a.reason,a.receipt,a.created_at FROM supervision_action a JOIN supervision_finding f ON f.id=a.finding_id AND f.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND f.issue_id=$2 ORDER BY a.created_at DESC LIMIT 50)x`, &actions},
 	} {
 		if err = h.DB.QueryRow(r.Context(), query.sql, ws, id).Scan(query.dest); err != nil {
 			writeError(w, 500, "读取审查详情失败")
+			return
+		}
+	}
+	if canManage {
+		err = h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x),'[]') FROM (
+            SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,jsonb_array_length(b.materials) material_count,
+              NULLIF(t.context->>'instructions','') instructions, NULLIF(t.context->>'instructions_sha256','') instructions_sha256
+            FROM supervision_batch b LEFT JOIN agent_task_queue t ON t.id=b.task_id
+            WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, ws, id).Scan(&batches)
+		if err != nil {
+			writeError(w, 500, "读取审查指令失败")
 			return
 		}
 	}

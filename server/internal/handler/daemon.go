@@ -3032,6 +3032,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				"error_supervision_fence", http.StatusConflict, "supervision batch or owner permission invalid")
 		}
 		resp.WorkspaceID = supervision.WorkspaceID
+		if strings.TrimSpace(supervision.Instructions) == "" {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, "监督运行未保存 Agent 指令，请重新安排检查。", taskfailure.ReasonAgentUnknown,
+				"error_supervision_instructions", http.StatusConflict, "supervision instructions missing")
+		}
+		resp.Agent.Instructions = supervision.Instructions
 		resp.SupervisionPrompt = supervision.Prompt
 		if supervision.Investigation {
 			roots, loadErr := h.supervisionRoots(r.Context(), supervision.WorkspaceID, supervision.BatchID, uuidToString(task.RuntimeID))

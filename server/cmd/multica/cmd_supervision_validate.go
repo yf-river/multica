@@ -77,7 +77,11 @@ var supervisionPromptCmd = &cobra.Command{Use: "supervision-prompt <bundle>", Hi
 	if b.Open == "" {
 		b.Open = "[]"
 	}
-	_, err = fmt.Fprintln(cmd.OutOrStdout(), supervision.BuildPrompt(b.Batch, b.Current, b.Summary, b.Open, b.Materials, b.Investigation))
+	input, err := supervision.BuildPrompt(b.Batch, b.Current, b.Summary, b.Open, b.Materials, b.Investigation)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(cmd.OutOrStdout(), input)
 	return err
 }}
 

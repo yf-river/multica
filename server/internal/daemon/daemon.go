@@ -7363,6 +7363,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		QwenpawWorkspace:       env.QwenpawWorkspace,
 	}
 	if task.SupervisionPrompt != "" {
+		// 监督模式显式传递 Agent 指令，避免依赖 CodeBuddy 的默认文件加载。
+		if provider == "codebuddy" {
+			execOpts.SystemPrompt = instructions
+		}
 		execOpts.Timeout = 10 * time.Minute
 		execOpts.McpConfig = json.RawMessage(`{}`)
 		if len(task.SupervisionInvestigation) > 0 {
@@ -7372,7 +7376,20 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 			execOpts.McpConfig = config
 			execOpts.MaxTurns = 40
-			prompt += sourcePrompt
+			var input map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(prompt), &input); err != nil {
+				return TaskResult{}, fmt.Errorf("decode supervision input: %w", err)
+			}
+			var sources map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(sourcePrompt), &sources); err != nil {
+				return TaskResult{}, fmt.Errorf("decode supervision sources: %w", err)
+			}
+			input["investigation_sources"] = sources["investigation_sources"]
+			body, err := json.Marshal(input)
+			if err != nil {
+				return TaskResult{}, err
+			}
+			prompt = string(body)
 		}
 	}
 	// 有些 provider 无法可靠地加载我们写进任务 workdir 的每任务 runtime 配置文件。

@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/attribution"
@@ -14,11 +17,13 @@ import (
 
 // SupervisionContext 将无 issue 的监督运行绑定到服务端审查批次。
 type SupervisionContext struct {
-	Type          string `json:"type"`
-	WorkspaceID   string `json:"workspace_id"`
-	BatchID       string `json:"batch_id"`
-	Prompt        string `json:"prompt"`
-	Investigation bool   `json:"investigation"`
+	Type               string `json:"type"`
+	WorkspaceID        string `json:"workspace_id"`
+	BatchID            string `json:"batch_id"`
+	Prompt             string `json:"prompt"`
+	Investigation      bool   `json:"investigation"`
+	Instructions       string `json:"instructions"`
+	InstructionsSHA256 string `json:"instructions_sha256"`
 }
 
 // EnqueueSupervisionTaskTx 与调用方的批次认领共用事务，避免重复创建运行。
@@ -44,7 +49,11 @@ func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Querie
 	if !ready.Ready() {
 		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 暂不可用：%s", ready.Detail)
 	}
-	raw, err := json.Marshal(SupervisionContext{Type: "quality_supervision", WorkspaceID: util.UUIDToString(ws), BatchID: util.UUIDToString(batch), Prompt: prompt, Investigation: investigation})
+	if strings.TrimSpace(agent.Instructions) == "" {
+		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 的指令为空，请先在 Agent 设置中填写监督提示词")
+	}
+	digest := sha256.Sum256([]byte(agent.Instructions))
+	raw, err := json.Marshal(SupervisionContext{Type: "quality_supervision", WorkspaceID: util.UUIDToString(ws), BatchID: util.UUIDToString(batch), Prompt: prompt, Investigation: investigation, Instructions: agent.Instructions, InstructionsSHA256: hex.EncodeToString(digest[:])})
 	if err != nil {
 		return db.AgentTaskQueue{}, err
 	}

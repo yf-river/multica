@@ -196,6 +196,9 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 		apply(&opts)
 	}
 	body := buildPromptBody(task, provider)
+	if task.SupervisionPrompt != "" {
+		return body
+	}
 	// 运行级上下文是追加、绝不前置：它前面的一切在“续接会话的各轮”间稳定，追加让它
 	// 落在缓存前缀之后（MUL-5377）。
 	if blocks := perTurnContextBlocks(task, opts); blocks != "" {
