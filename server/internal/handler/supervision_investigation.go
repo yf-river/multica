@@ -98,7 +98,7 @@ func (h *Handler) investigationScope(w http.ResponseWriter, r *http.Request) (su
 	var owner, agent string
 	err := h.DB.QueryRow(r.Context(), `SELECT b.workspace_id::text,b.issue_id::text,b.id::text,t.id::text,t.runtime_id::text,c.owner_id::text,t.agent_id::text
  FROM supervision_batch b JOIN supervision_config c USING(workspace_id) JOIN agent_task_queue t ON t.id=b.task_id
- WHERE t.id=$1 AND t.status='running' AND b.status='running' AND c.enabled AND c.investigation_enabled AND c.agent_id=t.agent_id
+ WHERE t.id=$1 AND t.status='running' AND b.status='running' AND c.investigation_enabled AND c.agent_id=t.agent_id
  AND t.context->>'type'='quality_supervision' AND t.context->>'batch_id'=b.id::text`, task).Scan(&scope.Workspace, &scope.Issue, &scope.Batch, &scope.Task, &scope.Runtime, &owner, &agent)
 	if err != nil || agent != r.Header.Get("X-Agent-ID") || owner != requestUserID(r) || scope.Workspace != h.resolveWorkspaceID(r) || !h.CanUseSupervisionAgent(r.Context(), scope.Workspace, owner, agent) {
 		writeError(w, 403, "监督批次或调用权限已失效")

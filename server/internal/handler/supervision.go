@@ -397,6 +397,23 @@ func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var enabled bool
+	err = tx.QueryRow(r.Context(), `SELECT enabled FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&enabled)
+	if err != nil {
+		writeError(w, 409, "请先配置并启用监督")
+		return
+	}
+	if !enabled {
+		writeError(w, 409, "监督已暂停，请先恢复监督再重新审查")
+		return
+	}
+	if body.IssueID != "" {
+		var subject string
+		if err = tx.QueryRow(r.Context(), `SELECT issue_id::text FROM supervision_subject WHERE workspace_id=$1 AND issue_id=$2 FOR UPDATE`, ws, body.IssueID).Scan(&subject); err != nil {
+			writeError(w, 404, "任务尚未登记")
+			return
+		}
+	}
 	if body.Full {
 		if body.IssueID == "" {
 			writeError(w, 400, "重新审查需要指定任务")
@@ -456,12 +473,17 @@ func (h *Handler) UpdateSupervisionFinding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var exists bool
-	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM supervision_finding WHERE workspace_id=$1 AND id=$2)`, ws, id).Scan(&exists); err != nil || !exists {
+	var issue string
+	if err = tx.QueryRow(r.Context(), `SELECT issue_id::text FROM supervision_finding WHERE workspace_id=$1 AND id=$2`, ws, id).Scan(&issue); err != nil {
 		writeError(w, 404, "问题不存在")
 		return
 	}
-	tag, err := tx.Exec(r.Context(), `INSERT INTO supervision_action(workspace_id,finding_id,actor_id,operation_id,action,reason,receipt) VALUES($1,$2,$3,$4,$5,$6,jsonb_build_object('snoozed_until',$7::timestamptz)) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, ws, id, user, body.OperationID, body.Status, body.Reason, body.SnoozedUntil)
+	var subject string
+	if err = tx.QueryRow(r.Context(), `SELECT issue_id::text FROM supervision_subject WHERE workspace_id=$1 AND issue_id=$2 FOR UPDATE`, ws, issue).Scan(&subject); err != nil {
+		writeError(w, 404, "任务尚未登记")
+		return
+	}
+	tag, err := tx.Exec(r.Context(), `INSERT INTO supervision_action(workspace_id,finding_id,actor_id,operation_id,action,reason,receipt,created_at) VALUES($1,$2,$3,$4,$5,$6,jsonb_build_object('snoozed_until',$7::timestamptz),clock_timestamp()) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, ws, id, user, body.OperationID, body.Status, body.Reason, body.SnoozedUntil)
 	if err == nil && tag.RowsAffected() == 0 {
 		var same bool
 		err = tx.QueryRow(r.Context(), `SELECT finding_id=$3::uuid AND action=$4 AND reason=$5 AND (receipt->>'snoozed_until')::timestamptz IS NOT DISTINCT FROM $6::timestamptz FROM supervision_action WHERE workspace_id=$1 AND operation_id=$2`, ws, body.OperationID, id, body.Status, body.Reason, body.SnoozedUntil).Scan(&same)

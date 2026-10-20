@@ -385,7 +385,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	}
 	batch := util.UUIDToString(dbid.NewV7())
 	raw, _ := json.Marshal(materials)
-	if _, err = tx.Exec(ctx, `INSERT INTO supervision_batch(id,workspace_id,issue_id,target_version,materials,rules_version) VALUES($1,$2,$3,$4,$5,$6)`, batch, ws, issue, version, raw, RulesVersion); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO supervision_batch(id,workspace_id,issue_id,target_version,materials,rules_version,created_at) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp())`, batch, ws, issue, version, raw, RulesVersion); err != nil {
 		return err
 	}
 	var current json.RawMessage
@@ -592,6 +592,34 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	if status != "running" {
 		return fmt.Errorf("批次已失效")
 	}
+	// 人工操作与结果提交共用任务锁，避免新决定插入检查与写入之间。
+	var subject string
+	if err = tx.QueryRow(ctx, `SELECT issue_id::text FROM supervision_subject WHERE workspace_id=$1 AND issue_id=$2 FOR UPDATE`, ws, issue).Scan(&subject); err != nil {
+		return err
+	}
+	protectedIDs := map[string]bool{}
+	protectedFingerprints := map[string]bool{}
+	decisions, err := tx.Query(ctx, `SELECT DISTINCT f.id::text,f.fingerprint FROM supervision_finding f
+      JOIN supervision_action a ON a.finding_id=f.id AND a.workspace_id=f.workspace_id
+      WHERE f.workspace_id=$1 AND f.issue_id=$2 AND a.action IN('open','in_progress','resolved','ignored')
+      AND a.created_at>(SELECT created_at FROM supervision_batch WHERE id=$3)`, ws, issue, batch)
+	if err != nil {
+		return err
+	}
+	for decisions.Next() {
+		var id, fingerprint string
+		if err = decisions.Scan(&id, &fingerprint); err != nil {
+			decisions.Close()
+			return err
+		}
+		protectedIDs[id] = true
+		protectedFingerprints[fingerprint] = true
+	}
+	err = decisions.Err()
+	decisions.Close()
+	if err != nil {
+		return err
+	}
 	var materials []Material
 	if err = json.Unmarshal(raw, &materials); err != nil {
 		return err
@@ -619,6 +647,9 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 		return err
 	}
 	for _, f := range result.Findings {
+		if protectedIDs[f.ID] {
+			continue
+		}
 		if f.ID != "" {
 			evidence := marshalEvidence(f.Evidence, batch)
 			tag, err := tx.Exec(ctx, `UPDATE supervision_finding SET batch_id=$4,title=$5,description=$6,impact=$7,recommendation=$8,confidence=$9,evidence=$10,last_seen_at=now(),
@@ -633,6 +664,9 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 			continue
 		}
 		hash := sha256.Sum256([]byte(f.Code + ":" + f.Evidence[0].Kind + ":" + f.Evidence[0].ID))
+		if protectedFingerprints[hex.EncodeToString(hash[:])] {
+			continue
+		}
 		evidence := marshalEvidence(f.Evidence, batch)
 		_, err = tx.Exec(ctx, `INSERT INTO supervision_finding(workspace_id,issue_id,fingerprint,batch_id,title,description,impact,recommendation,confidence,evidence)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(workspace_id,issue_id,fingerprint) DO UPDATE
@@ -644,6 +678,9 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 		}
 	}
 	for _, r := range result.Resolutions {
+		if protectedIDs[r.ID] {
+			continue
+		}
 		evidence := marshalEvidence(r.Evidence, batch)
 		tag, err := tx.Exec(ctx, `UPDATE supervision_finding SET status='resolved',human_resolution=false,last_seen_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND id=$3 AND first_seen_at<(SELECT created_at FROM supervision_batch WHERE id=$4)`, ws, issue, r.ID, batch)
 		if err != nil {
@@ -668,10 +705,17 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 			return err
 		}
 	}
-	gaps, _ := json.Marshal(result.Gaps)
+	summary, efficiency, correctness := result.Summary, result.Efficiency, result.Correctness
+	currentGaps := result.Gaps
+	if len(protectedIDs) > 0 {
+		summary = "检查期间有新的人工处理，本轮结论保存在审查历史，当前问题状态以最新人工处理为准。"
+		efficiency, correctness = "uncertain", "uncertain"
+		currentGaps = []string{"人工处理后尚未重新复核。"}
+	}
+	gaps, _ := json.Marshal(currentGaps)
 	_, err = tx.Exec(ctx, `UPDATE supervision_subject SET summary=$3,efficiency=$4,correctness=$5,gaps=$6,last_checked_at=now(),failures=0,error='',force_review=false,
       reviewed_version=CASE WHEN NOT EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.generation>m.reviewed_generation) THEN $7 ELSE reviewed_version END,
-      next_attempt_at=now() WHERE workspace_id=$1 AND issue_id=$2`, ws, issue, redact.Text(result.Summary), result.Efficiency, result.Correctness, gaps, target)
+      next_attempt_at=now() WHERE workspace_id=$1 AND issue_id=$2`, ws, issue, redact.Text(summary), efficiency, correctness, gaps, target)
 	if err != nil {
 		return err
 	}

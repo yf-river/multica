@@ -167,6 +167,7 @@
     "actions_empty": "No handling records yet",
     "materials_count": "{{count}} materials",
     "recheck_title": "Re-check this task?",
+    "recheck_paused": "Resume supervision before reviewing this task again.",
     "recheck_body": "Reads the current materials again and produces a new conclusion. It may take a few minutes and does not modify the task.",
     "recheck_confirm": "Start re-check",
     "agent_instructions_filled": "Agent instructions filled ({{count}} characters).",

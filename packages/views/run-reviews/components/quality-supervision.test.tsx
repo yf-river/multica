@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithI18n } from "../../test/i18n";
@@ -74,6 +74,8 @@ describe("quality supervision", () => {
     });
     mocks.evidence.mockResolvedValue({ kind: "trace", id: "source-1", issue_id: "issue", run_id: "run-1", batch_id: "batch-1", snapshot: true, text: "审查时的证据片段", offset: 0, end: 8, length: 8, deleted: false });
     renderPage();
+    expect(await screen.findByRole("button", { name: "重新审查" })).toBeDisabled();
+    expect(screen.getByText("Resume supervision before reviewing this task again.")).toBeInTheDocument();
     fireEvent.click(await screen.findByText("查看证据、影响和建议"));
     fireEvent.click(screen.getByRole("button", { name: /View evidence/ }));
     expect(await screen.findByText("审查时的证据片段")).toBeInTheDocument();
@@ -97,6 +99,17 @@ describe("quality supervision", () => {
     expect(await screen.findByText("Preview trigger targets before sending.")).toBeInTheDocument();
     expect(screen.getByText("Not previewed yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送反馈" })).toBeDisabled();
+    let finishPreview!: (value: { agents: { id: string; name: string }[]; blocked: never[] }) => void;
+    mocks.preview.mockReturnValueOnce(new Promise((resolve) => { finishPreview = resolve; }));
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "正文 A" } });
+    fireEvent.click(screen.getByRole("button", { name: "预览触发对象" }));
+    await waitFor(() => expect(mocks.preview).toHaveBeenLastCalledWith("issue", "正文 A"));
+    fireEvent.change(input, { target: { value: "正文 B" } });
+    await act(async () => { finishPreview({ agents: [{ id: "agent-1", name: "旧正文的负责人" }], blocked: [] }); });
+    expect(await screen.findByText("Content changed; preview again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送反馈" })).toBeDisabled();
+    expect(screen.queryByText("旧正文的负责人")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "预览触发对象" }));
     expect(await screen.findByText("质量监督（DeepSeek Flash）")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送反馈" })).toBeEnabled();

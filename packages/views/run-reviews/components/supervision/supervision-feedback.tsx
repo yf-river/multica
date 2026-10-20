@@ -50,7 +50,7 @@ export function SupervisionFeedbackDialog({ open, close, finding, issueId, assig
   });
   const [operation, setOperation] = useState(createSafeId);
   const [previewedContent, setPreviewedContent] = useState("");
-  const preview = useMutation({ mutationFn: () => api.previewCommentTriggers(issueId, content), onSuccess: () => setPreviewedContent(content), onError: (e) => toast.error(errorText(e)) });
+  const preview = useMutation({ mutationFn: (submittedContent: string) => api.previewCommentTriggers(issueId, submittedContent), onSuccess: (_, submittedContent) => setPreviewedContent(submittedContent), onError: (e) => toast.error(errorText(e)) });
   const send = useMutation({ mutationFn: () => api.sendSupervisionFeedback(finding.id, { content, operation_id: operation }), onError: (e) => toast.error(errorText(e)) });
   const previewReady = previewedContent !== "" && previewedContent === content;
   const stale = previewedContent !== "" && previewedContent !== content;
@@ -133,7 +133,7 @@ export function SupervisionFeedbackDialog({ open, close, finding, issueId, assig
             {previewReady ? (agents.length > 0 ? t(($) => $.supervision.feedback_route_hint) : t(($) => $.supervision.trigger_only_comment)) : t(($) => $.supervision.send_needs_preview)}
           </p>
           <Button variant="ghost" disabled={send.isPending} onClick={close}>{t(($) => $.supervision.cancel)}</Button>
-          <Button variant="outline" disabled={preview.isPending || send.isPending || send.isSuccess} onClick={() => preview.mutate()}>
+          <Button variant="outline" disabled={preview.isPending || send.isPending || send.isSuccess} onClick={() => preview.mutate(content)}>
             {t(($) => $.supervision.preview_feedback)}
           </Button>
           <Button

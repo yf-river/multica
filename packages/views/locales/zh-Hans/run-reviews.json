@@ -167,6 +167,7 @@
     "actions_empty": "还没有处理记录",
     "materials_count": "{{count}} 份材料",
     "recheck_title": "重新审查这个任务？",
+    "recheck_paused": "监督已暂停，请先恢复监督再重新审查。",
     "recheck_body": "会重新读取该任务当前材料并生成新结论，可能需要几分钟；不会修改任务内容。",
     "recheck_confirm": "开始重新审查",
     "agent_instructions_filled": "该 Agent 的指令已填写（{{count}} 字）。",

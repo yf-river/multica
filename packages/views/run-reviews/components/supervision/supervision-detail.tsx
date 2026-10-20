@@ -40,7 +40,7 @@ import { errorText, moment } from "./supervision-shared";
  * questions: what was concluded, what is wrong, what evidence backs it up,
  * where reading stopped, then the audit trails.
  */
-export function SupervisionDetail({ issueId, canManage, close }: { issueId: string; canManage: boolean; close: () => void }) {
+export function SupervisionDetail({ issueId, canManage, enabled, close }: { issueId: string; canManage: boolean; enabled: boolean; close: () => void }) {
   const { t } = useT("run-reviews");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -100,11 +100,13 @@ export function SupervisionDetail({ issueId, canManage, close }: { issueId: stri
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" render={<AppLink href={paths.issueDetail(issueId)} />}>{t(($) => $.supervision.open_task)}</Button>
               {canManage && (
-                <Button variant="outline" disabled={recheck.isPending} onClick={() => setConfirming(true)}>
+                <Button variant="outline" disabled={!enabled || recheck.isPending} title={!enabled ? t(($) => $.supervision.recheck_paused) : undefined} onClick={() => setConfirming(true)}>
                   {t(($) => $.supervision.recheck)}
                 </Button>
               )}
             </div>
+
+            {canManage && !enabled && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.recheck_paused)}</p>}
 
             <section aria-labelledby="supervision-conclusion">
               <h3 id="supervision-conclusion" className="font-semibold">{t(($) => $.supervision.current_conclusion)}</h3>
@@ -308,7 +310,7 @@ export function SupervisionDetail({ issueId, canManage, close }: { issueId: stri
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={recheck.isPending}>{t(($) => $.supervision.cancel)}</AlertDialogCancel>
-            <AlertDialogAction disabled={recheck.isPending} onClick={() => recheck.mutate()}>
+            <AlertDialogAction disabled={!enabled || recheck.isPending} onClick={() => recheck.mutate()}>
               {t(($) => $.supervision.recheck_confirm)}
             </AlertDialogAction>
           </AlertDialogFooter>

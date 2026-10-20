@@ -325,7 +325,7 @@ export function QualitySupervision() {
       )}
 
       <SupervisionSettings open={settings} close={() => setSettings(false)} config={config} />
-      <SupervisionDetail issueId={selected} canManage={data.can_manage} close={() => route({ selected: null })} />
+      <SupervisionDetail issueId={selected} canManage={data.can_manage} enabled={config.enabled} close={() => route({ selected: null })} />
     </div>
   );
 }
