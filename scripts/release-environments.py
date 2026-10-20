@@ -45,9 +45,10 @@ def http(url, method='GET'):
         try: return json.loads(data)
         except ValueError: return data.decode()
 
-def ready(url, timeout=90):
+def ready(url, timeout=90, pid=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if pid is not None and not exists(pid): raise RuntimeError("服务启动进程已退出: "+url)
         try: return http(url)
         except Exception: time.sleep(.5)
     raise RuntimeError('服务启动失败: ' + url)
@@ -323,11 +324,11 @@ def launch(env, release, cfg, m):
     result={}
     m['pids']=result
     result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
-    ready(m['backend_url']+'/health')
+    ready(m['backend_url']+'/health',pid=result['server'])
     stop_maintenance(env)
     webcmd=['node',release/'apps/web/server.js'] if (release/'apps/web/server.js').exists() else ['node',release/'apps/web/node_modules/next/dist/bin/next','start','-p',str(m['frontend_port']),'-H','0.0.0.0']
     result['web']=start(webcmd,release/'apps/web',{**cfg['web'], 'MULTICA_RELEASE_MANIFEST': str(release/'release.json')},m['log_paths']['web'])
-    ready(m['frontend_url']+'/login')
+    ready(m['frontend_url']+'/login',pid=result['web'])
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
     # 以 CLI 管理的 profile 启动；PID 来自健康端点，不猜测子进程。

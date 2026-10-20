@@ -58,6 +58,11 @@ class DeliveryTests(unittest.TestCase):
         with patch.object(worker,'busy',return_value=False),patch.object(worker,'own_candidate',return_value=candidate),patch.object(worker,'source') as source,patch.object(worker,'advance'),patch.object(r,'validate_candidate') as validate,patch.object(r,'read',return_value={'frontend_url':'http://int'}):
             worker.prepare(d);source.assert_not_called();validate.assert_called_once_with(candidate)
 
+    def test_dead_startup_process_fails_without_waiting_for_http_timeout(self):
+        with patch.object(r,'exists',return_value=False),patch.object(r,'http') as http:
+            with self.assertRaisesRegex(RuntimeError,'启动进程已退出'):r.ready('http://fixture',pid=123)
+            http.assert_not_called()
+
     def test_coordinator_exit_keeps_application_processes_alive(self):
         files={}
         original=Path.write_text
@@ -68,6 +73,7 @@ class DeliveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'require_control_directory'),patch.object(r,'run') as command,patch.object(Path,'write_text',write):
             w.install('int')
             self.assertIn('KillMode=process',files['multica-delivery-int.service'])
+            self.assertEqual(files['multica-delivery-int.service'].count('Environment=HOME='),1)
             self.assertIn('OnBootSec=30s',files['multica-delivery-int.timer'])
             self.assertIn('OnUnitInactiveSec=15s',files['multica-delivery-int.timer'])
             self.assertIn('--now',command.call_args.args[0])

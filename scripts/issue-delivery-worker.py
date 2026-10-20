@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """外部交付接力：数据库保存审核真源，复用固定发布器执行联调和生产更新。"""
-import argparse, importlib.util, json, os, subprocess, sys, urllib.request, urllib.error
+import argparse, importlib.util, json, os, pwd, subprocess, sys, urllib.request, urllib.error
 from pathlib import Path
 
 spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name('release-environments.py'))
@@ -159,7 +159,7 @@ def install(env):
         if not target.exists():target.write_bytes((Path(__file__).parent/name).read_bytes())
     unit='multica-delivery-'+env
     units=Path('/etc/systemd/system')
-    service='[Unit]\nDescription=Multica delivery '+env+'\nAfter=network.target\n[Service]\nType=oneshot\nKillMode=process\nWorkingDirectory='+str(r.ROOT)+'\nEnvironment=MULTICA_RELEASE_ROOT='+str(r.ROOT)+'\nExecStart='+sys.executable+' '+str(directory/'issue-delivery-worker.py')+' --env '+env+'\n'
+    service='[Unit]\nDescription=Multica delivery '+env+'\nAfter=network.target\n[Service]\nType=oneshot\nKillMode=process\nEnvironment=HOME='+pwd.getpwuid(os.getuid()).pw_dir+'\nWorkingDirectory='+str(r.ROOT)+'\nEnvironment=MULTICA_RELEASE_ROOT='+str(r.ROOT)+'\nExecStart='+sys.executable+' '+str(directory/'issue-delivery-worker.py')+' --env '+env+'\n'
     timer='[Unit]\nDescription=Multica delivery queue '+env+'\n[Timer]\nOnBootSec=30s\nOnUnitInactiveSec=15s\nUnit='+unit+'.service\n[Install]\nWantedBy=timers.target\n'
     (units/(unit+'.service')).write_text(service)
     (units/(unit+'.timer')).write_text(timer)
