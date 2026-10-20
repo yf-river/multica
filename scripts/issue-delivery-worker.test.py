@@ -58,4 +58,18 @@ class DeliveryTests(unittest.TestCase):
         with patch.object(worker,'busy',return_value=False),patch.object(worker,'own_candidate',return_value=candidate),patch.object(worker,'source') as source,patch.object(worker,'advance'),patch.object(r,'validate_candidate') as validate,patch.object(r,'read',return_value={'frontend_url':'http://int'}):
             worker.prepare(d);source.assert_not_called();validate.assert_called_once_with(candidate)
 
+    def test_coordinator_exit_keeps_application_processes_alive(self):
+        files={}
+        original=Path.write_text
+        def write(path,text,*args,**kwargs):
+            if str(path).startswith('/etc/systemd/system/'):
+                files[path.name]=text;return len(text)
+            return original(path,text,*args,**kwargs)
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'require_control_directory'),patch.object(r,'run') as command,patch.object(Path,'write_text',write):
+            w.install('int')
+            self.assertIn('KillMode=process',files['multica-delivery-int.service'])
+            self.assertIn('OnBootSec=30s',files['multica-delivery-int.timer'])
+            self.assertIn('OnUnitInactiveSec=15s',files['multica-delivery-int.timer'])
+            self.assertIn('--now',command.call_args.args[0])
+
 if __name__=='__main__':unittest.main()
