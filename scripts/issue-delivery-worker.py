@@ -51,17 +51,25 @@ class Worker:
         return c and c.get('status') not in ('released','succeeded','failed') and c.get('delivery_id')!=d['id']
     def prepare(self,d):
         if self.busy(d):raise Busy('联调正由另一项交付使用')
-        path=self.source(d,integrate=True)
         c=self.own_candidate(d)
+        if c and c['status']=='building':
+            # 服务重启时先证明旧站仍健康；不能把半切换当作可直接重建。
+            with r.lock('publisher'):
+                c=self.own_candidate(d)
+                if c['status']=='building':
+                    live=r.read(r.meta_path('int'))
+                    if live['release_id']!=c.get('previous_int_release'):raise r.RecoveryRequired('构建中断后环境已切换，需要先核实恢复状态')
+                    r.check_process_ownership('int',live);r.isolation_check()
+                    c['status']='failed';r.write(r.candidate_path(),c,True)
         if not c or c['status'] in ('released','succeeded','failed'):
-            try:c=r.prepare_int(path)
+            path=self.source(d,integrate=True)
+            try:c=r.prepare_int(path,delivery=dict(delivery_id=d['id'],delivery_env=self.env,approved_source=d['source_commit']))
             except RuntimeError as e:
                 if '占用' in str(e) or '构建或发布' in str(e):raise Busy(str(e)) from e
                 raise
-            c.update(delivery_id=d['id'],delivery_env=self.env,approved_source=d['source_commit'])
-            r.write(r.candidate_path(),c,True)
-        elif c['status'] not in ('verifying','accepted'):
-            raise RuntimeError('交付构建或恢复未完成，请先检查原发布记录')
+        elif c['status'] in ('verifying','accepted'):
+            r.validate_candidate(c)
+        else:raise r.RecoveryRequired('交付构建或恢复未完成，请先检查原发布记录')
         self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path('int'))['frontend_url'])
         self.advance(d,'notify')
     def accept(self,d,release=False):
@@ -73,8 +81,8 @@ class Worker:
             r.accept(c['id'],evidence)
         if release:self.advance(d,'validated')
         else:
-            r.release_candidate(c['id'])
             self.advance(d,'accepted')
+            r.release_candidate(c['id'])
     def publish(self,d):
         if self.env!='prod':raise RuntimeError('联调交付队列不能更新生产')
         c=self.own_candidate(d)
@@ -92,13 +100,14 @@ class Worker:
         r.request_release(c['id'])
     def tick(self):
         with r.lock('delivery-worker-'+self.env):
-            rows=self.api('delivery-queue')
             current=r.candidate() if r.candidate_path().exists() else None
-            if current:
-                cancelled=next((d for d in rows if d['id']==current.get('delivery_id') and d['phase']=='cancelled'),None)
-                if cancelled and current['status'] in ('verifying','accepted'):r.release_candidate(current['id'])
+            current_id=current.get('delivery_id') if current else None
+            rows=self.api('delivery-queue'+('?current='+current_id if current_id else ''))
+            owner=next((d for d in rows if d['id']==current_id),None)
+            if current and owner and owner['phase'] in ('cancelled','needs_changes','awaiting_review') and current['status'] in ('verifying','accepted'):
+                r.release_candidate(current['id'])
             for d in rows:
-                if d['phase']!='cancelled':
+                if d['phase'] not in ('cancelled','needs_changes'):
                     try:self.pin(d)
                     except Exception as e:self.advance(d,'fail',error='无法固定交付提交：'+str(e)[:1500]);return
             # 先完成已占用环境的交付，再按创建顺序处理排队项。

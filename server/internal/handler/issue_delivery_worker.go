@@ -33,7 +33,13 @@ func (h *Handler) ListDeliveryQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var data json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY created_at),'[]') FROM (SELECT d.*,i.number,i.project_id FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND d.phase NOT IN ('published','needs_changes') ORDER BY created_at LIMIT 100)x`, ws).Scan(&data)
+	current := r.URL.Query().Get("current")
+	if current != "" {
+		if _, ok = parseUUIDOrBadRequest(w, current, "delivery_id"); !ok {
+			return
+		}
+	}
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR d.id=NULLIF($2,'')::uuid) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付队列失败")
 		return

@@ -48,7 +48,7 @@ func (h *Handler) deliveryHuman(r *http.Request, ws string) bool {
 }
 func (h *Handler) deliveryJSON(w http.ResponseWriter, r *http.Request, ws, issue string) {
 	var data json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved') AND q.created_at<d.created_at) AS queue_ahead FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved','testing','preparing_release','publishing') AND q.created_at<d.created_at) AS queue_ahead FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付记录失败")
 		return
@@ -291,7 +291,7 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "交付版本已变化，请刷新后重试")
 		return
 	}
-	if body.Action == "accept" || body.Action == "approve" {
+	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" {
 		var valid bool
 		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN issue_delivery_plan p ON p.id=d.plan_id AND p.workspace_id=d.workspace_id JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE d.id=$1 AND p.confirmed_by IS NOT NULL)`, id).Scan(&valid)
 		if err != nil || !valid {
@@ -332,6 +332,12 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='approved',approved_by=$4,approved_at=now(),approval_comment_id=NULLIF($5,'')::uuid,error='',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND id=$3`, ws, issue, id, approver, body.CommentID)
 		}
+	case "retest":
+		if phase != "awaiting_review" {
+			writeError(w, 409, "当前阶段不能重新准备联调")
+			return
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='waiting_int',candidate_id='',candidate_url='',acceptance_submitted=false,verification_comment_id=$2,worker_token=NULL,error='',revision=revision+1,updated_at=now() WHERE id=$1`, id, dbid.NewV7())
 	case "cancel":
 		if !h.deliveryHuman(r, ws) || phase == "publishing" || phase == "published" {
 			writeError(w, 409, "当前交付不能取消")

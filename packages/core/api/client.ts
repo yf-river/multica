@@ -776,7 +776,7 @@ export class ApiClient {
   async confirmIssuePlan(id: string, planId: string, revision: number) {
     return parseOrThrow<DeliverySnapshot>(await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/delivery-plan/confirm`, { method: "POST", body: JSON.stringify({ plan_id: planId, revision }) }), deliverySnapshotSchema, { endpoint: "POST /api/issues/:id/delivery-plan/confirm", sensitive: true, mayHaveCommitted: true });
   }
-  async actIssueDelivery(issueId: string, id: string, revision: number, action: "approve" | "cancel") {
+  async actIssueDelivery(issueId: string, id: string, revision: number, action: "approve" | "cancel" | "retest") {
     return parseOrThrow<DeliverySnapshot>(await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/deliveries/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ revision, action }) }), deliverySnapshotSchema, { endpoint: "POST /api/issues/:id/deliveries/:id/action", sensitive: true, mayHaveCommitted: true });
   }
 

@@ -2755,6 +2755,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                     variant={sidebarOpen ? "secondary" : "ghost"}
                     size="icon-sm"
                     className={sidebarOpen ? "" : "text-muted-foreground"}
+                    aria-label={t(($) => $.detail.sidebar_tooltip)}
                     onClick={handleToggleSidebar}
                   >
                     <PanelRight />

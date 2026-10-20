@@ -932,6 +932,9 @@
       "published": "生产更新成功",
       "needs_changes": "需要处理问题",
       "cancelled": "已取消交付"
-    }
+    },
+    "open_int": "Open current int",
+    "retest": "Prepare int again",
+    "retest_hint": "Queue this commit for integration verification again; production stays unchanged."
   }
 }

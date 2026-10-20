@@ -516,7 +516,7 @@ def candidate(version=None):
     if version and record['id'] != version: raise RuntimeError('int 已由其他候选占用')
     return record
 
-def prepare_int(source, timeout=900):
+def prepare_int(source, timeout=900, delivery=None):
     if os.environ.get('MULTICA_TASK_ID') and os.environ.get('MULTICA_SERVER_URL','').rstrip('/') == read(meta_path('int'))['backend_url'].rstrip('/'):
         raise RuntimeError('int 中运行的任务不能同步更新自身，请从生产运行时发起')
     # 生产升级需要等待所有运行退出，不能让其他运行阻塞在联调锁上。
@@ -531,7 +531,8 @@ def prepare_int(source, timeout=900):
                         git_common=output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),
                         branch=output(['git','symbolic-ref','HEAD'],cwd=source), status='building',
                         task_id=os.environ.get('MULTICA_TASK_ID',''), server_url=os.environ.get('MULTICA_SERVER_URL',''),
-                        workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''))
+                        workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''),publisher_pid=os.getpid(),previous_int_release=read(meta_path('int'))['release_id'])
+            if delivery:record.update(delivery)
             write(candidate_path(), record, True)
             try:
                 directory=idle_slot('int')

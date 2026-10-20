@@ -13,7 +13,7 @@ import (
 // 交付命令与页面使用同一套版本和确认接口。
 func init() {
 	group := &cobra.Command{Use: "delivery", Short: "Plan confirmation, integration queue and production review"}
-	for _, action := range []string{"status", "plan", "confirm-plan", "submit", "accept", "approve", "cancel"} {
+	for _, action := range []string{"status", "plan", "confirm-plan", "submit", "accept", "approve", "retest", "cancel"} {
 		action := action
 		cmd := &cobra.Command{Use: action + " <issue-id>", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newAPIClient(cmd)

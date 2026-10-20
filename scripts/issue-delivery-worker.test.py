@@ -47,4 +47,15 @@ class DeliveryTests(unittest.TestCase):
                 r.prepare_database(new,{'identity':'int'},old)
                 self.assertEqual(check.call_args_list[0].args[0],old);self.assertEqual(check.call_args_list[1].args[0],new);migrate.assert_called_once()
 
+    def test_review_state_releases_previous_slot_after_process_restart(self):
+        worker=object.__new__(w.Worker);worker.env='prod';d={'id':'one','phase':'awaiting_review'}
+        current={'id':'candidate','delivery_id':'one','status':'accepted'}
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'candidate_path',return_value=Path(__file__)),patch.object(r,'candidate',return_value=current),patch.object(worker,'api',return_value=[d]),patch.object(worker,'pin'),patch.object(r,'release_candidate') as release:
+            worker.tick();release.assert_called_once_with('candidate')
+    def test_verifying_candidate_is_not_remerged_on_resume(self):
+        worker=object.__new__(w.Worker);worker.env='prod';d={'id':'one','source_commit':'a'*40}
+        candidate={'id':'candidate','status':'verifying'}
+        with patch.object(worker,'busy',return_value=False),patch.object(worker,'own_candidate',return_value=candidate),patch.object(worker,'source') as source,patch.object(worker,'advance'),patch.object(r,'validate_candidate') as validate,patch.object(r,'read',return_value={'frontend_url':'http://int'}):
+            worker.prepare(d);source.assert_not_called();validate.assert_called_once_with(candidate)
+
 if __name__=='__main__':unittest.main()
