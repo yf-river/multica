@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@multica/core/api";
 import { createSafeId } from "@multica/core/utils";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { SupervisionFinding } from "@multica/core/supervision/schema";
+import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../../../i18n";
 import { blockedReasonLabel } from "../../../issues/blocked-trigger-copy";
 import { errorText } from "./supervision-shared";
@@ -23,14 +25,16 @@ type Props = {
 };
 
 /**
- * Feedback composer. Sending always goes through an explicit trigger preview so
- * the author can see who will be notified, and the receipt distinguishes
- * "comment saved" from "owner actually picked it up".
+ * Feedback composer. The trigger preview is a persistent state block instead of
+ * prose instructions: it always shows who will be notified, or why nobody is
+ * known yet, so the send button never needs a paragraph of explanation.
  */
 export function SupervisionFeedbackDialog({ open, close, finding, issueId, assigneeType, assigneeId }: Props) {
   const { t } = useT("run-reviews");
   const { t: issuesT } = useT("issues");
   const paths = useWorkspacePaths();
+  const contentId = useId();
+  const stateId = useId();
   const mention = assigneeId && (assigneeType === "agent" || assigneeType === "squad") ? `[@负责人](mention://${assigneeType}/${assigneeId})\n\n` : "";
   const [content, setContent] = useState(() => {
     const references = finding.evidence.map((e) => {
@@ -51,72 +55,95 @@ export function SupervisionFeedbackDialog({ open, close, finding, issueId, assig
   const previewReady = previewedContent !== "" && previewedContent === content;
   const stale = previewedContent !== "" && previewedContent !== content;
   const locked = send.isPending || send.isSuccess || (send.isError && !(send.error instanceof ApiError && send.error.status >= 400 && send.error.status < 500));
-  const blocked = preview.data?.blocked ?? [];
+  const blocked = previewReady ? preview.data?.blocked ?? [] : [];
+  const agents = previewReady ? preview.data?.agents ?? [] : [];
   return (
     <Dialog open={open} onOpenChange={(value) => { if (!value && !send.isPending) close(); }}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
-        <DialogTitle>{t(($) => $.supervision.feedback)}</DialogTitle>
-        <DialogDescription>{t(($) => $.supervision.feedback_hint)}</DialogDescription>
-        <p className="text-caption text-muted-foreground">{t(($) => $.supervision.feedback_steps)}</p>
-        <label className="space-y-2 text-body" htmlFor="supervision-feedback-content">
-          <span>{t(($) => $.supervision.feedback_content)}</span>
-          <textarea
-            id="supervision-feedback-content"
-            className="min-h-52 w-full rounded-md border bg-background p-3"
-            value={content}
-            disabled={locked}
-            onChange={(e) => {
-              setContent(e.target.value);
-              if (send.isError) {
-                send.reset();
-                setOperation(createSafeId());
-              }
-            }}
-          />
-        </label>
-        {preview.data && previewedContent === content && (
-          <div className="space-y-1 text-caption">
-            <p>{t(($) => $.supervision.feedback_targets, { count: preview.data.agents.length })}</p>
-            <ul className="space-y-0.5">{preview.data.agents.map((agent) => <li key={agent.id}>{agent.name}</li>)}</ul>
+      <DialogContent className="sm:max-w-[600px]">
+        <DialogHeader className="pr-8">
+          <DialogTitle className="leading-6">{t(($) => $.supervision.feedback)}</DialogTitle>
+          <DialogDescription>{t(($) => $.supervision.feedback_hint)}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label htmlFor={contentId} className="block text-caption text-muted-foreground">
+              {t(($) => $.supervision.feedback_content)}
+            </label>
+            <Textarea
+              id={contentId}
+              className="max-h-[40dvh] min-h-44 resize-y bg-surface-hover/60 p-3 leading-6"
+              value={content}
+              disabled={locked}
+              onChange={(e) => {
+                setContent(e.target.value);
+                if (send.isError) {
+                  send.reset();
+                  setOperation(createSafeId());
+                }
+              }}
+            />
+          </div>
+
+          <section id={stateId} aria-label={t(($) => $.supervision.trigger_targets)} aria-live="polite" className="rounded-lg bg-surface-hover px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-caption text-muted-foreground">{t(($) => $.supervision.trigger_targets)}</span>
+              {previewReady ? (
+                agents.length > 0 ? agents.map((agent) => (
+                  <span key={agent.id} className="inline-flex items-center gap-1.5 rounded-full bg-surface-raised px-2 py-0.5 text-caption text-foreground ring-1 ring-surface-border">
+                    <span aria-hidden className="size-1.5 rounded-full bg-info" />
+                    {agent.name}
+                  </span>
+                )) : <span className="text-caption text-muted-foreground">{t(($) => $.supervision.trigger_none)}</span>
+              ) : (
+                <span className={cn("text-caption", stale ? "text-warning" : "text-muted-foreground")}>
+                  {stale ? t(($) => $.supervision.preview_stale) : t(($) => $.supervision.trigger_not_previewed)}
+                </span>
+              )}
+            </div>
             {blocked.length > 0 && (
-              <div className="space-y-0.5 text-warning">
-                <p>{t(($) => $.supervision.trigger_blocked)}</p>
-                <ul className="space-y-0.5">{blocked.map((item) => <li key={`${item.target_type}:${item.target_id}`}>{blockedReasonLabel(item.reason_code, issuesT)}</li>)}</ul>
-              </div>
+              <ul className="mt-1.5 space-y-0.5 text-caption text-warning">
+                {blocked.map((item) => <li key={item.target_type + ":" + item.target_id}>{blockedReasonLabel(item.reason_code, issuesT)}</li>)}
+              </ul>
             )}
-          </div>
-        )}
-        {send.data && (
-          <div role="status" className="space-y-1 text-body">
-            <p>{send.data.pending ? t(($) => $.supervision.feedback_pending) : send.data.reconciled ? t(($) => $.supervision.feedback_unknown) : t(($) => $.supervision.feedback_sent)}</p>
-            {!send.data.pending && !send.data.reconciled && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.feedback_receipt)}</p>}
-            {send.data.trigger_outcomes?.map((outcome) => (
-              <p key={outcome.target_id} className="text-caption">
-                {outcome.status === "queued" ? t(($) => $.supervision.feedback_queued)
-                  : outcome.status === "coalesced" ? t(($) => $.supervision.feedback_coalesced)
-                  : outcome.status === "deferred" ? t(($) => $.supervision.feedback_deferred)
-                  : outcome.status === "blocked" ? blockedReasonLabel(outcome.reason_code, issuesT)
-                  : t(($) => $.supervision.feedback_unknown)}
+          </section>
+
+          {send.data && (
+            <div role="status" className="rounded-lg border border-info/30 bg-info/5 p-3">
+              <p className="text-body font-medium">
+                {send.data.pending ? t(($) => $.supervision.feedback_pending) : send.data.reconciled ? t(($) => $.supervision.feedback_unknown) : t(($) => $.supervision.feedback_sent)}
               </p>
-            ))}
-          </div>
-        )}
-        {send.isError && <p role="alert" className="text-destructive">{errorText(send.error)}</p>}
-        {!previewReady && !send.data && (
-          <p className="text-caption text-muted-foreground">{stale ? t(($) => $.supervision.preview_stale) : t(($) => $.supervision.send_needs_preview)}</p>
-        )}
-        <div className="flex flex-wrap justify-end gap-2">
+              {!send.data.pending && !send.data.reconciled && <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.feedback_receipt)}</p>}
+              {send.data.trigger_outcomes?.map((outcome) => (
+                <p key={outcome.target_id} className="mt-1 text-caption">
+                  {outcome.status === "queued" ? t(($) => $.supervision.feedback_queued)
+                    : outcome.status === "coalesced" ? t(($) => $.supervision.feedback_coalesced)
+                    : outcome.status === "deferred" ? t(($) => $.supervision.feedback_deferred)
+                    : outcome.status === "blocked" ? blockedReasonLabel(outcome.reason_code, issuesT)
+                    : t(($) => $.supervision.feedback_unknown)}
+                </p>
+              ))}
+            </div>
+          )}
+          {send.isError && <p role="alert" className="text-destructive">{errorText(send.error)}</p>}
+        </div>
+
+        <DialogFooter className="items-center">
+          <p className="mr-auto hidden text-caption text-muted-foreground sm:block">
+            {previewReady ? t(($) => $.supervision.feedback_route_hint) : t(($) => $.supervision.send_needs_preview)}
+          </p>
           <Button variant="ghost" disabled={send.isPending} onClick={close}>{t(($) => $.supervision.cancel)}</Button>
           <Button variant="outline" disabled={preview.isPending || send.isPending || send.isSuccess} onClick={() => preview.mutate()}>
             {t(($) => $.supervision.preview_feedback)}
           </Button>
           <Button
+            aria-describedby={!previewReady ? stateId : undefined}
             disabled={!content.trim() || !previewReady || send.isPending || (send.isSuccess && !send.data?.pending)}
             onClick={() => send.mutate()}
           >
             {send.data?.pending ? t(($) => $.supervision.query_receipt) : t(($) => $.supervision.send_feedback)}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

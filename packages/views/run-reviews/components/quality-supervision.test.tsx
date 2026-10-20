@@ -6,10 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithI18n } from "../../test/i18n";
 import { EMPTY_SUPERVISION } from "@multica/core/supervision/schema";
 
-const mocks = vi.hoisted(() => ({ snapshot: vi.fn(), list: vi.fn(), check: vi.fn(), detail: vi.fn(), evidence: vi.fn(), replace: vi.fn(), params: new URLSearchParams() }));
+const mocks = vi.hoisted(() => ({ snapshot: vi.fn(), list: vi.fn(), check: vi.fn(), detail: vi.fn(), evidence: vi.fn(), preview: vi.fn(), replace: vi.fn(), params: new URLSearchParams() }));
 vi.mock("@multica/core/paths", () => ({ useWorkspaceId: () => "ws", useWorkspacePaths: () => ({ runReviews: () => "/ws/run-reviews", issueDetail: (id: string) => `/ws/issues/${id}` }) }));
 vi.mock("../../navigation", () => ({ useNavigation: () => ({ pathname: "/ws/run-reviews", searchParams: mocks.params, replace: mocks.replace }), AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
-vi.mock("@multica/core/api", () => ({ api: { getSupervision: mocks.snapshot, listSupervision: mocks.list, checkSupervision: mocks.check, getSupervisionSubject: mocks.detail, getSupervisionEvidence: mocks.evidence, listProjects: async () => ({ projects: [] }), listAgents: async () => [] } }));
+vi.mock("@multica/core/api", () => ({ api: { getSupervision: mocks.snapshot, listSupervision: mocks.list, checkSupervision: mocks.check, getSupervisionSubject: mocks.detail, getSupervisionEvidence: mocks.evidence, previewCommentTriggers: mocks.preview, listProjects: async () => ({ projects: [] }), listAgents: async () => [] } }));
 import { QualitySupervision, SupervisionEvidencePanel } from "./quality-supervision";
 
 function renderPage() {
@@ -91,10 +91,15 @@ describe("quality supervision", () => {
       findings: [{ id: "f1", title: "字段错误", description: "实际取 UserID", impact: "租户错误", recommendation: "改为 TenantID", confidence: "confirmed", evidence: [], status: "open", human_resolution: false, first_seen_at: "2026-10-20T03:00:00Z", last_seen_at: "2026-10-20T03:00:00Z", snoozed_until: null }],
       notes: [], actions: [], batches: [], coverage: { materials: 1, covered: 1, runs: 1 }, investigations: [],
     });
+    mocks.preview.mockResolvedValue({ agents: [{ id: "agent-1", name: "质量监督（DeepSeek Flash）" }], blocked: [] });
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "反馈给负责人" }));
     expect(await screen.findByText("Preview trigger targets before sending.")).toBeInTheDocument();
+    expect(screen.getByText("Not previewed yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送反馈" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "预览触发对象" }));
+    expect(await screen.findByText("质量监督（DeepSeek Flash）")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送反馈" })).toBeEnabled();
   });
 
   it("does not describe search output or index entries as full source coverage", async () => {

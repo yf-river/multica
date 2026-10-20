@@ -3,6 +3,7 @@
 import { useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { RotateCw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { createSafeId } from "@multica/core/utils";
 import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
@@ -23,6 +24,7 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
+  AlertDialogMedia,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { AppLink, useNavigation } from "../../../navigation";
@@ -84,7 +86,7 @@ export function SupervisionDetail({ issueId, canManage, close }: { issueId: stri
       <SheetContent className="!w-full overflow-y-auto sm:!max-w-[640px]">
         <SheetHeader>
           <SheetTitle className="break-words pr-8">{data?.title ?? t(($) => $.supervision.task_detail)}</SheetTitle>
-          <SheetDescription>{t(($) => $.supervision.detail_hint)}</SheetDescription>
+          <SheetDescription className="text-caption">{t(($) => $.supervision.detail_hint)}</SheetDescription>
         </SheetHeader>
         {detail.isPending ? (
           <p className="p-5" role="status">{t(($) => $.supervision.loading)}</p>
@@ -298,8 +300,9 @@ export function SupervisionDetail({ issueId, canManage, close }: { issueId: stri
         ) : null}
       </SheetContent>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
+        <AlertDialogContent className="sm:max-w-[440px]">
           <AlertDialogHeader>
+            <AlertDialogMedia className="bg-info/10 text-info"><RotateCw /></AlertDialogMedia>
             <AlertDialogTitle>{t(($) => $.supervision.recheck_title)}</AlertDialogTitle>
             <AlertDialogDescription>{t(($) => $.supervision.recheck_body)}</AlertDialogDescription>
           </AlertDialogHeader>
