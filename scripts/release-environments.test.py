@@ -8,6 +8,10 @@ spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name(
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
 class ReleaseTests(unittest.TestCase):
+    def setUp(self):
+        # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
+        self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
+
     def test_task_cannot_restore_or_switch_production(self):
         with patch.dict(r.os.environ, {'MULTICA_TASK_ID':'task'}), patch.object(r,'read') as read, patch.object(r,'owned_stop') as stop:
             with self.assertRaisesRegex(RuntimeError,'request'): r.deploy('prod','missing')
