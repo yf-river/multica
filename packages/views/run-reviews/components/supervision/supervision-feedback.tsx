@@ -130,7 +130,7 @@ export function SupervisionFeedbackDialog({ open, close, finding, issueId, assig
 
         <DialogFooter className="items-center">
           <p className="mr-auto hidden text-caption text-muted-foreground sm:block">
-            {previewReady ? t(($) => $.supervision.feedback_route_hint) : t(($) => $.supervision.send_needs_preview)}
+            {previewReady ? (agents.length > 0 ? t(($) => $.supervision.feedback_route_hint) : t(($) => $.supervision.trigger_only_comment)) : t(($) => $.supervision.send_needs_preview)}
           </p>
           <Button variant="ghost" disabled={send.isPending} onClick={close}>{t(($) => $.supervision.cancel)}</Button>
           <Button variant="outline" disabled={preview.isPending || send.isPending || send.isSuccess} onClick={() => preview.mutate()}>

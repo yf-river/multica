@@ -248,6 +248,7 @@
     "preview_stale": "Content changed; preview again.",
     "trigger_targets": "Targets",
     "trigger_none": "No agent can be notified",
+    "trigger_only_comment": "The comment is posted without triggering an owner.",
     "trigger_not_previewed": "Not previewed yet",
     "feedback_receipt": "Comment sent; trigger results are below.",
     "feedback_template_evidence": "Evidence:",

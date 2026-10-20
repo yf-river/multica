@@ -248,6 +248,7 @@
     "preview_stale": "正文已修改，请重新预览。",
     "trigger_targets": "触发对象",
     "trigger_none": "没有可通知的 Agent",
+    "trigger_only_comment": "只发表评论，不会触发负责人。",
     "trigger_not_previewed": "尚未预览",
     "feedback_receipt": "评论已发送；下面是对负责人的触发结果。",
     "feedback_template_evidence": "证据：",
