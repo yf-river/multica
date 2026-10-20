@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithI18n } from "../../test/i18n";
 import { EMPTY_SUPERVISION } from "@multica/core/supervision/schema";
 
-const mocks = vi.hoisted(() => ({ snapshot: vi.fn(), list: vi.fn(), check: vi.fn(), detail: vi.fn(), evidence: vi.fn(), params: new URLSearchParams() }));
+const mocks = vi.hoisted(() => ({ snapshot: vi.fn(), list: vi.fn(), check: vi.fn(), detail: vi.fn(), evidence: vi.fn(), replace: vi.fn(), params: new URLSearchParams() }));
 vi.mock("@multica/core/paths", () => ({ useWorkspaceId: () => "ws", useWorkspacePaths: () => ({ runReviews: () => "/ws/run-reviews", issueDetail: (id: string) => `/ws/issues/${id}` }) }));
-vi.mock("../../navigation", () => ({ useNavigation: () => ({ pathname: "/ws/run-reviews", searchParams: mocks.params, replace: vi.fn() }), AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
+vi.mock("../../navigation", () => ({ useNavigation: () => ({ pathname: "/ws/run-reviews", searchParams: mocks.params, replace: mocks.replace }), AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
 vi.mock("@multica/core/api", () => ({ api: { getSupervision: mocks.snapshot, listSupervision: mocks.list, checkSupervision: mocks.check, getSupervisionSubject: mocks.detail, getSupervisionEvidence: mocks.evidence, listProjects: async () => ({ projects: [] }), listAgents: async () => [] } }));
 import { QualitySupervision, SupervisionEvidencePanel } from "./quality-supervision";
 
@@ -44,6 +44,59 @@ describe("quality supervision", () => {
     expect(screen.getByText("10 已覆盖当前内容")).toBeInTheDocument();
     expect(screen.getByText("90 暂无执行记录")).toBeInTheDocument();
   });
+  it("surfaces repeated failures and offers a failed filter", async () => {
+    mocks.snapshot.mockResolvedValue({
+      ...EMPTY_SUPERVISION,
+      config: { ...EMPTY_SUPERVISION.config, enabled: true, agent_id: "a1", inventory_complete: true },
+      summary: { ...EMPTY_SUPERVISION.summary, total: 2, covered: 1, failed: 1 },
+    });
+    mocks.list.mockResolvedValue({
+      items: [
+        { issue_id: "broken", identifier: "AIS-9", title: "重试失败的任务", business_status: "todo", project_id: null, desired_version: 1, reviewed_version: 1, summary: "", efficiency: "uncertain", correctness: "uncertain", run_count: 1, gaps: [], last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 3, stopped: false, running: false, open_findings: 0 },
+        { issue_id: "ok", identifier: "AIS-10", title: "正常覆盖的任务", business_status: "todo", project_id: null, desired_version: 1, reviewed_version: 1, summary: "", efficiency: "clear", correctness: "clear", run_count: 1, gaps: [], last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 0, stopped: false, running: false, open_findings: 0 },
+      ],
+      has_more: false,
+      offset: 0,
+    });
+    renderPage();
+    expect(await screen.findByText("1 failed checks")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Check failed" })).toBeInTheDocument();
+    expect(screen.getByText("检查失败，待重试")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /AIS-10/ })).toHaveTextContent("未发现问题");
+  });
+  it("opens cited evidence inside the detail without leaving the page", async () => {
+    mocks.params = new URLSearchParams({ selected: "issue" });
+    mocks.detail.mockResolvedValue({
+      title: "证据核对", description: "只读核验", assignee_type: "agent", assignee_id: "agent-1",
+      subject: { summary: "发现问题", efficiency: "problem", correctness: "problem", gaps: [], desired_version: 1, reviewed_version: 1, last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 0, stopped: false },
+      findings: [{ id: "f1", title: "字段错误", description: "实际取 UserID", impact: "租户错误", recommendation: "改为 TenantID", confidence: "confirmed", evidence: [{ kind: "trace", id: "source-1", batch_id: "batch-1", run_id: "run-1" }], status: "open", human_resolution: false, first_seen_at: "2026-10-20T03:00:00Z", last_seen_at: "2026-10-20T03:00:00Z", snoozed_until: null }],
+      notes: [], actions: [], batches: [], coverage: { materials: 1, covered: 1, runs: 1 }, investigations: [],
+    });
+    mocks.evidence.mockResolvedValue({ kind: "trace", id: "source-1", issue_id: "issue", run_id: "run-1", batch_id: "batch-1", snapshot: true, text: "审查时的证据片段", offset: 0, end: 8, length: 8, deleted: false });
+    renderPage();
+    fireEvent.click(await screen.findByText("查看证据、影响和建议"));
+    fireEvent.click(screen.getByRole("button", { name: /View evidence/ }));
+    expect(await screen.findByText("审查时的证据片段")).toBeInTheDocument();
+    expect(mocks.evidence).toHaveBeenCalledWith("trace", "source-1", 0, "batch-1");
+    expect(mocks.replace).not.toHaveBeenCalled();
+    const records = screen.getByRole("link", { name: "Open in run records" });
+    expect(records.getAttribute("href")).toContain("evidence_id=source-1");
+    expect(records.getAttribute("href")).toContain("tab=records");
+  });
+  it("explains why feedback cannot be sent before the trigger preview", async () => {
+    mocks.params = new URLSearchParams({ selected: "issue" });
+    mocks.detail.mockResolvedValue({
+      title: "反馈核对", description: "只读核验", assignee_type: "agent", assignee_id: "agent-1",
+      subject: { summary: "发现问题", efficiency: "problem", correctness: "problem", gaps: [], desired_version: 1, reviewed_version: 1, last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 0, stopped: false },
+      findings: [{ id: "f1", title: "字段错误", description: "实际取 UserID", impact: "租户错误", recommendation: "改为 TenantID", confidence: "confirmed", evidence: [], status: "open", human_resolution: false, first_seen_at: "2026-10-20T03:00:00Z", last_seen_at: "2026-10-20T03:00:00Z", snoozed_until: null }],
+      notes: [], actions: [], batches: [], coverage: { materials: 1, covered: 1, runs: 1 }, investigations: [],
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "反馈给负责人" }));
+    expect(await screen.findByText("Preview trigger targets before sending.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送反馈" })).toBeDisabled();
+  });
+
   it("does not describe search output or index entries as full source coverage", async () => {
     mocks.params.set("selected", "issue");
     const record = (id: string, tool: string, path: string, end: number, length: number) => ({

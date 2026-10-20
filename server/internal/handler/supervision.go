@@ -257,7 +257,8 @@ func (h *Handler) ListSupervisionSubjects(w http.ResponseWriter, r *http.Request
       AND ($2='' OR i.title ILIKE '%'||$2||'%' OR (w.issue_prefix||'-'||i.number) ILIKE '%'||$2||'%')
       AND ($3='' OR i.project_id=NULLIF($3,'')::uuid)
       AND ($4='' OR $4='all' OR ($4='pending' AND s.desired_version>s.reviewed_version) OR ($4='incomplete' AND s.gaps<>'[]'::jsonb)
-        OR ($4='problems' AND EXISTS(SELECT 1 FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress') AND (f.snoozed_until IS NULL OR f.snoozed_until<=now()))))
+        OR ($4='problems' AND EXISTS(SELECT 1 FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress') AND (f.snoozed_until IS NULL OR f.snoozed_until<=now())))
+        OR ($4='failed' AND s.failures>=3))
       ORDER BY EXISTS(SELECT 1 FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress') AND (f.snoozed_until IS NULL OR f.snoozed_until<=now())) DESC,s.changed_at DESC,i.id
       LIMIT $5 OFFSET $6`, ws, search, project, filter, limit+1, offset)
 	if err != nil {
