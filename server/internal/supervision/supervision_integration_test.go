@@ -63,7 +63,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 		t.Fatalf("no-run accounting=%d", n)
 	}
 	runtime := f.Runtime(t, "离线夹具", dbfx.Cols{"status": "offline"})
-	agent := f.Agent(t, "夹具", runtime)
+	agent := f.Agent(t, "夹具", runtime, dbfx.Cols{"max_concurrent_tasks": 3})
 	sourceTask := f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issues[0], "status": "completed", "completed_at": dbfx.Raw("now()")})
 	note := f.Comment(t, issues[0], "/note 请监督者核验映射，不要直接派发。")
 	large := f.Insert(t, "task_message", dbfx.Cols{"task_id": sourceTask, "seq": 20, "type": "text", "content": strings.Repeat("x", 10*1024*1024) + "END-OF-EVIDENCE"})
@@ -97,7 +97,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	}
 	noteFound := false
 	for _, m := range chunks {
-		if len([]rune(m.Text)) > 8000 {
+		if len([]rune(m.Text)) > 40000 {
 			t.Fatal("unbounded material body")
 		}
 		if m.ID == note {

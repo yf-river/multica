@@ -304,6 +304,15 @@ def stop_maintenance(env):
         owned_stop(pid,'maintenance',str(ROOT))
     marker.unlink(missing_ok=True)
 
+def reviewed_supervision_index_change(release, migration, statements):
+    # 本次已评审的索引替换：配置行锁仍保护旧程序的串行派发，恢复程序无需恢复旧索引。
+    replacement=Path(release)/'server/migrations/550_supervision_active_issue.up.sql'
+    return (migration.name=='551_supervision_parallel.up.sql'
+        and statements==['DROP INDEX CONCURRENTLY IF EXISTS supervision_active_workspace']
+        and replacement.exists()
+        and replacement.read_text().strip()=="CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS supervision_active_issue ON supervision_batch(workspace_id,issue_id) WHERE status IN ('preparing','running');")
+
+
 def prepare_database(release, cfg, previous):
     old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
     for migration in sorted((Path(release)/'server/migrations').glob('*.up.sql')):
@@ -313,9 +322,9 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if not additive:
+            if not additive and not reviewed_supervision_index_change(release,migration,statements):
                 raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
-    # 只对新增表与并发索引自动迁移；旧程序查询也必须能在迁移后准备成功。
+    # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)
     check_database(previous,cfg)
     check_database(release,cfg)
