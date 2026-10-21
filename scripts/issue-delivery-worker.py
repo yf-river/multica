@@ -93,10 +93,11 @@ class Worker:
             self.advance(d,'retry',error='主分支已前进，重新整合并联调');r.release_candidate(c['id']);return
         if r.output(['git','status','--porcelain','--untracked-files=all'],cwd=r.ROOT):raise Busy('主工作区有未保存改动，等待处理')
         if r.output(['git','branch','--show-current'],cwd=r.ROOT)!='personal-studio-upstream':raise RuntimeError('主工作区不在交付分支')
+        if d.get('phase')=='publishing':r.check_delivery_approval(c)
+        else:self.advance(d,'publishing')
         r.run(['git','merge','--ff-only',tested],cwd=r.ROOT)
         r.run(['git','push','origin','HEAD:personal-studio-upstream'],cwd=r.ROOT)
         if r.output(['git','ls-remote','origin','refs/heads/personal-studio-upstream'],cwd=r.ROOT).split()[0]!=tested:raise RuntimeError('远端主分支核对失败')
-        self.advance(d,'publishing')
         r.request_release(c['id'])
     def tick(self):
         with r.lock('delivery-worker-'+self.env):
@@ -111,11 +112,13 @@ class Worker:
                     try:self.pin(d)
                     except Exception as e:self.advance(d,'fail',error='无法固定交付提交：'+str(e)[:1500]);return
             # 先完成已占用环境的交付，再按创建顺序处理排队项。
-            active=[d for d in rows if d['phase'] in ('testing','preparing_release','publishing')]
+            active=[d for d in rows if d['phase'] in ('testing','preparing_release','publishing') or (d['phase']=='awaiting_review' and d.get('plan_snapshot',{}).get('authorization_pending'))]
             queued=[d for d in rows if d['phase'] in ('waiting_int','approved')]
             for d in active+queued:
                 try:
                     phase=d['phase']
+                    if phase=='awaiting_review':
+                        self.advance(d,'notify-authorization');return
                     if phase in ('waiting_int','approved'):
                         if self.busy(d):return
                         self.advance(d,'claim');self.prepare(d);return
@@ -132,7 +135,7 @@ class Worker:
                         return
                     if phase=='publishing':
                         target=r.request_path(d['candidate_id'])
-                        if not target.exists():r.request_release(d['candidate_id']);return
+                        if not target.exists():self.publish(d);return
                         result=r.read(target)
                         if result['status']=='succeeded':self.advance(d,'published')
                         elif result['status'] not in ('queued','publishing'):self.advance(d,'fail',error=result.get('error','生产更新失败'))

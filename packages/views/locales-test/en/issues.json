@@ -935,6 +935,11 @@
     },
     "open_int": "Open current int",
     "retest": "Prepare int again",
-    "retest_hint": "Queue this commit for integration verification again; production stays unchanged."
+    "retest_hint": "Queue this commit for integration verification again; production stays unchanged.",
+    "authorization_basis": "Authorization basis",
+    "authorization_release": "Release after acceptance",
+    "authorization_execute": "Execute plan",
+    "authorization_revoke": "Revoke release authorization",
+    "authorization_revoked": "Revoked"
   }
 }

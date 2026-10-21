@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY issue_delivery_authorization_key ON issue_delivery_authorization(id);

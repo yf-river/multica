@@ -1,0 +1,1 @@
+DROP INDEX issue_delivery_authorization_key;

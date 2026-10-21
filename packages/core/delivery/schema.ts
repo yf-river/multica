@@ -9,6 +9,8 @@ export const deliverySchema = z.object({
 });
 export const deliverySnapshotSchema = z.object({
   plan: z.object({ id: z.string(), comment_id: z.string(), comment_revision: z.number(), body: z.string(), stale: z.boolean(), confirmed_by: z.string().nullable(), confirmed_at: z.string().nullable() }).nullable(),
+  user_comments_version: z.string().optional(),
+  authorizations: z.array(z.object({ id:z.string(), kind:z.enum(["execute","release","revoke"]), scope:z.string(), revoked:z.boolean(), comment_snapshot:z.object({content:z.string(),author_id:z.string(),revision:z.number()}), created_at:z.string() })).default([]),
   deliveries: z.array(deliverySchema), can_confirm: z.boolean(),
 });
 export type DeliverySnapshot = z.infer<typeof deliverySnapshotSchema>;
