@@ -41,7 +41,7 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 	f.Member(t, f.WorkspaceID, f.UserID, "owner")
 	runtime := f.Runtime(t, "隔离排队夹具", dbfx.Cols{"provider": "codebuddy", "status": "online", "daemon_id": "no-daemon-" + stamp})
 	agent := f.Agent(t, "监督夹具", runtime, dbfx.Cols{"instructions": "只分析测试材料", "max_concurrent_tasks": 3})
-	f.InsertNoID(t, "supervision_config", dbfx.Cols{"workspace_id": f.WorkspaceID, "agent_id": agent, "owner_id": f.UserID, "enabled": true}, "workspace_id=$1", f.WorkspaceID)
+	f.InsertNoID(t, "supervision_config", dbfx.Cols{"workspace_id": f.WorkspaceID, "agent_id": agent, "owner_id": f.UserID, "enabled": false}, "workspace_id=$1", f.WorkspaceID)
 	t.Cleanup(func() {
 		for _, table := range []string{"supervision_action", "supervision_finding", "supervision_batch", "supervision_material", "supervision_subject", "supervision_config"} {
 			f.Exec(t, "DELETE FROM "+table+" WHERE workspace_id=$1", f.WorkspaceID)
@@ -49,7 +49,9 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 	})
 	issues := []string{}
 	for i := 0; i < 4; i++ {
-		issues = append(issues, f.Issue(t, fmt.Sprintf("task %d", i)))
+		issue := f.Issue(t, fmt.Sprintf("task %d", i))
+		issues = append(issues, issue)
+		f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issue, "status": "completed"})
 	}
 	source := f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issues[0], "status": "completed"})
 	long := f.Insert(t, "task_message", dbfx.Cols{"task_id": source, "seq": 1, "type": "text", "content": strings.Repeat("原文", 200000)})
@@ -58,6 +60,15 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 	svc.Authorize = func(context.Context, string, string, string) bool { return true }
 	if err = svc.inventory(ctx, f.WorkspaceID); err != nil {
 		t.Fatal(err)
+	}
+	// 初始盘点尚未完成时，最近盘点时间不能阻止下一页。
+	f.Exec(t, "DELETE FROM supervision_material WHERE workspace_id=$1 AND source_id=$2", f.WorkspaceID, later)
+	f.Exec(t, "UPDATE supervision_config SET inventory_complete=false,last_inventory_at=now() WHERE workspace_id=$1", f.WorkspaceID)
+	if err = svc.inventory(ctx, f.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if f.Count(t, "SELECT count(*) FROM supervision_material WHERE workspace_id=$1 AND source_id=$2", f.WorkspaceID, later) != 1 {
+		t.Fatal("initial inventory page waited for steady scan interval")
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -83,6 +94,7 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 	if !found {
 		t.Fatal("no long message")
 	}
+	f.Exec(t, "UPDATE supervision_config SET enabled=true WHERE workspace_id=$1", f.WorkspaceID)
 	var wg sync.WaitGroup
 	errs := make(chan error, 12)
 	for i := 0; i < 12; i++ {
@@ -97,10 +109,14 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 		}
 	}
 	// 竞争调用允许跳过已锁定配置；调度轮中的连续补位负责填满剩余名额。
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 20; i++ {
 		if err = svc.dispatch(ctx, f.WorkspaceID); err != nil {
 			t.Fatal(err)
 		}
+		if f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND status='running'", f.WorkspaceID) == 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	if n := f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND status='running'", f.WorkspaceID); n != 3 {
 		t.Fatalf("active=%d want3", n)

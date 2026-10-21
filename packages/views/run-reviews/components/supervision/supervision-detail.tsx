@@ -108,12 +108,6 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
 
             {canManage && !enabled && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.recheck_paused)}</p>}
 
-            <section aria-label={t(($) => $.supervision.coverage)} className="space-y-1 text-caption text-muted-foreground">
-              {data.coverage.partial != null && data.coverage.pending != null && <p>{t(($) => $.supervision.reading_progress, { covered: data.coverage.covered, partial: data.coverage.partial, pending: data.coverage.pending })}</p>}
-              {data.coverage.current?.length != null && <p>{t(($) => $.supervision.reading_position, { offset: data.coverage.current.offset, length: data.coverage.current.length })}</p>}
-              <p>{data.coverage.covered < data.coverage.materials ? t(($) => $.supervision.reading_history) : t(($) => $.supervision.reading_caught_up)}</p>
-            </section>
-
             <section aria-labelledby="supervision-conclusion">
               <h3 id="supervision-conclusion" className="font-semibold">{t(($) => $.supervision.current_conclusion)}</h3>
               <p className="mt-2 whitespace-pre-wrap text-body">{data.subject.summary || t(($) => $.supervision.no_conclusion)}</p>
@@ -194,7 +188,9 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
               <div className="mt-2 rounded-lg border p-3">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-body">
                   <strong className="font-medium">
-                    {t(($) => $.supervision.coverage_materials, { covered: data.coverage.covered, total: data.coverage.materials })}
+                    {data.coverage.partial != null && data.coverage.pending != null
+                      ? t(($) => $.supervision.reading_progress, { covered: data.coverage.covered, partial: data.coverage.partial, pending: data.coverage.pending })
+                      : t(($) => $.supervision.coverage_materials, { covered: data.coverage.covered, total: data.coverage.materials })}
                   </strong>
                   <span className="text-caption text-muted-foreground">{t(($) => $.supervision.coverage_runs, { count: data.coverage.runs })}</span>
                 </div>
@@ -215,6 +211,8 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                   {t(($) => $.supervision.last_check)} {moment(data.subject.last_checked_at)}
                   {data.subject.desired_version > data.subject.reviewed_version && " · " + t(($) => $.supervision.status_changed)}
                 </p>
+                {data.coverage.current?.length != null && <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.reading_position, { offset: data.coverage.current.offset, length: data.coverage.current.length })}</p>}
+                {data.coverage.runs > 0 && <p className="mt-1 text-caption text-muted-foreground">{data.coverage.covered < data.coverage.materials ? t(($) => $.supervision.reading_history) : t(($) => $.supervision.reading_caught_up)}</p>}
                 <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.coverage_hint)}</p>
                 {data.subject.gaps.length > 0 && (
                   <p className="mt-1 text-caption text-warning">{t(($) => $.supervision.coverage_gap_hint, { count: data.subject.gaps.length })}</p>

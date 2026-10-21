@@ -97,7 +97,26 @@ func (h *Handler) supervisionRoots(ctx context.Context, ws, batch, runtime strin
 			roots = append(roots, investigation.Root{ID: "evidence:" + strings.TrimPrefix(root.ID, "resource:"), Path: filepath.Join(root.Path, ".run", "evidence"), Label: "本任务验收材料", ArtifactPrefix: identifier})
 		}
 	}
-	return roots, nil
+	return distinctSupervisionRoots(roots), nil
+}
+
+// 同一目录在多个运行及项目绑定中出现时，仅提供一份当前内容来源。
+// 不合并不同验收范围，也不把同目录的不同运行误当成历史版本。
+func distinctSupervisionRoots(roots []investigation.Root) []investigation.Root {
+	out := make([]investigation.Root, 0, len(roots))
+	positions := map[string]int{}
+	for _, root := range roots {
+		key := filepath.Clean(root.Path) + "\x00" + root.ArtifactPrefix
+		if i, exists := positions[key]; exists {
+			if strings.HasPrefix(root.ID, "resource:") && !strings.HasPrefix(out[i].ID, "resource:") {
+				out[i] = root
+			}
+			continue
+		}
+		positions[key] = len(out)
+		out = append(out, root)
+	}
+	return out
 }
 
 type supervisionInvestigationScope struct{ Workspace, Issue, Batch, Task, Runtime string }

@@ -251,7 +251,10 @@ func (s *Session) capture(ctx context.Context, req Request, out Result, err erro
 	if s.Save != nil {
 		if saveErr := s.Save(ctx, req, &out); saveErr != nil {
 			out.Text = ""
-			return out, fmt.Errorf("调查调用错误=%v；证据保存失败：%w", err, saveErr)
+			if err != nil {
+				return out, fmt.Errorf("%v；证据保存失败：%w", err, saveErr)
+			}
+			return out, fmt.Errorf("调查证据保存失败：%w", saveErr)
 		}
 	}
 	if err != nil {

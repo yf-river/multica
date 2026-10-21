@@ -138,11 +138,12 @@ func (s *Service) setError(ctx context.Context, ws string, err error) {
 
 // inventory 每轮有界补齐历史引用。已存在引用不变，在线写入由事务触发器登记。
 func (s *Service) inventory(ctx context.Context, ws string) error {
-	var recent bool
-	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(last_inventory_at>now()-make_interval(secs=>interval_seconds),false) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&recent); err != nil {
+	var complete, recent bool
+	if err := s.Pool.QueryRow(ctx, `SELECT inventory_complete,COALESCE(last_inventory_at>now()-make_interval(secs=>interval_seconds),false) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&complete, &recent); err != nil {
 		return err
 	}
-	if recent {
+	// 首次盘点按有界页面连续推进；盘点完成后才按配置间隔复核全集。
+	if complete && recent {
 		_, err := s.Pool.Exec(ctx, `UPDATE supervision_config SET last_scan_at=now() WHERE workspace_id=$1`, ws)
 		return err
 	}
@@ -355,7 +356,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 		return fmt.Errorf("监督配置负责人已失去所选 Agent 的调用权限")
 	}
 	var capacity, active int
-	// Agent 行锁使共享该 Agent 的工作区也不会超额登记。
+	// Agent 行锁串行化监督名额检查；该 Agent 的其他待执行任务也占用名额。
 	if err = tx.QueryRow(ctx, `SELECT max_concurrent_tasks FROM agent WHERE id=$1 FOR UPDATE`, agent).Scan(&capacity); err != nil {
 		return err
 	}
