@@ -13,7 +13,7 @@ import (
 // 交付命令与页面使用同一套版本和确认接口。
 func init() {
 	group := &cobra.Command{Use: "delivery", Short: "Plan confirmation, integration queue and production review"}
-	for _, action := range []string{"status", "plan", "confirm-plan", "submit", "accept", "approve", "retest", "cancel"} {
+	for _, action := range []string{"status", "plan", "confirm-plan", "revoke-release", "submit", "accept", "approve", "retest", "cancel"} {
 		action := action
 		cmd := &cobra.Command{Use: action + " <issue-id>", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newAPIClient(cmd)
@@ -48,6 +48,8 @@ func init() {
 					err = client.PutJSON(ctx, path+"/delivery-plan", body, &result)
 				case "confirm-plan":
 					err = client.PostJSON(ctx, path+"/delivery-plan/confirm", body, &result)
+				case "revoke-release":
+					err = client.PostJSON(ctx, path+"/delivery-plan/revoke-release", body, &result)
 				case "submit":
 					err = client.PostJSON(ctx, path+"/deliveries", body, &result)
 				default:

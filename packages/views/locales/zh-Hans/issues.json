@@ -904,6 +904,11 @@
     },
     "open_int": "打开当前联调",
     "retest": "重新准备联调",
-    "retest_hint": "重新排队准备这个提交的联调环境，完成验证后再次进入待审核，不会发布生产。"
+    "retest_hint": "重新排队准备这个提交的联调环境，完成验证后再次进入待审核，不会发布生产。",
+    "authorization_basis": "授权依据",
+    "authorization_release": "联调通过后发布",
+    "authorization_execute": "执行方案",
+    "authorization_revoke": "撤销发布授权",
+    "authorization_revoked": "已撤销"
   }
 }

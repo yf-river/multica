@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY issue_delivery_authorization_source ON issue_delivery_authorization(workspace_id,plan_id,kind,comment_id,comment_revision);

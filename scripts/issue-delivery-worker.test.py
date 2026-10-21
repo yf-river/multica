@@ -30,6 +30,25 @@ class DeliveryTests(unittest.TestCase):
         with patch.object(r,'request_release') as publish:
             with self.assertRaisesRegex(RuntimeError,'不能更新生产'):worker.publish({})
             publish.assert_not_called()
+    def test_invalid_authorization_stops_before_merge_and_push(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        candidate={'status':'accepted','source':'/fixture','commit':'a'*40,'id':'candidate'}
+        with patch.object(worker,'own_candidate',return_value=candidate),patch.object(r,'run') as command,patch.object(r,'output',side_effect=['','personal-studio-upstream']),patch.object(subprocess,'run') as ancestry,patch.object(worker,'advance',side_effect=RuntimeError('authorization changed')),patch.object(r,'request_release') as request:
+            ancestry.return_value.returncode=0
+            with self.assertRaisesRegex(RuntimeError,'authorization changed'):worker.publish({'id':'delivery'})
+            self.assertEqual([call.args[0][1] for call in command.call_args_list],['fetch'])
+            request.assert_not_called()
+
+    def test_publishing_recovery_rechecks_then_finishes_git_before_request(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        candidate={'status':'accepted','source':'/fixture','commit':'a'*40,'id':'candidate'}
+        events=[]
+        with patch.object(worker,'own_candidate',return_value=candidate),patch.object(r,'run',side_effect=lambda args,**kw:events.append(args[1])),patch.object(r,'output',side_effect=['','personal-studio-upstream','a'*40+' refs/heads/personal-studio-upstream']),patch.object(subprocess,'run') as ancestry,patch.object(worker,'advance') as advance,patch.object(r,'check_delivery_approval',side_effect=lambda c:events.append('authorization')),patch.object(r,'request_release',side_effect=lambda c:events.append('request')):
+            ancestry.return_value.returncode=0
+            worker.publish({'id':'delivery','phase':'publishing'})
+            self.assertEqual(events,['fetch','authorization','merge','push','request'])
+            advance.assert_not_called()
+
     def test_normal_request_requires_human_approved_delivery(self):
         with self.assertRaisesRegex(RuntimeError,'交付审核'):r.check_delivery_approval({'commit':'a'*40})
     def test_schema_change_rejected_before_mutation_and_stop(self):

@@ -48,7 +48,7 @@ func (h *Handler) deliveryHuman(r *http.Request, ws string) bool {
 }
 func (h *Handler) deliveryJSON(w http.ResponseWriter, r *http.Request, ws, issue string) {
 	var data json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved','testing','preparing_release','publishing') AND q.created_at<d.created_at) AS queue_ahead FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'user_comments_version',(SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member'),'authorizations',(SELECT COALESCE(jsonb_agg(a ORDER BY a.created_at DESC),'[]') FROM issue_delivery_authorization a JOIN issue_delivery_plan p ON p.id=a.plan_id WHERE a.workspace_id=$1 AND a.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved','testing','preparing_release','publishing') AND q.created_at<d.created_at) AS queue_ahead FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付记录失败")
 		return
@@ -123,9 +123,9 @@ func (h *Handler) ConfirmIssuePlan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		PlanID    string `json:"plan_id"`
-		Revision  int    `json:"revision"`
-		CommentID string `json:"comment_id"`
+		PlanID   string `json:"plan_id"`
+		Revision int    `json:"revision"`
+		deliveryAuthorizationInput
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body) != nil {
 		writeError(w, 400, "确认格式错误")
@@ -150,18 +150,19 @@ func (h *Handler) ConfirmIssuePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	confirmedBy := requestUserID(r)
 	if body.CommentID != "" {
-		if _, ok = parseUUIDOrBadRequest(w, body.CommentID, "comment_id"); !ok {
-			return
+		_, confirmedBy, err = h.recordDeliveryAuthorization(r, tx, ws, issue, body.PlanID, "execute", body.deliveryAuthorizationInput)
+		if err == nil && body.ReleaseAfterAcceptance {
+			_, _, err = h.recordDeliveryAuthorization(r, tx, ws, issue, body.PlanID, "release", body.deliveryAuthorizationInput)
 		}
-		err = tx.QueryRow(r.Context(), `SELECT author_id::text FROM comment WHERE workspace_id=$1 AND issue_id=$2 AND id=$3 AND parent_id=$4 AND author_type='member' AND created_at>=(SELECT updated_at FROM comment WHERE id=$4) AND btrim(content) IN ('确认','同意','确认计划','同意计划','按计划执行','Implement the plan.')`, ws, issue, body.CommentID, comment).Scan(&confirmedBy)
 		if err != nil {
-			writeError(w, 403, "需要当前方案下的用户明确确认")
+			writeError(w, 409, err.Error())
 			return
 		}
 	} else if !h.deliveryHuman(r, ws) {
-		writeError(w, 403, "需要用户确认方案")
+		writeError(w, 403, "需要真实用户授权依据")
 		return
 	}
+
 	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery_plan SET confirmed_by=$3,confirmed_at=COALESCE(confirmed_at,now()),updated_at=now() WHERE workspace_id=$1 AND issue_id=$2`, ws, issue, confirmedBy)
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -226,7 +227,7 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	var plan string
 	var planSnapshot json.RawMessage
-	err = tx.QueryRow(r.Context(), `SELECT p.id::text,jsonb_build_object('comment_id',p.comment_id,'revision',p.comment_revision,'body',c.content,'confirmed_by',p.confirmed_by,'confirmed_at',p.confirmed_at) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE p.workspace_id=$1 AND p.issue_id=$2 AND p.confirmed_by IS NOT NULL FOR UPDATE OF p`, ws, issue).Scan(&plan, &planSnapshot)
+	err = tx.QueryRow(r.Context(), `SELECT p.id::text,jsonb_build_object('comment_id',p.comment_id,'revision',p.comment_revision,'body',c.content,'confirmed_by',p.confirmed_by,'confirmed_at',p.confirmed_at,'execute_authorizations',(SELECT COALESCE(jsonb_agg(a),'[]') FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked)) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE p.workspace_id=$1 AND p.issue_id=$2 AND p.confirmed_by IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute') OR EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment ac ON ac.id=a.comment_id AND ac.revision=a.comment_revision AND ac.author_type='member' JOIN member m ON m.workspace_id=a.workspace_id AND m.user_id=ac.author_id WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked AND m.role IN ('owner','admin','member'))) FOR UPDATE OF p`, ws, issue).Scan(&plan, &planSnapshot)
 	if err != nil {
 		writeError(w, 409, "请先确认当前方案")
 		return
@@ -264,10 +265,13 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Action    string          `json:"action"`
-		Revision  int64           `json:"revision"`
-		Checks    []deliveryCheck `json:"evidence"`
-		CommentID string          `json:"comment_id"`
+		Action   string          `json:"action"`
+		Revision int64           `json:"revision"`
+		Checks   []deliveryCheck `json:"evidence"`
+		deliveryAuthorizationInput
+		AuthorizationID string `json:"authorization_id"`
+		ScopeReview     string `json:"scope_review"`
+		CommentsVersion string `json:"user_comments_version"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body) != nil {
 		writeError(w, 400, "交付操作格式错误")
@@ -293,7 +297,7 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" {
 		var valid bool
-		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN issue_delivery_plan p ON p.id=d.plan_id AND p.workspace_id=d.workspace_id JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE d.id=$1 AND p.confirmed_by IS NOT NULL)`, id).Scan(&valid)
+		err = tx.QueryRow(r.Context(), deliveryPlanValidSQL, id).Scan(&valid)
 		if err != nil || !valid {
 			writeError(w, 409, "方案已变化，需要重新确认")
 			return
@@ -305,33 +309,57 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "请先完成该版本联调并提交实际证据")
 			return
 		}
+		if body.AuthorizationID != "" {
+			if _, err = h.bindDeliveryAuthorization(r, tx, ws, issue, id, body.AuthorizationID, body.ScopeReview, body.CommentsVersion); err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
+		}
 		evidence, _ := json.Marshal(body.Checks)
 		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=true,evidence=$4,error='',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND id=$3`, ws, issue, id, evidence)
 	case "approve":
-		human := h.deliveryHuman(r, ws)
-		// 评论只能引用已存在的人类明确确认，不能由任务自行声明批准。
-		if body.CommentID != "" {
-			var allowed bool
-			err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment c WHERE c.workspace_id=$1 AND c.issue_id=$2 AND c.id=$3 AND c.author_type='member' AND c.created_at>=(SELECT updated_at FROM issue_delivery WHERE id=$4) AND btrim(c.content) IN ('同意部署','同意发布生产','确认部署生产'))`, ws, issue, body.CommentID, id).Scan(&allowed)
-			human = err == nil && allowed
-		}
-		if !human {
-			writeError(w, 403, "生产发布需要用户明确确认")
-			return
-		}
 		if phase != "awaiting_review" {
 			writeError(w, 409, "该交付尚未完成联调审核")
 			return
 		}
-		var approver string
+		approver := ""
 		if body.CommentID != "" {
-			err = tx.QueryRow(r.Context(), `SELECT author_id::text FROM comment WHERE workspace_id=$1 AND issue_id=$2 AND id=$3 AND author_type='member'`, ws, issue, body.CommentID).Scan(&approver)
-		} else {
+			var plan string
+			err = tx.QueryRow(r.Context(), `SELECT plan_id::text FROM issue_delivery WHERE id=$1`, id).Scan(&plan)
+			if err == nil {
+				body.AuthorizationID, _, err = h.recordDeliveryAuthorization(r, tx, ws, issue, plan, "release", body.deliveryAuthorizationInput)
+			}
+			if err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
+		}
+		if body.AuthorizationID != "" {
+			approver, err = h.bindDeliveryAuthorization(r, tx, ws, issue, id, body.AuthorizationID, body.ScopeReview, body.CommentsVersion)
+			if err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
+		} else if h.deliveryHuman(r, ws) {
 			approver = requestUserID(r)
+			var source string
+			err = tx.QueryRow(r.Context(), `SELECT source_commit FROM issue_delivery WHERE id=$1`, id).Scan(&source)
+			version, versionErr := deliveryCommentsVersion(r.Context(), tx, ws, issue)
+			if err == nil {
+				err = versionErr
+			}
+			if err == nil {
+				review, _ := json.Marshal(map[string]string{"authorization_id": "button", "comments_version": version, "source_commit": source, "candidate_id": candidate, "reviewed_by": approver})
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_review}',$2::jsonb) WHERE id=$1`, id, review)
+			}
+		} else {
+			writeError(w, 403, "需要用户批准或可核对的真实用户授权记录")
+			return
 		}
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='approved',approved_by=$4,approved_at=now(),approval_comment_id=NULLIF($5,'')::uuid,error='',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND id=$3`, ws, issue, id, approver, body.CommentID)
 		}
+
 	case "retest":
 		if phase != "awaiting_review" {
 			writeError(w, 409, "当前阶段不能重新准备联调")
@@ -359,7 +387,7 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteDeliveryData(ctx context.Context, tx pgx.Tx, ws, issue string) error {
-	for _, table := range []string{"issue_delivery", "issue_delivery_plan"} {
+	for _, table := range []string{"issue_delivery_authorization", "issue_delivery", "issue_delivery_plan"} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`, ws, issue); err != nil {
 			return err
 		}

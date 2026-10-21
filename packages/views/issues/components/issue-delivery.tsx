@@ -40,6 +40,14 @@ export function IssueDelivery({ issueId }: { issueId: string }) {
       <details><summary className="cursor-pointer text-caption underline underline-offset-4">{t(($) => $.delivery.view_plan)}</summary><div className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-words text-caption">{plan.body}</div></details>
       {!plan.confirmed_by && data.can_confirm && <Button size="sm" disabled={plan.stale || act.isPending} onClick={() => setConfirmation({ kind: "plan", id: plan.id, revision: plan.comment_revision })}>{t(($) => $.delivery.confirm_plan)}</Button>}
     </div>}
+    {data.authorizations?.length > 0 && <details>
+      <summary className="cursor-pointer text-caption underline underline-offset-4">{t(($) => $.delivery.authorization_basis)}</summary>
+      <ul className="mt-2 space-y-3 text-caption">{data.authorizations.map((authorization) => <li key={authorization.id}>
+        <p className="font-medium">{authorization.kind === "release" ? t(($) => $.delivery.authorization_release) : authorization.kind === "revoke" ? t(($) => $.delivery.authorization_revoke) : t(($) => $.delivery.authorization_execute)}{authorization.revoked ? ` · ${t(($) => $.delivery.authorization_revoked)}` : ""}</p>
+        <blockquote className="mt-1 whitespace-pre-wrap break-words border-l-2 border-surface-border pl-2 text-muted-foreground">{authorization.comment_snapshot.content}</blockquote>
+        <p className="mt-1 whitespace-pre-wrap break-words">{authorization.scope}</p>
+      </li>)}</ul>
+    </details>}
     {latest && <div className="space-y-2 border-t border-surface-border pt-3">
       <p className="text-body font-medium" role="status">{t(($) => $.delivery.phases[latest.phase])}</p>
       <p className="break-all font-mono text-caption text-muted-foreground">{latest.source_commit.slice(0, 12)}</p>
