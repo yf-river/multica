@@ -75,6 +75,11 @@ func (h *Handler) bindDeliveryAuthorization(r *http.Request, tx pgx.Tx, ws, issu
 		return "", err
 	}
 	var valid bool
+	if authorization != "button" {
+		if _, parseErr := util.ParseUUID(authorization); parseErr != nil {
+			return "", fmt.Errorf("授权记录编号无效")
+		}
+	}
 	if authorization == "button" {
 		err = tx.QueryRow(r.Context(), `SELECT approved_by IS NOT NULL AND plan_snapshot->'authorization_review'->>'authorization_id'='button' FROM issue_delivery WHERE id=$1`, id).Scan(&valid)
 	} else {
@@ -114,6 +119,15 @@ func deliveryAuthorizationReady(ctx context.Context, tx pgx.Tx, ws, issue, id st
 	if err != nil {
 		return false, err
 	}
+	if approved {
+		var memberValid bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN member m ON m.workspace_id=d.workspace_id AND m.user_id=d.approved_by WHERE d.id=$1 AND m.role IN ('owner','admin','member'))`, id).Scan(&memberValid); err != nil {
+			return false, err
+		}
+		if !memberValid {
+			return false, nil
+		}
+	}
 	var saved map[string]string
 	if err = json.Unmarshal(review, &saved); err != nil {
 		return false, err
@@ -151,6 +165,9 @@ func (h *Handler) RevokeIssueReleaseAuthorization(w http.ResponseWriter, r *http
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&body) != nil {
 		writeError(w, 400, "撤销格式错误")
+		return
+	}
+	if _, ok = parseUUIDOrBadRequest(w, body.PlanID, "plan_id"); !ok {
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())

@@ -311,5 +311,43 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 		want(c, 409, v)
 	})
 
+	t.Run("button-approval-current-membership", func(t *testing.T) {
+		issue = f.Issue(t, "页面按钮批准")
+		pc := f.Insert(t, "comment", fxt.Cols{"issue_id": issue, "workspace_id": f.WorkspaceID, "author_type": "member", "author_id": f.UserID, "content": "页面批准方案"})
+		c, v := call(h.RegisterIssuePlan, false, map[string]any{"comment_id": pc, "revision": 1}, "id", issue)
+		want(c, 200, v)
+		c, v = call(h.ConfirmIssuePlan, false, map[string]any{"plan_id": v["plan"].(map[string]any)["id"], "revision": 1}, "id", issue)
+		want(c, 200, v)
+		body["operation_id"] = dbid.NewV7().String()
+		c, v = call(h.SubmitIssueDelivery, true, body, "id", issue)
+		want(c, 200, v)
+		id = v["deliveries"].([]any)[0].(map[string]any)["id"].(string)
+		revision = 1
+		token = ""
+		advance("claim", nil)
+		advance("prepared", map[string]any{"candidate_id": "button-one", "candidate_url": "http://int.example.test"})
+		action("accept", true, map[string]any{"evidence": checks}, 200)
+		advance("accepted", nil)
+		action("approve", false, nil, 200)
+		c, v = call(h.CheckDeliveryAuthorization, false, nil, "deliveryId", id)
+		want(c, 200, v)
+		if v["ready"] != true {
+			t.Fatal("真实按钮授权未生效")
+		}
+		replacement := f.User(t, "成员变更样本", schema+"-replacement@example.test", fxt.Cols{"account": schema + "-replacement"})
+
+		f.Member(t, f.WorkspaceID, replacement, "admin")
+		original := f.UserID
+		f.Exec(t, `DELETE FROM member WHERE workspace_id=$1 AND user_id=$2`, f.WorkspaceID, original)
+		f.UserID = replacement
+		c, v = call(h.CheckDeliveryAuthorization, false, nil, "deliveryId", id)
+		f.UserID = original
+		f.Member(t, f.WorkspaceID, original, "owner")
+		want(c, 200, v)
+		if v["ready"] != false {
+			t.Fatal("批准者已离开工作区仍能发布")
+		}
+	})
+
 	t.Log("PASS actual PostgreSQL and handlers: versioned plan, human-only approval, idempotent submit, int evidence gate, production confirmation, persisted phases; no model or production deployment")
 }
