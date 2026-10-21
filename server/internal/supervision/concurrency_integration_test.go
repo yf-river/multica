@@ -33,7 +33,7 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	f := dbfx.New(pool, "", "")
 	stamp := fmt.Sprint(time.Now().UnixNano())
 	f.UserID = f.User(t, "并发验收", "parallel-"+stamp+"@example.test", dbfx.Cols{"account": "parallel-" + stamp})
@@ -94,6 +94,12 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 	for e := range errs {
 		if e != nil {
 			t.Fatal(e)
+		}
+	}
+	// 竞争调用允许跳过已锁定配置；调度轮中的连续补位负责填满剩余名额。
+	for i := 0; i < 3; i++ {
+		if err = svc.dispatch(ctx, f.WorkspaceID); err != nil {
+			t.Fatal(err)
 		}
 	}
 	if n := f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND status='running'", f.WorkspaceID); n != 3 {

@@ -753,7 +753,7 @@ func main() {
 	// 重试，因此短暂故障不会让服务器崩掉。
 	h.Supervision = supervision.New(pool, h.TaskService)
 	h.Supervision.Authorize = h.CanUseSupervisionAgent
-	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
+	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{TickInterval: supervision.PollInterval})
 	if err := schedulerMgr.Register(scheduler.QualitySupervisionJob(h.Supervision)); err != nil {
 		slog.Error("注册质量监督调度失败", "error", err)
 	}

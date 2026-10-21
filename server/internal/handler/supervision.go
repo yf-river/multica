@@ -398,7 +398,7 @@ func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if _, err = tx.Exec(r.Context(), `UPDATE supervision_subject SET next_attempt_at='infinity' WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`, ws, body.IssueID); err != nil {
+		if _, err = tx.Exec(r.Context(), `UPDATE supervision_subject SET next_attempt_at='infinity' WHERE workspace_id=$1 AND $2<>'' AND issue_id=NULLIF($2,'')::uuid`, ws, body.IssueID); err != nil {
 			writeError(w, 500, "保存停止状态失败")
 			return
 		}
