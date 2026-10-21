@@ -64,3 +64,19 @@ func TestSupervisionSourceScopeDoesNotBroadenRunDirectories(t *testing.T) {
 		t.Fatal("Codex-specific MCP options leaked into another runtime")
 	}
 }
+
+func TestSupervisionSourceAvailabilityUsesFilesystem(t *testing.T) {
+	directory := t.TempDir()
+	file := filepath.Join(directory, "file.txt")
+	if err := os.WriteFile(file, []byte("evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"", file, filepath.Join(directory, "deleted")} {
+		if investigationRootAvailable(path) || investigationRootReason(path) == "" {
+			t.Fatalf("unavailable source advertised as readable: %s", path)
+		}
+	}
+	if !investigationRootAvailable(directory) || investigationRootReason(directory) != "" {
+		t.Fatal("existing directory unavailable")
+	}
+}

@@ -8,10 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/supervision"
 	dbfixture "github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -63,7 +67,7 @@ func TestIntSupervisionInvestigationScopeAndPersistentBudget(t *testing.T) {
 	batch := f.Insert(t, "supervision_batch", dbfixture.Cols{"workspace_id": f.WorkspaceID, "issue_id": issue, "task_id": review, "target_version": 1, "status": "running"})
 	f.Exec(t, "UPDATE agent_task_queue SET context=jsonb_build_object('type','quality_supervision','batch_id',$2::text) WHERE id=$1", review, batch)
 	t.Cleanup(func() {
-		for _, table := range []string{"supervision_investigation", "supervision_material", "supervision_subject"} {
+		for _, table := range []string{"attachment", "supervision_investigation", "supervision_material", "supervision_subject"} {
 			_, e := pool.Exec(ctx, "DELETE FROM "+table+" WHERE workspace_id=$1", f.WorkspaceID)
 			if e != nil {
 				t.Error(e)
@@ -79,6 +83,8 @@ func TestIntSupervisionInvestigationScopeAndPersistentBudget(t *testing.T) {
 		"run:" + source:            {Path: directory + "/run", RunID: source, Label: "运行目录当前内容"},
 		"resource:" + resource:     {Path: directory, Label: "关联源码"},
 		"resource:" + repoResource: {Path: directory + "/repo", Label: "项目代码仓库"},
+		"evidence:" + resource:     {Path: directory + "/.run/evidence", Label: "本任务验收材料"},
+		"evidence:" + repoResource: {Path: directory + "/repo/.run/evidence", Label: "本任务验收材料"},
 	}
 	for _, root := range roots {
 		expected, ok := wanted[root.ID]
@@ -90,6 +96,38 @@ func TestIntSupervisionInvestigationScopeAndPersistentBudget(t *testing.T) {
 	if len(wanted) != 0 {
 		t.Fatalf("missing roots: %+v", wanted)
 	}
+
+	// 恢复失败任务不重扫已完成任务，也不清零已经读过的原文。
+	f.Exec(t, "INSERT INTO supervision_subject(workspace_id,issue_id,failures,desired_version,reviewed_version) VALUES($1,$2,3,2,1),($1,$3,0,1,1) ON CONFLICT(workspace_id,issue_id) DO UPDATE SET failures=EXCLUDED.failures,desired_version=EXCLUDED.desired_version,reviewed_version=EXCLUDED.reviewed_version", f.WorkspaceID, issue, other)
+	f.Exec(t, "INSERT INTO supervision_material(workspace_id,issue_id,kind,source_id,generation,reviewed_generation,reviewed_offset) VALUES($1,$2,'message',$3,1,0,4000) ON CONFLICT(workspace_id,kind,source_id) DO UPDATE SET reviewed_offset=4000", f.WorkspaceID, issue, message)
+	recovery := httptest.NewRequest(http.MethodPost, "/api/supervision/check", bytes.NewBufferString(`{"retry_failed":true}`))
+	recovery.Header.Set("X-User-ID", f.UserID)
+	recovery = recovery.WithContext(middleware.SetMemberContext(recovery.Context(), f.WorkspaceID, db.Member{UserID: parseUUID(f.UserID), WorkspaceID: parseUUID(f.WorkspaceID), Role: "owner"}))
+	dbfixture.Call(t, h.CheckSupervision, recovery).Want(202)
+	var failures, offset int
+	var forced, otherForced bool
+	if err = pool.QueryRow(ctx, "SELECT failures,force_review,(SELECT reviewed_offset FROM supervision_material WHERE workspace_id=$1 AND source_id=$3),(SELECT force_review FROM supervision_subject WHERE workspace_id=$1 AND issue_id=$4) FROM supervision_subject WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issue, message, other).Scan(&failures, &forced, &offset, &otherForced); err != nil {
+		t.Fatal(err)
+	}
+	if failures != 0 || !forced || offset != 4000 || otherForced {
+		t.Fatalf("recovery changed unrelated progress: %d %v %d %v", failures, forced, offset, otherForced)
+	}
+
+	// 校验工具不受主动调查开关限制，也不能保存调查记录或推进游标。
+	f.Exec(t, "UPDATE supervision_config SET investigation_enabled=false WHERE workspace_id=$1", f.WorkspaceID)
+	validation := httptest.NewRequest(http.MethodPost, "/api/supervision/validate", bytes.NewBufferString(`{"summary":"范围已核对","efficiency":"uncertain","correctness":"uncertain","gaps":[],"covered":[],"findings":[],"resolutions":[],"read_receipts":[]}`))
+	setTaskTokenActor(validation, agent, review)
+	validation.Header.Set("X-User-ID", f.UserID)
+	validation.Header.Set("X-Workspace-ID", f.WorkspaceID)
+	validationResponse := httptest.NewRecorder()
+	h.ValidateSupervisionResult(validationResponse, validation)
+	if validationResponse.Code != 200 || !strings.Contains(validationResponse.Body.String(), `"valid":true`) {
+		t.Fatalf("validation: %d %s", validationResponse.Code, validationResponse.Body.String())
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_investigation WHERE batch_id=$1", batch); n != 0 {
+		t.Fatal("validation mutated evidence")
+	}
+	f.Exec(t, "UPDATE supervision_config SET investigation_enabled=true WHERE workspace_id=$1", f.WorkspaceID)
 	call := func(path string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		setTaskTokenActor(r, agent, review)
@@ -105,6 +143,53 @@ func TestIntSupervisionInvestigationScopeAndPersistentBudget(t *testing.T) {
 	}
 	if w := call("/api/supervision/investigation/material?kind=message&id=" + foreignMessage + "&offset=0&reason=verify"); w.Code != 404 {
 		t.Fatalf("foreign=%d", w.Code)
+	}
+
+	if w := call("/api/supervision/investigation/material?kind=index&id=&offset=0&reason=inspect"); w.Code != 200 {
+		t.Fatalf("index=%d %s", w.Code, w.Body.String())
+	}
+	t.Setenv("LOCAL_UPLOAD_DIR", t.TempDir())
+	t.Setenv("LOCAL_UPLOAD_BASE_URL", "http://fixture/uploads")
+	h.Storage = storage.NewLocalStorageFromEnv()
+	evidence := roots[len(roots)-2]
+	folder := strings.ToLower(strings.ReplaceAll(evidence.ArtifactPrefix, "-", "")) + "-acceptance"
+	artifact := filepath.Join(evidence.Path, folder, "report.json")
+	if err = os.MkdirAll(filepath.Dir(artifact), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(artifact, []byte(`{"checks":["passed"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	session := investigation.Session{Roots: []investigation.Root{evidence}}
+	session.Save = func(ctx context.Context, request investigation.Request, result *investigation.Result) error {
+		body, _ := json.Marshal(map[string]any{"request": request, "result": result})
+		req := httptest.NewRequest(http.MethodPost, "/api/supervision/investigation", bytes.NewReader(body))
+		setTaskTokenActor(req, agent, review)
+		req.Header.Set("X-User-ID", f.UserID)
+		req.Header.Set("X-Workspace-ID", f.WorkspaceID)
+		reply := httptest.NewRecorder()
+		h.SaveSupervisionInvestigation(reply, req)
+		if reply.Code != 200 {
+			return fmt.Errorf("save=%d %s", reply.Code, reply.Body.String())
+		}
+		return nil
+	}
+	if _, err = session.Call(ctx, "supervision_read", investigation.Request{Root: evidence.ID, Path: folder + "/report.json", Reason: "核对真实验收报告"}); err != nil {
+		t.Fatal(err)
+	}
+	var attachment string
+	f.QueryRow(t, "SELECT id::text FROM attachment WHERE issue_id=$1", issue).Scan(&attachment)
+	if attachment == "" {
+		t.Fatal("evidence not archived in existing attachment storage")
+	}
+	if err = os.RemoveAll(evidence.Path); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("/api/supervision/investigation/material?kind=attachments&id=&offset=0&reason=locate"); w.Code != 200 || !strings.Contains(w.Body.String(), attachment) {
+		t.Fatalf("attachment index=%d %s", w.Code, w.Body.String())
+	}
+	if w := call("/api/supervision/investigation/material?kind=attachment&id=" + attachment + "&offset=0&reason=recheck"); w.Code != 200 || !strings.Contains(w.Body.String(), "passed") {
+		t.Fatalf("archived read=%d %s", w.Code, w.Body.String())
 	}
 	f.Exec(t, "UPDATE supervision_batch SET status='cancelled' WHERE id=$1", batch)
 	if w := call(path); w.Code != 403 {

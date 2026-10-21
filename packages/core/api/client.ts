@@ -801,7 +801,7 @@ export class ApiClient {
   async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds"> & { investigation_enabled?: boolean }) {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/", { method: "PUT", body: JSON.stringify(config) }), supervisionSnapshotSchema, { endpoint: "PUT /api/supervision", sensitive: true, mayHaveCommitted: true });
   }
-  async checkSupervision(body: { issue_id?: string; full?: boolean; stop?: boolean }) {
+  async checkSupervision(body: { issue_id?: string; full?: boolean; stop?: boolean; retry_failed?: boolean }) {
     return this.fetch<{ scheduled?: boolean; stopped?: boolean }>("/api/supervision/check", { method: "POST", body: JSON.stringify(body) });
   }
   async sendSupervisionFeedback(id: string, body: { content: string; operation_id: string }) {

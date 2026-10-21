@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
-const RulesVersion = "supervision-v4"
+const RulesVersion = "supervision-v5"
 
 type Service struct {
 	Pool      *pgxpool.Pool
@@ -65,13 +66,14 @@ type Resolution struct {
 	Evidence []Evidence `json:"evidence"`
 }
 type Result struct {
-	Summary     string       `json:"summary"`
-	Efficiency  string       `json:"efficiency"`
-	Correctness string       `json:"correctness"`
-	Gaps        []string     `json:"gaps"`
-	Findings    []Finding    `json:"findings"`
-	Resolutions []Resolution `json:"resolutions"`
-	Covered     []Evidence   `json:"covered"`
+	Summary      string       `json:"summary"`
+	Efficiency   string       `json:"efficiency"`
+	Correctness  string       `json:"correctness"`
+	Gaps         []string     `json:"gaps"`
+	Findings     []Finding    `json:"findings"`
+	Resolutions  []Resolution `json:"resolutions"`
+	Covered      []Evidence   `json:"covered"`
+	ReadReceipts []string     `json:"read_receipts"`
 }
 
 func uuid(s string) pgtype.UUID { u, _ := util.ParseUUID(s); return u }
@@ -494,14 +496,22 @@ func ValidateResult(r Result, materials []Material, investigations ...Material) 
 	for _, m := range investigations {
 		allowed[m.Kind+":"+m.ID] = m
 	}
-	for _, f := range r.Findings {
+	for index, f := range r.Findings {
 		if f.ID != "" {
 			if _, err := util.ParseUUID(f.ID); err != nil {
 				return fmt.Errorf("已有问题编号无效")
 			}
 		}
-		if f.Code == "" || f.Title == "" || f.Description == "" || f.Impact == "" || f.Recommendation == "" || len(f.Evidence) == 0 || (f.Confidence != "confirmed" && f.Confidence != "risk") {
-			return fmt.Errorf("问题字段不完整")
+		for _, field := range []struct{ name, value string }{{"code", f.Code}, {"title", f.Title}, {"description", f.Description}, {"impact", f.Impact}, {"recommendation", f.Recommendation}} {
+			if strings.TrimSpace(field.value) == "" {
+				return fmt.Errorf("findings[%d].%s 缺失或为空", index, field.name)
+			}
+		}
+		if len(f.Evidence) == 0 {
+			return fmt.Errorf("findings[%d].evidence 必须包含本批次证据", index)
+		}
+		if f.Confidence != "confirmed" && f.Confidence != "risk" {
+			return fmt.Errorf("findings[%d].confidence 只能为 confirmed 或 risk", index)
 		}
 		for _, e := range f.Evidence {
 			if !check(e) {
@@ -520,6 +530,118 @@ func ValidateResult(r Result, materials []Material, investigations ...Material) 
 		}
 	}
 	return nil
+}
+
+// Receipt 是平台保存的补读结果，模型仅能引用本批次真实回执。
+type Receipt struct {
+	ID         string
+	Kind       string `json:"kind"`
+	Path       string `json:"path"`
+	Tool       string `json:"tool"`
+	Generation int64  `json:"generation"`
+	Offset     int    `json:"offset"`
+	End        int    `json:"end"`
+	Length     int    `json:"length"`
+	Error      string `json:"error"`
+}
+
+func receiptMaterials(result Result, receipts map[string]Receipt) ([]Material, error) {
+	var pages []Material
+	seen := map[string]bool{}
+	for index, id := range result.ReadReceipts {
+		page, ok := receipts[id]
+		parts := strings.Split(page.Path, "/")
+		if !ok || seen[id] || page.Error != "" || page.Tool != "supervision_material" || len(parts) != 2 || page.Generation < 1 || page.Offset < 0 || page.End <= page.Offset || page.End > page.Length {
+			return nil, fmt.Errorf("read_receipts[%d] 不是本批次有效且唯一的原文补读回执", index)
+		}
+		seen[id] = true
+		pages = append(pages, Material{Evidence: Evidence{Kind: parts[0], ID: parts[1]}, Generation: page.Generation, Offset: page.Offset, End: page.End, Length: page.Length})
+	}
+	return pages, nil
+}
+
+// ContiguousEnd 只推进连续审查的同版本原文，不能跨越未读空洞。
+func ContiguousEnd(offset int, pages []Material) int {
+	sort.Slice(pages, func(i, j int) bool { return pages[i].Offset < pages[j].Offset })
+	for _, page := range pages {
+		if page.Offset > offset {
+			break
+		}
+		if page.End > offset {
+			offset = page.End
+		}
+	}
+	return offset
+}
+
+// ValidateBatch 只读校验，使用与最终提交相同的解析、证据及回执规则。
+func (s *Service) ValidateBatch(ctx context.Context, ws, batch, task string, result Result) error {
+	var raw []byte
+	if err := s.Pool.QueryRow(ctx, `SELECT materials FROM supervision_batch WHERE workspace_id=$1 AND id=$2 AND task_id=$3 AND status='running'`, ws, batch, task).Scan(&raw); err != nil {
+		return fmt.Errorf("监督批次已失效")
+	}
+	var materials []Material
+	if err := json.Unmarshal(raw, &materials); err != nil {
+		return err
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT id::text,COALESCE(result->>'run_id',''),result FROM supervision_investigation WHERE workspace_id=$1 AND batch_id=$2 AND task_id=$3`, ws, batch, task)
+	if err != nil {
+		return err
+	}
+	var investigations []Material
+	receipts := map[string]Receipt{}
+	for rows.Next() {
+		var id, run string
+		var body []byte
+		if err = rows.Scan(&id, &run, &body); err != nil {
+			rows.Close()
+			return err
+		}
+		var receipt Receipt
+		if err = json.Unmarshal(body, &receipt); err != nil {
+			rows.Close()
+			return err
+		}
+		receipts[id] = receipt
+		investigations = append(investigations, Material{Evidence: Evidence{Kind: "investigation", ID: id, RunID: run}})
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if err = ValidateResult(result, materials, investigations...); err != nil {
+		return err
+	}
+	if _, err = receiptMaterials(result, receipts); err != nil {
+		return err
+	}
+	for _, id := range append(findingIDs(result), resolutionIDs(result)...) {
+		var exists bool
+		if err = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_finding WHERE workspace_id=$1 AND id=$2 AND issue_id=(SELECT issue_id FROM supervision_batch WHERE id=$3))`, ws, id, batch).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("问题编号不属于本任务：%s", id)
+		}
+	}
+	return nil
+}
+func findingIDs(r Result) []string {
+	var out []string
+	for _, f := range r.Findings {
+		if f.ID != "" {
+			out = append(out, f.ID)
+		}
+	}
+	return out
+}
+func resolutionIDs(r Result) []string {
+	var out []string
+	for _, f := range r.Resolutions {
+		out = append(out, f.ID)
+	}
+	return out
 }
 
 func (s *Service) reconcile(ctx context.Context, ws string) error {
@@ -624,18 +746,26 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	if err = json.Unmarshal(raw, &materials); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `SELECT id::text,COALESCE(result->>'run_id','') FROM supervision_investigation WHERE workspace_id=$1 AND batch_id=$2 AND task_id=$3`, ws, batch, task)
+	rows, err := tx.Query(ctx, `SELECT id::text,COALESCE(result->>'run_id',''),result FROM supervision_investigation WHERE workspace_id=$1 AND batch_id=$2 AND task_id=$3`, ws, batch, task)
 	if err != nil {
 		return err
 	}
 	var investigations []Material
+	receipts := map[string]Receipt{}
 	for rows.Next() {
 		var m Material
 		m.Kind = "investigation"
-		if err = rows.Scan(&m.ID, &m.RunID); err != nil {
+		var receiptBody []byte
+		if err = rows.Scan(&m.ID, &m.RunID, &receiptBody); err != nil {
 			rows.Close()
 			return err
 		}
+		var receipt Receipt
+		if err = json.Unmarshal(receiptBody, &receipt); err != nil {
+			rows.Close()
+			return err
+		}
+		receipts[m.ID] = receipt
 		investigations = append(investigations, m)
 	}
 	err = rows.Err()
@@ -644,6 +774,10 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 		return err
 	}
 	if err = ValidateResult(result, materials, investigations...); err != nil {
+		return err
+	}
+	pages, err := receiptMaterials(result, receipts)
+	if err != nil {
 		return err
 	}
 	for _, f := range result.Findings {
@@ -695,16 +829,38 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 			return err
 		}
 	}
-	for _, m := range materials {
-		if m.ContextOnly {
+	groups := map[string][]Material{}
+	for _, m := range append(materials, pages...) {
+		if !m.ContextOnly {
+			key := m.Kind + ":" + m.ID
+			groups[key] = append(groups[key], m)
+		}
+	}
+	for _, ranges := range groups {
+		first := ranges[0]
+		var generation int64
+		var offset int
+		if err = tx.QueryRow(ctx, `SELECT generation,reviewed_offset FROM supervision_material WHERE workspace_id=$1 AND kind=$2 AND source_id=$3 FOR UPDATE`, ws, first.Kind, first.ID).Scan(&generation, &offset); err != nil {
+			return err
+		}
+		valid := []Material{}
+		length := 0
+		for _, page := range ranges {
+			if page.Generation == generation {
+				valid = append(valid, page)
+				length = page.Length
+			}
+		}
+		if len(valid) == 0 {
 			continue
 		}
-		_, err = tx.Exec(ctx, `UPDATE supervision_material SET reviewed_offset=$5::integer,reviewed_generation=CASE WHEN $5::integer>=$6::integer THEN generation ELSE reviewed_generation END
-          WHERE workspace_id=$1 AND kind=$2 AND source_id=$3 AND generation=$4`, ws, m.Kind, m.ID, m.Generation, m.End, m.Length)
+		end := ContiguousEnd(offset, valid)
+		_, err = tx.Exec(ctx, `UPDATE supervision_material SET reviewed_offset=$5::integer,reviewed_generation=CASE WHEN $5::integer>=$6::integer THEN generation ELSE reviewed_generation END WHERE workspace_id=$1 AND kind=$2 AND source_id=$3 AND generation=$4`, ws, first.Kind, first.ID, generation, end, length)
 		if err != nil {
 			return err
 		}
 	}
+
 	summary, efficiency, correctness := result.Summary, result.Efficiency, result.Correctness
 	currentGaps := result.Gaps
 	if len(protectedIDs) > 0 {
@@ -771,14 +927,16 @@ const PollInterval = time.Minute
 
 type EvidencePage struct {
 	Evidence
-	BatchID  string `json:"batch_id,omitempty"`
-	IssueID  string `json:"issue_id"`
-	Text     string `json:"text"`
-	Offset   int    `json:"offset"`
-	End      int    `json:"end"`
-	Length   int    `json:"length"`
-	Deleted  bool   `json:"deleted"`
-	Snapshot bool   `json:"snapshot"`
+	BatchID    string `json:"batch_id,omitempty"`
+	IssueID    string `json:"issue_id"`
+	Text       string `json:"text"`
+	Offset     int    `json:"offset"`
+	End        int    `json:"end"`
+	Length     int    `json:"length"`
+	Deleted    bool   `json:"deleted"`
+	Snapshot   bool   `json:"snapshot"`
+	Generation int64  `json:"generation"`
+	SHA256     string `json:"sha256"`
 }
 
 // ReadEvidence 只读取已登记的工作区材料，按字符分页，原文不可用时保留明确状态。
@@ -790,14 +948,12 @@ func (s *Service) ReadEvidence(ctx context.Context, ws, kind, id string, offset 
 		page.Text = redact.Text(page.Text)
 		return page, err
 	}
-	if err := s.Pool.QueryRow(ctx, `SELECT issue_id::text,COALESCE(run_id::text,'') FROM supervision_material WHERE workspace_id=$1 AND kind=$2 AND source_id=$3`, ws, kind, id).Scan(&page.IssueID, &page.RunID); err != nil {
-		return page, err
-	}
 	query, err := sourceSQL(kind)
 	if err != nil {
 		return page, err
 	}
-	err = s.Pool.QueryRow(ctx, `SELECT length(body),substring(body from $3 for 8000) FROM (`+query+`) source(body)`, id, ws, offset+1).Scan(&page.Length, &page.Text)
+	err = s.Pool.QueryRow(ctx, `SELECT m.issue_id::text,COALESCE(m.run_id::text,''),m.generation,COALESCE(length(source.body),0),COALESCE(substring(source.body from $4::integer for 8000),''),COALESCE(encode(sha256(convert_to(source.body,'UTF8')),'hex'),''),source.body IS NULL FROM supervision_material m LEFT JOIN LATERAL (`+query+`) source(body) ON true WHERE m.workspace_id=$2 AND m.kind=$3 AND m.source_id=$1`, id, ws, kind, offset+1).Scan(&page.IssueID, &page.RunID, &page.Generation, &page.Length, &page.Text, &page.SHA256, &page.Deleted)
+
 	if errors.Is(err, pgx.ErrNoRows) {
 		page.Deleted = true
 		return page, nil

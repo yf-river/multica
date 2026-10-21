@@ -75,6 +75,7 @@ export function QualitySupervision() {
     running: t(($) => $.supervision.status_running),
     stopped: t(($) => $.supervision.status_stopped),
     failed: t(($) => $.supervision.status_failed),
+    retrying: t(($) => $.supervision.status_retrying),
     changed: t(($) => $.supervision.status_changed),
     pending: t(($) => $.supervision.status_pending),
     covered: t(($) => $.supervision.status_covered),
@@ -84,6 +85,7 @@ export function QualitySupervision() {
     running: "border-info/40 bg-info/10 text-info",
     stopped: "text-muted-foreground",
     failed: "border-destructive/40 bg-destructive/10 text-destructive",
+    retrying: "border-warning/40 bg-warning/10 text-warning",
     changed: "border-warning/40 bg-warning/10 text-warning",
     pending: "border-warning/40 bg-warning/10 text-warning",
     covered: "text-muted-foreground",
@@ -93,7 +95,7 @@ export function QualitySupervision() {
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2 text-body font-medium">
-            <span aria-hidden className={cn("h-2 w-2 rounded-full", config.error ? "bg-destructive" : config.enabled ? "bg-info" : "bg-muted-foreground")} />
+            <span aria-hidden className={cn("h-2 w-2 rounded-full", (config.error || summary.failed > 0) ? "bg-destructive" : config.enabled ? "bg-info" : "bg-muted-foreground")} />
             {config.error ? t(($) => $.supervision.interrupted) : config.enabled ? t(($) => $.supervision.active) : t(($) => $.supervision.paused)}
             {summary.running > 0 && (
               <span className="inline-flex items-center gap-1.5 text-caption font-normal text-info">
@@ -107,6 +109,11 @@ export function QualitySupervision() {
             {" · "}
             {t(($) => $.supervision.last_success)} {moment(config.last_success_at)}
           </p>
+          {config.enabled && <p role="status" className="text-caption text-muted-foreground">{summary.running > 0 ? t(($) => $.supervision.health_running) : summary.pending > 0 ? (summary.failed >= summary.pending ? t(($) => $.supervision.health_blocked) : t(($) => $.supervision.health_waiting)) : t(($) => $.supervision.health_idle)}</p>}
+          {config.enabled && summary.failed > 0 && <div role="alert" className="space-y-2 text-caption text-destructive">
+            <p>{t(($) => $.supervision.failure_limit_hint, {count:summary.failed})}</p>
+            {data.can_manage && <Button variant="outline" disabled={check.isPending} onClick={() => check.mutate({ retry_failed: true })}>{t(($) => $.supervision.resume_failed)}</Button>}
+          </div>}
           {paused && (
             <p id="supervision-paused-hint" className="text-caption text-muted-foreground">{t(($) => $.supervision.paused_hint)}</p>
           )}

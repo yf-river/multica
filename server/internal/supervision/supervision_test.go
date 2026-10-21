@@ -109,3 +109,47 @@ func TestBatchInputRejectsInvalidJSON(t *testing.T) {
 		t.Fatal("invalid structured input accepted")
 	}
 }
+
+func TestFindingValidationNamesMissingField(t *testing.T) {
+	m := Material{Evidence: Evidence{Kind: "message", ID: "source"}}
+	r := Result{Covered: []Evidence{m.Evidence}, Findings: []Finding{{Title: "确定的映射错误", Description: "输入被遗漏", Impact: "接口接收错误数据", Recommendation: "保留用户输入", Confidence: "confirmed", Evidence: []Evidence{m.Evidence}}}}
+	if err := ValidateResult(r, []Material{m}); err == nil || !strings.Contains(err.Error(), "findings[0].code") {
+		t.Fatalf("missing field not actionable: %v", err)
+	}
+	r.Findings[0].Code = "mapping_mismatch"
+	r.Findings[0].Title = ""
+	if err := ValidateResult(r, []Material{m}); err == nil || !strings.Contains(err.Error(), "findings[0].title") {
+		t.Fatalf("wrong next error: %v", err)
+	}
+	r.Findings[0].Title = "确定的映射错误"
+	if err := ValidateResult(r, []Material{m}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadReceiptsRequireRealSuccessfulMaterialPages(t *testing.T) {
+	receipts := map[string]Receipt{"tail": {Tool: "supervision_material", Path: "message/source", Generation: 2, Offset: 8000, End: 15000, Length: 15000}, "index": {Tool: "supervision_material", Path: "index"}, "failed": {Tool: "supervision_material", Path: "message/source", Generation: 2, Offset: 8000, End: 15000, Length: 15000, Error: "已删除"}}
+	pages, err := receiptMaterials(Result{ReadReceipts: []string{"tail"}}, receipts)
+	if err != nil || len(pages) != 1 || pages[0].Generation != 2 {
+		t.Fatalf("valid page rejected: %v", err)
+	}
+	for _, ids := range [][]string{{"unknown"}, {"index"}, {"failed"}, {"tail", "tail"}} {
+		if _, err := receiptMaterials(Result{ReadReceipts: ids}, receipts); err == nil {
+			t.Fatalf("accepted invalid receipts: %v", ids)
+		}
+	}
+}
+
+func TestContiguousReadDoesNotJumpOverUnreadText(t *testing.T) {
+	pages := []Material{{Offset: 16000, End: 23000}, {Offset: 0, End: 8000}}
+	if got := ContiguousEnd(0, pages); got != 8000 {
+		t.Fatalf("jumped unread gap: %d", got)
+	}
+	pages = append(pages, Material{Offset: 7000, End: 17000})
+	if got := ContiguousEnd(0, pages); got != 23000 {
+		t.Fatalf("overlap not merged: %d", got)
+	}
+	if got := ContiguousEnd(24000, pages); got != 24000 {
+		t.Fatal("cursor moved backwards")
+	}
+}

@@ -23,10 +23,27 @@ import (
 const PageSize = 8000
 
 type Root struct {
-	ID    string `json:"id"`
-	Path  string `json:"path"`
-	RunID string `json:"run_id,omitempty"`
-	Label string `json:"label,omitempty"`
+	ArtifactPrefix string `json:"artifact_prefix,omitempty"`
+	ID             string `json:"id"`
+	Path           string `json:"path"`
+	RunID          string `json:"run_id,omitempty"`
+	Label          string `json:"label,omitempty"`
+}
+
+// Allows 将验收目录约束在工单号对应的子路径；其他.run内容不开放。
+func (r Root) Allows(name, tool string) bool {
+	if r.ArtifactPrefix == "" {
+		return true
+	}
+	if tool == "supervision_git" {
+		return false
+	}
+	if (name == "" || name == ".") && tool == "supervision_search" {
+		return true
+	}
+	part := strings.ToLower(strings.Split(name, "/")[0])
+	prefix := strings.ToLower(r.ArtifactPrefix)
+	return strings.HasPrefix(part, prefix+"-") || strings.HasPrefix(part, strings.ReplaceAll(prefix, "-", "")+"-")
 }
 
 type Request struct {
@@ -39,6 +56,7 @@ type Request struct {
 }
 
 type Result struct {
+	Generation  int64     `json:"generation,omitempty"`
 	Kind        string    `json:"kind"`
 	ID          string    `json:"id,omitempty"`
 	Root        string    `json:"root"`
@@ -133,6 +151,9 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 		return s.capture(ctx, req, out, fmt.Errorf("来源目录不可用：%w", err))
 	}
 	defer root.Close()
+	if !selected.Allows(req.Path, tool) {
+		return s.capture(ctx, req, out, fmt.Errorf("路径不属于本任务验收材料"))
+	}
 	var body string
 	switch tool {
 	case "supervision_read":
@@ -206,7 +227,7 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 			if e != nil {
 				return e
 			}
-			if hidden(name) {
+			if hidden(name) || (name != "." && !selected.Allows(name, "supervision_read")) {
 				if entry.IsDir() {
 					return fs.SkipDir
 				}

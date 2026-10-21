@@ -213,6 +213,8 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                 {data.subject.gaps.length > 0 && (
                   <p className="mt-1 text-caption text-warning">{t(($) => $.supervision.coverage_gap_hint, { count: data.subject.gaps.length })}</p>
                 )}
+                {data.subject.failures >= 3 && <p role="alert" className="mt-2 text-body text-destructive">{t(($) => $.supervision.failure_limit_hint, {count:1})}</p>}
+                {data.subject.failures > 0 && data.subject.failures < 3 && data.subject.next_attempt_at && <p className="mt-2 text-caption">{t(($) => $.supervision.next_retry)} {moment(data.subject.next_attempt_at)}</p>}
                 {data.subject.stopped && <p className="mt-2 text-body">{t(($) => $.supervision.stopped)}</p>}
                 {data.subject.error && <p role="alert" className="mt-2 text-destructive">{data.subject.error}</p>}
                 <details className="mt-3 rounded-md border p-3">

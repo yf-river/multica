@@ -288,3 +288,29 @@ func TestSearchBudgetCanBeNarrowedAndLongMatchRemainsVisible(t *testing.T) {
 		t.Fatalf("match cropped out: %+v %v", result, err)
 	}
 }
+
+func TestEvidenceRootCannotReadAnotherIssueOrRunState(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"gong8-links/report.json", "gong-8-log/output.txt", "gong9-links/report.json"} {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("验收记录"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session := Session{Roots: []Root{{ID: "evidence", Path: dir, ArtifactPrefix: "GONG-8"}}}
+	out, err := session.Call(context.Background(), "supervision_search", Request{Root: "evidence", Path: ".", Reason: "列出本任务验收材料"})
+	if err != nil || !strings.Contains(out.Text, "gong8-links/report.json") || strings.Contains(out.Text, "gong9") {
+		t.Fatalf("bad scope: %s %v", out.Text, err)
+	}
+	if _, err = session.Call(context.Background(), "supervision_read", Request{Root: "evidence", Path: "gong8-links/report.json", Reason: "核对验收结果"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"gong9-links/report.json", "../credentials.json", ".env", "gong-80-log/output.txt"} {
+		if _, err = session.Call(context.Background(), "supervision_read", Request{Root: "evidence", Path: p, Reason: "越权反例"}); err == nil {
+			t.Fatalf("read outside scope: %s", p)
+		}
+	}
+}

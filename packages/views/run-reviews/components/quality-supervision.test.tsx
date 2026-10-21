@@ -48,6 +48,7 @@ describe("quality supervision", () => {
     mocks.snapshot.mockResolvedValue({
       ...EMPTY_SUPERVISION,
       config: { ...EMPTY_SUPERVISION.config, enabled: true, agent_id: "a1", inventory_complete: true },
+      can_manage: true,
       summary: { ...EMPTY_SUPERVISION.summary, total: 2, covered: 1, failed: 1 },
     });
     mocks.list.mockResolvedValue({
@@ -61,7 +62,10 @@ describe("quality supervision", () => {
     renderPage();
     expect(await screen.findByText("1 failed checks")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Check failed" })).toBeInTheDocument();
-    expect(screen.getByText("检查失败，待重试")).toBeInTheDocument();
+    expect(screen.getByText("已停止自动检查，需要恢复")).toBeInTheDocument();
+    expect(mocks.check).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "恢复失败任务" }));
+    await waitFor(() => expect(mocks.check).toHaveBeenCalledWith({ retry_failed: true }));
     expect(screen.getByRole("button", { name: /AIS-10/ })).toHaveTextContent("未发现问题");
   });
   it("opens cited evidence inside the detail without leaving the page", async () => {

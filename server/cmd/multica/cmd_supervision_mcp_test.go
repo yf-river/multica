@@ -10,7 +10,7 @@ import (
 
 func TestSupervisionToolsAdvertiseReadOnlyClosedWorld(t *testing.T) {
 	tools := supervisionMCPTools()
-	if len(tools) != 4 {
+	if len(tools) != 5 {
 		t.Fatalf("unexpected investigation tool set: %d", len(tools))
 	}
 	for _, tool := range tools {

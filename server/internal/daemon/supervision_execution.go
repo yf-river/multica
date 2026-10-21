@@ -56,11 +56,33 @@ func supervisionMCPConfig(task Task, envRoot, workspacesRoot, provider string) (
 	config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"supervision": server}})
 	sources := make([]map[string]any, 0, len(roots))
 	for _, root := range roots {
-		sources = append(sources, map[string]any{"id": root.ID, "label": root.Label, "run_id": root.RunID, "available": root.Path != ""})
+		sources = append(sources, map[string]any{"id": root.ID, "label": root.Label, "run_id": root.RunID, "available": investigationRootAvailable(root.Path), "unavailable_reason": investigationRootReason(root.Path)})
 	}
 	sourceData, marshalErr := json.Marshal(map[string]any{"investigation_sources": sources})
 	if marshalErr != nil {
 		return nil, "", marshalErr
 	}
 	return config, string(sourceData), err
+}
+
+func investigationRootAvailable(path string) bool {
+	if path == "" {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	return err == nil && stat.IsDir()
+}
+func investigationRootReason(path string) string {
+	if path == "" {
+		return "来源未获本运行授权"
+	}
+	if !investigationRootAvailable(path) {
+		return "来源目录不存在或不可读取"
+	}
+	return ""
 }

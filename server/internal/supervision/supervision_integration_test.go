@@ -342,3 +342,86 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	}
 	t.Log("PASS: 100-task inventory; note generation race; duplicate callbacks; independent restart; 10MB bounded reads and tail; late seq; task fence; edited user decision")
 }
+
+func TestIntSupplementalReadingAdvancesOnlyContiguousCurrentGeneration(t *testing.T) {
+	if os.Getenv("MULTICA_SUPERVISION_INT_TEST") != "1" {
+		t.Skip("explicit int required")
+	}
+	ctx := context.Background()
+	raw, err := os.ReadFile("/data/ida/multica/.run/env/int-services.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]map[string]string
+	if err = json.Unmarshal(raw, &config); err != nil || config["server"]["MULTICA_ENV_ID"] != "int" {
+		t.Fatal("not int")
+	}
+	pool, err := pgxpool.New(ctx, config["server"]["DATABASE_URL"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	f := dbfx.New(pool, "", "")
+	stamp := fmt.Sprint(time.Now().UnixNano())
+	f.UserID = f.User(t, "补读回执验收", "receipt-"+stamp+"@example.test", dbfx.Cols{"account": "receipt-" + stamp})
+	f.WorkspaceID = f.Workspace(t, "补读回执验收", "receipt-"+stamp)
+	f.Member(t, f.WorkspaceID, f.UserID, "owner")
+	f.InsertNoID(t, "supervision_config", dbfx.Cols{"workspace_id": f.WorkspaceID, "owner_id": f.UserID, "enabled": false}, "workspace_id=$1", f.WorkspaceID)
+	t.Cleanup(func() {
+		for _, table := range []string{"supervision_investigation", "supervision_batch", "supervision_material", "supervision_subject", "supervision_config"} {
+			if _, e := pool.Exec(ctx, "DELETE FROM "+table+" WHERE workspace_id=$1", f.WorkspaceID); e != nil {
+				t.Error(e)
+			}
+		}
+	})
+	issue := f.Issue(t, "中文长材料补读")
+	runtime := f.Runtime(t, "补读夹具", dbfx.Cols{"status": "offline"})
+	agent := f.Agent(t, "补读夹具", runtime)
+	task := f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issue, "status": "completed", "context": dbfx.Raw(`'{"type":"quality_supervision"}'::jsonb`)})
+	note := f.Comment(t, issue, strings.Repeat("连续核对中文原文。", 2000))
+	svc := New(pool, nil)
+	var target int64
+	f.QueryRow(t, "SELECT desired_version FROM supervision_subject WHERE issue_id=$1", issue).Scan(&target)
+	first, err := svc.ReadEvidence(ctx, f.WorkspaceID, "comment", note, 0)
+	if err != nil || first.Generation < 1 || len(first.SHA256) != 64 {
+		t.Fatalf("versioned page: %+v %v", first, err)
+	}
+	m := Material{Evidence: Evidence{Kind: "comment", ID: note}, Generation: first.Generation, Offset: 0, End: first.End, Length: first.Length, Text: first.Text}
+	materials, _ := json.Marshal([]Material{m})
+	batch := f.Insert(t, "supervision_batch", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issue, "task_id": task, "target_version": target, "status": "running", "materials": materials})
+	var ids []string
+	for offset := first.End; offset < first.Length; {
+		page, e := svc.ReadEvidence(ctx, f.WorkspaceID, "comment", note, offset)
+		if e != nil {
+			t.Fatal(e)
+		}
+		id := f.Insert(t, "supervision_investigation", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issue, "batch_id": batch, "task_id": task, "request": map[string]any{}, "result": map[string]any{"tool": "supervision_material", "path": "comment/" + note, "generation": page.Generation, "offset": page.Offset, "end": page.End, "length": page.Length}})
+		ids = append(ids, id)
+		offset = page.End
+	}
+	r := Result{Summary: "已连续核对长原文", Efficiency: "clear", Correctness: "clear", Gaps: []string{}, Findings: []Finding{}, Resolutions: []Resolution{}, Covered: []Evidence{m.Evidence}, ReadReceipts: ids}
+	if err = svc.ValidateBatch(ctx, f.WorkspaceID, batch, task, r); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_material WHERE source_id=$1 AND reviewed_generation=generation", note); n != 0 {
+		t.Fatal("validation advanced cursor")
+	}
+	if err = svc.Commit(ctx, f.WorkspaceID, batch, task, r); err != nil {
+		t.Fatal(err)
+	}
+	var cursor int
+	f.QueryRow(t, "SELECT reviewed_offset FROM supervision_material WHERE source_id=$1", note).Scan(&cursor)
+	if cursor != first.Length {
+		t.Fatalf("supplementary tail not committed: %d/%d", cursor, first.Length)
+	}
+	if err = svc.Commit(ctx, f.WorkspaceID, batch, task, r); err != nil {
+		t.Fatal(err)
+	}
+	f.Exec(t, "UPDATE comment SET content=content||'新增决定' WHERE id=$1", note)
+	if err = svc.Commit(ctx, f.WorkspaceID, batch, task, r); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_material WHERE source_id=$1 AND generation>reviewed_generation AND reviewed_offset=0", note); n != 1 {
+		t.Fatal("late edit was consumed by old callback")
+	}
+}

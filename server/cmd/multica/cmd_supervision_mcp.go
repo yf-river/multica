@@ -112,6 +112,29 @@ var supervisionMCPCmd = &cobra.Command{
 					response.Result = lifeMCPToolResult("调查参数无效", true)
 					break
 				}
+
+				if call.Name == "supervision_validate" {
+					var input struct {
+						Arguments struct {
+							Result json.RawMessage `json:"result"`
+						} `json:"arguments"`
+					}
+					if err := json.Unmarshal(request.Params, &input); err != nil || len(input.Arguments.Result) == 0 {
+						response.Result = lifeMCPToolResult("需要result对象", true)
+						break
+					}
+					client, err := newAPIClient(cmd)
+					var reply json.RawMessage
+					if err == nil {
+						err = client.PostJSON(ctx, "/api/supervision/validate", input.Arguments.Result, &reply)
+					}
+					if err != nil {
+						response.Result = lifeMCPToolResult(err.Error(), true)
+					} else {
+						response.Result = lifeMCPToolResult(string(reply), false)
+					}
+					break
+				}
 				result, err := session.Call(ctx, call.Name, call.Arguments)
 				if err != nil {
 					result.Error = err.Error()
@@ -178,9 +201,11 @@ func supervisionMCPTools() []map[string]any {
 		{"supervision_read", "分页读取授权来源内的文本；offset为字符偏移，使用sha256核对补读期间来源是否变化。"},
 		{"supervision_search", "列出或按字面值搜索授权来源；命中格式为文件:行号: [source_offset=字符偏移] 片段，可将source_offset直接用于supervision_read的offset补读该片段。结果有上限，注意truncated；本工具offset用于搜索结果分页。query为空时列文件。"},
 		{"supervision_git", "查询授权仓库；query为status、diff、history或show。diff比较当前工作区与HEAD，history列文件历史，二者须指定path；revision仅用于show，须提供完整40位提交及文件path。比较历史版本时分别show读取文件，不支持提交范围diff或用show列目录；列当前文件请使用supervision_search。含可执行过滤器的仓库不运行status/diff，可用supervision_read和Git show核验文件。"},
-		{"supervision_material", "列出或补读当前业务任务历史。path=index列来源索引，offset为条目偏移；path=kind/UUID读取原文，offset为字符偏移。kind为issue、comment、task、message或trace。root填materials。"},
+		{"supervision_material", "列出或补读当前业务任务历史。path=index列来源索引，path=attachments仅列本任务附件，offset为条目偏移；path=kind/UUID读取原文，offset为字符偏移。kind为issue、comment、task、message、trace、investigation或attachment。root填materials。"},
 	} {
 		tools = append(tools, map[string]any{"name": entry.name, "description": entry.description, "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}, "inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"root": map[string]any{"type": "string"}, "path": map[string]any{"type": "string"}, "query": map[string]any{"type": "string"}, "offset": map[string]any{"type": "integer", "minimum": 0}, "revision": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}}, "required": []string{"root", "reason"}}})
 	}
+
+	tools = append(tools, map[string]any{"name": "supervision_validate", "description": "只读校验本轮完整JSON结果，返回valid及具体字段错误；不会保存问题或推进进度。", "annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}, "inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"result": map[string]any{"type": "object"}}, "required": []string{"result"}}})
 	return tools
 }

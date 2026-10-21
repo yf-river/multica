@@ -13,7 +13,7 @@ export function moment(value?: string | null) {
   return value ? formatDateTime(value) : "—";
 }
 
-export type ReviewState = "no_runs" | "running" | "stopped" | "failed" | "changed" | "pending" | "covered";
+export type ReviewState = "no_runs" | "running" | "stopped" | "failed" | "retrying" | "changed" | "pending" | "covered";
 
 /** Subject shape needed to derive the review badge, without binding to the full API type. */
 export type ReviewSubject = {
@@ -36,6 +36,7 @@ export function reviewState(item: ReviewSubject): ReviewState {
   if (item.running) return "running";
   if (item.stopped) return "stopped";
   if (item.failures >= 3) return "failed";
+  if (item.failures > 0) return "retrying";
   if (item.desired_version > item.reviewed_version) return item.last_checked_at ? "changed" : "pending";
   return "covered";
 }

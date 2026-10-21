@@ -159,6 +159,7 @@ func (h *Handler) GetSupervision(w http.ResponseWriter, r *http.Request) {
       'pending',count(*) FILTER(WHERE s.desired_version>s.reviewed_version AND EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id) AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.issue_id=s.issue_id AND b.status IN('preparing','running'))),
       'running',count(*) FILTER(WHERE EXISTS(SELECT 1 FROM supervision_batch b WHERE b.issue_id=s.issue_id AND b.status IN('preparing','running'))),
       'incomplete',count(*) FILTER(WHERE s.gaps<>'[]'::jsonb),'failed',count(*) FILTER(WHERE s.failures>=3),
+ 'retrying',count(*) FILTER(WHERE s.failures>0 AND s.failures<3 AND s.desired_version>s.reviewed_version),
       'oldest_pending_at',min(s.changed_at) FILTER(WHERE s.desired_version>s.reviewed_version AND EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id)),
       'open_findings',(SELECT count(*) FROM supervision_finding f WHERE f.workspace_id=$1 AND f.status IN('open','in_progress')),
       'issues_with_findings',(SELECT count(DISTINCT issue_id) FROM supervision_finding f WHERE f.workspace_id=$1 AND f.status IN('open','in_progress')))
@@ -250,7 +251,7 @@ func (h *Handler) ListSupervisionSubjects(w http.ResponseWriter, r *http.Request
 	rows, err := h.DB.Query(r.Context(), `SELECT jsonb_build_object('issue_id',i.id,'title',i.title,'identifier',w.issue_prefix||'-'||i.number,'business_status',i.status,'project_id',i.project_id,
       'desired_version',s.desired_version,'reviewed_version',s.reviewed_version,'summary',s.summary,'efficiency',s.efficiency,'correctness',s.correctness,'gaps',s.gaps,'last_checked_at',s.last_checked_at,'error',s.error,'failures',s.failures,
       'run_count',(SELECT count(*) FROM agent_task_queue t WHERE t.issue_id=i.id),
-      'stopped',s.next_attempt_at='infinity'::timestamptz,'running',EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=i.id AND b.status IN('preparing','running')),
+      'stopped',s.next_attempt_at='infinity'::timestamptz,'next_attempt_at',CASE WHEN isfinite(s.next_attempt_at) THEN s.next_attempt_at ELSE NULL END,'running',EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=i.id AND b.status IN('preparing','running')),
       'open_findings',(SELECT count(*) FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress')))
       FROM supervision_subject s JOIN issue i ON i.id=s.issue_id JOIN workspace w ON w.id=i.workspace_id
       WHERE s.workspace_id=$1 AND COALESCE(i.origin_type,'')<>'health_report'
@@ -302,7 +303,7 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var subject json.RawMessage
-	err = h.DB.QueryRow(r.Context(), `SELECT to_jsonb(s)||jsonb_build_object('stopped',s.next_attempt_at='infinity'::timestamptz) FROM supervision_subject s WHERE workspace_id=$1 AND issue_id=$2`, ws, id).Scan(&subject)
+	err = h.DB.QueryRow(r.Context(), `SELECT (to_jsonb(s)-'next_attempt_at')||jsonb_build_object('stopped',s.next_attempt_at='infinity'::timestamptz,'next_attempt_at',CASE WHEN isfinite(s.next_attempt_at) THEN s.next_attempt_at ELSE NULL END) FROM supervision_subject s WHERE workspace_id=$1 AND issue_id=$2`, ws, id).Scan(&subject)
 	if err != nil {
 		writeError(w, 404, "任务尚未登记")
 		return
@@ -354,9 +355,10 @@ func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		IssueID string `json:"issue_id"`
-		Full    bool   `json:"full"`
-		Stop    bool   `json:"stop"`
+		IssueID     string `json:"issue_id"`
+		Full        bool   `json:"full"`
+		Stop        bool   `json:"stop"`
+		RetryFailed bool   `json:"retry_failed"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeError(w, 400, "检查请求格式错误")
@@ -425,7 +427,7 @@ func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE supervision_subject SET force_review=true,next_attempt_at=now(),failures=0,error='' WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`, ws, body.IssueID)
+		_, err = tx.Exec(r.Context(), `UPDATE supervision_subject SET force_review=true,next_attempt_at=now(),failures=0,error='' WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid) AND (NOT $3::boolean OR failures>=3)`, ws, body.IssueID, body.RetryFailed)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
