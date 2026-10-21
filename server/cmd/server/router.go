@@ -1655,10 +1655,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/pull-requests", h.LinkPullRequestToIssue)
 					r.Post("/merge-requests/create", h.CreateMergeRequestForIssue)
 					r.Post("/source-fetch", h.RecordIssueSourceFetch)
+					r.Get("/deliveries", h.GetIssueDeliveries)
+					r.Post("/deliveries", h.SubmitIssueDelivery)
+					r.Put("/delivery-plan", h.RegisterIssuePlan)
+					r.Post("/delivery-plan/confirm", h.ConfirmIssuePlan)
+					r.Post("/deliveries/{deliveryId}/action", h.ActIssueDelivery)
 				})
 			})
 
+			r.Get("/api/delivery-queue", h.ListDeliveryQueue)
+			r.Post("/api/delivery-queue/advance", h.AdvanceDelivery)
+
 			// 任务消息（面向用户，非 daemon 认证）
+			r.Route("/api/supervision", func(r chi.Router) {
+				r.Get("/", h.GetSupervision)
+				r.Post("/validate", h.ValidateSupervisionResult)
+				r.Post("/investigation", h.SaveSupervisionInvestigation)
+				r.Get("/investigation/material", h.ReadSupervisionInvestigationMaterial)
+				r.Put("/", h.UpdateSupervision)
+				r.Get("/subjects", h.ListSupervisionSubjects)
+				r.Get("/evidence/{kind}/{sourceId}", h.GetSupervisionEvidence)
+				r.Get("/subjects/{issueId}", h.GetSupervisionSubject)
+				r.Get("/batches/{batchId}/task", h.GetSupervisionBatchTask)
+				r.Post("/check", h.CheckSupervision)
+				r.Patch("/findings/{findingId}", h.UpdateSupervisionFinding)
+				r.Post("/findings/{findingId}/feedback", h.FeedbackSupervisionFinding)
+			})
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 

@@ -1754,6 +1754,18 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
 	}
+	if opts.AnalysisOnly {
+		startParams["sandbox"] = "read-only"
+		startParams["approvalPolicy"] = "never"
+		startParams["includeApplyPatchTool"] = false
+		// 调查来源由本轮 MCP 授权，内置浏览器、应用和图像工具不能绕过该范围。
+		startParams["config"] = map[string]any{
+			"features.shell_tool": false, "features.unified_exec": false, "web_search": "disabled",
+			"features.browser_use": false, "features.in_app_browser": false, "features.computer_use": false,
+			"features.view_image": false, "features.image_generation": false, "features.apps": false,
+			"features.skill_search": false, "features.multi_agent": false, "features.plugins": false,
+		}
+	}
 	applyCodexReasoningEffort(startParams, opts.ThinkingLevel)
 	applyCodexServiceTier(startParams, opts.ServiceTier)
 	c.threadSetupMethod = "thread/start"

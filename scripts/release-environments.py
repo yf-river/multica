@@ -45,9 +45,10 @@ def http(url, method='GET'):
         try: return json.loads(data)
         except ValueError: return data.decode()
 
-def ready(url, timeout=90):
+def ready(url, timeout=90, pid=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if pid is not None and not exists(pid): raise RuntimeError("服务启动进程已退出: "+url)
         try: return http(url)
         except Exception: time.sleep(.5)
     raise RuntimeError('服务启动失败: ' + url)
@@ -168,12 +169,20 @@ def build(source, target):
         for binary in ('server', 'multica', 'migrate'):
             run(['go', 'build', '-ldflags', f'-X main.version={sha[:12]} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
+    operations=target/'operations';operations.mkdir(exist_ok=True)
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py'):
+        script=source/'scripts'/name
+        if script.exists():(operations/name).write_bytes(script.read_bytes())
     if checked_source(source)[1] != sha or source_digest(source)[0] != digest:
         raise RuntimeError('构建期间源码变化，请重新联调')
     queries = []
     for file in sorted((source/'server/pkg/db/generated').glob('*.sql.go')):
         for name, sql in re.findall(r'^const (\w+) = `(.*?)`\n', file.read_text(), re.M | re.S):
             queries.append(dict(name=name, sql=sql.replace('` + "`" + `', '`')))
+    for file in (source/'server/internal/handler').glob('issue_delivery*.go'):
+        for sql in re.findall(r'`([^`]+)`',file.read_text()):
+            if re.match(r'^\s*(SELECT|INSERT|UPDATE|DELETE|WITH)\b',sql) and not sql.rstrip().endswith('FROM'):
+                queries.append(dict(name='delivery_'+str(len(queries)),sql=sql))
     write(target/'server/queries.json', queries)
     manifest = dict(id=sha+'-'+str(time.time_ns()), source_commit=sha, source_directory=str(source), source_digest=digest,
                     inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
@@ -263,14 +272,63 @@ def migrate(release, cfg, action='up', previous=None):
         args.extend(['--versions', ','.join(versions)])
     run(args, cwd=Path(release)/'server', env=cfg['server'])
 
+def start_maintenance(env, metadata):
+    marker=RUN/(env+'-maintenance.json')
+    if marker.exists():
+        state=read(marker)
+        if exists(state['pid']):
+            args=Path('/proc/'+str(state['pid'])+'/cmdline').read_bytes()
+            if b'release-maintenance.py' not in args: raise RuntimeError('维护进程身份不匹配')
+            return state['pid']
+    helper=Path(__file__).with_name('release-maintenance.py')
+    pid=start([sys.executable,helper,'--port',str(metadata['frontend_port'])],ROOT,os.environ,RUN/(env+'-maintenance.log'))
+    write(marker,{'pid':pid},True)
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        if not exists(pid):raise RuntimeError('维护提示启动失败')
+        try:
+            http(metadata['frontend_url']+'/api/config')
+        except urllib.error.HTTPError as e:
+            if e.code==503:return pid
+        except (OSError,urllib.error.URLError):pass
+        time.sleep(.1)
+    raise RuntimeError('维护提示未就绪')
+
+def stop_maintenance(env):
+    marker=RUN/(env+'-maintenance.json')
+    if not marker.exists():return
+    pid=read(marker)['pid']
+    if exists(pid):
+        args=Path('/proc/'+str(pid)+'/cmdline').read_bytes()
+        if b'release-maintenance.py' not in args:raise RuntimeError('维护进程身份不匹配')
+        owned_stop(pid,'maintenance',str(ROOT))
+    marker.unlink(missing_ok=True)
+
+def prepare_database(release, cfg, previous):
+    old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
+    for migration in sorted((Path(release)/'server/migrations').glob('*.up.sql')):
+        if migration.name in old:continue
+        sql=re.sub(r'/\*.*?\*/','',migration.read_text(),flags=re.S)
+        sql=re.sub(r'--[^\n]*','',sql)
+        statements=[part.strip() for part in sql.split(';') if part.strip()]
+        for statement in statements:
+            additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
+            if not additive:
+                raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
+    # 只对新增表与并发索引自动迁移；旧程序查询也必须能在迁移后准备成功。
+    migrate(release,cfg,previous=previous)
+    check_database(previous,cfg)
+    check_database(release,cfg)
+
 def launch(env, release, cfg, m):
     result={}
     m['pids']=result
     result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
-    ready(m['backend_url']+'/health')
+    ready(m['backend_url']+'/health',pid=result['server'])
+    stop_maintenance(env)
     webcmd=['node',release/'apps/web/server.js'] if (release/'apps/web/server.js').exists() else ['node',release/'apps/web/node_modules/next/dist/bin/next','start','-p',str(m['frontend_port']),'-H','0.0.0.0']
     result['web']=start(webcmd,release/'apps/web',{**cfg['web'], 'MULTICA_RELEASE_MANIFEST': str(release/'release.json')},m['log_paths']['web'])
-    ready(m['frontend_url']+'/login')
+    ready(m['frontend_url']+'/login',pid=result['web'])
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
     # 以 CLI 管理的 profile 启动；PID 来自健康端点，不猜测子进程。
@@ -313,7 +371,7 @@ def deploy(env, release, timeout=900):
         check_process_ownership(env,m)
         isolation_check(config_only=True)
         check_live_environment(env, m, cfg)
-        check_database(release, cfg)
+        prepare_database(release, cfg, m['release_dir'])
         if m.get('release_id')==release_id:
             isolation_check()
             print(env,'版本已运行，无需重启',release_id)
@@ -333,8 +391,8 @@ def deploy(env, release, timeout=900):
             while exists(m['pids']['daemon']) and time.monotonic()<deadline: time.sleep(.2)
             if exists(m['pids']['daemon']): raise RuntimeError('Daemon 未退出，拒绝强杀')
             owned_stop(m['pids']['web'],'web',old_cwds['web'])
+            start_maintenance(env,m)
             owned_stop(m['pids']['server'],'server',old_cwds['server'])
-            migrate(release,cfg,previous=old_cwds['server'])
             m['pids']=launch(env,release,cfg,m)
         except Exception as failure:
             # 启动失败时只回收本次创建的进程，并恢复切换前的程序与运行配置。
@@ -348,6 +406,7 @@ def deploy(env, release, timeout=900):
                 oldrelease=Path(old_cwds['server'])
                 for role in ('web','server'):
                     if exists(prior['pids'][role]): owned_stop(prior['pids'][role],role,old_cwds[role])
+                start_maintenance(env,prior)
                 prior['pids']=launch(env,oldrelease,oldcfg,prior)
             write(meta_path(env),prior)
             isolation_check()
@@ -437,6 +496,13 @@ def publish(env, directory, timeout=900):
     try:
         verify_browser(env)
         verify_logs(env)
+        operations=Path(directory)/'operations'
+        if (operations/'issue-delivery-worker.py').exists():
+            bundle=RUN/'publisher'/('activate-delivery-'+env)
+            bundle.mkdir(parents=True,exist_ok=True)
+            for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py'):
+                (bundle/name).write_bytes((operations/name).read_bytes())
+            run([sys.executable,bundle/'issue-delivery-worker.py','--env',env,'--install'],env={**os.environ,'MULTICA_RELEASE_ROOT':str(ROOT)})
     except Exception:
         try:
             restore(env, timeout)
@@ -451,7 +517,7 @@ def candidate(version=None):
     if version and record['id'] != version: raise RuntimeError('int 已由其他候选占用')
     return record
 
-def prepare_int(source, timeout=900):
+def prepare_int(source, timeout=900, delivery=None):
     if os.environ.get('MULTICA_TASK_ID') and os.environ.get('MULTICA_SERVER_URL','').rstrip('/') == read(meta_path('int'))['backend_url'].rstrip('/'):
         raise RuntimeError('int 中运行的任务不能同步更新自身，请从生产运行时发起')
     # 生产升级需要等待所有运行退出，不能让其他运行阻塞在联调锁上。
@@ -466,7 +532,8 @@ def prepare_int(source, timeout=900):
                         git_common=output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),
                         branch=output(['git','symbolic-ref','HEAD'],cwd=source), status='building',
                         task_id=os.environ.get('MULTICA_TASK_ID',''), server_url=os.environ.get('MULTICA_SERVER_URL',''),
-                        workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''))
+                        workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''),publisher_pid=os.getpid(),previous_int_release=read(meta_path('int'))['release_id'])
+            if delivery:record.update(delivery)
             write(candidate_path(), record, True)
             try:
                 directory=idle_slot('int')
@@ -530,6 +597,18 @@ def request_path(request_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',request_id): raise RuntimeError('非法请求编号')
     return RUN/'publish-requests'/f'{request_id}.json'
 
+def check_delivery_approval(record):
+    if not record.get('delivery_id') or record.get('delivery_env')!='prod':
+        raise RuntimeError('生产更新需要原任务的交付审核记录，请在任务中确认生产发布')
+    meta=read(meta_path('prod'));profile=read(meta['daemon_profile_path'])
+    req=urllib.request.Request(meta['backend_url'].rstrip('/')+'/api/delivery-queue',headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=15) as response: records=json.load(response)
+    delivery=next((d for d in records if d['id']==record['delivery_id']),None)
+    if not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by') or not delivery.get('release_validated') or delivery['source_commit']!=record.get('approved_source') or delivery['candidate_id']!=record['id']:
+        raise RuntimeError('生产批准或联调复核已失效')
+    if subprocess.run(['git','--git-dir',record['git_common'],'merge-base','--is-ancestor',delivery['source_commit'],record['commit']]).returncode:
+        raise RuntimeError('发布候选未包含用户批准的任务提交')
+
 def request_release(version,timeout=900):
     with lock('publisher',wait=True):
         record=candidate(version)
@@ -540,6 +619,7 @@ def request_release(version,timeout=900):
                 print(json.dumps(previous,ensure_ascii=False));return previous
             raise RuntimeError('上次生产更新未成功，请重新联调')
         if record['status'] != 'accepted': raise RuntimeError('先完成本次功能验收并 accept')
+        check_delivery_approval(record)
         validate_candidate(record)
         # 发布来源为提交请求的这轮运行，可能与开始联调的运行不同。
         record.update(task_id=os.environ.get('MULTICA_TASK_ID',''), server_url=os.environ.get('MULTICA_SERVER_URL',''),
@@ -548,6 +628,7 @@ def request_release(version,timeout=900):
         runner=RUN/'publisher'/version/'release.py'
         runner.parent.mkdir(parents=True,exist_ok=True)
         runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
+        (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
         write(target,record,True);write(candidate_path(),record,True)
         try:
             run(['systemd-run','--quiet','--collect','--unit',record['unit'],'--property=Type=exec','--property=KillMode=process',
@@ -652,6 +733,7 @@ def worker(request_id):
                 current_record=candidate(request_id)
                 if current_record['status']!='queued': raise RuntimeError('候选已释放或更新不在队列中')
                 current=validate_candidate(record, allow_finalized=True)
+                check_delivery_approval(record)
                 record.update(status='publishing');write(target,record,True);write(candidate_path(),record,True)
                 directory=idle_slot('prod')
                 copy_tree(Path(current['release_dir']),directory,excludes=('**/.next/cache/***',))
@@ -720,7 +802,7 @@ def require_control_directory():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset'])
+    parser.add_argument('command',choices=['int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset','delivery-worker'])
     parser.add_argument('target',nargs='?')
     parser.add_argument('--source')
     parser.add_argument('--evidence')
@@ -750,6 +832,8 @@ def main():
     elif a.command=='restore':
         if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('恢复应由运行环境外部执行')
         with lock('publisher',wait=True): restore(a.env,a.timeout)
+    elif a.command=='delivery-worker':
+        run([sys.executable,Path(__file__).with_name('issue-delivery-worker.py'),'--env',a.env,'--install'],env={**os.environ,'MULTICA_RELEASE_ROOT':str(ROOT)})
     elif a.command=='verify': isolation_check()
     elif a.command=='status':
         print(json.dumps({'environments':{e:{k:read(meta_path(e)).get(k) for k in ('release_id','commit','release_dir')} for e in ENVS},

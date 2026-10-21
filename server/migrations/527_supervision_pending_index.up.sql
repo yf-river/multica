@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY supervision_pending ON supervision_subject(workspace_id,next_attempt_at,last_checked_at) WHERE desired_version>reviewed_version;

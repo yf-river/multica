@@ -44,6 +44,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/supervision"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -181,6 +182,7 @@ type DaemonPendingWorkNotifier interface {
 // 事件总线、实时推送、daemon 连接、各类服务与缓存、限流器、外部集成等）
 // 聚合到一处，各资源 handler 以它的方法形式组织在各自文件里。
 type Handler struct {
+	Supervision            *supervision.Service
 	Queries                *db.Queries
 	DB                     dbExecutor
 	TxStarter              txStarter

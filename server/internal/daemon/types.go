@@ -157,12 +157,14 @@ type Task struct {
 	// RegenerateQuickActionsFor 只有早于“服务端生成快捷动作”的服务器才会设置
 	// （MUL-5573）。读出来要当作“拒绝”标记，绝不能执行：见 runTask 里的守卫。
 	RegenerateQuickActionsFor string          `json:"regenerate_quick_actions_for,omitempty"`
-	AutopilotRunID            string          `json:"autopilot_run_id,omitempty"`            // autopilot 的 run_only 任务时非空
-	AutopilotID               string          `json:"autopilot_id,omitempty"`                // 产生本次运行的 autopilot
-	AutopilotTitle            string          `json:"autopilot_title,omitempty"`             // 作为任务上下文的 autopilot 标题
-	AutopilotDescription      string          `json:"autopilot_description,omitempty"`       // 作为任务 prompt 的 autopilot 描述
-	AutopilotSource           string          `json:"autopilot_source,omitempty"`            // manual、schedule、webhook 或 api
-	AutopilotTriggerPayload   json.RawMessage `json:"autopilot_trigger_payload,omitempty"`   // webhook/api 运行的可选触发载荷
+	AutopilotRunID            string          `json:"autopilot_run_id,omitempty"`          // autopilot 的 run_only 任务时非空
+	AutopilotID               string          `json:"autopilot_id,omitempty"`              // 产生本次运行的 autopilot
+	AutopilotTitle            string          `json:"autopilot_title,omitempty"`           // 作为任务上下文的 autopilot 标题
+	AutopilotDescription      string          `json:"autopilot_description,omitempty"`     // 作为任务 prompt 的 autopilot 描述
+	AutopilotSource           string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
+	AutopilotTriggerPayload   json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发载荷
+	SupervisionPrompt         string          `json:"supervision_prompt,omitempty"`
+	SupervisionInvestigation  json.RawMessage `json:"supervision_investigation,omitempty"`
 	QuickCreatePrompt         string          `json:"quick_create_prompt,omitempty"`         // 快速创建任务时用户输入的自然语言
 	QuickCreatePriority       string          `json:"quick_create_priority,omitempty"`       // 快速创建时显式选的优先级
 	QuickCreateDueDate        string          `json:"quick_create_due_date,omitempty"`       // 快速创建时显式选的日历截止日

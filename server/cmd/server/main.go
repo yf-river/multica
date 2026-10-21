@@ -36,6 +36,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/supervision"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -750,7 +751,12 @@ func main() {
 	// bug）。一旦跑起来，manager 对瞬时错误——数据库不可达、或罕见的半迁移状态
 	// 下缺 sys_cron_executions——的处理是在失败的那个 tick 记日志、下一个周期
 	// 重试，因此短暂故障不会让服务器崩掉。
+	h.Supervision = supervision.New(pool, h.TaskService)
+	h.Supervision.Authorize = h.CanUseSupervisionAgent
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
+	if err := schedulerMgr.Register(scheduler.QualitySupervisionJob(h.Supervision)); err != nil {
+		slog.Error("注册质量监督调度失败", "error", err)
+	}
 	if err := schedulerMgr.Register(scheduler.TaskUsageHourlyJob(pool)); err != nil {
 		slog.Warn("scheduler: failed to register task_usage_hourly rollup job", "error", err)
 	}

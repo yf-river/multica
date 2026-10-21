@@ -1,0 +1,13 @@
+DROP TRIGGER IF EXISTS supervision_issue_change ON issue;
+DROP TRIGGER IF EXISTS supervision_comment_change ON comment;
+DROP TRIGGER IF EXISTS supervision_task_change ON agent_task_queue;
+DROP TRIGGER IF EXISTS supervision_message_change ON task_message;
+DROP TRIGGER IF EXISTS supervision_trace_change ON task_trace_event;
+DROP FUNCTION IF EXISTS supervision_source_changed();
+DROP FUNCTION IF EXISTS supervision_touch(uuid,text,uuid,uuid);
+DROP TABLE IF EXISTS supervision_action;
+DROP TABLE IF EXISTS supervision_finding;
+DROP TABLE IF EXISTS supervision_batch;
+DROP TABLE IF EXISTS supervision_material;
+DROP TABLE IF EXISTS supervision_subject;
+DROP TABLE IF EXISTS supervision_config;

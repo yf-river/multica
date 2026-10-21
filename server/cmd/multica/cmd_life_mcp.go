@@ -57,6 +57,13 @@ func init() {
 // runLifeMCPServer 逐行读 stdin 的 JSON-RPC 请求并逐行写 stdout 响应（MCP stdio
 // 传输）。行太长时扩大 scanner 缓冲上限至 4MB；解析失败回 -32700 parse error。
 func runLifeMCPServer(cmd *cobra.Command, input io.Reader, output io.Writer) error {
+	return runScopedMCPServer(input, output, func(request lifeMCPRequest) lifeMCPResponse {
+		return handleLifeMCPRequest(cmd, request)
+	})
+}
+
+// runScopedMCPServer 为受限后台工具共用逐行 JSON-RPC 传输，不挂载用户 MCP。
+func runScopedMCPServer(input io.Reader, output io.Writer, handle func(lifeMCPRequest) lifeMCPResponse) error {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	encoder := json.NewEncoder(output)
@@ -75,7 +82,7 @@ func runLifeMCPServer(cmd *cobra.Command, input io.Reader, output io.Writer) err
 		if len(request.ID) == 0 {
 			continue
 		}
-		response := handleLifeMCPRequest(cmd, request)
+		response := handle(request)
 		if err := encoder.Encode(response); err != nil {
 			return err
 		}

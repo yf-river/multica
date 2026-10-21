@@ -6818,6 +6818,10 @@ func (s *TaskService) broadcastTaskFailedEvent(ctx context.Context, task db.Agen
 // 经其 run 来自 autopilot；quick-create 任务来自 context JSONB。全部链接都无法解析时返回 ""——调用方把它
 // 视为 “not found”。
 func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentTaskQueue) string {
+	var supervision SupervisionContext
+	if json.Unmarshal(task.Context, &supervision) == nil && supervision.Type == "quality_supervision" {
+		return supervision.WorkspaceID
+	}
 	if task.IssueID.Valid {
 		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
 			return util.UUIDToString(issue.WorkspaceID)

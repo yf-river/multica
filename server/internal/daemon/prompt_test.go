@@ -1957,3 +1957,11 @@ func TestWorktreeReplayConflictBlock(t *testing.T) {
 		}
 	})
 }
+
+func TestSupervisionInputHasNoAppendedWorkflow(t *testing.T) {
+	input := `{"batch_id":"test","materials":[]}`
+	task := Task{SupervisionPrompt: input, InitiatorType: "member", InitiatorName: "caller", PriorSessionResumeUnavailable: true}
+	if got := BuildPrompt(task, "codebuddy"); got != input {
+		t.Fatalf("structured supervision input changed: %s", got)
+	}
+}
