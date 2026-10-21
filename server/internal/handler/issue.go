@@ -3882,6 +3882,7 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLsWithEvents(ctx context.Con
 
 	result := issueDeleteResult{}
 	persistedEvents := make([]events.Event, 0, len(issues))
+	var supervisionTasks []pgtype.UUID
 	for _, issue := range issues {
 		if _, err := qtx.LockIssueForDelete(ctx, db.LockIssueForDeleteParams{
 			ID: issue.ID, WorkspaceID: issue.WorkspaceID,
@@ -3952,12 +3953,31 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLsWithEvents(ctx context.Con
 			}
 			persistedEvents = append(persistedEvents, event)
 		}
+		var reviewTask pgtype.UUID
+		err = tx.QueryRow(ctx, `SELECT task_id FROM supervision_batch WHERE workspace_id=$1 AND issue_id=$2 AND status='running'`, issue.WorkspaceID, issue.ID).Scan(&reviewTask)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return issueDeleteResult{}, nil, err
+		}
+		if reviewTask.Valid {
+			supervisionTasks = append(supervisionTasks, reviewTask)
+		}
+		if err := deleteDeliveryData(ctx, tx, uuidToString(issue.WorkspaceID), uuidToString(issue.ID)); err != nil {
+			return issueDeleteResult{}, nil, err
+		}
+		if err := deleteSupervisionData(ctx, tx, uuidToString(issue.WorkspaceID), uuidToString(issue.ID)); err != nil {
+			return issueDeleteResult{}, nil, err
+		}
 		if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 			return issueDeleteResult{}, nil, fmt.Errorf("delete issue: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return issueDeleteResult{}, nil, fmt.Errorf("commit issue delete: %w", err)
+	}
+	for _, task := range supervisionTasks {
+		if _, err := h.TaskService.CancelTaskByUser(ctx, task); err != nil {
+			slog.Error("停止已删除任务的监督运行失败", "task_id", uuidToString(task), "error", err)
+		}
 	}
 	return result, persistedEvents, nil
 }

@@ -8,6 +8,10 @@ spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name(
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
 class ReleaseTests(unittest.TestCase):
+    def setUp(self):
+        # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
+        self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
+
     def test_task_cannot_restore_or_switch_production(self):
         with patch.dict(r.os.environ, {'MULTICA_TASK_ID':'task'}), patch.object(r,'read') as read, patch.object(r,'owned_stop') as stop:
             with self.assertRaisesRegex(RuntimeError,'request'): r.deploy('prod','missing')
@@ -121,12 +125,12 @@ class ReleaseTests(unittest.TestCase):
             r.RUN=Path(d)
             r.write(r.candidate_path(),{'id':'v','status':'accepted'})
             try:
-                with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'):
+                with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'),patch.object(r,'check_delivery_approval'):
                     first=r.request_release('v');second=r.request_release('v')
                     self.assertEqual(first['id'],second['id']);launch.assert_called_once()
                     self.assertEqual(launch.call_args.args[0][0],'systemd-run')
                 failed=r.read(r.request_path('v'));failed['status']='failed';r.write(r.request_path('v'),failed)
-                with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'):
+                with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'),patch.object(r,'check_delivery_approval'):
                     with self.assertRaisesRegex(RuntimeError,'重新联调'): r.request_release('v')
                     launch.assert_not_called()
             finally:r.RUN=original
@@ -141,9 +145,9 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, patch.object(r,'RUN',Path(d)):
             artifact=Path(d)/'candidate';artifact.mkdir()
             r.write(artifact/'release.json',{'id':'new','files':{}})
-            r.write(r.meta_path('prod'),{'release_id':'old'})
+            r.write(r.meta_path('prod'),{'release_id':'old','release_dir':'old'})
             r.write(r.config_path('prod'),{})
-            with patch.object(r,'check_process_ownership'), patch.object(r,'isolation_check'), patch.object(r,'check_live_environment'), patch.object(r,'check_database',side_effect=RuntimeError('schema mismatch')), patch.object(r,'drain') as drain, patch.object(r,'owned_stop') as stop:
+            with patch.object(r,'check_process_ownership'), patch.object(r,'isolation_check'), patch.object(r,'check_live_environment'), patch.object(r,'prepare_database',side_effect=RuntimeError('schema mismatch')), patch.object(r,'drain') as drain, patch.object(r,'owned_stop') as stop:
                 with self.assertRaisesRegex(RuntimeError,'schema mismatch'): r.deploy('prod',artifact)
                 drain.assert_not_called();stop.assert_not_called()
                 self.assertFalse((r.RUN/'deployments/prod-previous.json').exists())
@@ -166,7 +170,7 @@ class ReleaseTests(unittest.TestCase):
                     metadata['pids']={'server':21};raise RuntimeError('startup failed')
                 return {'server':31,'web':32,'daemon':33}
             try:
-                with patch.object(r,'check_database'),patch.object(r,'check_live_environment'),patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
+                with patch.object(r,'prepare_database'),patch.object(r,'start_maintenance'),patch.object(r,'check_live_environment'),patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
                     with self.assertRaisesRegex(RuntimeError,'startup failed'):r.deploy('prod',artifact)
                 restored=r.read(r.meta_path('prod'))
                 self.assertEqual(restored['release_id'],'old');self.assertEqual(restored['pids']['daemon'],33)

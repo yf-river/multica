@@ -1,0 +1,38 @@
+CREATE TABLE issue_delivery_plan (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    comment_id uuid NOT NULL,
+    comment_revision integer NOT NULL,
+    confirmed_by uuid,
+    confirmed_at timestamptz,
+    confirmation_id uuid NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE issue_delivery (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    plan_snapshot jsonb NOT NULL,
+    source_commit text NOT NULL,
+    source_branch text NOT NULL,
+    base_commit text NOT NULL,
+    phase text NOT NULL DEFAULT 'waiting_int' CHECK (phase IN ('waiting_int','testing','awaiting_review','approved','preparing_release','publishing','published','needs_changes','cancelled')),
+    evidence jsonb NOT NULL DEFAULT '[]',
+    acceptance_submitted boolean NOT NULL DEFAULT false,
+    verification_comment_id uuid NOT NULL,
+    release_comment_id uuid NOT NULL,
+    release_validated boolean NOT NULL DEFAULT false,
+    candidate_id text NOT NULL DEFAULT '',
+    candidate_url text NOT NULL DEFAULT '',
+    approved_by uuid,
+    approved_at timestamptz,
+    approval_comment_id uuid,
+    error text NOT NULL DEFAULT '',
+    worker_token uuid,
+    revision bigint NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);

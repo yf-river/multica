@@ -7354,6 +7354,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
 	execOpts := agent.ExecOptions{
+		AnalysisOnly:               task.SupervisionPrompt != "",
 		Cwd:                        env.WorkDir,
 		Model:                      model,
 		ThreadName:                 deriveTaskThreadName(task),
@@ -7381,6 +7382,39 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ServiceTier:            serviceTier,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
+	}
+	if task.SupervisionPrompt != "" {
+		// 监督模式显式传递 Agent 指令，避免依赖 CodeBuddy 的默认文件加载。
+		if provider == "codebuddy" {
+			execOpts.SystemPrompt = instructions
+		}
+		execOpts.Timeout = 10 * time.Minute
+		execOpts.McpConfig = json.RawMessage(`{}`)
+		if len(task.SupervisionInvestigation) == 0 {
+			task.SupervisionInvestigation = json.RawMessage(`[]`)
+		}
+		{
+			config, sourcePrompt, setupErr := supervisionMCPConfig(task, env.RootDir, d.cfg.WorkspacesRoot, provider)
+			if setupErr != nil {
+				return TaskResult{}, fmt.Errorf("prepare supervision investigation: %w", setupErr)
+			}
+			execOpts.McpConfig = config
+			execOpts.MaxTurns = 40
+			var input map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(prompt), &input); err != nil {
+				return TaskResult{}, fmt.Errorf("decode supervision input: %w", err)
+			}
+			var sources map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(sourcePrompt), &sources); err != nil {
+				return TaskResult{}, fmt.Errorf("decode supervision sources: %w", err)
+			}
+			input["investigation_sources"] = sources["investigation_sources"]
+			body, err := json.Marshal(input)
+			if err != nil {
+				return TaskResult{}, err
+			}
+			prompt = string(body)
+		}
 	}
 	// 有些 provider 无法可靠地加载我们写进任务 workdir 的每任务 runtime 配置文件。
 	// Kimi 套在自己 CLI 后面、其 cwd 处理不透明，连基于文件的路径也不可信。

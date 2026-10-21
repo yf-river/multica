@@ -1,3 +1,5 @@
+import { deliverySnapshotSchema, type DeliverySnapshot } from "../delivery/schema";
+import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, type SupervisionEvidencePage, type SupervisionConfig, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback } from "../supervision/schema";
 import { TaskOutputPageSchema, TaskMessagePayloadSchema, type TaskOutputPage } from "./schemas";
 import { MealsSchema, mealWire, type MealsData, type MealCommand } from "../meals/schema";
 import { CookingListSchema, CookingDetailSchema, CookingCategoriesSchema, type CookingList, type CookingDetail, type CookingCategory } from "../cooking/schema";
@@ -766,6 +768,47 @@ export class ApiClient {
     // /login 从而离开 workspace 路由，下一次进入 workspace 时会重新覆盖
     // 该 id，所以这里无需主动清理。
     this.options.onUnauthorized?.();
+  }
+
+  async getIssueDeliveries(id: string) {
+    return parseOrThrow<DeliverySnapshot>(await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/deliveries`), deliverySnapshotSchema, { endpoint: "GET /api/issues/:id/deliveries", sensitive: true });
+  }
+  async confirmIssuePlan(id: string, planId: string, revision: number) {
+    return parseOrThrow<DeliverySnapshot>(await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/delivery-plan/confirm`, { method: "POST", body: JSON.stringify({ plan_id: planId, revision }) }), deliverySnapshotSchema, { endpoint: "POST /api/issues/:id/delivery-plan/confirm", sensitive: true, mayHaveCommitted: true });
+  }
+  async actIssueDelivery(issueId: string, id: string, revision: number, action: "approve" | "cancel" | "retest") {
+    return parseOrThrow<DeliverySnapshot>(await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/deliveries/${encodeURIComponent(id)}/action`, { method: "POST", body: JSON.stringify({ revision, action }) }), deliverySnapshotSchema, { endpoint: "POST /api/issues/:id/deliveries/:id/action", sensitive: true, mayHaveCommitted: true });
+  }
+
+  async getSupervision() {
+    return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/"), supervisionSnapshotSchema, { endpoint: "GET /api/supervision", sensitive: true });
+  }
+  async listSupervision(params: { search: string; filter: string; offset: number; project: string }) {
+    const q = new URLSearchParams({ ...params, offset: String(params.offset) });
+    return parseOrThrow<SupervisionList>(await this.fetch<unknown>(`/api/supervision/subjects?${q}`), supervisionListSchema, { endpoint: "GET /api/supervision/subjects", sensitive: true });
+  }
+  async getSupervisionEvidence(kind: string, id: string, offset: number, batch?: string) {
+    const query = new URLSearchParams({ offset: String(offset) });
+    if (batch) query.set("batch", batch);
+    return parseOrThrow<SupervisionEvidencePage>(await this.fetch<unknown>(`/api/supervision/evidence/${encodeURIComponent(kind)}/${encodeURIComponent(id)}?${query}`), supervisionEvidencePageSchema, { endpoint: "GET /api/supervision/evidence/:kind/:id", sensitive: true });
+  }
+  async getSupervisionSubject(id: string) {
+    return parseOrThrow<SupervisionDetail>(await this.fetch<unknown>(`/api/supervision/subjects/${encodeURIComponent(id)}`), supervisionDetailSchema, { endpoint: "GET /api/supervision/subjects/:id", sensitive: true });
+  }
+  async getSupervisionBatchTask(id: string): Promise<AgentTask> {
+    return parseOrThrow<AgentTask>(await this.fetch<unknown>(`/api/supervision/batches/${encodeURIComponent(id)}/task`), AgentTaskSchema, { endpoint: "GET /api/supervision/batches/:id/task", sensitive: true });
+  }
+  async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds"> & { investigation_enabled?: boolean }) {
+    return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/", { method: "PUT", body: JSON.stringify(config) }), supervisionSnapshotSchema, { endpoint: "PUT /api/supervision", sensitive: true, mayHaveCommitted: true });
+  }
+  async checkSupervision(body: { issue_id?: string; full?: boolean; stop?: boolean; retry_failed?: boolean }) {
+    return this.fetch<{ scheduled?: boolean; stopped?: boolean }>("/api/supervision/check", { method: "POST", body: JSON.stringify(body) });
+  }
+  async sendSupervisionFeedback(id: string, body: { content: string; operation_id: string }) {
+    return parseOrThrow<SupervisionFeedback>(await this.fetch<unknown>(`/api/supervision/findings/${encodeURIComponent(id)}/feedback`, { method: "POST", body: JSON.stringify(body) }), supervisionFeedbackSchema, { endpoint: "POST /api/supervision/findings/:id/feedback", sensitive: true, mayHaveCommitted: true });
+  }
+  async updateSupervisionFinding(id: string, body: { status: string; reason: string; operation_id: string; snoozed_until?: string }) {
+    return this.fetch<{ saved: boolean }>(`/api/supervision/findings/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
   }
 
   private async parseErrorMessage(res: Response, fallback: string): Promise<string> {

@@ -742,6 +742,8 @@ function FilesTab({
             autoFocus={focusEditor}
             onChange={onContentChange}
             onFocusHandled={onFocusHandled}
+            filePaths={filePaths}
+            onSelectPath={onSelectPath}
           />}
         </div>
       </section>
