@@ -22,7 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
-const RulesVersion = "supervision-v5"
+const RulesVersion = "supervision-v6"
 
 type Service struct {
 	Pool      *pgxpool.Pool
@@ -77,7 +77,7 @@ type Result struct {
 
 func uuid(s string) pgtype.UUID { u, _ := util.ParseUUID(s); return u }
 
-// Tick 仅安排有待办的工作区；每个工作区的配置行与批次唯一索引共同串行化派发。
+// Tick 仅安排有待办的工作区；每个工作区的配置行与任务唯一索引共同限制并发派发。
 func (s *Service) Tick(ctx context.Context) error {
 	rows, err := s.Pool.Query(ctx, `SELECT workspace_id::text FROM supervision_config ORDER BY workspace_id`)
 	if err != nil {
@@ -119,8 +119,15 @@ func (s *Service) Tick(ctx context.Context) error {
 			s.setError(ctx, ws, err)
 			continue
 		}
-		if err = s.dispatch(ctx, ws); err != nil {
-			s.setError(ctx, ws, err)
+		var capacity int
+		if err = s.Pool.QueryRow(ctx, `SELECT COALESCE(a.max_concurrent_tasks,1) FROM supervision_config c LEFT JOIN agent a ON a.id=c.agent_id WHERE c.workspace_id=$1`, ws).Scan(&capacity); err != nil {
+			return err
+		}
+		for i := 0; i < capacity; i++ {
+			if err = s.dispatch(ctx, ws); err != nil {
+				s.setError(ctx, ws, err)
+				break
+			}
 		}
 	}
 	return nil
@@ -131,12 +138,11 @@ func (s *Service) setError(ctx context.Context, ws string, err error) {
 
 // inventory 每轮有界补齐历史引用。已存在引用不变，在线写入由事务触发器登记。
 func (s *Service) inventory(ctx context.Context, ws string) error {
-	var complete bool
 	var recent bool
-	if err := s.Pool.QueryRow(ctx, `SELECT inventory_complete,COALESCE(last_inventory_at>now()-interval '15 minutes',false) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&complete, &recent); err != nil {
+	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(last_inventory_at>now()-make_interval(secs=>interval_seconds),false) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&recent); err != nil {
 		return err
 	}
-	if complete && recent {
+	if recent {
 		_, err := s.Pool.Exec(ctx, `UPDATE supervision_config SET last_scan_at=now() WHERE workspace_id=$1`, ws)
 		return err
 	}
@@ -206,7 +212,7 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string) ([
       LEFT JOIN agent_task_queue t ON t.id=m.run_id
       WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.generation>m.reviewed_generation
       ORDER BY CASE m.kind WHEN 'issue' THEN 0 WHEN 'comment' THEN 1 WHEN 'task' THEN 2 WHEN 'message' THEN 3 ELSE 4 END,
-        CASE WHEN m.kind='comment' THEN m.changed_at END DESC,
+        CASE WHEN m.kind='comment' THEN m.changed_at END ASC,
         CASE WHEN m.kind='message' THEN t.created_at END,
         CASE WHEN m.kind='message' THEN m.run_id END,
         tm.seq,m.changed_at,m.source_id LIMIT 24`, ws, issue)
@@ -229,16 +235,12 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string) ([
 	}
 	budget := 48000
 	out := []Material{}
-	partialRuns := map[string]bool{}
 	for _, m := range items {
-		if m.Kind == "message" && partialRuns[m.RunID] {
-			continue
-		}
 		query, err := sourceSQL(m.Kind)
 		if err != nil {
 			return nil, err
 		}
-		size := min(8000, budget)
+		size := min(40000, budget)
 		if size <= 0 {
 			break
 		}
@@ -259,10 +261,10 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string) ([
 				return nil, err
 			}
 		}
-		if m.Kind == "message" && m.End < m.Length {
-			partialRuns[m.RunID] = true
-		}
 		out = append(out, m)
+		if m.End < m.Length {
+			break
+		}
 	}
 	return s.withMessageContext(ctx, tx, ws, out)
 }
@@ -352,11 +354,15 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	if s.Authorize == nil || !s.Authorize(ctx, ws, owner, agent) {
 		return fmt.Errorf("监督配置负责人已失去所选 Agent 的调用权限")
 	}
-	var active bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_batch WHERE workspace_id=$1 AND status IN('preparing','running'))`, ws).Scan(&active); err != nil {
+	var capacity, active int
+	// Agent 行锁使共享该 Agent 的工作区也不会超额登记。
+	if err = tx.QueryRow(ctx, `SELECT max_concurrent_tasks FROM agent WHERE id=$1 FOR UPDATE`, agent).Scan(&capacity); err != nil {
 		return err
 	}
-	if active {
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND status IN('queued','dispatched','running')`, agent).Scan(&active); err != nil {
+		return err
+	}
+	if active >= capacity {
 		return nil
 	}
 	var issue string
@@ -364,6 +370,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	var summary string
 	err = tx.QueryRow(ctx, `SELECT s.issue_id::text,s.desired_version,s.summary FROM supervision_subject s JOIN issue i ON i.id=s.issue_id
       WHERE s.workspace_id=$1 AND s.desired_version>s.reviewed_version AND s.next_attempt_at<=now() AND s.failures<3
+      AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=s.workspace_id AND b.issue_id=s.issue_id AND b.status IN('preparing','running'))
       AND (s.force_review OR s.last_checked_at IS NULL OR s.last_checked_at<now()-make_interval(secs=>$2::double precision)
         OR NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id AND t.status IN('queued','dispatched','running')))
       ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id FOR UPDATE OF s SKIP LOCKED LIMIT 1`, ws, interval).Scan(&issue, &version, &summary)
@@ -911,7 +918,7 @@ func (s *Service) ReadBatchEvidence(ctx context.Context, ws, batch, kind, id str
 }
 
 // PollInterval 仅为后台发现节奏；业务分析合并窗口由工作区配置控制。
-const PollInterval = time.Minute
+const PollInterval = 15 * time.Second
 
 type EvidencePage struct {
 	Evidence

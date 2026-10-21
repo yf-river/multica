@@ -300,6 +300,14 @@
     "health_running": "正在审查任务原文",
     "health_blocked": "待检查任务均已因失败停止，当前不会自动继续",
     "health_waiting": "有待处理材料，等待调度或重试",
-    "health_idle": "当前没有可处理的增量材料"
+    "health_idle": "当前没有可处理的增量材料",
+    "concurrency_summary": "并行 {{running}} / {{capacity}} · 等待 {{pending}}",
+    "reading_progress": "完整已读 {{covered}} 条 · 部分已读 {{partial}} 条 · 未读 {{pending}} 条",
+    "reading_position": "当前长材料：已读至第 {{offset}} / {{length}} 字符",
+    "reading_history": "正在按顺序补读历史；本批完成不代表全部审完",
+    "reading_caught_up": "已追上当前登记的材料",
+    "batch_timing": "排队 {{queue}} 秒 · 执行 {{execution}} 秒 · 等待保存 {{persistence}} 秒",
+    "search_scope_partial": "搜索范围未完成，零命中不能证明不存在",
+    "investigation_parameters": "调用参数"
   }
 }

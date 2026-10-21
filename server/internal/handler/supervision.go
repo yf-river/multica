@@ -145,7 +145,7 @@ func (h *Handler) GetSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var config json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('enabled',enabled,'agent_id',agent_id,'interval_seconds',interval_seconds,'investigation_enabled',investigation_enabled,'inventory_complete',inventory_complete,'last_scan_at',last_scan_at,'last_success_at',last_success_at,'error',error) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&config)
+	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('enabled',enabled,'agent_id',agent_id,'concurrency',(SELECT max_concurrent_tasks FROM agent WHERE id=agent_id),'interval_seconds',interval_seconds,'investigation_enabled',investigation_enabled,'inventory_complete',inventory_complete,'last_scan_at',last_scan_at,'last_success_at',last_success_at,'error',error) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&config)
 	if errors.Is(err, pgx.ErrNoRows) {
 		config = json.RawMessage(`{"enabled":false,"agent_id":null,"interval_seconds":300,"inventory_complete":false,"error":""}`)
 	} else if err != nil {
@@ -320,7 +320,9 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 	}{
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,batch_id,created_at,request,result-'text' result FROM supervision_investigation WHERE workspace_id=$1 AND issue_id=$2 ORDER BY created_at DESC LIMIT 100)x`, &investigations},
 		{`SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.last_seen_at DESC),'[]') FROM supervision_finding f WHERE workspace_id=$1 AND issue_id=$2`, &findings},
-		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,jsonb_array_length(b.materials) material_count FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, &batches},
+		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,EXTRACT(EPOCH FROM (COALESCE(t.started_at,t.completed_at,now())-b.created_at)) queue_seconds,
+ EXTRACT(EPOCH FROM (COALESCE(t.completed_at,now())-t.started_at)) execution_seconds,
+ EXTRACT(EPOCH FROM (COALESCE(b.completed_at,now())-t.completed_at)) persistence_seconds,jsonb_array_length(b.materials) material_count FROM supervision_batch b LEFT JOIN agent_task_queue t ON t.id=b.task_id WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, &batches},
 		{`SELECT COALESCE(jsonb_agg(x ORDER BY x.created_at),'[]') FROM (SELECT id,content,created_at FROM comment WHERE issue_id=$2 AND author_type='member' AND lower(ltrim(content))~'^/note([[:space:]]|$)' AND EXISTS(SELECT 1 FROM issue WHERE id=$2 AND workspace_id=$1))x`, &notes},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT a.id,a.finding_id,a.actor_id,a.action,a.reason,a.receipt,a.created_at FROM supervision_action a JOIN supervision_finding f ON f.id=a.finding_id AND f.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND f.issue_id=$2 ORDER BY a.created_at DESC LIMIT 50)x`, &actions},
 	} {
@@ -331,7 +333,9 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 	}
 	if canManage {
 		err = h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x),'[]') FROM (
-            SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,jsonb_array_length(b.materials) material_count,
+            SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,EXTRACT(EPOCH FROM (COALESCE(t.started_at,t.completed_at,now())-b.created_at)) queue_seconds,
+ EXTRACT(EPOCH FROM (COALESCE(t.completed_at,now())-t.started_at)) execution_seconds,
+ EXTRACT(EPOCH FROM (COALESCE(b.completed_at,now())-t.completed_at)) persistence_seconds,jsonb_array_length(b.materials) material_count,
               NULLIF(t.context->>'instructions','') instructions, NULLIF(t.context->>'instructions_sha256','') instructions_sha256
             FROM supervision_batch b LEFT JOIN agent_task_queue t ON t.id=b.task_id
             WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, ws, id).Scan(&batches)
@@ -341,7 +345,13 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	var coverage json.RawMessage
-	err = h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('materials',count(*),'covered',count(*) FILTER(WHERE reviewed_generation>=generation),'runs',count(DISTINCT run_id)) FROM supervision_material WHERE workspace_id=$1 AND issue_id=$2`, ws, id).Scan(&coverage)
+	err = h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('materials',count(*),'covered',count(*) FILTER(WHERE reviewed_generation>=generation),'runs',count(DISTINCT run_id),
+ 'partial',count(*) FILTER(WHERE reviewed_generation<generation AND reviewed_offset>0),
+ 'pending',count(*) FILTER(WHERE reviewed_generation<generation AND reviewed_offset=0),
+ 'current',(SELECT jsonb_build_object('kind',m.kind,'id',m.source_id,'offset',m.reviewed_offset,'length',(
+ SELECT (part->>'length')::integer FROM supervision_batch b CROSS JOIN LATERAL jsonb_array_elements(b.materials) part
+ WHERE b.workspace_id=m.workspace_id AND b.issue_id=m.issue_id AND part->>'id'=m.source_id::text AND (part->>'generation')::bigint=m.generation
+ ORDER BY b.created_at DESC LIMIT 1)) FROM supervision_material m WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.reviewed_generation<m.generation AND m.reviewed_offset>0 ORDER BY m.changed_at,m.source_id LIMIT 1)) FROM supervision_material WHERE workspace_id=$1 AND issue_id=$2`, ws, id).Scan(&coverage)
 	if err != nil {
 		writeError(w, 500, "读取覆盖范围失败")
 		return
@@ -370,27 +380,64 @@ func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Stop {
-		var task string
-		err := h.DB.QueryRow(r.Context(), `SELECT task_id::text FROM supervision_batch WHERE workspace_id=$1 AND status='running'`, ws).Scan(&task)
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, 200, map[string]bool{"stopped": true})
+		tx, err := h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, 500, "停止检查失败")
 			return
 		}
+		defer tx.Rollback(r.Context())
+		// 与派发使用相同的配置锁，先阻止补位，再取消全部相关运行。
+		var enabled bool
+		if err = tx.QueryRow(r.Context(), `SELECT enabled FROM supervision_config WHERE workspace_id=$1 FOR UPDATE`, ws).Scan(&enabled); err != nil {
+			writeError(w, 500, "读取监督配置失败")
+			return
+		}
+		if body.IssueID == "" {
+			if _, err = tx.Exec(r.Context(), `UPDATE supervision_config SET enabled=false WHERE workspace_id=$1`, ws); err != nil {
+				writeError(w, 500, "暂停监督失败")
+				return
+			}
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE supervision_subject SET next_attempt_at='infinity' WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`, ws, body.IssueID); err != nil {
+			writeError(w, 500, "保存停止状态失败")
+			return
+		}
+		rows, err := tx.Query(r.Context(), `SELECT task_id::text FROM supervision_batch WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid) AND status IN('preparing','running') AND task_id IS NOT NULL`, ws, body.IssueID)
 		if err != nil {
 			writeError(w, 500, "读取当前检查失败")
 			return
 		}
-		if _, err = h.TaskService.CancelTaskByUser(r.Context(), parseUUID(task)); err != nil {
-			writeError(w, 500, "停止检查失败")
+		var tasks []string
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				rows.Close()
+				writeError(w, 500, "读取当前检查失败")
+				return
+			}
+			tasks = append(tasks, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			writeError(w, 500, "读取当前检查失败")
 			return
 		}
-		_, err = h.DB.Exec(r.Context(), `WITH stopped AS (UPDATE supervision_batch SET status='cancelled',completed_at=now() WHERE workspace_id=$1 AND task_id=$2 AND status='running' RETURNING issue_id)
-          UPDATE supervision_subject SET next_attempt_at='infinity' WHERE workspace_id=$1 AND issue_id IN(SELECT issue_id FROM stopped)`, ws, task)
-		if err != nil {
+		if err = tx.Commit(r.Context()); err != nil {
 			writeError(w, 500, "保存停止状态失败")
 			return
 		}
-		writeJSON(w, 200, map[string]bool{"stopped": true})
+		for _, task := range tasks {
+			if _, err = h.TaskService.CancelTaskByUser(r.Context(), parseUUID(task)); err != nil {
+				writeError(w, 500, "已阻止新检查，但部分运行取消失败，请重试停止")
+				return
+			}
+			if _, err = h.DB.Exec(r.Context(), `UPDATE supervision_batch SET status='cancelled',completed_at=now() WHERE workspace_id=$1 AND task_id=$2 AND status IN('preparing','running')`, ws, task); err != nil {
+				writeError(w, 500, "保存停止状态失败")
+				return
+			}
+		}
+		writeJSON(w, 200, map[string]any{"stopped": true, "count": len(tasks)})
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())

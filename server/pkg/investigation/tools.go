@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
@@ -47,6 +46,7 @@ func (r Root) Allows(name, tool string) bool {
 }
 
 type Request struct {
+	Cursor   string `json:"cursor,omitempty"`
 	Root     string `json:"root"`
 	Path     string `json:"path,omitempty"`
 	Query    string `json:"query,omitempty"`
@@ -56,24 +56,29 @@ type Request struct {
 }
 
 type Result struct {
-	Generation  int64     `json:"generation,omitempty"`
-	Kind        string    `json:"kind"`
-	ID          string    `json:"id,omitempty"`
-	Root        string    `json:"root"`
-	RootSHA256  string    `json:"root_sha256,omitempty"`
-	SourceLabel string    `json:"source_label,omitempty"`
-	RunID       string    `json:"run_id,omitempty"`
-	Tool        string    `json:"tool"`
-	Path        string    `json:"path,omitempty"`
-	Revision    string    `json:"revision,omitempty"`
-	SHA256      string    `json:"sha256,omitempty"`
-	ObservedAt  time.Time `json:"observed_at"`
-	Text        string    `json:"text"`
-	Offset      int       `json:"offset"`
-	End         int       `json:"end"`
-	Length      int       `json:"length"`
-	Truncated   bool      `json:"truncated"`
-	Error       string    `json:"error,omitempty"`
+	NextCursor       string    `json:"next_cursor,omitempty"`
+	ScopeTruncated   bool      `json:"scope_truncated"`
+	ContentTruncated bool      `json:"content_truncated"`
+	Directories      []string  `json:"directories,omitempty"`
+	Skipped          []string  `json:"skipped,omitempty"`
+	Generation       int64     `json:"generation,omitempty"`
+	Kind             string    `json:"kind"`
+	ID               string    `json:"id,omitempty"`
+	Root             string    `json:"root"`
+	RootSHA256       string    `json:"root_sha256,omitempty"`
+	SourceLabel      string    `json:"source_label,omitempty"`
+	RunID            string    `json:"run_id,omitempty"`
+	Tool             string    `json:"tool"`
+	Path             string    `json:"path,omitempty"`
+	Revision         string    `json:"revision,omitempty"`
+	SHA256           string    `json:"sha256,omitempty"`
+	ObservedAt       time.Time `json:"observed_at"`
+	Text             string    `json:"text"`
+	Offset           int       `json:"offset"`
+	End              int       `json:"end"`
+	Length           int       `json:"length"`
+	Truncated        bool      `json:"truncated"`
+	Error            string    `json:"error,omitempty"`
 }
 
 // Session 的根目录由领取批次或冻结评测清单提供，不接受模型补充路径。
@@ -140,7 +145,10 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 		}
 	}
 	if selected == nil {
-		return out, fmt.Errorf("来源未获本批次授权")
+		if req.Root == "materials" {
+			return s.capture(ctx, req, out, fmt.Errorf("任务轨迹请使用supervision_material，root=materials，path=kind/UUID；无需运行目录授权"))
+		}
+		return s.capture(ctx, req, out, fmt.Errorf("来源未获本批次授权；root须取investigation_sources中的id"))
 	}
 	out.RunID = selected.RunID
 	out.SourceLabel = selected.Label
@@ -207,106 +215,7 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 		sum := sha256.Sum256(data)
 		out.SHA256 = hex.EncodeToString(sum[:])
 	case "supervision_search":
-		if req.Path == "" {
-			req.Path = "."
-		}
-		if !safePath(req.Path) || len(req.Query) > 200 {
-			err = fmt.Errorf("搜索范围或查询无效")
-			break
-		}
-		if err = rejectLinks(root, req.Path); err != nil {
-			break
-		}
-		var lines []string
-		visited := 0
-		scanned := int64(0)
-		err = fs.WalkDir(root.FS(), req.Path, func(name string, entry fs.DirEntry, e error) error {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if e != nil {
-				return e
-			}
-			if hidden(name) || (name != "." && !selected.Allows(name, "supervision_read")) {
-				if entry.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if entry.Type()&os.ModeSymlink != 0 {
-				return nil
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			visited++
-			if visited > 2000 || scanned >= 16*1024*1024 || len(lines) >= 200 {
-				out.Truncated = true
-				return fs.SkipAll
-			}
-			if req.Query == "" {
-				lines = append(lines, name)
-				return nil
-			}
-			info, e := entry.Info()
-			if e != nil {
-				out.Truncated = true
-				return nil
-			}
-			if !info.Mode().IsRegular() {
-				return nil
-			}
-			remaining := 16*1024*1024 - scanned
-			if info.Size() > remaining {
-				out.Truncated = true
-				return nil
-			}
-			f, e := root.Open(name)
-			if e != nil {
-				out.Truncated = true
-				return nil
-			}
-			defer f.Close()
-			opened, e := f.Stat()
-			if e != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
-				out.Truncated = true
-				return nil
-			}
-			data, e := io.ReadAll(io.LimitReader(f, remaining+1))
-			if int64(len(data)) > remaining {
-				data = data[:remaining]
-				out.Truncated = true
-			}
-			scanned += int64(len(data))
-			if e != nil {
-				out.Truncated = true
-				return nil
-			}
-			if strings.Contains(string(data), "\x00") {
-				return nil
-			}
-			lineOffset := 0
-			for n, line := range strings.Split(string(data), "\n") {
-				sourceOffset := lineOffset
-				lineOffset += utf8.RuneCountInString(line) + 1
-				if strings.Contains(line, req.Query) {
-					r := []rune(line)
-					if len(r) > 500 {
-						start := max(0, utf8.RuneCountInString(line[:strings.Index(line, req.Query)])-200)
-						sourceOffset += start
-						line = string(r[start:min(start+500, len(r))])
-						out.Truncated = true
-					}
-					lines = append(lines, fmt.Sprintf("%s:%d: [source_offset=%d] %s", name, n+1, sourceOffset, line))
-					if len(lines) >= 200 {
-						out.Truncated = true
-						return fs.SkipAll
-					}
-				}
-			}
-			return nil
-		})
-		body = strings.Join(lines, "\n")
+		body, err = search(ctx, root, *selected, req, &out)
 	case "supervision_git":
 		body, out.Revision, err = readGit(ctx, selected.Path, req)
 	default:
@@ -328,7 +237,8 @@ func (s *Session) Call(ctx context.Context, tool string, req Request) (Result, e
 		end := min(req.Offset+PageSize, len(runes))
 		out.Text = redact.Text(string(runes[req.Offset:end]))
 		out.End = end
-		out.Truncated = out.Truncated || end < len(runes)
+		out.ContentTruncated = out.ContentTruncated || end < len(runes)
+		out.Truncated = out.Truncated || out.ScopeTruncated || out.ContentTruncated
 		s.Characters += len([]rune(out.Text))
 	}
 	return s.capture(ctx, req, out, err)
@@ -341,7 +251,7 @@ func (s *Session) capture(ctx context.Context, req Request, out Result, err erro
 	if s.Save != nil {
 		if saveErr := s.Save(ctx, req, &out); saveErr != nil {
 			out.Text = ""
-			return out, fmt.Errorf("调查证据保存失败：%w", saveErr)
+			return out, fmt.Errorf("调查调用错误=%v；证据保存失败：%w", err, saveErr)
 		}
 	}
 	if err != nil {

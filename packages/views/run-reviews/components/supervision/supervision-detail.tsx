@@ -108,6 +108,12 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
 
             {canManage && !enabled && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.recheck_paused)}</p>}
 
+            <section aria-label={t(($) => $.supervision.coverage)} className="space-y-1 text-caption text-muted-foreground">
+              {data.coverage.partial != null && data.coverage.pending != null && <p>{t(($) => $.supervision.reading_progress, { covered: data.coverage.covered, partial: data.coverage.partial, pending: data.coverage.pending })}</p>}
+              {data.coverage.current?.length != null && <p>{t(($) => $.supervision.reading_position, { offset: data.coverage.current.offset, length: data.coverage.current.length })}</p>}
+              <p>{data.coverage.covered < data.coverage.materials ? t(($) => $.supervision.reading_history) : t(($) => $.supervision.reading_caught_up)}</p>
+            </section>
+
             <section aria-labelledby="supervision-conclusion">
               <h3 id="supervision-conclusion" className="font-semibold">{t(($) => $.supervision.current_conclusion)}</h3>
               <p className="mt-2 whitespace-pre-wrap text-body">{data.subject.summary || t(($) => $.supervision.no_conclusion)}</p>
@@ -281,6 +287,7 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                       <Badge variant={batch.status === "failed" ? "destructive" : "outline"}>{statusLabel(batch.status)}</Badge>
                       <span className="text-muted-foreground">{batch.rules_version} · {t(($) => $.supervision.materials_count, { count: batch.material_count })}</span>
                     </div>
+                    {batch.queue_seconds != null && <p className="mt-1 tabular-nums text-muted-foreground">{t(($) => $.supervision.batch_timing, { queue: Math.max(0, Math.round(batch.queue_seconds)), execution: batch.execution_seconds == null ? "—" : Math.max(0, Math.round(batch.execution_seconds)), persistence: batch.persistence_seconds == null ? "—" : Math.max(0, Math.round(batch.persistence_seconds)) })}</p>}
                     {batch.error && <p className="mt-1 break-words text-destructive">{batch.error}</p>}
                     {canManage && (
                       <details className="mt-2">
@@ -340,7 +347,7 @@ type Investigation = {
   id: string;
   created_at: string;
   request: { reason: string; path?: string };
-  result: { tool: string; source_label?: string; path?: string; error?: string; offset: number; end: number; length: number; truncated: boolean };
+  result: { tool: string; source_label?: string; path?: string; error?: string; offset: number; end: number; length: number; truncated: boolean; scope_truncated?: boolean };
 };
 
 function InvestigationRow({ entry, openEvidence }: { entry: Investigation; openEvidence: (target: EvidenceTarget) => void }) {
@@ -363,6 +370,8 @@ function InvestigationRow({ entry, openEvidence }: { entry: Investigation; openE
           : isRead ? t(($) => $.supervision.investigation_read_range, range)
           : t(($) => $.supervision.investigation_result_range, range)}
       </p>
+      <details className="mt-1"><summary className="cursor-pointer">{t(($) => $.supervision.investigation_parameters)}</summary><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(entry.request, null, 2)}</pre></details>
+      {entry.result.scope_truncated && <p className="mt-1 text-warning">{t(($) => $.supervision.search_scope_partial)}</p>}
       {entry.result.error ? (
         <p className="mt-1 whitespace-pre-wrap break-words text-destructive">{entry.result.error}</p>
       ) : entry.result.truncated ? (
