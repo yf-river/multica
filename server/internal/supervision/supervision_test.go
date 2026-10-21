@@ -127,16 +127,18 @@ func TestFindingValidationNamesMissingField(t *testing.T) {
 	}
 }
 
-func TestReadReceiptsRequireRealSuccessfulMaterialPages(t *testing.T) {
-	receipts := map[string]Receipt{"tail": {Tool: "supervision_material", Path: "message/source", Generation: 2, Offset: 8000, End: 15000, Length: 15000}, "index": {Tool: "supervision_material", Path: "index"}, "failed": {Tool: "supervision_material", Path: "message/source", Generation: 2, Offset: 8000, End: 15000, Length: 15000, Error: "已删除"}}
-	pages, err := receiptMaterials(Result{ReadReceipts: []string{"tail"}}, receipts)
-	if err != nil || len(pages) != 1 || pages[0].Generation != 2 {
-		t.Fatalf("valid page rejected: %v", err)
+func TestReadReceiptsUseOnlySuccessfulOriginalPages(t *testing.T) {
+	path := "message/00112233-4455-6677-8899-aabbccddeeff"
+	receipts := map[string]Receipt{
+		"tail":       {Tool: "supervision_material", Path: path, Generation: 2, Offset: 8000, End: 15000, Length: 15000},
+		"index":      {Tool: "supervision_material", Path: "index"},
+		"failed":     {Tool: "supervision_material", Path: path, Generation: 2, Offset: 8000, End: 15000, Length: 15000, Error: "已删除"},
+		"search":     {Tool: "supervision_search", Path: path, Generation: 2, Offset: 8000, End: 15000, Length: 15000},
+		"attachment": {Tool: "supervision_material", Path: "attachment/00112233-4455-6677-8899-aabbccddeeff", Generation: 2, Offset: 8000, End: 15000, Length: 15000},
 	}
-	for _, ids := range [][]string{{"unknown"}, {"index"}, {"failed"}, {"tail", "tail"}} {
-		if _, err := receiptMaterials(Result{ReadReceipts: ids}, receipts); err == nil {
-			t.Fatalf("accepted invalid receipts: %v", ids)
-		}
+	pages := receiptMaterials(receipts)
+	if len(pages) != 1 || pages[0].Generation != 2 || pages[0].Offset != 8000 {
+		t.Fatalf("unexpected original pages: %+v", pages)
 	}
 }
 

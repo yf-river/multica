@@ -389,17 +389,15 @@ func TestIntSupplementalReadingAdvancesOnlyContiguousCurrentGeneration(t *testin
 	m := Material{Evidence: Evidence{Kind: "comment", ID: note}, Generation: first.Generation, Offset: 0, End: first.End, Length: first.Length, Text: first.Text}
 	materials, _ := json.Marshal([]Material{m})
 	batch := f.Insert(t, "supervision_batch", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issue, "task_id": task, "target_version": target, "status": "running", "materials": materials})
-	var ids []string
 	for offset := first.End; offset < first.Length; {
 		page, e := svc.ReadEvidence(ctx, f.WorkspaceID, "comment", note, offset)
 		if e != nil {
 			t.Fatal(e)
 		}
-		id := f.Insert(t, "supervision_investigation", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issue, "batch_id": batch, "task_id": task, "request": map[string]any{}, "result": map[string]any{"tool": "supervision_material", "path": "comment/" + note, "generation": page.Generation, "offset": page.Offset, "end": page.End, "length": page.Length}})
-		ids = append(ids, id)
+		f.Insert(t, "supervision_investigation", dbfx.Cols{"workspace_id": f.WorkspaceID, "issue_id": issue, "batch_id": batch, "task_id": task, "request": map[string]any{}, "result": map[string]any{"tool": "supervision_material", "path": "comment/" + note, "generation": page.Generation, "offset": page.Offset, "end": page.End, "length": page.Length}})
 		offset = page.End
 	}
-	r := Result{Summary: "已连续核对长原文", Efficiency: "clear", Correctness: "clear", Gaps: []string{}, Findings: []Finding{}, Resolutions: []Resolution{}, Covered: []Evidence{m.Evidence}, ReadReceipts: ids}
+	r := Result{Summary: "已连续核对长原文", Efficiency: "clear", Correctness: "clear", Gaps: []string{}, Findings: []Finding{}, Resolutions: []Resolution{}, Covered: []Evidence{m.Evidence}}
 	if err = svc.ValidateBatch(ctx, f.WorkspaceID, batch, task, r); err != nil {
 		t.Fatal(err)
 	}

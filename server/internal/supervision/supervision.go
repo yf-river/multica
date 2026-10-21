@@ -66,14 +66,13 @@ type Resolution struct {
 	Evidence []Evidence `json:"evidence"`
 }
 type Result struct {
-	Summary      string       `json:"summary"`
-	Efficiency   string       `json:"efficiency"`
-	Correctness  string       `json:"correctness"`
-	Gaps         []string     `json:"gaps"`
-	Findings     []Finding    `json:"findings"`
-	Resolutions  []Resolution `json:"resolutions"`
-	Covered      []Evidence   `json:"covered"`
-	ReadReceipts []string     `json:"read_receipts"`
+	Summary     string       `json:"summary"`
+	Efficiency  string       `json:"efficiency"`
+	Correctness string       `json:"correctness"`
+	Gaps        []string     `json:"gaps"`
+	Findings    []Finding    `json:"findings"`
+	Resolutions []Resolution `json:"resolutions"`
+	Covered     []Evidence   `json:"covered"`
 }
 
 func uuid(s string) pgtype.UUID { u, _ := util.ParseUUID(s); return u }
@@ -532,10 +531,8 @@ func ValidateResult(r Result, materials []Material, investigations ...Material) 
 	return nil
 }
 
-// Receipt 是平台保存的补读结果，模型仅能引用本批次真实回执。
+// Receipt 是平台保存的工具回执，不由模型重复申报阅读位置。
 type Receipt struct {
-	ID         string
-	Kind       string `json:"kind"`
 	Path       string `json:"path"`
 	Tool       string `json:"tool"`
 	Generation int64  `json:"generation"`
@@ -545,19 +542,24 @@ type Receipt struct {
 	Error      string `json:"error"`
 }
 
-func receiptMaterials(result Result, receipts map[string]Receipt) ([]Material, error) {
+func receiptMaterials(receipts map[string]Receipt) []Material {
 	var pages []Material
-	seen := map[string]bool{}
-	for index, id := range result.ReadReceipts {
-		page, ok := receipts[id]
+	for _, page := range receipts {
 		parts := strings.Split(page.Path, "/")
-		if !ok || seen[id] || page.Error != "" || page.Tool != "supervision_material" || len(parts) != 2 || page.Generation < 1 || page.Offset < 0 || page.End <= page.Offset || page.End > page.Length {
-			return nil, fmt.Errorf("read_receipts[%d] 不是本批次有效且唯一的原文补读回执", index)
+		if page.Error != "" || page.Tool != "supervision_material" || len(parts) != 2 || page.Generation < 1 || page.Offset < 0 || page.End <= page.Offset || page.End > page.Length {
+			continue
 		}
-		seen[id] = true
+		switch parts[0] {
+		case "issue", "comment", "task", "message", "trace":
+		default:
+			continue
+		}
+		if _, err := util.ParseUUID(parts[1]); err != nil {
+			continue
+		}
 		pages = append(pages, Material{Evidence: Evidence{Kind: parts[0], ID: parts[1]}, Generation: page.Generation, Offset: page.Offset, End: page.End, Length: page.Length})
 	}
-	return pages, nil
+	return pages
 }
 
 // ContiguousEnd 只推进连续审查的同版本原文，不能跨越未读空洞。
@@ -584,25 +586,17 @@ func (s *Service) ValidateBatch(ctx context.Context, ws, batch, task string, res
 	if err := json.Unmarshal(raw, &materials); err != nil {
 		return err
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT id::text,COALESCE(result->>'run_id',''),result FROM supervision_investigation WHERE workspace_id=$1 AND batch_id=$2 AND task_id=$3`, ws, batch, task)
+	rows, err := s.Pool.Query(ctx, `SELECT id::text,COALESCE(result->>'run_id','') FROM supervision_investigation WHERE workspace_id=$1 AND batch_id=$2 AND task_id=$3`, ws, batch, task)
 	if err != nil {
 		return err
 	}
 	var investigations []Material
-	receipts := map[string]Receipt{}
 	for rows.Next() {
 		var id, run string
-		var body []byte
-		if err = rows.Scan(&id, &run, &body); err != nil {
+		if err = rows.Scan(&id, &run); err != nil {
 			rows.Close()
 			return err
 		}
-		var receipt Receipt
-		if err = json.Unmarshal(body, &receipt); err != nil {
-			rows.Close()
-			return err
-		}
-		receipts[id] = receipt
 		investigations = append(investigations, Material{Evidence: Evidence{Kind: "investigation", ID: id, RunID: run}})
 	}
 	err = rows.Err()
@@ -611,9 +605,6 @@ func (s *Service) ValidateBatch(ctx context.Context, ws, batch, task string, res
 		return err
 	}
 	if err = ValidateResult(result, materials, investigations...); err != nil {
-		return err
-	}
-	if _, err = receiptMaterials(result, receipts); err != nil {
 		return err
 	}
 	for _, id := range append(findingIDs(result), resolutionIDs(result)...) {
@@ -776,10 +767,7 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	if err = ValidateResult(result, materials, investigations...); err != nil {
 		return err
 	}
-	pages, err := receiptMaterials(result, receipts)
-	if err != nil {
-		return err
-	}
+	pages := receiptMaterials(receipts)
 	for _, f := range result.Findings {
 		if protectedIDs[f.ID] {
 			continue
