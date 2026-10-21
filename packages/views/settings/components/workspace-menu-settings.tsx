@@ -14,8 +14,8 @@ export function WorkspaceMenuSettings({ workspace, canManage }: { workspace: Wor
   const update = useUpdateWorkspaceMenu();
   return <SettingsSection title={t(($) => $.workspace.menu_title)} action={<SettingsSaveState status={update.isPending ? "saving" : update.isError ? "error" : update.isSuccess ? "saved" : "idle"} savingLabel={t(($) => $.auto_save.saving)} savedLabel={t(($) => $.auto_save.saved)} errorLabel={t(($) => $.auto_save.failed)} />}>
     <SettingsCard>
-      <div className="px-4 py-3 text-sm text-muted-foreground">{t(($) => $.workspace.menu_hint)}</div>
-      {update.isError && <p role="alert" className="px-4 py-3 text-sm text-destructive">{update.error.message}</p>}
+      <div className="px-4 py-3 text-body text-muted-foreground">{t(($) => $.workspace.menu_hint)}</div>
+      {update.isError && <p role="alert" className="px-4 py-3 text-body text-destructive">{update.error.message}</p>}
       {CONFIGURABLE_MENU_KEYS.map((key) => {
         const label = nav(($) => $.nav[WORKSPACE_PAGES[key].navKey]);
         return <SettingsRow key={key} label={<label htmlFor={`workspace-menu-${key}`} className="cursor-pointer">{label}</label>}>
