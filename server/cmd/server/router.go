@@ -1659,12 +1659,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/deliveries", h.SubmitIssueDelivery)
 					r.Put("/delivery-plan", h.RegisterIssuePlan)
 					r.Post("/delivery-plan/confirm", h.ConfirmIssuePlan)
+					r.Post("/delivery-plan/revoke-release", h.RevokeIssueReleaseAuthorization)
 					r.Post("/deliveries/{deliveryId}/action", h.ActIssueDelivery)
 				})
 			})
 
 			r.Get("/api/delivery-queue", h.ListDeliveryQueue)
 			r.Post("/api/delivery-queue/advance", h.AdvanceDelivery)
+			r.Get("/api/delivery-queue/{deliveryId}/authorization", h.CheckDeliveryAuthorization)
 
 			// 任务消息（面向用户，非 daemon 认证）
 			r.Route("/api/supervision", func(r chi.Router) {

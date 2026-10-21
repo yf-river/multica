@@ -23,3 +23,7 @@ it("never lets a stale plan start implementation",async()=>{
 it("does not offer an approval action to task identities",async()=>{
  mocks.get.mockResolvedValue({...snapshot,can_confirm:false});render();await screen.findByText("联调通过，等待生产确认");expect(screen.queryByRole("button",{name:"Approve production"})).not.toBeInTheDocument();
 });
+it("shows the user's exact words and interpreted scope without authorizing anything",async()=>{
+ mocks.get.mockResolvedValue({...snapshot,authorizations:[{id:"auth",kind:"release",scope:"只发布菜单修复",revoked:false,comment_snapshot:{content:"测好没问题就上线",revision:1,author_id:"user"},created_at:"2026-10-21T00:00:00Z"}]});
+ render();fireEvent.click(await screen.findByText("Authorization basis"));expect(screen.getByText("测好没问题就上线")).toBeInTheDocument();expect(screen.getByText("只发布菜单修复")).toBeInTheDocument();expect(mocks.act).not.toHaveBeenCalled();
+});

@@ -604,6 +604,10 @@ def check_delivery_approval(record):
     req=urllib.request.Request(meta['backend_url'].rstrip('/')+'/api/delivery-queue',headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=15) as response: records=json.load(response)
     delivery=next((d for d in records if d['id']==record['delivery_id']),None)
+    authorization_url=meta['backend_url'].rstrip('/')+'/api/delivery-queue/'+record['delivery_id']+'/authorization'
+    authorization_request=urllib.request.Request(authorization_url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(authorization_request,timeout=15) as response: authorization=json.load(response)
+    if not authorization.get('ready'):raise RuntimeError('发布授权或用户要求已变化，需要负责人重新核对')
     if not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by') or not delivery.get('release_validated') or delivery['source_commit']!=record.get('approved_source') or delivery['candidate_id']!=record['id']:
         raise RuntimeError('生产批准或联调复核已失效')
     if subprocess.run(['git','--git-dir',record['git_common'],'merge-base','--is-ancestor',delivery['source_commit'],record['commit']]).returncode:

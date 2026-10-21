@@ -6,22 +6,30 @@
 
 ida-developer、multica-developer 的沟通约定保存在各自 Agent 指令中：先查项目事实，澄清目标和边界，输出编号行动摘要及完整计划，用户确认一次后执行已授权动作。Multica 新任务从 `origin/personal-studio-upstream` 创建任务分支；已有任务续接原分支。保留其他任务的未提交内容。
 
-原任务评论保存方案全文。登记评论ID及revision后，页面显示“确认计划并开始”；用户确认生成固定ID的真实评论，复用现有任务派发链。用户已在方案线程明确回复确认时，可引用该评论登记确认，不再问一次。方案修改会使原确认及未发布交付失效。
+续接已有任务先读取交付记录并复用当前方案；代码与方案没有变化时，不重发方案来引导确认。联调由 submit 后的平台队列准备，不先手动构建再补交付记录。
+
+原任务评论保存方案全文，登记评论 ID 和 revision 后形成当前方案。自然语言授权由 Agent 结合任务上下文解释；平台核实引用评论的用户身份、任务归属和 revision，保存原文快照、范围解释和登记者，不匹配固定口令或评论层级。页面按钮也可直接确认准确版本。
+
+方案内容变化需重新登记；普通修复及未改变需求范围的主分支整合续接现有方案。Agent 根据用户最新决定判断是否仍在授权范围内，不通过重发相同方案要求再次确认。
 
 CLI 与页面共用接口：
 
 ```bash
 multica issue delivery plan GONG-24 --file /absolute/plan.json
 multica issue delivery confirm-plan GONG-24 --file /absolute/confirmation.json
+multica issue delivery revoke-release GONG-24 --file /absolute/revocation.json
 multica issue delivery submit GONG-24 --file /absolute/delivery.json
 multica issue delivery status GONG-24
 multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidence.json
 ```
 
 - plan：`comment_id`、`revision`。
-- confirmation：`plan_id`、`revision`、`comment_id`；CLI引用当前方案线程里已存在的人类明确确认评论。
+- confirmation：`plan_id`、`revision`、`comment_id`、`comment_revision`、`scope`。`scope` 是 Agent 对真实用户授权范围的解释。用户同时授权联调后发布时增加 `release_after_acceptance: true`；不要求评论晚于方案登记或处于特定线程。重复登记同一评论版本与类型必须使用相同解释。
+- revoke-release：同样引用当前方案和用户撤销评论及 revision、`scope`；保留原授权及撤销依据，不删除历史。
+- status：返回 `authorizations`（用户原话、类型、范围、登记者和撤销状态）、`user_comments_version`（当前用户评论版本摘要）及原交付记录。
 - delivery：固定 `operation_id`、完整 `source_commit`、`source_branch`、`base_commit` 和本地 `evidence`。证据是非空数组，每项含 `name`、`status: passed`、实际 `evidence`。重试保持操作号与内容一致。
-- accept：当前交付 `revision` 和真实 int 业务验证的 `evidence`；初次本地证据不等于 int 验收。
+- accept：当前交付 `revision` 和真实 int 业务验证的 `evidence`。存在发布授权时，同时提交 `authorization_id`、`scope_review`、`user_comments_version`，说明准确候选仍在授权范围内；缺少范围复核时只完成联调，不能自动发布。由按钮批准的候选复验使用 `authorization_id: "button"`，仅既有真实按钮批准允许复用。
+- approve：验收后可引用新用户评论，提供 `comment_id`、`comment_revision`、`scope`、`scope_review`、`user_comments_version`；也可直接引用已有 `authorization_id` 并提供范围复核。任务身份不能无依据自批。
 
 ## 排队与源码恢复
 
@@ -50,9 +58,11 @@ pnpm --dir /data/ida/multica release delivery-worker --env prod
 
 ## 用户确认与生产更新
 
-页面“同意部署生产”是独立操作，确认对话框固定交付版本。任务身份不能自批；也可引用验收之后人类明确回复“同意部署 / 同意发布生产 / 确认部署生产”的评论。普通“继续”、`/note` 和 Agent 评论不构成生产批准。
+用户可以在方案阶段授权“测试通过后直接发布”。授权先保存，Agent 验收准确候选并提交范围复核后，外部发布器完成验收并自动接续生产准备，不要求用户再次发送口令。只有执行授权时，联调后进入待审核，等待新的发布决定；页面“同意部署生产”仍作为可选入口。
 
-批准后接力器整合最新 `origin/personal-studio-upstream`，重新准备并通知必要的 int 验证。没有实质改动时不重复索要发布批准；冲突或方案变化返回开发和审核。验证完成后快进合入、推送并核对远端主分支，再调用现有外部 publisher。主分支前进则重新排队整合和验证，禁止强推。
+平台不会解释否定、疑问或 `/note` 的业务含义，由 Agent 提示词负责理解，不能将含糊表达登记为批准。平台拒绝不存在、被修改、其他任务、Agent 自己的评论及无权限用户的授权。发布前核对授权来源、当前方案、候选版本与已审查用户评论摘要；有新评论或来源变化时暂停发布并通过原任务通知负责人核对，通知可恢复且不会重复派发。
+
+批准后接力器整合最新 `origin/personal-studio-upstream`，重新准备并通知必要的 int 验证。未改变需求范围时复用授权并复核新候选；范围或重要取舍变化返回用户确认。验证完成后快进合入、推送并核对远端主分支，再调用现有外部 publisher。主分支前进则重新排队整合和验证，禁止强推。
 
 `release request` 与实际 publisher 都核对数据库中的批准、复核标记、原任务提交和候选身份。来源不符、批准失效或候选未包含批准提交时拒绝生产更新。
 
