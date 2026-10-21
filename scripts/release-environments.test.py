@@ -12,6 +12,19 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_supervision_index_replacement_is_exact_and_preserves_general_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            release=Path(tmp); migrations=release/'server/migrations'; migrations.mkdir(parents=True)
+            replacement=migrations/'550_supervision_active_issue.up.sql'
+            replacement.write_text("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS supervision_active_issue ON supervision_batch(workspace_id,issue_id) WHERE status IN ('preparing','running');\n")
+            migration=migrations/'551_supervision_parallel.up.sql'
+            statement='DROP INDEX CONCURRENTLY IF EXISTS supervision_active_workspace'
+            self.assertTrue(r.reviewed_supervision_index_change(release,migration,[statement]))
+            self.assertFalse(r.reviewed_supervision_index_change(release,migration,[statement,'DROP TABLE issue']))
+            self.assertFalse(r.reviewed_supervision_index_change(release,migrations/'552_other.up.sql',[statement]))
+            replacement.write_text('CREATE INDEX something_else ON issue(id);')
+            self.assertFalse(r.reviewed_supervision_index_change(release,migration,[statement]))
+
     def test_task_cannot_restore_or_switch_production(self):
         with patch.dict(r.os.environ, {'MULTICA_TASK_ID':'task'}), patch.object(r,'read') as read, patch.object(r,'owned_stop') as stop:
             with self.assertRaisesRegex(RuntimeError,'request'): r.deploy('prod','missing')

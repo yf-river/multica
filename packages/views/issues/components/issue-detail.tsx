@@ -94,7 +94,6 @@ import { ThreadMinimap } from "./thread-minimap";
 import { ThreadNavPanel, mentionsUser, type ThreadNavThread } from "./thread-nav-panel";
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
-import { IssueDelivery } from "./issue-delivery";
 import { ExecutionLogSection } from "./execution-log-section";
 import { TAPDSourceBadge } from "./tapd-source-badge";
 import { QuickActionsSection } from "./quick-actions-section";
@@ -2474,7 +2473,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       {/* 执行日志——进行中的运行 + 折叠的过往运行，每段都带自己的 token 消耗，
           区块标题上汇总 issue 总计。自包含：自己管理折叠状态与 WS 订阅。
           没有可展示的运行时会自行隐藏。 */}
-      <IssueDelivery issueId={id} />
       <ExecutionLogSection issueId={id} identifier={issue.identifier} />
 
       {/* 详情——创建人与时间戳。放在执行日志下方，因为它是边栏里最没人看的区块：
