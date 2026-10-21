@@ -373,6 +373,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
       WHERE s.workspace_id=$1 AND s.desired_version>s.reviewed_version AND s.next_attempt_at<=now() AND s.failures<3
       AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=s.workspace_id AND b.issue_id=s.issue_id AND b.status IN('preparing','running'))
       AND (s.force_review OR s.last_checked_at IS NULL OR s.last_checked_at<now()-make_interval(secs=>$2::double precision)
+        OR EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id AND m.generation>m.reviewed_generation AND m.changed_at<=s.last_checked_at)
         OR NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id AND t.status IN('queued','dispatched','running')))
       ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id FOR UPDATE OF s SKIP LOCKED LIMIT 1`, ws, interval).Scan(&issue, &version, &summary)
 	if errors.Is(err, pgx.ErrNoRows) {

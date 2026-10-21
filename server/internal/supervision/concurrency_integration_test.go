@@ -133,4 +133,26 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 	if n := f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1", f.WorkspaceID); n != 3 {
 		t.Fatal("restart duplicated batches")
 	}
+	// 活跃任务新增内容遵循扫描间隔；历史尚未读完时可以连续补读。
+	f.Exec(t, "UPDATE supervision_batch SET status='completed' WHERE workspace_id=$1", f.WorkspaceID)
+	f.Exec(t, "UPDATE agent_task_queue SET status='completed' WHERE agent_id=$1", agent)
+	f.Exec(t, "UPDATE agent_task_queue SET status='running' WHERE id=$1", source)
+	f.Exec(t, "UPDATE supervision_material SET reviewed_generation=generation WHERE workspace_id=$1", f.WorkspaceID)
+	f.Exec(t, "UPDATE supervision_subject SET reviewed_version=desired_version,force_review=false WHERE workspace_id=$1", f.WorkspaceID)
+	f.Exec(t, "UPDATE supervision_subject SET desired_version=desired_version+1,last_checked_at=clock_timestamp() WHERE issue_id=$1", issues[0])
+	f.Exec(t, "UPDATE supervision_material SET generation=generation+1,reviewed_offset=40000,changed_at=clock_timestamp()+interval '1 second' WHERE source_id=$1", long)
+	if err = svc.dispatch(ctx, f.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND status='running'", f.WorkspaceID); n != 0 {
+		t.Fatal("fresh active-task changes bypassed the scan interval")
+	}
+	f.Exec(t, "UPDATE supervision_material SET changed_at=now()-interval '1 minute' WHERE source_id=$1", long)
+	if err = svc.dispatch(ctx, f.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND status='running'", f.WorkspaceID); n != 1 {
+		t.Fatal("unread history waits for another scan interval")
+	}
+
 }
