@@ -229,6 +229,8 @@ func (h *Handler) CreateUpstreamAbsorptionTask(w http.ResponseWriter, r *http.Re
 		return
 	}
 	creator := pgtype.UUID{Bytes: creatorUUID, Valid: true}
+	alreadyCreated := errors.New("absorption task already created")
+	var concurrentIssue string
 	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 		WorkspaceID:    wsID,
 		Title:          "评估上游改动：" + title,
@@ -242,13 +244,26 @@ func (h *Handler) CreateUpstreamAbsorptionTask(w http.ResponseWriter, r *http.Re
 		ActorID:  user,
 		Platform: "web",
 		RelatedRecord: func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
-			if _, err := tx.Exec(ctx, `INSERT INTO upstream_sync_absorption_task(item_id,issue_id,status) VALUES($1,$2,'task_created') ON CONFLICT(item_id) DO NOTHING`, itemID, issue.ID); err != nil {
+			var linked string
+			err := tx.QueryRow(ctx, `INSERT INTO upstream_sync_absorption_task(item_id,issue_id,status) VALUES($1,$2,'task_created') ON CONFLICT(item_id) DO NOTHING RETURNING issue_id::text`, itemID, issue.ID).Scan(&linked)
+			if errors.Is(err, pgx.ErrNoRows) {
+				if err := tx.QueryRow(ctx, `SELECT issue_id::text FROM upstream_sync_absorption_task WHERE item_id=$1`, itemID).Scan(&concurrentIssue); err != nil {
+					return err
+				}
+				// 并发请求已创建关联时，回滚本次新任务并返回同一个任务。
+				return alreadyCreated
+			}
+			if err != nil {
 				return err
 			}
-			_, err := tx.Exec(ctx, `UPDATE upstream_sync_item SET status='adopted',adopted_at=COALESCE(adopted_at,now()),adopted_by=COALESCE(adopted_by,$2),updated_at=now() WHERE id=$1`, itemID, creator)
+			_, err = tx.Exec(ctx, `UPDATE upstream_sync_item SET status='adopted',adopted_at=COALESCE(adopted_at,now()),adopted_by=COALESCE(adopted_by,$2),updated_at=now() WHERE id=$1`, itemID, creator)
 			return err
 		},
 	})
+	if errors.Is(err, alreadyCreated) {
+		writeJSON(w, http.StatusOK, map[string]any{"issue_id": concurrentIssue, "status": "task_created", "existing": true})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "创建吸收任务失败")
 		return
