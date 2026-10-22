@@ -10,22 +10,13 @@ export const reviewSettingsSchema = z
     model: z.string().default(""),
     thinking_level: z.string().default(""),
     instructions: z.string(),
-    instructions_customized: z.boolean().default(false),
     default_instructions: z.string(),
-    instructions_version: z.string(),
     max_rounds: z.number().int().positive().default(6),
     can_manage: z.boolean().default(false),
   })
   .loose();
 
 export type ReviewSettings = z.infer<typeof reviewSettingsSchema>;
-
-export const reviewInstructionsSchema = z.object({
-  instructions: z.string(),
-  version: z.string(),
-});
-
-export type ReviewInstructions = z.infer<typeof reviewInstructionsSchema>;
 
 export const EMPTY_REVIEW_SETTINGS: ReviewSettings = {
   configured: false,
@@ -35,9 +26,7 @@ export const EMPTY_REVIEW_SETTINGS: ReviewSettings = {
   model: "",
   thinking_level: "",
   instructions: "",
-  instructions_customized: false,
   default_instructions: "",
-  instructions_version: "",
   max_rounds: 6,
   can_manage: false,
 };

@@ -65,7 +65,7 @@ func TestEffectiveInstructionsFollowsDefault(t *testing.T) {
 	if EffectiveInstructions("自定义") != "自定义" {
 		t.Fatal("custom instructions must win")
 	}
-	if DefaultInstructions() == "" || InstructionsVersion() == "" {
-		t.Fatal("built-in prompt and its version must not be empty")
+	if DefaultInstructions() == "" {
+		t.Fatal("built-in prompt must not be empty")
 	}
 }

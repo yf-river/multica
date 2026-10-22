@@ -3,9 +3,7 @@
 package review
 
 import (
-	"crypto/sha256"
 	_ "embed"
-	"encoding/hex"
 	"sort"
 	"strings"
 )
@@ -59,12 +57,6 @@ func EffectiveInstructions(custom string) string {
 	return custom
 }
 
-// InstructionsVersion 是内置提示词的短指纹，设置页用它提示「默认版本」。
-func InstructionsVersion() string {
-	sum := sha256.Sum256([]byte(DefaultInstructions()))
-	return hex.EncodeToString(sum[:])[:12]
-}
-
 // Finding 是一条审查问题，落库后供下一轮判断是否真的改过。
 type Finding struct {
 	Level  string `json:"level"`
@@ -105,17 +97,6 @@ func (f Findings) Normalize(verdict Verdict) Findings {
 		}
 	}
 	return f
-}
-
-// Files 返回本轮问题涉及的文件，用于下一轮的进展核对。
-func (f Findings) Files() []string {
-	files := make([]string, 0, len(f.Items))
-	for _, item := range f.Items {
-		if item.File != "" {
-			files = append(files, item.File)
-		}
-	}
-	return compact(files)
 }
 
 // ParseVerdict 把 CLI 输入归一化；未知值返回空串由调用方拒绝。

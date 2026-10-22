@@ -92,7 +92,6 @@ func (h *Handler) GetReviewSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	member, _ := h.getWorkspaceMember(r.Context(), requestUserID(r), ws)
-	customized := strings.TrimSpace(cfg.Instructions) != ""
 	writeJSON(w, http.StatusOK, map[string]any{
 		"configured":              configured,
 		"enabled":                 cfg.Enabled,
@@ -101,9 +100,7 @@ func (h *Handler) GetReviewSettings(w http.ResponseWriter, r *http.Request) {
 		"model":                   cfg.Model,
 		"thinking_level":          cfg.Thinking,
 		"instructions":            review.EffectiveInstructions(cfg.Instructions),
-		"instructions_customized": customized,
 		"default_instructions":    review.DefaultInstructions(),
-		"instructions_version":    review.InstructionsVersion(),
 		"max_rounds":              review.MaxRounds,
 		"can_manage":              member.Role == "owner" || member.Role == "admin",
 	})
@@ -276,17 +273,6 @@ func (h *Handler) UpdateReviewSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.GetReviewSettings(w, r)
-}
-
-// GetReviewInstructions 单独返回内置默认提示词，供设置页「恢复默认」使用。
-func (h *Handler) GetReviewInstructions(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := h.reviewScope(w, r, true); !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"instructions": review.DefaultInstructions(),
-		"version":      review.InstructionsVersion(),
-	})
 }
 
 // ReviewVerdictRequest 是审查 Agent 提交的一轮结论。

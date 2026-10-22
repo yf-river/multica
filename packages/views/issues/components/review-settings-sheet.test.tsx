@@ -49,9 +49,7 @@ describe("ReviewSettingsSheet", () => {
       model: "",
       thinking_level: "",
       instructions: "默认提示词",
-      instructions_customized: false,
       default_instructions: "默认提示词",
-      instructions_version: "v1",
       max_rounds: 6,
       can_manage: true,
     });

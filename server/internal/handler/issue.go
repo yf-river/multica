@@ -4328,10 +4328,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// 两边都解析成它们继承的 canonical 状态，这样把最后一个子任务移到「自定义的
 		// done/cancelled」上的批次仍然会走进关卡屏障。字面比较会让 childDoneCompleted 为空、
 		// 整个 notifyParentsOfBatchChildDone 被悄悄跳过。 (MUL-6243)
-		if statusChanged {
-			h.afterIssueStatusChangeForReview(r.Context(), prevIssue, issue)
-		}
-
 		if statusChanged && issue.ParentIssueID.Valid {
 			prevTerminal := isTerminalChildStatus(
 				issuestatus.Effective(r.Context(), h.Queries, prevIssue.WorkspaceID, prevIssue.Status))
@@ -4340,6 +4336,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if !prevTerminal && nowTerminal {
 				childDoneCompleted = append(childDoneCompleted, issue)
 			}
+		}
+
+		// 批量改状态与单选更新走同一入口：任务进入审核中时交给审查 Agent 接手。
+		if statusChanged {
+			h.afterIssueStatusChangeForReview(r.Context(), prevIssue, issue)
 		}
 
 		updated++

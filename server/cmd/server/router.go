@@ -1673,7 +1673,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/review", func(r chi.Router) {
 				r.Get("/settings", h.GetReviewSettings)
 				r.Put("/settings", h.UpdateReviewSettings)
-				r.Get("/instructions", h.GetReviewInstructions)
 			})
 
 			// 任务消息（面向用户，非 daemon 认证）
