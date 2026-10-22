@@ -61,7 +61,8 @@
       "trigger_manual": "手动",
       "trigger_schedule": "定时",
       "run_now": "立即跑一批",
-      "triggered": "已触发"
+      "triggered": "已触发",
+      "scope_hint": "请在绑定运行时所在的工作区执行，或在设置中选择当前工作区的运行时。"
     },
     "setup": {
       "hint": "还没绑定同步智能体，添加后可每天自动跑增量。",

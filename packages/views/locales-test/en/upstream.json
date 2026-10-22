@@ -61,7 +61,8 @@
       "trigger_manual": "Manual",
       "trigger_schedule": "Scheduled",
       "run_now": "Run a batch now",
-      "triggered": "Triggered"
+      "triggered": "Triggered",
+      "scope_hint": "Run from the workspace of the selected runtime, or select a runtime in this workspace in settings."
     },
     "setup": {
       "hint": "No sync agent bound yet. Add one to run incremental sync daily.",

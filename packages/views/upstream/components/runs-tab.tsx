@@ -3,6 +3,8 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
+import { autopilotKeys, autopilotRunsOptions } from "@multica/core/autopilots/queries";
+import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { upstreamRunsOptions, upstreamSnapshotOptions, type UpstreamRun } from "@multica/core/upstream/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -24,10 +26,17 @@ export function RunsTab({ wsId }: { wsId: string }) {
   const boundAgent = !!snapshot.data?.config.agent_id;
   const autopilotId = snapshot.data?.config.autopilot_id ?? "";
   const qc = useQueryClient();
+  const runtimes = useQuery(runtimeListOptions(wsId));
+  const canExecute = (runtimes.data ?? []).some((runtime) => runtime.id === snapshot.data?.config.runtime_id);
+  const execution = useQuery({ ...autopilotRunsOptions(wsId, autopilotId), enabled: canExecute && !!autopilotId, refetchInterval: 5000 });
+  const latestExecution = execution.data?.[0];
+  const dispatchRunning = latestExecution?.status === "running";
+  const dispatchFailure = latestExecution && (latestExecution.status === "failed" || latestExecution.status === "skipped");
   const trigger = useMutation({
     mutationFn: () => api.triggerAutopilot(autopilotId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["upstream", wsId] });
+      qc.invalidateQueries({ queryKey: autopilotKeys.runs(wsId, autopilotId) });
     },
   });
 
@@ -55,7 +64,7 @@ export function RunsTab({ wsId }: { wsId: string }) {
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" disabled={trigger.isPending || !!snapshot.data?.active_run_id || snapshot.data?.config.sync_state==="paused"} onClick={() => trigger.mutate()}>
+          <Button size="sm" variant="secondary" disabled={!canExecute || dispatchRunning || trigger.isPending || !!snapshot.data?.active_run_id || snapshot.data?.config.sync_state==="paused"} onClick={() => trigger.mutate()}>
             {t(($) => $.page.runs.run_now)}
           </Button>
           {trigger.isError ? <p role="alert" className="text-caption text-danger">{trigger.error.message}</p>:null}
@@ -65,6 +74,10 @@ export function RunsTab({ wsId }: { wsId: string }) {
         </div>
       )}
 
+      {boundAgent && !canExecute && !runtimes.isLoading ? <p className="text-caption text-muted-foreground">{t(($) => $.page.runs.scope_hint)}</p> : null}
+      {dispatchRunning && !snapshot.data?.active_run_id ? <p aria-live="polite" className="text-caption text-muted-foreground">{t(($) => $.page.status.running)}</p> : null}
+      {dispatchFailure ? <p role="alert" className="text-caption text-danger">{t(($) => $.page.status.error)}：{latestExecution.failure_reason}</p> : null}
+      {execution.error ? <p role="alert" className="text-caption text-danger">{execution.error.message}</p> : null}
       {error ? <p role="alert" className="text-caption text-danger">{error.message}</p> : null}
       {isLoading ? (
         <div className="space-y-2">
