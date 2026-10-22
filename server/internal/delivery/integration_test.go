@@ -20,21 +20,17 @@ import (
 )
 
 func TestFixedIntDeliveryWorkflow(t *testing.T) {
-	if os.Getenv("MULTICA_DELIVERY_INT_TEST") != "1" {
-		t.Skip("explicit int validation required")
+	raw := os.Getenv("MULTICA_DELIVERY_TEST_URL")
+	if raw == "" {
+		t.Skip("requires isolated verification_full_test database")
 	}
 	ctx := context.Background()
-	raw, err := os.ReadFile("/data/ida/multica/.run/env/int-services.json")
+	cfg, err := pgxpool.ParseConfig(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config map[string]map[string]string
-	if json.Unmarshal(raw, &config) != nil || config["server"]["MULTICA_ENV_ID"] != "int" {
-		t.Fatal("not int")
-	}
-	cfg, err := pgxpool.ParseConfig(config["server"]["DATABASE_URL"])
-	if err != nil {
-		t.Fatal(err)
+	if cfg.ConnConfig.Host != "127.0.0.1" || cfg.ConnConfig.Database != "verification_full_test" {
+		t.Fatal("refusing non-test target")
 	}
 	base, err := pgxpool.NewWithConfig(ctx, cfg.Copy())
 	if err != nil {
@@ -52,7 +48,7 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		pool.Close()
-		for _, table := range []string{"issue_delivery_authorization", "issue_delivery", "issue_delivery_plan"} {
+		for _, table := range []string{"verification_event", "verification_slot", "issue_delivery_authorization", "issue_delivery", "issue_delivery_plan"} {
 			if _, e := base.Exec(ctx, "DROP TABLE IF EXISTS "+schema+"."+table); e != nil {
 				t.Error(e)
 			}
@@ -61,7 +57,7 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 			t.Error(e)
 		}
 	})
-	for _, pattern := range []string{"542_*.up.sql", "543_*.up.sql", "544_*.up.sql", "545_*.up.sql", "546_*.up.sql", "547_*.up.sql", "548_*.up.sql", "549_*.up.sql"} {
+	for _, pattern := range []string{"542_*.up.sql", "543_*.up.sql", "544_*.up.sql", "545_*.up.sql", "546_*.up.sql", "547_*.up.sql", "548_*.up.sql", "549_*.up.sql", "567_*.up.sql", "568_*.up.sql", "569_*.up.sql"} {
 		names, _ := filepath.Glob("../../migrations/" + pattern)
 		if len(names) != 1 {
 			t.Fatal(pattern)
@@ -168,6 +164,18 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 		token = v["worker_token"].(string)
 	}
 	advance("claim", nil)
+	// 真实数据库上的池化领取、迟到回执与后续 int 发布共用同一交付流程。
+	f.Exec(t, `INSERT INTO verification_slot(name,enabled) VALUES('verify-1',true)`)
+	code, lease := call(h.AdvanceVerificationSlot, false, map[string]any{"action": "claim", "delivery_id": id, "worker_token": token, "source_commit": strings.Repeat("a", 40)})
+	want(code, 200, lease)
+	code, s = call(h.AdvanceDelivery, false, map[string]any{"id": id, "revision": revision, "action": "fail", "worker_token": dbid.NewV7().String(), "error": "stale worker"})
+	want(code, 403, s)
+	code, s = call(h.AdvanceDelivery, false, map[string]any{"id": id, "revision": revision, "action": "prepared", "worker_token": token, "candidate_id": "wrong", "candidate_url": "http://fixture"})
+	want(code, 409, s)
+	lease["action"] = "prepared"
+	lease["candidate_id"] = "candidate-one"
+	code, s = call(h.AdvanceVerificationSlot, false, lease)
+	want(code, 200, s)
 	advance("prepared", map[string]any{"candidate_id": "candidate-one", "candidate_url": "http://int.example.test"})
 	action := func(name string, agent bool, extra map[string]any, expected int) {
 		t.Helper()
@@ -186,6 +194,17 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 	action("accept", true, map[string]any{"evidence": []any{}}, 409)
 	action("accept", true, map[string]any{"evidence": checks}, 200)
 	advance("accepted", nil)
+	lease["action"] = "drain"
+	code, s = call(h.AdvanceVerificationSlot, false, lease)
+	want(code, 200, s)
+	lease["action"] = "release"
+	code, s = call(h.AdvanceVerificationSlot, false, lease)
+	want(code, 200, s)
+	var remaining int
+	f.QueryRow(t, `SELECT count(*) FROM verification_slot WHERE delivery_id=$1`, id).Scan(&remaining)
+	if remaining != 0 {
+		t.Fatal("review retained verification slot")
+	}
 	var status string
 	f.QueryRow(t, "SELECT status FROM issue WHERE id=$1", issue).Scan(&status)
 	if status != "in_review" {

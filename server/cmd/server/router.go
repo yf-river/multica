@@ -1666,6 +1666,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			r.Get("/api/delivery-queue", h.ListDeliveryQueue)
 			r.Post("/api/delivery-queue/advance", h.AdvanceDelivery)
+			r.Post("/api/delivery-queue/slots/advance", h.AdvanceVerificationSlot)
+			r.Get("/api/delivery-queue/slots", h.GetVerificationLease)
 			r.Get("/api/delivery-queue/{deliveryId}/authorization", h.CheckDeliveryAuthorization)
 
 			// 任务消息（面向用户，非 daemon 认证）

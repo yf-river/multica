@@ -27,7 +27,10 @@ import (
 // readinessQuery 统计本二进制要求的迁移版本里有多少条已被记录为"已应用"。
 // 之所以比较"数量"而不是只查一条"最新版本"行，是为了能发现中间缺了迁移
 // （编号排在某个已应用的较新版本之下）的情况——单查最新会把它掩盖掉。
-const readinessQuery = `SELECT COUNT(*) FROM schema_migrations WHERE version = ANY($1)`
+const readinessQuery = `SELECT count(*) FROM unnest($1::text[]) AS required(version)
+ WHERE EXISTS(SELECT 1 FROM schema_migrations m WHERE m.version=required.version)
+ OR (required.version ~ '^[0-9]{3}_' AND substring(required.version,1,3) BETWEEN '001' AND '` + migrations.BaselineLastPrefix + `'
+ AND EXISTS(SELECT 1 FROM schema_migrations m WHERE m.version='000_initial_schema'))`
 
 // readinessCacheTTL 就绪结果的缓存有效期：探针通常几秒一轮，没必要每次都
 // 真去查库。

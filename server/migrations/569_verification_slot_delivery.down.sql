@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY verification_slot_delivery;

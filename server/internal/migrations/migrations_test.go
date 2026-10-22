@@ -41,8 +41,13 @@ func TestFilesKeepsBaselineAndHistoricalMigrationsMutuallyExclusive(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(files) != 1 || filepath.Base(files[0]) != "000_initial_schema.up.sql" {
+		if len(files) < 2 || filepath.Base(files[0]) != "000_initial_schema.up.sql" {
 			t.Fatalf("baseline migration files = %v", files)
+		}
+		for _, f := range files {
+			if CoveredByBaseline(ExtractVersion(f)) {
+				t.Fatalf("快照覆盖范围不应重复执行: %s", f)
+			}
 		}
 	})
 }

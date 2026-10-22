@@ -12,6 +12,34 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_candidates_are_scoped_and_history_survives_reuse(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(r, 'RUN', Path(tmp)):
+            for env in ('int', *r.VERIFICATION_ENVS):
+                r.save_candidate({'id':env+'-one', 'environment':env, 'status':'verifying'})
+            r.save_candidate({'id':'verify-1-two', 'environment':'verify-1', 'status':'verifying'})
+            self.assertEqual(r.candidate(env='verify-2')['id'], 'verify-2-one')
+            self.assertEqual(r.candidate()['id'], 'int-one')
+            self.assertEqual(r.read(r.candidate_record_path('verify-1-one'))['id'], 'verify-1-one')
+            with self.assertRaisesRegex(RuntimeError, '其他候选'):
+                r.release_candidate('verify-1-one', env='verify-1')
+            self.assertEqual(r.candidate(env='verify-1')['status'], 'verifying')
+
+    def test_verification_locks_are_independent(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(r, 'RUN', Path(tmp)):
+            with r.lock(r.candidate_lock('verify-1')):
+                with r.lock(r.candidate_lock('verify-2')):
+                    with r.lock(r.candidate_lock('int')):
+                        with self.assertRaises(BlockingIOError):
+                            with r.lock(r.candidate_lock('verify-1')): pass
+
+    def test_verification_candidate_cannot_publish(self):
+        with patch.object(r, 'read') as read:
+            with self.assertRaisesRegex(RuntimeError, 'int 集成验收'):
+                r.check_delivery_approval({'environment':'verify-1'})
+            read.assert_not_called()
+        for env in ('prod', '../int', '', 'verify-4'):
+            with self.assertRaises(RuntimeError): r.candidate_path(env)
+
     def test_supervision_index_replacement_is_exact_and_preserves_general_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             release=Path(tmp); migrations=release/'server/migrations'; migrations.mkdir(parents=True)
