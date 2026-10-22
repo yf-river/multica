@@ -118,7 +118,7 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
-	"570_verification_event_delivery":             "verification_event_delivery",
+	"574_verification_event_delivery":             "verification_event_delivery",
 	"550_supervision_active_issue":                "supervision_active_issue",
 	"549_delivery_authorization_source":           "issue_delivery_authorization_source",
 	"548_delivery_authorization_key":              "issue_delivery_authorization_key",
@@ -156,8 +156,8 @@ var concurrentIndexCleanups = map[string]string{
 	"355_autopilot_quota_reservation_key_index":   "uq_autopilot_quota_reservation_key",
 	"354_autopilot_quota_reservation_id_index":    "autopilot_quota_reservation_pkey_uidx",
 	"353_autopilot_quota_period_scope_index":      "uq_autopilot_quota_period_scope",
-	"568_verification_slot_name":                  "verification_slot_name",
-	"569_verification_slot_delivery":              "verification_slot_delivery",
+	"572_verification_slot_name":                  "verification_slot_name",
+	"573_verification_slot_delivery":              "verification_slot_delivery",
 	"520_repository_id":                           "repository_id_idx",
 	"521_repository_identity":                     "repository_identity_idx",
 	"522_repository_location_id":                  "repository_location_id_idx",

@@ -203,6 +203,9 @@ def build(source, target):
     for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py'):
         script=source/'scripts'/name
         if script.exists():(operations/name).write_bytes(script.read_bytes())
+    for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
+        destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
+        destination.write_bytes((source/'scripts'/name).read_bytes())
     if checked_source(source)[1] != sha or source_digest(source)[0] != digest:
         raise RuntimeError('构建期间源码变化，请重新联调')
     queries = []
@@ -526,7 +529,7 @@ def isolation_check(config_only=False):
 
 def verify_browser(env='prod'):
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
-    run(['node',ROOT/'scripts/verify-release-browser.mjs'],cwd=ROOT,env=child_env)
+    run(['node',Path(__file__).with_name('verify-release-browser.mjs')],cwd=ROOT,env=child_env)
 
 def restore(env, timeout=900):
     require_environment(env)
@@ -584,8 +587,7 @@ def publish(env, directory, timeout=900):
         if env in ENVS and (operations/'issue-delivery-worker.py').exists():
             bundle=RUN/'publisher'/('activate-delivery-'+env)
             bundle.mkdir(parents=True,exist_ok=True)
-            for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py'):
-                (bundle/name).write_bytes((operations/name).read_bytes())
+            copy_tree(operations,bundle)
             run([sys.executable,bundle/'issue-delivery-worker.py','--env',env,'--install'],env={**os.environ,'MULTICA_RELEASE_ROOT':str(ROOT)})
     except Exception:
         try:

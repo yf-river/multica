@@ -54,7 +54,7 @@ func TestSlotLifecycle(t *testing.T) {
 	}()
 	p = scoped
 
-	for _, name := range []string{"542_issue_delivery", "567_verification_slot", "568_verification_slot_name", "569_verification_slot_delivery"} {
+	for _, name := range []string{"542_issue_delivery", "571_verification_slot", "572_verification_slot_name", "573_verification_slot_delivery"} {
 		sql, e := os.ReadFile(filepath.Join("../../migrations", name+".up.sql"))
 		if e != nil {
 			t.Fatal(e)

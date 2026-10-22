@@ -73,6 +73,9 @@ class ReleaseTests(unittest.TestCase):
             (current/'server/bin').mkdir(parents=True)
             (current/'apps/web').mkdir(parents=True)
             (source/'server/migrations').mkdir(parents=True)
+            for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
+                fixture=source/'scripts'/name;fixture.parent.mkdir(parents=True,exist_ok=True)
+                fixture.write_text('audit fixture')
             (current/'server/bin/server').write_text('compiled server')
             (current/'apps/web/server.js').write_text('compiled web')
             inputs={key:r.hashlib.sha256().hexdigest() for key in ('go','web')}
