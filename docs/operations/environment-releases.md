@@ -108,4 +108,4 @@ pnpm --dir /data/ida/multica release delivery-worker --env prod
 
 测试数据库使用本次明确创建的隔离实例和库，记录目标、命令、提交、退出码及跳过项。生产及固定 int 的账号、Token、上传文件、工作目录不作测试夹具。每批同步的提交清单、报告覆盖及用户选择状态属于验收内容，不能只检查页面能打开。
 
-`make test` 在准备容器和执行迁移之前运行 `scripts/check-test-database.sh`，读取同一份 ENV_FILE，要求显式的 MULTICA_TEST_DATABASE_URL 与其指向同一目标，拒绝固定环境所在实例和本机冻结实例。该检查不更改角色权限，也不能拦截绕过入口的任意 SQL 或直接 Go 命令；后者仍须按规则显式指定隔离数据库。
+`make test` 在执行迁移之前运行 `scripts/check-test-database.sh`，读取同一份 ENV_FILE，要求显式的 MULTICA_TEST_DATABASE_URL 与其指向同一目标，拒绝固定环境所在实例和本机冻结实例。测试目标须预先创建；该入口不会调用共享 Compose 准备脚本。检查同时核对 Make 实际导出的连接和 ENV_FILE 的连接，防止二者分歧。该检查不更改角色权限，也不能拦截绕过入口的任意 SQL 或直接 Go 命令；后者仍须按规则显式指定隔离数据库。

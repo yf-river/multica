@@ -6,6 +6,7 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "测试环境配置文件不存在" >&2
   exit 2
 fi
+python3 "$SCRIPT_DIR/check-test-database.py"
 set -a
 # 与 ensure-postgres.sh 读取同一个文件，在任何容器准备动作前核对真正生效的目标。
 . "$ENV_FILE"

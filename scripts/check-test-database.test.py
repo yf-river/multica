@@ -39,4 +39,11 @@ class TargetChecks(unittest.TestCase):
             self.assertIn('MULTICA_TEST_DATABASE_URL',result.stderr)
             self.assertNotIn('private',result.stderr)
 
+    def test_make_test_cannot_start_the_shared_compose_cluster(self):
+        makefile=Path(__file__).parent.parent/'Makefile'
+        recipe=makefile.read_text().split('test: ## Run Go tests',1)[1].split('# Database',1)[0]
+        self.assertIn('check-test-database.sh',recipe)
+        self.assertNotIn('ensure-postgres.sh',recipe)
+        self.assertNotIn('docker compose',recipe)
+
 if __name__=='__main__':unittest.main()
