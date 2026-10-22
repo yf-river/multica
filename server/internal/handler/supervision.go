@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/supervision"
 )
@@ -212,7 +213,7 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "所选 Agent 尚未绑定运行时")
 			return
 		}
-		runtime, err := h.Queries.GetAgentRuntime(r.Context(), agent.RuntimeID)
+		runtime, err := h.getAgentRuntime(r.Context(), obsmetrics.RuntimeLookupSourceSupervision, agent.RuntimeID)
 		if err != nil || (runtime.Provider != "codex" && runtime.Provider != "codebuddy") {
 			writeError(w, 400, "请选择使用 Codex 或 CodeBuddy 运行时的 Agent")
 			return

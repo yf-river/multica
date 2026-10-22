@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -35,7 +36,7 @@ func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Querie
 	if agent.WorkspaceID != ws || agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 不可用")
 	}
-	runtime, err := q.GetAgentRuntime(ctx, agent.RuntimeID)
+	runtime, err := RuntimeLookup{Queries: q, Metrics: s.Metrics, Source: obsmetrics.RuntimeLookupSourceSupervision}.Get(ctx, agent.RuntimeID)
 	if err != nil {
 		return db.AgentTaskQueue{}, err
 	}
