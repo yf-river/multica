@@ -143,8 +143,8 @@ func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, error) {
 		f.Status = "open"
 	}
 	rows, err := s.Pool.Query(ctx, `SELECT i.id::text, i.run_id::text, i.cluster_key, i.title, i.summary, i.rationale,
- verdict, confidence, presence, paths, commit_count, commit_shas,
- first_commit_at, last_commit_at, status, adopted_at, created_at,
+ i.verdict, i.confidence, i.presence, i.paths, i.commit_count, i.commit_shas,
+ i.first_commit_at, i.last_commit_at, i.status, i.adopted_at, i.created_at,
  COALESCE(a.issue_id::text,''), COALESCE(a.status,'none')
  FROM upstream_sync_item i
  LEFT JOIN upstream_sync_absorption_task a ON a.item_id=i.id
@@ -152,7 +152,7 @@ func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, error) {
    AND ($2 = '' OR i.verdict=$2)
    AND ($3 = '' OR i.presence=$3)
    AND ($4 = '' OR i.title ILIKE '%'||$4||'%' OR i.summary ILIKE '%'||$4||'%' OR i.cluster_key ILIKE '%'||$4||'%')
- ORDER BY created_at DESC, id DESC
+ ORDER BY i.created_at DESC, i.id DESC
  LIMIT $5 OFFSET $6`,
 		f.Status, f.Verdict, f.Presence, f.Query, f.Limit, f.Offset)
 	if err != nil {

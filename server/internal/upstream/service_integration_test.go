@@ -29,7 +29,7 @@ func isolatedService(t *testing.T) *Service {
 	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"agent_runtime", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit"} {
+	for _, table := range []string{"agent_runtime", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit", "upstream_sync_absorption_task"} {
 		if _, err = admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (LIKE public.%s INCLUDING ALL)", schema, table, table)); err != nil {
 			t.Fatal(err)
 		}
@@ -268,5 +268,29 @@ func TestRunHistoryPaginationKeepsOlderBatches(t *testing.T) {
 			t.Fatal("duplicated batch across pages")
 		}
 		seen[run.ID] = true
+	}
+}
+
+// 建议列表同时读取人工选择和关联任务状态，不能混用两张表的同名列。
+func TestListItemsIncludesAbsorptionTaskWithoutAmbiguousColumns(t *testing.T) {
+	s := isolatedService(t)
+	ctx := context.Background()
+	id, run, issue := newID(), newID(), newID()
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_item(id,run_id,cluster_key,title,summary,rationale,verdict,confidence,presence) VALUES($1,$2,'list-regression','有实际价值的改进','摘要','依据','review','medium','partial')`, id, run); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.ListItems(ctx, ItemFilter{})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("unlinked list: %+v %v", items, err)
+	}
+	if items[0].AbsorptionIssueID != "" || items[0].AbsorptionStatus != "none" {
+		t.Fatalf("unexpected link: %+v", items[0])
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_absorption_task(item_id,issue_id) VALUES($1,$2)`, id, issue); err != nil {
+		t.Fatal(err)
+	}
+	items, err = s.ListItems(ctx, ItemFilter{})
+	if err != nil || len(items) != 1 || items[0].AbsorptionIssueID != issue || items[0].AbsorptionStatus != "task_created" {
+		t.Fatalf("linked list: %+v %v", items, err)
 	}
 }
