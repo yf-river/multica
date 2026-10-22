@@ -194,14 +194,14 @@ func (s *Service) MarkItems(ctx context.Context, ids []string, status, actorID s
 	return int(tag.RowsAffected()), nil
 }
 
-func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
+func (s *Service) ListRuns(ctx context.Context, limit, offset int) ([]Run, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
 	rows, err := s.Pool.Query(ctx, `SELECT id::text, mode, trigger_source, status, base_sha,
  observed_head_sha, cursor_sha, scanned_commits, absorbed_commits, item_count,
  has_more, error, started_at, completed_at, created_at
- FROM upstream_sync_run ORDER BY created_at DESC, id DESC LIMIT $1`, limit)
+ FROM upstream_sync_run ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

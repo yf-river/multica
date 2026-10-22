@@ -188,7 +188,12 @@ func (h *Handler) ListUpstreamRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	runs, err := h.Upstream.ListRuns(r.Context(), limit)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		writeError(w, 400, "分页位置不能为负数")
+		return
+	}
+	runs, err := h.Upstream.ListRuns(r.Context(), limit, offset)
 	if err != nil {
 		writeError(w, 500, "读取同步记录失败")
 		return

@@ -32,10 +32,12 @@ export function upstreamItemsOptions(
 }
 
 export function upstreamRunsOptions(wsId: string) {
-  return queryOptions({
+  return infiniteQueryOptions({
     queryKey: upstreamKeys.runs(wsId),
-    refetchInterval: 5000,
-    queryFn: () => api.listUpstreamRuns(30),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => api.listUpstreamRuns(30, pageParam),
+    getNextPageParam: (lastPage, pages) => lastPage.runs.length === 30 ? pages.length * 30 : undefined,
+    refetchInterval: (query) => query.state.data?.pages[0]?.runs.some((run) => run.status === "preparing" || run.status === "running") ? 5000 : false,
   });
 }
 

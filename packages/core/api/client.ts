@@ -785,8 +785,8 @@ export class ApiClient {
     }
     return parseOrThrow<{ items: UpstreamItem[] }>(await this.fetch<unknown>(`/api/upstream/items?${q}`), UpstreamItemsSchema, { endpoint: "GET /api/upstream/items" });
   }
-  async listUpstreamRuns(limit = 30) {
-    return parseOrThrow<{ runs: UpstreamRun[] }>(await this.fetch<unknown>(`/api/upstream/runs?limit=${limit}`), UpstreamRunsSchema, { endpoint: "GET /api/upstream/runs" });
+  async listUpstreamRuns(limit = 30, offset = 0) {
+    return parseOrThrow<{ runs: UpstreamRun[] }>(await this.fetch<unknown>(`/api/upstream/runs?limit=${limit}&offset=${offset}`), UpstreamRunsSchema, { endpoint: "GET /api/upstream/runs" });
   }
   async updateUpstreamConfig(body: { upstream_url: string; upstream_branch: string; local_ref: string; batch_size: number; enabled?: boolean; runtime_id?: string }) {
     return this.fetch<{ ok: boolean }>("/api/upstream/", { method: "PUT", body: JSON.stringify(body) });

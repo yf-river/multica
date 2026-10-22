@@ -242,3 +242,31 @@ func TestConcurrentStartsHaveOneOwner(t *testing.T) {
 		t.Fatalf("expected one owner, got %d", accepted)
 	}
 }
+
+func TestRunHistoryPaginationKeepsOlderBatches(t *testing.T) {
+	s := isolatedService(t)
+	ctx := context.Background()
+	for i := 0; i < 31; i++ {
+		if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_run(id,status,created_at) VALUES($1,'completed',now()-$2*interval '1 second')`, newID(), i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := s.ListRuns(ctx, 30, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	older, err := s.ListRuns(ctx, 30, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 30 || len(older) != 1 {
+		t.Fatalf("history pages=%d/%d", len(first), len(older))
+	}
+	seen := map[string]bool{}
+	for _, run := range append(first, older...) {
+		if seen[run.ID] {
+			t.Fatal("duplicated batch across pages")
+		}
+		seen[run.ID] = true
+	}
+}

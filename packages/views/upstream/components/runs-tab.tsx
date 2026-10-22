@@ -1,7 +1,7 @@
 // 同步记录页签：每次批次的模式、范围、状态与产出数量。
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { Button } from "@multica/ui/components/ui/button";
 import { upstreamRunsOptions, upstreamSnapshotOptions, type UpstreamRun } from "@multica/core/upstream/queries";
@@ -18,9 +18,9 @@ function formatTime(value: string | null): string {
 
 export function RunsTab({ wsId }: { wsId: string }) {
   const { t } = useT("upstream");
-  const { data, isLoading, error } = useQuery(upstreamRunsOptions(wsId));
+  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery(upstreamRunsOptions(wsId));
   const snapshot = useQuery(upstreamSnapshotOptions(wsId));
-  const runs = data?.runs ?? [];
+  const runs = data?.pages.flatMap((page) => page.runs) ?? [];
   const boundAgent = !!snapshot.data?.config.agent_id;
   const autopilotId = snapshot.data?.config.autopilot_id ?? "";
   const qc = useQueryClient();
@@ -95,6 +95,7 @@ export function RunsTab({ wsId }: { wsId: string }) {
           ))}
         </ul>
       )}
+      {hasNextPage ? <Button size="sm" variant="ghost" disabled={isFetchingNextPage} onClick={() => void fetchNextPage()}>{t(($) => $.page.pending.load_more)}</Button> : null}
     </div>
   );
 }

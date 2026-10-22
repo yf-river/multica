@@ -233,8 +233,8 @@ function ItemRow({
                 <div>
                   <div className="text-caption font-medium text-muted-foreground">{pathsLabel}</div>
                   <ul className="mt-0.5 space-y-0.5">
-                    {item.paths.slice(0, 20).map((p) => (
-                      <li key={p} className="truncate font-mono text-caption text-muted-foreground">
+                    {item.paths.map((p) => (
+                      <li key={p} className="break-all font-mono text-caption text-muted-foreground">
                         {p}
                       </li>
                     ))}
@@ -243,7 +243,7 @@ function ItemRow({
               ) : null}
               {item.commit_shas.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
-                  {item.commit_shas.slice(0, 20).map((sha) => (
+                  {item.commit_shas.map((sha) => (
                     <code key={sha} className="rounded bg-muted px-1 py-0.5 font-mono text-caption">
                       {sha.slice(0, 8)}
                     </code>
