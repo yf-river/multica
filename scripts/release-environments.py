@@ -935,6 +935,10 @@ def verify_logs(env='prod'):
     m=read(meta_path(env));results={}
     for role,path in m['log_paths'].items():
         p=Path(path)
+        # Daemon 使用独立 profile 日志，标准发布日志路径可能没有文件；缺失本身不是致命日志。
+        if not p.exists():
+            results[role]={'exists':False,'fatal_errors':0}
+            continue
         with p.open('rb') as f:
             f.seek(m.get('log_offsets',{}).get(role,0));data=f.read().decode(errors='replace')
         errors=[line for line in data.splitlines() if re.search(r'panic:|fatal error:|UnhandledPromiseRejection|EADDRINUSE|Cannot find module',line)]
