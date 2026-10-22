@@ -59,7 +59,9 @@
       "items": "Items {{count}}",
       "has_more": "More remaining",
       "trigger_manual": "Manual",
-      "trigger_schedule": "Scheduled"
+      "trigger_schedule": "Scheduled",
+      "run_now": "Run a batch now",
+      "triggered": "Triggered"
     },
     "setup": {
       "hint": "No sync agent bound yet. Add one to run incremental sync daily.",

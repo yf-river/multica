@@ -1,7 +1,9 @@
 // 同步记录页签：每次批次的模式、范围、状态与产出数量。
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
+import { Button } from "@multica/ui/components/ui/button";
 import { upstreamRunsOptions, upstreamSnapshotOptions, type UpstreamRun } from "@multica/core/upstream/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -20,6 +22,14 @@ export function RunsTab({ wsId }: { wsId: string }) {
   const snapshot = useQuery(upstreamSnapshotOptions(wsId));
   const runs = data?.runs ?? [];
   const boundAgent = !!snapshot.data?.config.agent_id;
+  const autopilotId = snapshot.data?.config.autopilot_id ?? "";
+  const qc = useQueryClient();
+  const trigger = useMutation({
+    mutationFn: () => api.triggerAutopilot(autopilotId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["upstream", wsId] });
+    },
+  });
 
   const modeLabel = (mode: string) =>
     mode === "bootstrap" ? t(($) => $.page.runs.mode_bootstrap) : t(($) => $.page.runs.mode_incremental);
@@ -43,7 +53,16 @@ export function RunsTab({ wsId }: { wsId: string }) {
         <div className="rounded-lg border border-dashed border-surface-border px-4 py-3 text-caption text-muted-foreground">
           {t(($) => $.page.setup.hint)}
         </div>
-      ) : null}
+      ) : (
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" disabled={trigger.isPending || !!snapshot.data?.active_run_id} onClick={() => trigger.mutate()}>
+            {t(($) => $.page.runs.run_now)}
+          </Button>
+          {trigger.isSuccess ? (
+            <span className="text-caption text-muted-foreground">{t(($) => $.page.runs.triggered)}</span>
+          ) : null}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="space-y-2">

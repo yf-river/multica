@@ -59,7 +59,9 @@
       "items": "条目 {{count}}",
       "has_more": "还有剩余",
       "trigger_manual": "手动",
-      "trigger_schedule": "定时"
+      "trigger_schedule": "定时",
+      "run_now": "立即跑一批",
+      "triggered": "已触发"
     },
     "setup": {
       "hint": "还没绑定同步智能体，添加后可每天自动跑增量。",
