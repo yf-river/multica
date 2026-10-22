@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/review"
+	"github.com/multica-ai/multica/server/internal/upstream"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -54,6 +55,10 @@ import (
 func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType, actorID, originatorUserID, workspaceID string) bool {
 	// 托管审查 Agent 只接受服务端的审查派发，不能被成员 @、指派或聊天调用。
 	if agent.SystemKey.Valid && agent.SystemKey.String == review.SystemKey {
+		return false
+	}
+	// 上游同步执行体只接受自动化派发，不能被成员 @、指派或聊天调用。
+	if agent.SystemKey.Valid && agent.SystemKey.String == upstream.ExecutorSystemKey {
 		return false
 	}
 	allowed := h.invokeAgentDecision(ctx, agent, actorType, actorID, originatorUserID, workspaceID)

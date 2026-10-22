@@ -784,13 +784,28 @@ export class ApiClient {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== "") q.set(key, String(value));
     }
-    return parseOrThrow<{ items: UpstreamItem[] }>(await this.fetch<unknown>(`/api/upstream/items?${q}`), UpstreamItemsSchema, { endpoint: "GET /api/upstream/items" });
+    return parseOrThrow<{ items: UpstreamItem[]; total: number }>(await this.fetch<unknown>(`/api/upstream/items?${q}`), UpstreamItemsSchema, { endpoint: "GET /api/upstream/items" });
   }
   async listUpstreamRuns(limit = 30, offset = 0) {
     return parseOrThrow<{ runs: UpstreamRun[] }>(await this.fetch<unknown>(`/api/upstream/runs?limit=${limit}&offset=${offset}`), UpstreamRunsSchema, { endpoint: "GET /api/upstream/runs" });
   }
-  async updateUpstreamConfig(body: { upstream_url: string; upstream_branch: string; local_ref: string; batch_size: number; enabled?: boolean; runtime_id?: string }) {
-    return this.fetch<{ ok: boolean }>("/api/upstream/", { method: "PUT", body: JSON.stringify(body) });
+  async updateUpstreamConfig(body: {
+    upstream_url: string;
+    upstream_branch: string;
+    local_ref: string;
+    batch_size: number;
+    schedule_hour: number;
+    enabled?: boolean;
+    runtime_id?: string;
+    model?: string;
+    thinking_level?: string;
+    /** 省略表示不改提示词；空串表示恢复内置默认。 */
+    instructions?: string;
+  }) {
+    return this.fetch<{ ok: boolean; agent_id: string; autopilot_id: string }>("/api/upstream/", { method: "PUT", body: JSON.stringify(body) });
+  }
+  async getUpstreamInstructions() {
+    return this.fetch<{ instructions: string }>("/api/upstream/instructions");
   }
   async markUpstreamItems(body: { ids: string[]; status: "adopted" | "ignored" | "open" }) {
     return this.fetch<{ updated: number }>("/api/upstream/items/status", { method: "PATCH", body: JSON.stringify(body) });

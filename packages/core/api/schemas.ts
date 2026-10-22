@@ -3224,13 +3224,28 @@ export const UpstreamConfigSchema = z.object({
   upstream_url: z.string(), upstream_branch: z.string(), local_ref: z.string(),
   runtime_id: z.string().default(""),
   agent_id: z.string().default(""), autopilot_id: z.string().default(""),
-  batch_size: z.number(), sync_state: z.string(),
+  batch_size: z.number(), schedule_hour: z.number().default(9),
+  sync_state: z.string(),
   bootstrap_base_sha: z.string(), cursor_sha: z.string(), head_sha: z.string(),
   last_run_at: z.string().nullable(), error: z.string().default(""),
+  model: z.string().default(""), thinking_level: z.string().default(""),
+  instructions: z.string().default(""),
+});
+export const UpstreamRunSchema = z.object({
+  id: z.string(), mode: z.string(), trigger_source: z.string(), status: z.string(),
+  base_sha: z.string(), observed_head_sha: z.string(), cursor_sha: z.string(),
+  scanned_commits: z.number(), absorbed_commits: z.number(), item_count: z.number(),
+  has_more: z.boolean(), error: z.string(),
+  started_at: z.string().nullable(), completed_at: z.string().nullable(), created_at: z.string(),
 });
 export const UpstreamSnapshotSchema = z.object({
-  config: UpstreamConfigSchema, pending: z.number(), adopted: z.number(),
-  active_run_id: z.string().default(""), instructions: z.string().default(""),
+  config: UpstreamConfigSchema, pending: z.number(), adopted: z.number(), ignored: z.number().default(0),
+  active_run_id: z.string().default(""), can_write: z.boolean().default(false),
+  next_run_at: z.string().nullable().default(null),
+  runtime_online: z.boolean().default(false),
+  // none 未绑定运行时；unbound 执行体失去运行时；bound 已绑定。
+  executor_state: z.string().default("none"),
+  last_run: UpstreamRunSchema.nullable().default(null),
 });
 export const UpstreamItemSchema = z.object({
   id: z.string(), run_id: z.string(), cluster_key: z.string(), title: z.string(),
@@ -3240,15 +3255,9 @@ export const UpstreamItemSchema = z.object({
   first_commit_at: z.string().nullable(), last_commit_at: z.string().nullable(),
   status: z.string(), adopted_at: z.string().nullable(), created_at: z.string(),
   absorption_issue_id: z.string().default(""), absorption_status: z.string().default("none"),
+  has_new_commits: z.boolean().default(false),
 });
-export const UpstreamItemsSchema = z.object({ items: z.array(UpstreamItemSchema) });
-export const UpstreamRunSchema = z.object({
-  id: z.string(), mode: z.string(), trigger_source: z.string(), status: z.string(),
-  base_sha: z.string(), observed_head_sha: z.string(), cursor_sha: z.string(),
-  scanned_commits: z.number(), absorbed_commits: z.number(), item_count: z.number(),
-  has_more: z.boolean(), error: z.string(),
-  started_at: z.string().nullable(), completed_at: z.string().nullable(), created_at: z.string(),
-});
+export const UpstreamItemsSchema = z.object({ items: z.array(UpstreamItemSchema), total: z.number().default(0) });
 export const UpstreamRunsSchema = z.object({ runs: z.array(UpstreamRunSchema) });
 export type UpstreamSnapshot = z.output<typeof UpstreamSnapshotSchema>;
 export type UpstreamItem = z.output<typeof UpstreamItemSchema>;

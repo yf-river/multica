@@ -129,7 +129,7 @@ func TestBatchCoverageRetryAndAdoptedState(t *testing.T) {
 	}
 }
 
-func TestSetupIsAtomicAndSwitchDisablesOldSchedule(t *testing.T) {
+func TestSettingsKeepSingleExecutorAndSchedule(t *testing.T) {
 	s := isolatedService(t)
 	ctx := context.Background()
 	ws, creator := newID(), newID()
@@ -139,8 +139,13 @@ func TestSetupIsAtomicAndSwitchDisablesOldSchedule(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := Config{RuntimeID: ids[0], BatchSize: 200, UpstreamURL: "https://example.invalid/up.git", UpstreamBranch: "main", LocalRef: "origin/personal-studio-upstream"}
-	first, pilot, err := s.SetupExecutor(ctx, cfg, creator, "instructions", true)
+	base := Settings{BatchSize: 200, ScheduleHour: 9, Enabled: true, UpstreamURL: "https://example.invalid/up.git", UpstreamBranch: "main", LocalRef: "origin/personal-studio-upstream", DefaultInstructions: "默认提示词"}
+	with := func(runtime string) Settings {
+		in := base
+		in.RuntimeID = runtime
+		return in
+	}
+	first, pilot, err := s.SaveSettings(ctx, with(ids[0]), creator)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,42 +153,64 @@ func TestSetupIsAtomicAndSwitchDisablesOldSchedule(t *testing.T) {
 	if err = s.Pool.QueryRow(ctx, `SELECT owner_id::text FROM agent WHERE id=$1`, first).Scan(&owner); err != nil || owner != creator {
 		t.Fatalf("private executor owner: %s %v", owner, err)
 	}
-	again, same, err := s.SetupExecutor(ctx, cfg, creator, "new instructions", true)
-	if err != nil || first != again || pilot != same {
-		t.Fatalf("duplicate binding %s %s %v", again, same, err)
+	again, samePilot, err := s.SaveSettings(ctx, with(ids[0]), creator)
+	if err != nil || first != again || pilot != samePilot {
+		t.Fatalf("duplicate binding %s %s %v", again, samePilot, err)
 	}
-	// 系统执行体的启停由上游设置管理，包括全局暂停后的恢复。
-	if _, err = s.Pool.Exec(ctx, `UPDATE autopilot SET status='paused' WHERE id=$1`, pilot); err != nil {
+	// 暂停后恢复：同一执行体、同一自动化，调度重新排到下一个整点。
+	if _, _, err = s.SaveSettings(ctx, paused(with(ids[0])), creator); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.SetupExecutor(ctx, cfg, creator, "instructions", true); err != nil {
+	if _, _, err = s.SaveSettings(ctx, with(ids[0]), creator); err != nil {
 		t.Fatal(err)
 	}
 	var status string
 	if err = s.Pool.QueryRow(ctx, `SELECT status FROM autopilot WHERE id=$1`, pilot).Scan(&status); err != nil || status != "active" {
 		t.Fatalf("resume executor: %s %v", status, err)
 	}
-	cfg.RuntimeID = ids[1]
-	_, newPilot, err := s.SetupExecutor(ctx, cfg, creator, "instructions", true)
+	// 换运行时只改绑定，不新增执行体或自动化。
+	switched, samePilot2, err := s.SaveSettings(ctx, with(ids[1]), creator)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var active int
-	if err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM autopilot_trigger WHERE enabled`).Scan(&active); err != nil || active != 1 {
-		t.Fatalf("old schedule remains active: %d %v", active, err)
+	if switched != first || samePilot2 != pilot {
+		t.Fatalf("runtime switch created new rows: %s %s", switched, samePilot2)
 	}
-	if newPilot == pilot {
-		t.Fatal("runtime switch retained old executor")
-	}
-	if _, _, err = s.SetupExecutor(ctx, cfg, creator, "instructions", false); err != nil {
+	var agentCount, pilotCount, active int
+	if err = s.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM agent),(SELECT count(*) FROM autopilot),(SELECT count(*) FROM autopilot_trigger WHERE enabled)`).Scan(&agentCount, &pilotCount, &active); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM autopilot_trigger WHERE enabled`).Scan(&active); err != nil || active != 0 {
-		t.Fatalf("disable: %d %v", active, err)
+	if agentCount != 1 || pilotCount != 1 || active != 1 {
+		t.Fatalf("duplicated rows: agents=%d pilots=%d triggers=%d", agentCount, pilotCount, active)
 	}
-	if err = s.Pool.QueryRow(ctx, `SELECT status FROM autopilot WHERE id=$1`, newPilot).Scan(&status); err != nil || status != "paused" {
+	var boundRuntime string
+	if err = s.Pool.QueryRow(ctx, `SELECT runtime_id::text FROM agent WHERE id=$1`, first).Scan(&boundRuntime); err != nil || boundRuntime != ids[1] {
+		t.Fatalf("runtime rebind: %s %v", boundRuntime, err)
+	}
+	// 没有运行时也能保存：批量、时间与暂停不依赖绑定。
+	before, _, _ := s.SaveSettings(ctx, with(ids[1]), creator)
+	pausedNoRuntime := paused(base)
+	pausedNoRuntime.RuntimeID = ""
+	pausedNoRuntime.BatchSize = 50
+	laterHour := pausedNoRuntime
+	laterHour.ScheduleHour = 23
+	kept, keptPilot, err := s.SaveSettings(ctx, laterHour, creator)
+	if err != nil || kept != before || keptPilot != pilot {
+		t.Fatalf("config-only save dropped executor: %s %s %v", kept, keptPilot, err)
+	}
+	var hour int
+	var enabled int
+	if err = s.Pool.QueryRow(ctx, `SELECT schedule_hour,(SELECT count(*) FROM autopilot_trigger WHERE enabled) FROM upstream_sync_config WHERE singleton=1`).Scan(&hour, &enabled); err != nil || hour != 23 || enabled != 0 {
+		t.Fatalf("paused settings: hour=%d enabled=%d %v", hour, enabled, err)
+	}
+	if err = s.Pool.QueryRow(ctx, `SELECT status FROM autopilot WHERE id=$1`, pilot).Scan(&status); err != nil || status != "paused" {
 		t.Fatalf("pause executor: %s %v", status, err)
 	}
+}
+
+func paused(in Settings) Settings {
+	in.Enabled = false
+	return in
 }
 
 func TestExpiredLeaseCannotAdvanceAndPartialBatchIsRetried(t *testing.T) {
@@ -293,8 +320,8 @@ func TestListItemsIncludesAbsorptionTaskWithoutAmbiguousColumns(t *testing.T) {
 	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_item(id,run_id,cluster_key,title,summary,rationale,verdict,confidence,presence) VALUES($1,$2,'list-regression','有实际价值的改进','摘要','依据','review','medium','partial')`, id, run); err != nil {
 		t.Fatal(err)
 	}
-	items, err := s.ListItems(ctx, ItemFilter{})
-	if err != nil || len(items) != 1 {
+	items, total, err := s.ListItems(ctx, ItemFilter{})
+	if err != nil || len(items) != 1 || total != 1 {
 		t.Fatalf("unlinked list: %+v %v", items, err)
 	}
 	if items[0].AbsorptionIssueID != "" || items[0].AbsorptionStatus != "none" {
@@ -303,8 +330,8 @@ func TestListItemsIncludesAbsorptionTaskWithoutAmbiguousColumns(t *testing.T) {
 	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_absorption_task(item_id,issue_id) VALUES($1,$2)`, id, issue); err != nil {
 		t.Fatal(err)
 	}
-	items, err = s.ListItems(ctx, ItemFilter{})
-	if err != nil || len(items) != 1 || items[0].AbsorptionIssueID != issue || items[0].AbsorptionStatus != "task_created" {
+	items, total, err = s.ListItems(ctx, ItemFilter{})
+	if err != nil || len(items) != 1 || total != 1 || items[0].AbsorptionIssueID != issue || items[0].AbsorptionStatus != "task_created" {
 		t.Fatalf("linked list: %+v %v", items, err)
 	}
 }

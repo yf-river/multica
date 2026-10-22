@@ -17,6 +17,7 @@ type Config struct {
 	AgentID          string     `json:"agent_id"`
 	AutopilotID      string     `json:"autopilot_id"`
 	BatchSize        int        `json:"batch_size"`
+	ScheduleHour     int        `json:"schedule_hour"`
 	SyncState        string     `json:"sync_state"`
 	BootstrapBaseSHA string     `json:"bootstrap_base_sha"`
 	CursorSHA        string     `json:"cursor_sha"`
@@ -24,15 +25,28 @@ type Config struct {
 	LastRunAt        *time.Time `json:"last_run_at"`
 	Error            string     `json:"error"`
 	CreatedBy        string     `json:"created_by"`
+	// Model 与 ThinkingLevel 存在执行体上，空值表示跟随运行时默认。
+	Model         string `json:"model"`
+	ThinkingLevel string `json:"thinking_level"`
+	// Instructions 是用户改写后的提示词，空值表示跟随内置默认。
+	Instructions string `json:"instructions"`
 }
 
 type Snapshot struct {
 	Config      Config `json:"config"`
 	Pending     int    `json:"pending"`
 	Adopted     int    `json:"adopted"`
+	Ignored     int    `json:"ignored"`
 	ActiveRunID string `json:"active_run_id"`
-	// Instructions 由 handler 注入内置提示词，供页面只读预览。
-	Instructions string `json:"instructions"`
+	// NextRunAt 是自动同步的下一次计划时间，暂停或未建调度时为空。
+	NextRunAt *time.Time `json:"next_run_at"`
+	// RuntimeOnline 只用于提示；离线不阻止保存设置。
+	RuntimeOnline bool `json:"runtime_online"`
+	// ExecutorState 为 none（未绑定运行时）、unbound（执行体失去运行时）或 bound。
+	ExecutorState string `json:"executor_state"`
+	// CanWrite 由 handler 按成员角色注入，只影响页面入口，不代替接口校验。
+	CanWrite bool `json:"can_write"`
+	LastRun  *Run `json:"last_run"`
 }
 
 type Item struct {
@@ -55,6 +69,8 @@ type Item struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	AbsorptionIssueID string     `json:"absorption_issue_id,omitempty"`
 	AbsorptionStatus  string     `json:"absorption_status"`
+	// HasNewCommits 表示已采纳的条目后来又被上游补了提交；只做标记，不自动改状态。
+	HasNewCommits bool `json:"has_new_commits"`
 }
 
 type ItemFilter struct {
@@ -91,19 +107,25 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 	}
 
 	var out Snapshot
-	var runtimeID, agentID, autopilotID, createdBy *string
-	if err := s.Pool.QueryRow(ctx, `SELECT upstream_url, upstream_branch, local_ref,
- runtime_id::text, agent_id::text, autopilot_id::text, batch_size, sync_state, bootstrap_base_sha,
- cursor_sha, head_sha, last_run_at, error, created_by::text
- FROM upstream_sync_config WHERE singleton=1`).
+	var agentID, autopilotID, createdBy *string
+	var agentRow, boundRuntime bool
+	var runtimeStatus string
+	if err := s.Pool.QueryRow(ctx, `SELECT c.upstream_url, c.upstream_branch, c.local_ref,
+ c.agent_id::text, c.autopilot_id::text, c.batch_size, c.schedule_hour, c.sync_state, c.bootstrap_base_sha,
+ c.cursor_sha, c.head_sha, c.last_run_at, c.error, c.created_by::text, c.instructions,
+ COALESCE(a.runtime_id::text,''), COALESCE(a.model,''), COALESCE(a.thinking_level,''),
+ (a.id IS NOT NULL), COALESCE(r.status,'')
+ FROM upstream_sync_config c
+ LEFT JOIN agent a ON a.id=c.agent_id
+ LEFT JOIN agent_runtime r ON r.id=a.runtime_id
+ WHERE c.singleton=1`).
 		Scan(&out.Config.UpstreamURL, &out.Config.UpstreamBranch, &out.Config.LocalRef,
-			&runtimeID, &agentID, &autopilotID, &out.Config.BatchSize, &out.Config.SyncState,
+			&agentID, &autopilotID, &out.Config.BatchSize, &out.Config.ScheduleHour, &out.Config.SyncState,
 			&out.Config.BootstrapBaseSHA, &out.Config.CursorSHA, &out.Config.HeadSHA,
-			&out.Config.LastRunAt, &out.Config.Error, &createdBy); err != nil {
+			&out.Config.LastRunAt, &out.Config.Error, &createdBy, &out.Config.Instructions,
+			&out.Config.RuntimeID, &out.Config.Model, &out.Config.ThinkingLevel,
+			&agentRow, &runtimeStatus); err != nil {
 		return nil, err
-	}
-	if runtimeID != nil {
-		out.Config.RuntimeID = *runtimeID
 	}
 	if agentID != nil {
 		out.Config.AgentID = *agentID
@@ -114,16 +136,41 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 	if createdBy != nil {
 		out.Config.CreatedBy = *createdBy
 	}
+	boundRuntime = out.Config.RuntimeID != ""
+	out.RuntimeOnline = boundRuntime && runtimeStatus == "online"
+	switch {
+	case !agentRow:
+		out.ExecutorState = "none"
+	case !boundRuntime:
+		out.ExecutorState = "unbound"
+	default:
+		out.ExecutorState = "bound"
+	}
 	if err := s.Pool.QueryRow(ctx, `SELECT
  count(*) FILTER (WHERE status='open'),
- count(*) FILTER (WHERE status='adopted')
- FROM upstream_sync_item`).Scan(&out.Pending, &out.Adopted); err != nil {
+ count(*) FILTER (WHERE status='adopted'),
+ count(*) FILTER (WHERE status='ignored')
+ FROM upstream_sync_item`).Scan(&out.Pending, &out.Adopted, &out.Ignored); err != nil {
 		return nil, err
 	}
 	err := s.Pool.QueryRow(ctx, `SELECT id::text FROM upstream_sync_run
  WHERE status IN ('preparing','running') AND lease_expires_at>now() LIMIT 1`).Scan(&out.ActiveRunID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
+	}
+	if out.Config.AutopilotID != "" {
+		err = s.Pool.QueryRow(ctx, `SELECT next_run_at FROM autopilot_trigger
+ WHERE autopilot_id=$1 AND kind='schedule' LIMIT 1`, out.Config.AutopilotID).Scan(&out.NextRunAt)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	}
+	runs, err := s.ListRuns(ctx, 1, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) > 0 {
+		out.LastRun = &runs[0]
 	}
 	return &out, nil
 }
@@ -135,20 +182,29 @@ func nullableUUID(v string) any {
 	return v
 }
 
-func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, error) {
+// ListItems 返回一页条目与满足筛选条件的总数，页尾判断用 total 而不是"这页是否满"。
+func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, int, error) {
 	if f.Limit <= 0 || f.Limit > 200 {
 		f.Limit = 100
 	}
+	// 空值沿用"只看待定"的旧语义；all 表示不按状态过滤。
 	if f.Status == "" {
 		f.Status = "open"
+	}
+	if f.Status == "all" {
+		f.Status = ""
+	}
+	if f.Presence == "all" {
+		f.Presence = ""
 	}
 	rows, err := s.Pool.Query(ctx, `SELECT i.id::text, i.run_id::text, i.cluster_key, i.title, i.summary, i.rationale,
  i.verdict, i.confidence, i.presence, i.paths, i.commit_count, i.commit_shas,
  i.first_commit_at, i.last_commit_at, i.status, i.adopted_at, i.created_at,
- COALESCE(a.issue_id::text,''), COALESCE(a.status,'none')
+ COALESCE(a.issue_id::text,''), COALESCE(a.status,'none'), count(*) OVER(),
+ EXISTS(SELECT 1 FROM upstream_sync_commit c WHERE c.item_id=i.id AND i.adopted_at IS NOT NULL AND c.created_at>i.adopted_at)
  FROM upstream_sync_item i
  LEFT JOIN upstream_sync_absorption_task a ON a.item_id=i.id
- WHERE i.status=$1
+ WHERE ($1 = '' OR i.status=$1)
    AND ($2 = '' OR i.verdict=$2)
    AND ($3 = '' OR i.presence=$3)
    AND ($4 = '' OR i.title ILIKE '%'||$4||'%' OR i.summary ILIKE '%'||$4||'%' OR i.cluster_key ILIKE '%'||$4||'%')
@@ -156,22 +212,35 @@ func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, error) {
  LIMIT $5 OFFSET $6`,
 		f.Status, f.Verdict, f.Presence, f.Query, f.Limit, f.Offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
 	out := make([]Item, 0, f.Limit)
+	total := 0
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.RunID, &it.ClusterKey, &it.Title, &it.Summary, &it.Rationale,
 			&it.Verdict, &it.Confidence, &it.Presence, &it.Paths, &it.CommitCount, &it.CommitSHAs,
 			&it.FirstCommitAt, &it.LastCommitAt, &it.Status, &it.AdoptedAt, &it.CreatedAt,
-			&it.AbsorptionIssueID, &it.AbsorptionStatus); err != nil {
-			return nil, err
+			&it.AbsorptionIssueID, &it.AbsorptionStatus, &total, &it.HasNewCommits); err != nil {
+			return nil, 0, err
 		}
 		out = append(out, it)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(out) == 0 && f.Offset > 0 {
+		// 空页没有窗口计数，用一次计数补齐，保证页尾判断稳定。
+		if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM upstream_sync_item i
+ WHERE ($1 = '' OR i.status=$1) AND ($2 = '' OR i.verdict=$2) AND ($3 = '' OR i.presence=$3)
+   AND ($4 = '' OR i.title ILIKE '%'||$4||'%' OR i.summary ILIKE '%'||$4||'%' OR i.cluster_key ILIKE '%'||$4||'%')`,
+			f.Status, f.Verdict, f.Presence, f.Query).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	}
+	return out, total, nil
 }
 
 // MarkItems 只改标记，不触发任何代码或任务副作用。

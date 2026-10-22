@@ -25,7 +25,7 @@ describe("上游建议清单分页", () => {
   });
   it("可以读取第 101 条，并保留筛选条件", async () => {
     const items = Array.from({ length: 101 }, (_, i) => ({ id: String(i) }) as UpstreamItem);
-    const list = vi.spyOn(api, "listUpstreamItems").mockImplementation(async ({ offset = 0, limit = 100 }) => ({ items: items.slice(offset, offset + limit) }));
+    const list = vi.spyOn(api, "listUpstreamItems").mockImplementation(async ({ offset = 0, limit = 100 }) => ({ items: items.slice(offset, offset + limit), total: items.length }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const observer = new InfiniteQueryObserver(client, upstreamItemsOptions("workspace", { status: "adopted", q: "terminal" }));
     try {

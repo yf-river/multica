@@ -36,8 +36,12 @@ export function useUpdateUpstreamConfig() {
       upstream_branch: string;
       local_ref: string;
       batch_size: number;
+      schedule_hour: number;
       enabled?: boolean;
       runtime_id?: string;
+      model?: string;
+      thinking_level?: string;
+      instructions?: string;
     }) => api.updateUpstreamConfig(body),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: upstreamKeys.all(wsId) });

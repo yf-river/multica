@@ -6,7 +6,7 @@ import { api } from "@multica/core/api";
 import { autopilotKeys, autopilotRunsOptions } from "@multica/core/autopilots/queries";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { Button } from "@multica/ui/components/ui/button";
-import { upstreamRunsOptions, upstreamSnapshotOptions, type UpstreamRun } from "@multica/core/upstream/queries";
+import { upstreamRunsOptions, type UpstreamRun, type UpstreamSnapshot } from "@multica/core/upstream/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useT } from "../../i18n";
@@ -18,16 +18,36 @@ function formatTime(value: string | null): string {
   return date.toLocaleString();
 }
 
-export function RunsTab({ wsId }: { wsId: string }) {
+function duration(startedAt: string | null, completedAt: string | null): string {
+  if (!startedAt || !completedAt) return "";
+  const start = new Date(startedAt).getTime();
+  const end = new Date(completedAt).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return "";
+  const seconds = Math.round((end - start) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+export function RunsTab({
+  wsId,
+  snapshot,
+  onOpenSettings,
+}: {
+  wsId: string;
+  snapshot?: UpstreamSnapshot;
+  onOpenSettings: () => void;
+}) {
   const { t } = useT("upstream");
   const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery(upstreamRunsOptions(wsId));
-  const snapshot = useQuery(upstreamSnapshotOptions(wsId));
   const runs = data?.pages.flatMap((page) => page.runs) ?? [];
-  const boundAgent = !!snapshot.data?.config.agent_id;
-  const autopilotId = snapshot.data?.config.autopilot_id ?? "";
+  const boundAgent = !!snapshot?.config.agent_id;
+  const canWrite = snapshot?.can_write ?? false;
+  const autopilotId = snapshot?.config.autopilot_id ?? "";
   const qc = useQueryClient();
   const runtimes = useQuery(runtimeListOptions(wsId));
-  const canExecute = (runtimes.data ?? []).some((runtime) => runtime.id === snapshot.data?.config.runtime_id);
+  const canExecute = (runtimes.data ?? []).some((runtime) => runtime.id === snapshot?.config.runtime_id);
   const execution = useQuery({ ...autopilotRunsOptions(wsId, autopilotId), enabled: canExecute && !!autopilotId, refetchInterval: 5000 });
   const latestExecution = execution.data?.[0];
   const dispatchRunning = latestExecution?.status === "running";
@@ -59,24 +79,26 @@ export function RunsTab({ wsId }: { wsId: string }) {
   return (
     <div className="space-y-3">
       {!boundAgent ? (
-        <div className="rounded-lg border border-dashed border-surface-border px-4 py-3 text-caption text-muted-foreground">
-          {t(($) => $.page.setup.hint)}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-surface-border px-4 py-3 text-caption text-muted-foreground">
+          <span>{t(($) => $.page.setup.hint)}</span>
+          {canWrite ? <Button size="sm" variant="secondary" onClick={onOpenSettings}>{t(($) => $.page.setup.title)}</Button> : null}
         </div>
-      ) : (
+      ) : canWrite ? (
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" disabled={!canExecute || dispatchRunning || trigger.isPending || !!snapshot.data?.active_run_id || snapshot.data?.config.sync_state==="paused"} onClick={() => trigger.mutate()}>
+          <Button size="sm" variant="secondary" disabled={!canExecute || dispatchRunning || trigger.isPending || !!snapshot?.active_run_id || snapshot?.config.sync_state === "paused"} onClick={() => trigger.mutate()}>
             {t(($) => $.page.runs.run_now)}
           </Button>
-          {trigger.isError ? <p role="alert" className="text-caption text-danger">{trigger.error.message}</p>:null}
+          {trigger.isError ? <p role="alert" className="text-caption text-danger">{trigger.error.message}</p> : null}
           {trigger.isSuccess ? (
             <span className="text-caption text-muted-foreground">{t(($) => $.page.runs.triggered)}</span>
           ) : null}
         </div>
-      )}
+      ) : null}
 
       {boundAgent && !canExecute && !runtimes.isLoading ? <p className="text-caption text-muted-foreground">{t(($) => $.page.runs.scope_hint)}</p> : null}
-      {dispatchRunning && !snapshot.data?.active_run_id ? <p aria-live="polite" className="text-caption text-muted-foreground">{t(($) => $.page.status.running)}</p> : null}
-      {dispatchFailure ? <p role="alert" className="text-caption text-danger">{t(($) => $.page.status.error)}：{latestExecution.failure_reason}</p> : null}
+      {boundAgent && !snapshot?.runtime_online ? <p className="text-caption text-warning">{t(($) => $.page.runs.runtime_offline)}</p> : null}
+      {dispatchRunning && !snapshot?.active_run_id ? <p aria-live="polite" className="text-caption text-muted-foreground">{t(($) => $.page.status.running)}</p> : null}
+      {dispatchFailure ? <p role="alert" className="text-caption text-danger">{t(($) => $.page.runs.dispatch_failed, { reason: latestExecution.failure_reason ?? "" })}</p> : null}
       {execution.error ? <p role="alert" className="text-caption text-danger">{execution.error.message}</p> : null}
       {error ? <p role="alert" className="text-caption text-danger">{error.message}</p> : null}
       {isLoading ? (
@@ -97,8 +119,11 @@ export function RunsTab({ wsId }: { wsId: string }) {
               modeLabel={modeLabel(run.mode)}
               statusLabel={statusLabel(run.status)}
               scannedLabel={t(($) => $.page.runs.scanned, { count: run.scanned_commits })}
+              absorbedLabel={t(($) => $.page.runs.absorbed, { count: run.absorbed_commits })}
               itemsLabel={t(($) => $.page.runs.items, { count: run.item_count })}
               hasMoreLabel={t(($) => $.page.runs.has_more)}
+              durationLabel={duration(run.started_at, run.completed_at)}
+              errorLabel={t(($) => $.page.runs.error_detail)}
               triggerLabel={
                 run.trigger_source === "schedule"
                   ? t(($) => $.page.runs.trigger_schedule)
@@ -118,16 +143,22 @@ function RunRow({
   modeLabel,
   statusLabel,
   scannedLabel,
+  absorbedLabel,
   itemsLabel,
   hasMoreLabel,
+  durationLabel,
+  errorLabel,
   triggerLabel,
 }: {
   run: UpstreamRun;
   modeLabel: string;
   statusLabel: string;
   scannedLabel: string;
+  absorbedLabel: string;
   itemsLabel: string;
   hasMoreLabel: string;
+  durationLabel: string;
+  errorLabel: string;
   triggerLabel: string;
 }) {
   return (
@@ -144,10 +175,19 @@ function RunRow({
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 text-caption text-muted-foreground">
           <span>{scannedLabel}</span>
+          <span>{absorbedLabel}</span>
           <span>{itemsLabel}</span>
+          {durationLabel ? <span>{durationLabel}</span> : null}
           <span>{triggerLabel}</span>
-          {run.error ? <span className="text-danger">{run.error}</span> : null}
         </div>
+        {run.error ? (
+          <details className="mt-1 text-caption">
+            <summary className="cursor-pointer text-danger">{errorLabel}</summary>
+            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono">
+              {run.error}
+            </pre>
+          </details>
+        ) : null}
       </div>
       <span className="shrink-0 text-caption text-faint-foreground">
         {formatTime(run.completed_at ?? run.started_at ?? run.created_at)}
