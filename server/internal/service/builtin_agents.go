@@ -13,6 +13,11 @@ import (
 // runtime 消失时硬删除），而 Mika 需要与这三者全部相反。
 const MikaSystemKey = "mika"
 
+// SupervisionSystemKey 标记质量监督的工作区托管 Agent。它由监督设置自动创建并
+// 维护，运行时和型号也由设置页决定；为了让运行历史不随运行时删除一起消失，它
+// 保持 kind='user'，只通过 system_key 从 Agent 列表与选择器中隐藏。
+const SupervisionSystemKey = "quality_supervision"
+
 // MikaDefaultName 是 agent 创建时的默认名字。owner 可改名；服务端没有任何逻辑以名字为键，
 // 提示词基于当前名字模板化。
 const MikaDefaultName = "Mika"

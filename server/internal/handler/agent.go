@@ -988,6 +988,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
+		// 质量监督的工作区托管 Agent 由监督设置维护，不属于可指派或可编辑的
+		// Agent；它是可见 Agent 列表之外的执行身份。
+		if a.SystemKey.Valid && a.SystemKey.String == service.SupervisionSystemKey {
+			continue
+		}
 		targets := targetsByAgent[uuidToString(a.ID)]
 		if actorType == "member" {
 			if !memberAllowedToViewAgent(a, targets, actorID, member.Role) {
@@ -1645,6 +1650,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	existing, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
+		return
+	}
+	if existing.SystemKey.Valid && existing.SystemKey.String == service.SupervisionSystemKey {
+		writeError(w, http.StatusForbidden, "该 Agent 由质量监督托管，请到质量监督设置中修改")
 		return
 	}
 	if !h.canManageAgent(w, r, existing) {

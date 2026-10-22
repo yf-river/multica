@@ -1,4 +1,4 @@
-import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, type SupervisionEvidencePage, type SupervisionConfig, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback } from "../supervision/schema";
+import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, supervisionInstructionsSchema, type SupervisionEvidencePage, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback, type SupervisionInstructions } from "../supervision/schema";
 import { TaskOutputPageSchema, TaskMessagePayloadSchema, type TaskOutputPage } from "./schemas";
 import { MealsSchema, mealWire, type MealsData, type MealCommand } from "../meals/schema";
 import { CookingListSchema, CookingDetailSchema, CookingCategoriesSchema, type CookingList, type CookingDetail, type CookingCategory } from "../cooking/schema";
@@ -787,7 +787,10 @@ export class ApiClient {
   async getSupervisionBatchTask(id: string): Promise<AgentTask> {
     return parseOrThrow<AgentTask>(await this.fetch<unknown>(`/api/supervision/batches/${encodeURIComponent(id)}/task`), AgentTaskSchema, { endpoint: "GET /api/supervision/batches/:id/task", sensitive: true });
   }
-  async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds"> & { investigation_enabled?: boolean }) {
+  async getSupervisionInstructions() {
+    return parseOrThrow<SupervisionInstructions>(await this.fetch<unknown>("/api/supervision/instructions"), supervisionInstructionsSchema, { endpoint: "GET /api/supervision/instructions", sensitive: true });
+  }
+  async updateSupervision(config: { enabled: boolean; interval_seconds: number; investigation_enabled?: boolean; runtime_id?: string | null; model?: string | null; thinking_level?: string | null; instructions?: string | null }) {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/", { method: "PUT", body: JSON.stringify(config) }), supervisionSnapshotSchema, { endpoint: "PUT /api/supervision", sensitive: true, mayHaveCommitted: true });
   }
   async checkSupervision(body: { issue_id?: string; full?: boolean; stop?: boolean; retry_failed?: boolean }) {
