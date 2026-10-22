@@ -2,11 +2,11 @@
 // 页面只读展示服务端台账；所有 git 操作都在 daemon 侧 Agent 里完成。
 "use client";
 
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitMerge, Settings } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { upstreamSnapshotOptions } from "@multica/core/upstream/queries";
+import { upstreamKeys, upstreamSnapshotOptions } from "@multica/core/upstream/queries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useT } from "../../i18n";
@@ -27,6 +27,13 @@ export function UpstreamPage() {
   const { data, isLoading, error } = useQuery(upstreamSnapshotOptions(wsId));
 
   const config = data?.config;
+  const qc = useQueryClient();
+  const cursor = config?.cursor_sha;
+  const activeRun = data?.active_run_id;
+  // 批次由后台 Agent 完成，页面通过台账变化刷新建议，不依赖用户手动刷新。
+  useEffect(() => {
+    void qc.invalidateQueries({ queryKey: upstreamKeys.all(wsId) });
+  }, [qc, wsId, cursor, activeRun]);
   const head = config?.head_sha ?? "";
   const running = !!data?.active_run_id;
 

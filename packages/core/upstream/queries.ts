@@ -13,6 +13,7 @@ export const upstreamKeys = {
 export function upstreamSnapshotOptions(wsId: string) {
   return queryOptions({
     queryKey: upstreamKeys.snapshot(wsId),
+    refetchInterval: 5000,
     queryFn: () => api.getUpstreamSnapshot(),
   });
 }
@@ -33,6 +34,7 @@ export function upstreamItemsOptions(
 export function upstreamRunsOptions(wsId: string) {
   return queryOptions({
     queryKey: upstreamKeys.runs(wsId),
+    refetchInterval: 5000,
     queryFn: () => api.listUpstreamRuns(30),
   });
 }
