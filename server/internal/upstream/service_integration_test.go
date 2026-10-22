@@ -152,6 +152,17 @@ func TestSetupIsAtomicAndSwitchDisablesOldSchedule(t *testing.T) {
 	if err != nil || first != again || pilot != same {
 		t.Fatalf("duplicate binding %s %s %v", again, same, err)
 	}
+	// 系统执行体的启停由上游设置管理，包括全局暂停后的恢复。
+	if _, err = s.Pool.Exec(ctx, `UPDATE autopilot SET status='paused' WHERE id=$1`, pilot); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.SetupExecutor(ctx, cfg, creator, "instructions", true); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err = s.Pool.QueryRow(ctx, `SELECT status FROM autopilot WHERE id=$1`, pilot).Scan(&status); err != nil || status != "active" {
+		t.Fatalf("resume executor: %s %v", status, err)
+	}
 	cfg.RuntimeID = ids[1]
 	_, newPilot, err := s.SetupExecutor(ctx, cfg, creator, "instructions", true)
 	if err != nil {
@@ -169,6 +180,9 @@ func TestSetupIsAtomicAndSwitchDisablesOldSchedule(t *testing.T) {
 	}
 	if err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM autopilot_trigger WHERE enabled`).Scan(&active); err != nil || active != 0 {
 		t.Fatalf("disable: %d %v", active, err)
+	}
+	if err = s.Pool.QueryRow(ctx, `SELECT status FROM autopilot WHERE id=$1`, newPilot).Scan(&status); err != nil || status != "paused" {
+		t.Fatalf("pause executor: %s %v", status, err)
 	}
 }
 

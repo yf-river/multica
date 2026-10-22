@@ -79,7 +79,7 @@ func (s *Service) SetupExecutor(ctx context.Context, c Config, creatorID, instru
 	if err != nil {
 		return "", "", err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE autopilot SET description=$2,updated_at=now() WHERE id=$1`, pilot, DailyPrompt); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE autopilot SET description=$2,status=CASE WHEN $3 THEN 'active' ELSE 'paused' END,pause_reason=NULL,updated_at=now() WHERE id=$1`, pilot, DailyPrompt, enabled); err != nil {
 		return "", "", err
 	}
 	if oldPilot != "" && oldPilot != pilot {
