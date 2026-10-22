@@ -73,7 +73,14 @@ func BuildManifest(ctx context.Context, mirror string, c Config, processed []str
 	}
 	args := []string{"rev-list", "--reverse", "--topo-order", m.HeadSHA}
 	if c.BootstrapBaseSHA != "" {
-		args = append(args, "^"+m.BaseSHA)
+		lineage, parentErr := gitOutput(ctx, mirror, "rev-list", "--parents", "-n", "1", m.BaseSHA)
+		if parentErr != nil {
+			return m, parentErr
+		}
+		// 自动建立的根起点也要由台账确认，失败重试不能跳过尚未回传的根提交。
+		if len(strings.Fields(lineage)) > 1 {
+			args = append(args, "^"+m.BaseSHA)
+		}
 	}
 	all, err := gitOutput(ctx, mirror, args...)
 	if err != nil {

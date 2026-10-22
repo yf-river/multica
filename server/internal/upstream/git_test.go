@@ -37,6 +37,10 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	write("base", "base")
 	git(up, "add", ".")
 	git(up, "commit", "-m", "base")
+	rootSHA := git(up, "rev-parse", "HEAD")
+	write("baseline", "existing imported history")
+	git(up, "add", ".")
+	git(up, "commit", "-m", "imported baseline")
 	base := git(up, "rev-parse", "HEAD")
 	git(up, "checkout", "-b", "topic")
 	write("topic", "new feature")
@@ -57,8 +61,13 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.BaseSHA != base || len(initial.Commits) != 4 || initial.Commits[0].SHA != base {
+	if initial.BaseSHA != rootSHA || len(initial.Commits) != 5 || initial.Commits[0].SHA != rootSHA {
 		t.Fatalf("initial scan omitted upstream history: %+v", initial)
+	}
+	fresh.BootstrapBaseSHA = initial.BaseSHA
+	retry, err := BuildManifest(ctx, filepath.Join(root, "initial-mirror"), fresh, nil)
+	if err != nil || len(retry.Commits) != 5 || retry.Commits[0].SHA != rootSHA {
+		t.Fatalf("root commit lost before report on retry: %+v %v", retry, err)
 	}
 	first, err := BuildManifest(ctx, mirror, cfg, nil)
 	if err != nil {
