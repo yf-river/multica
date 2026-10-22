@@ -163,3 +163,17 @@ export function useRemoveAgentMcpServer(agentId: string) {
   return useAgentMcpMutation(agentId, (serverId: string) =>
     api.removeAgentMcpServer(agentId, serverId));
 }
+
+/** Save workspace navigation through the server and publish its canonical response. */
+export function useUpdateWorkspaceMenu() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workspace, hidden }: { workspace: Workspace; hidden: string[] }) =>
+      api.updateWorkspace(workspace.id, { settings: { ...workspace.settings, hidden_menu_items: hidden } }),
+    onSuccess: (updated) => {
+      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] = []) =>
+        old.map((ws) => ws.id === updated.id ? updated : ws));
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: workspaceKeys.list() }),
+  });
+}

@@ -921,8 +921,8 @@ func TestParseCodexSessionFileSubtractsCachedInput(t *testing.T) {
 	if got.usage.CacheReadTokens != 300 {
 		t.Fatalf("cache read tokens = %d, want 300", got.usage.CacheReadTokens)
 	}
-	if got.usage.OutputTokens != 50 {
-		t.Fatalf("output tokens = %d, want 50", got.usage.OutputTokens)
+	if got.usage.OutputTokens != 40 {
+		t.Fatalf("output tokens = %d, want 40 (reasoning is included)", got.usage.OutputTokens)
 	}
 }
 
@@ -1008,7 +1008,7 @@ func TestScanCodexSessionUsageSubtractsResumeBaseline(t *testing.T) {
 	}
 	// total_token_usage is cumulative for the resumed Codex session. This task
 	// should report only the delta after startTime, not the whole session total.
-	want := TokenUsage{InputTokens: 100, OutputTokens: 65, CacheReadTokens: 700}
+	want := TokenUsage{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 700}
 	if got.usage != want {
 		t.Fatalf("usage = %+v, want resumed-task delta %+v", got.usage, want)
 	}
@@ -5908,5 +5908,54 @@ func TestCodexResumeOverflowErrorMatchesLiveFailureText(t *testing.T) {
 
 	if !CodexResumeOverflowError(result.Error) {
 		t.Fatalf("predicate missed the error the backend actually produced: %q", result.Error)
+	}
+}
+
+func TestCodexModernUsageNotifications(t *testing.T) {
+	c, _, _ := newTestCodexClient(t)
+	c.threadID = "main"
+	update := func(total, input, cached, output float64) {
+		c.handleRawNotification("thread/tokenUsage/updated", map[string]any{"threadId": "main", "tokenUsage": map[string]any{
+			"total": map[string]any{"totalTokens": total}, "last": map[string]any{"inputTokens": input, "cachedInputTokens": cached, "outputTokens": output},
+		}})
+	}
+	update(110, 100, 70, 10)
+	update(110, 100, 70, 10)
+	update(330, 200, 150, 20)
+	want := TokenUsage{InputTokens: 80, CacheReadTokens: 220, OutputTokens: 30}
+	if c.usage != want {
+		t.Fatalf("usage = %+v, want %+v", c.usage, want)
+	}
+	c.handleRawNotification("thread/tokenUsage/updated", map[string]any{"threadId": "child", "tokenUsage": map[string]any{"total": map[string]any{"totalTokens": float64(900)}, "last": map[string]any{"inputTokens": float64(800)}}})
+	if c.usage != want {
+		t.Fatalf("child usage leaked: %+v", c.usage)
+	}
+}
+
+func TestCodexUsageAfterOversizedToolRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	content := `{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}` + "\n" + strings.Repeat("x", 2*1024*1024) + "\n" +
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":70,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":120}}}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := parseCodexSessionFile(path)
+	if got == nil || got.model != "gpt-6.1-sol" || got.usage != (TokenUsage{InputTokens: 30, CacheReadTokens: 70, OutputTokens: 20}) {
+		t.Fatalf("usage after large record = %+v", got)
+	}
+}
+
+// Sanitized token_count captured from a real GONG-25 Codex run (2026-10-19).
+func TestCodexRealUsageSample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.jsonl")
+	content := `{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":341015,"cached_input_tokens":265600,"cache_write_input_tokens":0,"output_tokens":1739,"reasoning_output_tokens":63,"total_tokens":342754}}}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := parseCodexSessionFile(path)
+	want := TokenUsage{InputTokens: 75415, CacheReadTokens: 265600, OutputTokens: 1739}
+	if got == nil || got.model != "gpt-6.1-sol" || got.usage != want {
+		t.Fatalf("sample = %+v, want %+v", got, want)
 	}
 }

@@ -72,7 +72,7 @@ export function GlobalShortcuts() {
     const destinations: Partial<Record<ShortcutActionId, string>> = {
       goInbox: workspacePaths.inbox(),
       goChat: chatPath,
-      goMyIssues: workspacePaths.myIssues(),
+      goMyIssues: workspacePaths.issues(),
       goIssues: workspacePaths.issues(),
       goProjects: workspacePaths.projects(),
       goAutopilots: workspacePaths.autopilots(),

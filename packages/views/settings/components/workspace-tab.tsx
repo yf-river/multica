@@ -49,6 +49,7 @@ import {
   SettingsTab,
   type SettingsSaveStatus,
 } from "./settings-layout";
+import { WorkspaceMenuSettings } from "./workspace-menu-settings";
 import { useAutoSave } from "./use-auto-save";
 
 /** 工作区资料编辑的草稿：名称 / 描述 / 背景上下文。 */
@@ -456,6 +457,8 @@ export function WorkspaceTab() {
             )}
         </SettingsCard>
       </SettingsSection>
+
+      <WorkspaceMenuSettings key={workspace.id} workspace={workspace} canManage={canManageWorkspace} />
 
       {/* 危险区——等成员查询落定后再渲染，避免仅 owner 可见的「删除」按钮与
           唯一 owner 的「退出」提示在挂载后才闪现出来。 */}

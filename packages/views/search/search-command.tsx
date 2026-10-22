@@ -1,4 +1,5 @@
 "use client";
+import { isWorkspaceMenuVisible } from "@multica/core/workspace";
 
 import { issueStatusCategory } from "@multica/core/issues";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,7 +39,7 @@ import {
 } from "@multica/core/issues/stores";
 import { issueDetailOptions, issueTimelineOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
-import { useWorkspacePaths, WORKSPACE_PAGES } from "@multica/core/paths";
+import { useCurrentWorkspace, useWorkspacePaths, WORKSPACE_PAGES } from "@multica/core/paths";
 import type { WorkspacePageKey, WorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
 import { createShortcutChord } from "@multica/core/shortcuts";
@@ -333,14 +334,15 @@ export function SearchCommand() {
   // 页面名取自侧边栏自己的命名空间，而不是 `search.pages` 下的私有副本：
   // 每个页面只有一条翻译，调色板永远不会跟侧边栏在页面叫法上打架。
   const { t: tNav } = useT("layout");
+  const workspace = useCurrentWorkspace();
   const navPages = useMemo<NavPage[]>(
     () =>
-      NAV_PAGE_KEYS.map((key) => ({
+      NAV_PAGE_KEYS.filter((key) => isWorkspaceMenuVisible(workspace?.settings, key)).map((key) => ({
         key,
         label: tNav(($) => $.nav[WORKSPACE_PAGES[key].navKey]),
         keywords: PAGE_KEYWORDS[key],
       })),
-    [tNav],
+    [tNav, workspace?.settings],
   );
   const { pathname, getShareableUrl } = useNavigation();
   const intentNavigate = useIntentNavigate();

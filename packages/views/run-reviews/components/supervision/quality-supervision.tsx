@@ -104,6 +104,7 @@ export function QualitySupervision() {
               </span>
             )}
           </div>
+          {config.concurrency != null && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.concurrency_summary, { running: summary.running, capacity: config.concurrency, pending: summary.pending })}</p>}
           <p className="text-caption text-muted-foreground">
             {t(($) => $.supervision.interval_summary, { minutes: Math.round(config.interval_seconds / 60) })}
             {" · "}

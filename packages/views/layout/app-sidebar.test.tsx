@@ -2,7 +2,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
-vi.mock("./mika-sidebar-entry", () => ({ MikaSidebarEntry: () => null }));
 
 const { detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
   sidebarState: { setOpenMobile: vi.fn() },

@@ -23,3 +23,12 @@ describe("supervision response contracts", () => {
     expect(supervisionEvidencePageSchema.parse({ ...page, snapshot: true, batch_id: "batch" }).batch_id).toBe("batch");
   });
 });
+
+it("rejects malformed progress and timing without confusing old responses", () => {
+  const coverage = supervisionDetailSchema.shape.coverage;
+  expect(coverage.parse({ materials: 10, covered: 2, runs: 1 }).partial).toBeUndefined();
+  expect(coverage.safeParse({ materials: 10, covered: 2, runs: 1, partial: "3" }).success).toBe(false);
+  expect(coverage.parse({ materials: 10, covered: 2, runs: 1, partial: 1, pending: 7, current: { kind: "message", id: "m", offset: 39000, length: 400000 } }).current?.offset).toBe(39000);
+  const batch = supervisionDetailSchema.shape.batches.element;
+  expect(batch.safeParse({ id: "b", task_id: null, status: "completed", error: "", rules_version: "v6", created_at: "now", completed_at: null, material_count: 1, queue_seconds: "12" }).success).toBe(false);
+});

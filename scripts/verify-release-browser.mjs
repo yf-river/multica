@@ -62,26 +62,20 @@ try {
       if (!response.ok() || !(await response.body()).length) throw Error('report original unavailable');
       checks.push('private report original accessible');
     } else unavailable.push('no production health report to verify original');
-    const agents = await read(`/api/agents?workspace_id=${workspace.id}`, workspace.id);
-    const mika = agents.find(item => item.system_key === 'mika' && !item.archived_at);
-    if (mika) {
-      const entry = page.locator('[data-slot="sidebar"]').getByRole('button', { name: mika.name, exact: true });
-      await expect(entry).toBeVisible();
-      const session = sessions.find(item => item.agent_id === mika.id && item.creator_id === me.id && item.status === 'active');
-      if (session) {
-        // 侧栏通过 reuse_existing 获取当前用户的会话，列表第一项并非该接口的选择依据。
-        const opened = page.waitForResponse(response =>
-          new URL(response.url()).pathname === '/api/chat/sessions' && response.request().method() === 'POST');
-        await entry.click();
-        const response = await opened;
-        if (!response.ok()) throw Error(`Mika conversation: ${response.status()}`);
-        const target = await response.json();
-        if (target.agent_id !== mika.id || target.workspace_id !== workspace.id || target.creator_id !== me.id
-            || !sessions.some(item => item.id === target.id)) throw Error('Mika did not reuse an existing conversation belonging to this user');
-        await expect(page).toHaveURL(new RegExp(`session=${target.id}`));
-      }
-      else unavailable.push('Mika has no existing session for this user; acceptance does not create user chat');
-    } else unavailable.push('Mika not created in production workspace');
+    const chatEntry = page.locator('[data-slot="sidebar"]').getByRole('link', { name: '聊天', exact: true });
+    if (await chatEntry.count()) {
+      await expect(chatEntry).toBeVisible();
+      await chatEntry.click();
+      await expect(page).toHaveURL(new RegExp(`/${workspace.slug}/chat$`));
+      await expect(page.locator('[data-slot="sidebar"]').getByText('我的任务', { exact: true })).toHaveCount(0);
+      checks.push('persistent generic Chat navigation and retired personal tasks entry');
+    } else {
+      // The fixed controller also validates the old program during rollback.
+      const agents = await read('/api/agents', workspace.id);
+      const mika = agents.find(item => item.system_key === 'mika' && !item.archived_at);
+      if (mika) await expect(page.locator('[data-slot="sidebar"]').getByRole('button', { name: mika.name, exact: true })).toBeVisible();
+      checks.push('legacy navigation during rollback');
+    }
     const websocket = await page.evaluate(slug => new Promise(resolve => {
       const url = new URL('/ws', location.href);url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';url.searchParams.set('workspace_slug', slug);
       const socket = new WebSocket(url);

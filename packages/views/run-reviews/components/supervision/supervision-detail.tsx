@@ -188,7 +188,9 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
               <div className="mt-2 rounded-lg border p-3">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-body">
                   <strong className="font-medium">
-                    {t(($) => $.supervision.coverage_materials, { covered: data.coverage.covered, total: data.coverage.materials })}
+                    {data.coverage.partial != null && data.coverage.pending != null
+                      ? t(($) => $.supervision.reading_progress, { covered: data.coverage.covered, partial: data.coverage.partial, pending: data.coverage.pending })
+                      : t(($) => $.supervision.coverage_materials, { covered: data.coverage.covered, total: data.coverage.materials })}
                   </strong>
                   <span className="text-caption text-muted-foreground">{t(($) => $.supervision.coverage_runs, { count: data.coverage.runs })}</span>
                 </div>
@@ -209,6 +211,8 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                   {t(($) => $.supervision.last_check)} {moment(data.subject.last_checked_at)}
                   {data.subject.desired_version > data.subject.reviewed_version && " · " + t(($) => $.supervision.status_changed)}
                 </p>
+                {data.coverage.current?.length != null && <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.reading_position, { offset: data.coverage.current.offset, length: data.coverage.current.length })}</p>}
+                {data.coverage.runs > 0 && <p className="mt-1 text-caption text-muted-foreground">{data.coverage.covered < data.coverage.materials ? t(($) => $.supervision.reading_history) : t(($) => $.supervision.reading_caught_up)}</p>}
                 <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.coverage_hint)}</p>
                 {data.subject.gaps.length > 0 && (
                   <p className="mt-1 text-caption text-warning">{t(($) => $.supervision.coverage_gap_hint, { count: data.subject.gaps.length })}</p>
@@ -281,6 +285,7 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                       <Badge variant={batch.status === "failed" ? "destructive" : "outline"}>{statusLabel(batch.status)}</Badge>
                       <span className="text-muted-foreground">{batch.rules_version} · {t(($) => $.supervision.materials_count, { count: batch.material_count })}</span>
                     </div>
+                    {batch.queue_seconds != null && <p className="mt-1 tabular-nums text-muted-foreground">{t(($) => $.supervision.batch_timing, { queue: Math.max(0, Math.round(batch.queue_seconds)), execution: batch.execution_seconds == null ? "—" : Math.max(0, Math.round(batch.execution_seconds)), persistence: batch.persistence_seconds == null ? "—" : Math.max(0, Math.round(batch.persistence_seconds)) })}</p>}
                     {batch.error && <p className="mt-1 break-words text-destructive">{batch.error}</p>}
                     {canManage && (
                       <details className="mt-2">
@@ -340,7 +345,7 @@ type Investigation = {
   id: string;
   created_at: string;
   request: { reason: string; path?: string };
-  result: { tool: string; source_label?: string; path?: string; error?: string; offset: number; end: number; length: number; truncated: boolean };
+  result: { tool: string; source_label?: string; path?: string; error?: string; offset: number; end: number; length: number; truncated: boolean; scope_truncated?: boolean };
 };
 
 function InvestigationRow({ entry, openEvidence }: { entry: Investigation; openEvidence: (target: EvidenceTarget) => void }) {
@@ -363,6 +368,8 @@ function InvestigationRow({ entry, openEvidence }: { entry: Investigation; openE
           : isRead ? t(($) => $.supervision.investigation_read_range, range)
           : t(($) => $.supervision.investigation_result_range, range)}
       </p>
+      <details className="mt-1"><summary className="cursor-pointer">{t(($) => $.supervision.investigation_parameters)}</summary><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(entry.request, null, 2)}</pre></details>
+      {entry.result.scope_truncated && <p className="mt-1 text-warning">{t(($) => $.supervision.search_scope_partial)}</p>}
       {entry.result.error ? (
         <p className="mt-1 whitespace-pre-wrap break-words text-destructive">{entry.result.error}</p>
       ) : entry.result.truncated ? (

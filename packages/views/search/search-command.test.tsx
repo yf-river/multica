@@ -206,6 +206,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   // Spread the real module so pure helpers (resolveRouteIconName, used to
   // derive each nav page's icon from its href) stay intact.
   ...(await importOriginal<typeof import("@multica/core/paths")>()),
+  useCurrentWorkspace: () => ({ settings: {} }),
   useWorkspacePaths: () => ({
     inbox: () => "/ws-test/inbox",
     chat: () => "/ws-test/chat",
@@ -224,6 +225,8 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     runReviews: () => "/ws-test/run-reviews",
     runtimes: () => "/ws-test/runtimes",
     skills: () => "/ws-test/skills",
+    mcp: () => "/ws-test/mcp",
+    quickActions: () => "/ws-test/quick-actions",
     settings: () => "/ws-test/settings",
     lifeTab: (tab: string) => `/ws-test/life?tab=${tab}`,
     issueDetail: (id: string) => `/ws-test/issues/${id}`,
@@ -416,7 +419,7 @@ describe("SearchCommand", () => {
     // the sidebar and the desktop tab bar read — so searching a page by the
     // exact name the sidebar shows must always reach it. The hand-written
     // list this replaced had gone stale by four pages (MUL-6272).
-    for (const page of Object.values(WORKSPACE_PAGES)) {
+    for (const page of Object.entries(WORKSPACE_PAGES).filter(([key]) => key !== "myIssues").map(([, page]) => page)) {
       const label = enLayout.nav[page.navKey];
       await user.clear(input);
       await user.type(input, label);
