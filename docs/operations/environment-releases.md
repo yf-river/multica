@@ -122,3 +122,13 @@ pnpm --dir /data/ida/multica release delivery-worker --env prod
 CLI 写入交付时使用 `MULTICA_TASK_ID`、`CODEX_THREAD_ID` 或显式 `--execution` 标识当前执行，凭据保存在私有配置目录。`owner` 查询，`claim-owner` 领取，`recover-owner --recovery-evidence` 显式交接，`release-owner` 释放；旧代次不能覆盖新负责人。相同凭据的原执行可以续期，另一执行即使看到超时也必须提供恢复核对依据。
 
 候选可通过 `scripts/delivery-acceptance.json` 声明检查组、路径覆盖和参数数组命令，由 `run-delivery-acceptance.py` 在候选源码上执行。验收命令只访问 int/verify 环境，实际日志和不可变验收记录独立保存。声明只覆盖它真实验证的行为，真实 Agent 续接与生产浏览器结果仍需要对应证据。Agent 提交验收后结束本轮，外部发布器通知下一阶段，禁止同步等待自身执行进程被更新。
+
+## 审查与监督设置兼容迁移（611–619）
+
+GONG-40 的审查配置、轮次记录使用新表；唯一约束和查询索引各自使用单条并发索引迁移。原任务未发布的 555/556 编号与上游同步冲突，交付版本使用 611–616；不改写已发布迁移。
+
+GONG-49 的 617 仅为 `supervision_config` 追加默认空串的 `instructions text NOT NULL`，不修改旧列或已有提示词。空值由新程序读取代码内默认指令。618 仅按同工作区的已有 `supervision_config.agent_id` 将原监督 Agent 标为 `quality_supervision`，保留 ID、运行时、任务历史和原 instructions；619 单独建立托管身份的并发唯一索引。配置中原 Agent 的 ID 在新旧程序间一致。
+
+发布器只接受 617、618 两份固定文件的准确 SHA-256，修改 SQL 后即拒绝自动发布；其他 ALTER、UPDATE、DELETE 仍须单独评审。旧程序可忽略新增列，仍按配置 Agent ID 派发；程序回退保留新增列、表、索引和身份标记，不执行 down 或重置数据。恢复旧版时旧界面可能仍显示该 Agent，但既有任务、运行时和配置继续可读取。
+
+联调前在独立 PostgreSQL 实例应用全部迁移，并核对旧、新查询可准备执行；生产切换前保存数据库及文件备份，再由相同发布入口核对目标实例、旧新程序查询和唯一索引。存在重复托管身份或查询不兼容时停止切换，禁止删除业务行处理冲突。默认设置不启用自动审查，也不改变监督原有 enabled 状态。

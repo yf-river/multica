@@ -275,4 +275,14 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(r.build_version(Path(d),'9'*40),'9'*12)
                 output.assert_not_called()
 
+    def test_reviewed_supervision_settings_migrations_are_exact_and_reject_changed_sql(self):
+        from tempfile import TemporaryDirectory
+        source=Path(__file__).parent.parent/'server/migrations'
+        for name in ('617_supervision_instructions.up.sql','618_supervision_managed_agent.up.sql'):
+            with TemporaryDirectory() as folder:
+                target=Path(folder)/name;target.write_bytes((source/name).read_bytes())
+                self.assertTrue(r.reviewed_supervision_settings_change(target))
+                target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
+                self.assertFalse(r.reviewed_supervision_settings_change(target))
+
 if __name__=='__main__':unittest.main()

@@ -5,5 +5,5 @@
 UPDATE agent a
 SET system_key = 'quality_supervision', updated_at = now()
 FROM supervision_config c
-WHERE c.agent_id = a.id
+WHERE c.agent_id = a.id AND c.workspace_id = a.workspace_id
   AND a.system_key IS NULL;

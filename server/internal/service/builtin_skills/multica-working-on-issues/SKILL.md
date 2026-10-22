@@ -362,3 +362,17 @@ outputs truncated before storage cannot be recovered through this command.
 For Multica code delivery, use `multica issue delivery` with the current task identity (`MULTICA_TASK_ID`, `CODEX_THREAD_ID`, or `--execution`). Reuse the existing delivery for the same plan and source commit. Inspect `owner` and delivery history before any recovery; another execution requires `recover-owner --recovery-evidence` and must not overwrite active work. Keep the existing source branch and acceptance evidence.
 
 Submit actual acceptance evidence, then finish this execution. The external publisher advances the release and posts the next-stage result; do not poll synchronously for the restart of your own daemon. A publication pause is not user cancellation: preserve the original task and work directory. On automatic continuation, inspect Git refs, delivery state, deployment identity, and the last external operation before resuming; never repeat an operation with an unknown result blindly. Report a precise task-level blocker if its outcome cannot be established.
+
+## 托管代码审查
+
+工作区管理员在审核中列的“审查设置”选择运行时、模型与提示词。启用后，任务进入 `in_review` 会自动派发托管审查员；开发者完成修改后提交审核，不手动调用或指派该隐藏 Agent。
+
+审查员通过当前任务令牌提交结论：
+
+```bash
+multica issue review submit <issue-id> --verdict pass --findings-file /absolute/findings.json --output json
+multica issue review submit <issue-id> --verdict reject --findings-file /absolute/findings.json --comment-id <review-comment-id>
+multica issue review submit <issue-id> --verdict stalled --findings-file /absolute/findings.json
+```
+
+文件格式为 `{ "summary": "结论", "items": [{ "level": "blocking", "file": "path", "detail": "实际问题" }], "unchanged_previous": [] }`。`pass` 写通过标记，任务留在审核中；`reject` 回到进行中并唤醒原开发者；`stalled` 或达到累计轮次上限会停止自动返工并请负责人处理。只有配置的审查 Agent 和有效的当前执行可提交，旧轮次不能覆盖新轮次。不要用直接修改状态代替提交审查结果，也不要将审查通过等同于生产发布完成。

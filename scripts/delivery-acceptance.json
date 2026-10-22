@@ -60,6 +60,21 @@
         "python3",
         "scripts/delivery-coordination.test.py"
       ]
+    },
+    {
+      "name": "batch-closeout-api",
+      "paths": [
+        "server/internal/review/",
+        "server/internal/handler/issue_review",
+        "server/internal/supervision/",
+        "packages/core/review/",
+        "packages/views/modals/quick-create-issue",
+        "packages/views/issues/components/review-"
+      ],
+      "command": [
+        "python3",
+        "scripts/verify-batch-closeout.py"
+      ]
     }
   ]
 }

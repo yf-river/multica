@@ -529,6 +529,15 @@ def reviewed_supervision_index_change(release, migration, statements):
         and replacement.read_text().strip()=="CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS supervision_active_issue ON supervision_batch(workspace_id,issue_id) WHERE status IN ('preparing','running');")
 
 
+def reviewed_supervision_settings_change(migration):
+    # 精确兼容迁移：追加提示词列，按现有配置标记托管身份；旧程序仍按原ID读取。
+    reviewed = {
+        '617_supervision_instructions.up.sql': '695c87f6f451cd1aeb233262e4845a8301798f1fbe538b9d1daf2d8b70e46d3e',
+        '618_supervision_managed_agent.up.sql': 'ba9490794ae9c5717ed1c89e08a8de46c195a5203989e929707afbb9fda6469c',
+    }
+    return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
+
+
 def prepare_database(release, cfg, previous):
     old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
     for migration in sorted((Path(release)/'server/migrations').glob('*.up.sql')):
@@ -538,7 +547,7 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements):
+            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements) and not reviewed_supervision_settings_change(migration):
                 raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)

@@ -232,3 +232,11 @@ Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`
 - `server/internal/daemon/release_pause.go`: preserved execution checkpoint and source/agent ownership validation.
 - `scripts/issue-delivery-worker.py`: asynchronous final integration, acceptance and publication notifications.
 - `scripts/release-environments.py`: bounded publication pause, identical artifact promotion and task recovery.
+
+## 托管代码审查
+
+- CLI：`server/cmd/multica/cmd_issue_review.go`。
+- 设置、派发、结论和任务状态：`server/internal/handler/issue_review.go`。
+- 入队与运行时：`server/internal/service/task_review.go`。
+- 默认指令、结论与停止策略：`server/internal/review/`。
+- 当前任务令牌及最新执行核对位于 `SubmitIssueReviewVerdict`；业务验收见 `server/internal/handler/issue_review_test.go`。

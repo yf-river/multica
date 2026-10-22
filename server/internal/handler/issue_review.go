@@ -93,16 +93,16 @@ func (h *Handler) GetReviewSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	member, _ := h.getWorkspaceMember(r.Context(), requestUserID(r), ws)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"configured":              configured,
-		"enabled":                 cfg.Enabled,
-		"agent_id":                nullableUUID(cfg.AgentID),
-		"runtime_id":              nullableUUID(cfg.RuntimeID),
-		"model":                   cfg.Model,
-		"thinking_level":          cfg.Thinking,
-		"instructions":            review.EffectiveInstructions(cfg.Instructions),
-		"default_instructions":    review.DefaultInstructions(),
-		"max_rounds":              review.MaxRounds,
-		"can_manage":              member.Role == "owner" || member.Role == "admin",
+		"configured":           configured,
+		"enabled":              cfg.Enabled,
+		"agent_id":             nullableUUID(cfg.AgentID),
+		"runtime_id":           nullableUUID(cfg.RuntimeID),
+		"model":                cfg.Model,
+		"thinking_level":       cfg.Thinking,
+		"instructions":         review.EffectiveInstructions(cfg.Instructions),
+		"default_instructions": review.DefaultInstructions(),
+		"max_rounds":           review.MaxRounds,
+		"can_manage":           member.Role == "owner" || member.Role == "admin",
 	})
 }
 
@@ -289,9 +289,8 @@ func (h *Handler) SubmitIssueReviewVerdict(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	issue, err := h.Queries.GetIssue(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "issue not found")
+	issue, ok := h.loadIssueForUser(w, r, uuidToString(id))
+	if !ok {
 		return
 	}
 	ws := issue.WorkspaceID
@@ -304,6 +303,19 @@ func (h *Handler) SubmitIssueReviewVerdict(w http.ResponseWriter, r *http.Reques
 	if actorType != "agent" || actorID != uuidToString(cfg.AgentID) {
 		writeError(w, http.StatusForbidden, "只有审查 Agent 可以提交审查结论")
 		return
+	}
+
+	// 正在执行的旧轮次不能覆盖已经派发的新轮次。
+	if taskID := r.Header.Get("X-Task-ID"); taskID != "" {
+		if _, valid := parseUUIDOrBadRequest(w, taskID, "task_id"); !valid {
+			return
+		}
+		var current bool
+		err := h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM agent_task_queue q WHERE q.id=$1 AND q.issue_id=$2 AND q.agent_id=$3 AND q.status='running' AND NOT EXISTS(SELECT 1 FROM agent_task_queue n WHERE n.issue_id=q.issue_id AND n.agent_id=q.agent_id AND n.created_at>q.created_at))`, taskID, issue.ID, cfg.AgentID).Scan(&current)
+		if err != nil || !current {
+			writeError(w, http.StatusConflict, "本次审查执行已失效，请读取当前轮次")
+			return
+		}
 	}
 
 	var body ReviewVerdictRequest

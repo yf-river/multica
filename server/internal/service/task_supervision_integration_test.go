@@ -18,23 +18,16 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-func TestIntSupervisionInstructionSnapshot(t *testing.T) {
-	if os.Getenv("MULTICA_SUPERVISION_INT_TEST") != "1" {
-		t.Skip("requires explicit fixed-int validation")
+func TestSupervisionInstructionSnapshot(t *testing.T) {
+	databaseURL := os.Getenv("MULTICA_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("requires explicitly isolated test database")
+	}
+	if databaseURL != os.Getenv("DATABASE_URL") {
+		t.Fatal("test database and configured database differ")
 	}
 	ctx := context.Background()
-	raw, err := os.ReadFile("/data/ida/multica/.run/env/int-services.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg map[string]map[string]string
-	if err = json.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg["server"]["MULTICA_ENV_ID"] != "int" {
-		t.Fatal("not int")
-	}
-	pool, err := pgxpool.New(ctx, cfg["server"]["DATABASE_URL"])
+	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}

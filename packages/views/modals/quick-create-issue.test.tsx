@@ -62,7 +62,7 @@ const sourceContextPanelData = {
 const emptyIssueDraft = () => ({
   shared: {
     projectId: undefined as string | undefined,
-    priority: "not_important_not_urgent" as "not_important_not_urgent" | "not_important_not_urgent" | "not_important_urgent" | "important_not_urgent" | "important_urgent",
+    priority: "not_important_not_urgent" as "not_important_not_urgent" | "not_important_urgent" | "important_not_urgent" | "important_urgent",
     dueDate: null as string | null,
     attachments: [] as Array<{ id: string }>,
   },
@@ -272,7 +272,7 @@ vi.mock("../issues/components", () => ({
   ),
   DueDatePicker: ({ dueDate, onUpdate }: any) => (
     <button type="button" data-testid="due-date-picker" onClick={() => onUpdate({ due_date: "2026-08-01" })}>
-      Due date {dueDate ?? "not_important_not_urgent"}
+      Due date {dueDate ?? "none"}
     </button>
   ),
 }));
@@ -281,7 +281,7 @@ vi.mock("../projects/components/project-picker", () => ({
   ProjectPicker: ({ projectId, onUpdate, triggerRender }: any) => (
     <>
       <button type="button" data-testid="project-picker" onClick={() => onUpdate({ project_id: "proj-1" })}>
-        Project {projectId ?? "not_important_not_urgent"}
+        Project {projectId ?? "none"}
       </button>
       {/* The caller's own trigger renders too — the pill carries the
           quick-clear ×, which belongs to this panel, not to the picker. */}
@@ -629,7 +629,7 @@ describe("AgentCreatePanel", () => {
       "true",
     );
     expect(screen.getByTestId("project-picker")).toHaveTextContent("Project proj-1");
-    expect(screen.getByTestId("priority-picker")).toHaveTextContent("Priority high");
+    expect(screen.getByTestId("priority-picker")).toHaveTextContent("Priority important_not_urgent");
     expect(screen.getByTestId("due-date-picker")).toHaveTextContent("Due date 2026-08-01");
   });
 

@@ -73,7 +73,10 @@ func submitReviewVerdict(t *testing.T, issueID, agentID, verdict string, finding
 	req = withURLParam(req, "id", issueID)
 	req.Header.Set("X-Actor-Source", "task_token")
 	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", "00000000-0000-0000-0000-000000000001")
+	var taskID string
+	dbfx.QueryRow(t, `SELECT id::text FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2 ORDER BY created_at DESC LIMIT 1`, issueID, agentID).Scan(&taskID)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status='running',started_at=now() WHERE id=$1`, taskID)
+	req.Header.Set("X-Task-ID", taskID)
 	req = withChatTestWorkspaceCtx(t, req)
 	w := httptest.NewRecorder()
 	testHandler.SubmitIssueReviewVerdict(w, req)
@@ -239,5 +242,24 @@ func TestReviewStalledStopsAutomation(t *testing.T) {
 	}
 	if !strings.Contains(content, "mention://member/"+testUserID) {
 		t.Fatalf("stop comment does not mention the workspace owner: %s", content)
+	}
+}
+
+func TestReviewOldExecutionCannotSubmitForNewRound(t *testing.T) {
+	reviewer := enableReviewSettings(t, "")
+	issue := dbfx.Issue(t, "review stale execution", testutil.Cols{"status": "todo"})
+	if response := moveIssueTo(t, issue, "in_review"); response.Code != 200 {
+		t.Fatal(response.Body.String())
+	}
+	old := dbfx.Task(t, reviewer, testutil.Cols{"issue_id": issue, "runtime_id": handlerTestRuntimeID(t), "status": "running", "created_at": testutil.Raw("now()-interval '1 minute'")})
+	req := withURLParam(newRequest("POST", "/review-verdict", map[string]any{"verdict": "pass"}), "id", issue)
+	req.Header.Set("X-Actor-Source", "task_token")
+	req.Header.Set("X-Agent-ID", reviewer)
+	req.Header.Set("X-Task-ID", old)
+	testutil.Call(t, testHandler.SubmitIssueReviewVerdict, withChatTestWorkspaceCtx(t, req)).Want(409)
+	var state string
+	dbfx.QueryRow(t, `SELECT state FROM issue_review WHERE issue_id=$1`, issue).Scan(&state)
+	if state != review.StateDispatched {
+		t.Fatalf("旧执行改变了当前审查状态: %s", state)
 	}
 }
