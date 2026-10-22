@@ -48,7 +48,9 @@ class ReleaseTests(unittest.TestCase):
             (current/'server/bin/server').write_text('compiled server')
             (current/'apps/web/server.js').write_text('compiled web')
             inputs={key:r.hashlib.sha256().hexdigest() for key in ('go','web')}
-            r.write(current/'release.json',{'inputs':inputs,'files':r.checksums(current)})
+            # 复用还要求注入的版本串一致；这里 source 没有 build-version.sh，
+            # build_version 会退回提交哈希前 12 位，与实际构建时的值保持一致。
+            r.write(current/'release.json',{'inputs':inputs,'files':r.checksums(current),'version':'a'*12})
             with patch.object(r,'RUN',root/'state'), patch.object(r,'checked_source',return_value=(source,'a'*40)), patch.object(r,'source_digest',return_value=('b'*64,[])):
                 r.write(r.meta_path('int'),{'release_dir':str(current)})
                 first=r.build(source,root/'first'); second=r.build(source,root/'second')
@@ -189,5 +191,39 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(restored['release_id'],'old');self.assertEqual(restored['pids']['daemon'],33)
                 self.assertEqual(r.read(r.config_path('prod')),{'config':'unchanged'})
             finally:r.RUN=original
+
+    def test_reuse_requires_the_same_injected_version(self):
+        # 源码没变但注入的版本串变了（例如上一轮是用裸哈希规则构建的），必须重新
+        # 编译：否则候选目录里躺着的是没有修复的二进制，版本门槛依旧把它当旧运行时。
+        previous={'version':'v0.4.37-0-g9283f784db88','files':{'server/bin/multica':'sum'}}
+        files={'server/bin/multica':'sum'}
+        self.assertTrue(r.reusable_build(previous,files,'v0.4.37-0-g9283f784db88'))
+        self.assertFalse(r.reusable_build(previous,files,'v0.4.38-0-g9283f784db88'))
+        self.assertFalse(r.reusable_build({'version':'v0.4.37-0-g9283f784db88','files':{'server/bin/multica':'other'}},files,'v0.4.37-0-g9283f784db88'))
+
+    def test_build_version_rejects_bare_commit_hash(self):
+        # 裸提交哈希是这次线上问题的形态：daemon 上报它以后，前端和服务端都判不出
+        # 新旧，交接说明被当成旧运行时、快速创建被 422 拒绝。构建阶段就该失败。
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d);(source/'scripts').mkdir()
+            (source/'scripts/build-version.sh').write_text('')
+            with patch.object(r,'output',return_value='9283f784db88'):
+                with self.assertRaisesRegex(RuntimeError,'不可被版本门槛解析'):
+                    r.build_version(source,'9283f784db8872c7d5f83577e832bd84f131cfad')
+
+    def test_build_version_accepts_forms_the_gates_can_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d);(source/'scripts').mkdir()
+            (source/'scripts/build-version.sh').write_text('')
+            for version in ('v0.4.37','v0.4.37-0-g9283f784db88','0.4.37-12-g9283f784-dirty'):
+                with patch.object(r,'output',return_value=version):
+                    self.assertEqual(r.build_version(source,'9'*40),version)
+
+    def test_build_version_falls_back_to_commit_without_helper(self):
+        # 发布器可能对着没有 build-version.sh 的更早任务分支构建；此时行为与改动前一致。
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(r,'output') as output:
+                self.assertEqual(r.build_version(Path(d),'9'*40),'9'*12)
+                output.assert_not_called()
 
 if __name__=='__main__':unittest.main()
