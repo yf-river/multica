@@ -51,6 +51,18 @@ func (s Store) Claim(ctx context.Context, workspace, delivery, token, source str
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, err
 	}
+	// 已完成构建的交付按进入等待队列的时间领取，构建耗时不占槽位。
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('verification-slot-claim',0))`); err != nil {
+		return Lease{}, err
+	}
+	var first string
+	err = tx.QueryRow(ctx, `SELECT d.id::text FROM issue_delivery d JOIN LATERAL (SELECT stage,created_at FROM verification_event e WHERE e.delivery_id=d.id ORDER BY created_at DESC LIMIT 1) e ON true WHERE d.phase='testing' AND e.stage='waiting_slot' AND NOT EXISTS(SELECT 1 FROM verification_slot s WHERE s.delivery_id=d.id) ORDER BY e.created_at,d.created_at LIMIT 1`).Scan(&first)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Lease{}, err
+	}
+	if err == nil && first != delivery {
+		return Lease{}, ErrBusy
+	}
 	err = tx.QueryRow(ctx, `UPDATE verification_slot SET state='preparing',generation=generation+1,workspace_id=$1,delivery_id=$2,worker_token=$3,source_commit=$4,candidate_id='',error='',lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE name=(SELECT name FROM verification_slot WHERE enabled AND state='idle' ORDER BY name FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING name,generation,state`, workspace, delivery, token, source).Scan(&l.Name, &l.Generation, &l.State)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, ErrBusy

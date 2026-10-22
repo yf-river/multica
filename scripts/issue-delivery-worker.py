@@ -224,7 +224,7 @@ class Worker:
                     if not d or d['phase']!='testing':break
                     if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
                     attempt=d.get('verification_run') or {}
-                    if attempt.get('settled') and attempt.get('status') in ('failed','cancelled','completed') and not d['acceptance_submitted']:
+                    if attempt.get('settled') and attempt.get('status') in ('failed','cancelled','blocked','completed') and not d['acceptance_submitted']:
                         self.advance(d,'fail',error=attempt.get('error') or '验收执行已结束，但没有提交通过证据')
                         break
                     if d['acceptance_submitted']:

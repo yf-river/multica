@@ -9,6 +9,32 @@ import (
 	"github.com/multica-ai/multica/server/internal/verification"
 )
 
+// ConfigureVerificationSlot 允许人工管理员启停调度；停用不打断已有验收。
+func (h *Handler) ConfigureVerificationSlot(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.deliveryOperator(w, r); !ok {
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil || body.Enabled == nil {
+		writeError(w, 400, "缺少槽位名称或启用状态")
+		return
+	}
+	if body.Name != "verify-1" && body.Name != "verify-2" && body.Name != "verify-3" {
+		writeError(w, 400, "未知验收槽位")
+		return
+	}
+	var state string
+	err := h.DB.QueryRow(r.Context(), `INSERT INTO verification_slot(name,enabled) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=now() RETURNING state`, body.Name, *body.Enabled).Scan(&state)
+	if err != nil {
+		writeError(w, 500, "设置验收槽位失败")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"name": body.Name, "enabled": *body.Enabled, "state": state})
+}
+
 // AdvanceVerificationSlot 供外部交付器管理占用；工作区身份来自认证上下文。
 func (h *Handler) AdvanceVerificationSlot(w http.ResponseWriter, r *http.Request) {
 	ws, ok := h.deliveryOperator(w, r)

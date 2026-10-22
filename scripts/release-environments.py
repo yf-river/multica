@@ -200,7 +200,7 @@ def build(source, target):
             run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs'):
         script=source/'scripts'/name
         if script.exists():(operations/name).write_bytes(script.read_bytes())
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
@@ -668,7 +668,7 @@ def build_verification(source, delivery_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', delivery_id):
         raise RuntimeError('非法交付编号')
     source, sha = checked_source(source)
-    target = RUN/'verification-builds'/delivery_id/sha
+    target = RUN/'verification-builds'/'commits'/sha
     with lock('verification-build', wait=True):
         if (target/'release.json').exists():
             manifest = read(target/'release.json')

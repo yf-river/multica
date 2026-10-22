@@ -57,7 +57,7 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 			t.Error(e)
 		}
 	})
-	for _, pattern := range []string{"542_*.up.sql", "543_*.up.sql", "544_*.up.sql", "545_*.up.sql", "546_*.up.sql", "547_*.up.sql", "548_*.up.sql", "549_*.up.sql", "567_*.up.sql", "568_*.up.sql", "569_*.up.sql"} {
+	for _, pattern := range []string{"542_*.up.sql", "543_*.up.sql", "544_*.up.sql", "545_*.up.sql", "546_*.up.sql", "547_*.up.sql", "548_*.up.sql", "549_*.up.sql", "571_*.up.sql", "572_*.up.sql", "573_*.up.sql"} {
 		names, _ := filepath.Glob("../../migrations/" + pattern)
 		if len(names) != 1 {
 			t.Fatal(pattern)
