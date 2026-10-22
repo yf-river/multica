@@ -97,7 +97,31 @@ class Worker:
     def finish_publication(self,d):
         path=self.publication_path(d)
         if path.exists():
+            lease=r.read(path);current=self.api('delivery-queue/publication')
+            if (current.get('state')=='idle' and current.get('generation',0)>=lease.get('generation',1)) or (current.get('delivery_id')!=d['id'] and current.get('generation',0)>lease.get('generation',0)):
+                path.unlink();return
             self.publication(d,'check');self.publication(d,'release');path.unlink()
+    def recover_finished_publications(self,rows):
+        # 业务阶段提交和本地清理之间可能重启；持久占用必须在领取下一项前收尾。
+        records={d['id']:d for d in rows}
+        for path in (r.RUN/'publication-leases').glob('*.json'):
+            identity=path.stem
+            if identity not in records:
+                records.update({d['id']:d for d in self.api('delivery-queue?current='+identity)})
+            d=records.get(identity)
+            if not d:raise r.RecoveryRequired('发布占用对应的交付记录缺失')
+            finished=d['phase'] in ('published','cancelled','needs_changes','approved') or (d['phase']=='awaiting_review' and not d.get('plan_snapshot',{}).get('authorization_pending'))
+            if not finished:continue
+            c=self.own_candidate(d)
+            if c:
+                if c['status'] not in ('verifying','accepted','released','succeeded','failed'):
+                    raise r.RecoveryRequired('交付已结束但环境切换尚未确认，保留发布占用')
+                request=r.request_path(c['id'])
+                if request.exists() and r.read(request).get('status') in ('queued','publishing'):
+                    raise r.RecoveryRequired('生产切换仍在执行，保留发布占用')
+                for env in ('int','prod'):r.check_process_ownership(env,r.read(r.meta_path(env)))
+                if c['status'] in ('verifying','accepted'):r.release_candidate(c['id'])
+            self.finish_publication(d)
     def prepare(self,d):
         with self.publication_guard(d) as (lease,fence):
             return self.prepare_owned(d,lease,fence)
@@ -330,6 +354,7 @@ class Worker:
             current=r.candidate() if r.candidate_path().exists() else None
             current_id=current.get('delivery_id') if current and current.get('status') not in ('released','succeeded','failed') else None
             rows=self.api('delivery-queue'+('?current='+current_id if current_id else ''))
+            self.recover_finished_publications(rows)
             if self.pool_enabled():
                 managed=self.pool_dispatch(rows,current_id)
             else:

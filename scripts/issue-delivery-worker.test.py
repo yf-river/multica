@@ -71,6 +71,35 @@ class DeliveryTests(unittest.TestCase):
         current={'id':'candidate','delivery_id':'one','status':'accepted'}
         with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'candidate_path',return_value=Path(__file__)),patch.object(r,'candidate',return_value=current),patch.object(worker,'api',return_value=[d]),patch.object(worker,'pin'),patch.object(r,'release_candidate') as release:
             worker.tick();release.assert_called_once_with('candidate')
+    def test_restart_finishes_lease_even_after_candidate_was_released(self):
+        import uuid
+        identity=str(uuid.uuid4());d=dict(id=identity,phase='cancelled')
+        worker=object.__new__(w.Worker)
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)):
+            path=worker.publication_path(d);path.parent.mkdir();path.write_text('{}')
+            with patch.object(worker,'api',return_value=[d]) as api,patch.object(worker,'own_candidate',return_value={'id':'candidate','status':'released'}),patch.object(r,'request_path',return_value=Path(folder)/'missing'),patch.object(r,'read',return_value={}),patch.object(r,'check_process_ownership'),patch.object(worker,'finish_publication') as finish:
+                worker.recover_finished_publications([])
+                api.assert_called_once_with('delivery-queue?current='+identity)
+                finish.assert_called_once_with(d)
+    def test_restart_keeps_lease_while_publication_is_still_running(self):
+        import uuid
+        identity=str(uuid.uuid4());d=dict(id=identity,phase='published')
+        worker=object.__new__(w.Worker)
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)):
+            path=worker.publication_path(d);path.parent.mkdir();path.write_text('{}')
+            request=Path(folder)/'request';request.write_text('{}')
+            with patch.object(worker,'own_candidate',return_value={'id':'candidate','status':'succeeded'}),patch.object(r,'request_path',return_value=request),patch.object(r,'read',return_value={'status':'publishing'}),patch.object(worker,'finish_publication') as finish:
+                with self.assertRaises(r.RecoveryRequired):worker.recover_finished_publications([d])
+                finish.assert_not_called()
+    def test_release_response_loss_only_removes_already_released_local_lease(self):
+        import uuid
+        d=dict(id=str(uuid.uuid4()))
+        worker=object.__new__(w.Worker)
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)):
+            path=worker.publication_path(d);path.parent.mkdir();path.write_text(json.dumps({'generation':3}))
+            with patch.object(worker,'api',return_value={'state':'idle','generation':3}),patch.object(worker,'publication') as publication:
+                worker.finish_publication(d)
+                self.assertFalse(path.exists());publication.assert_not_called()
     def test_verifying_candidate_is_not_remerged_on_resume(self):
         worker=object.__new__(w.Worker);worker.env='prod';d={'id':'one','source_commit':'a'*40}
         candidate={'id':'candidate','status':'verifying','commit':'a'*40,'source':'/fixture'}
