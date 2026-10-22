@@ -1,7 +1,7 @@
 // 待吸收页签：按状态/结论/范围/关键词筛选台账，勾选后只改标记。
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -41,6 +41,7 @@ export function PendingTab({
   const [verdict, setVerdict] = useState("");
   const [presence, setPresence] = useState("");
   const [q, setQ] = useState("");
+  const [queryInput, setQueryInput] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -51,6 +52,12 @@ export function PendingTab({
   const createTask = useCreateUpstreamAbsorptionTask();
   const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
   const canWrite = snapshot?.can_write ?? false;
+
+  // 1. 搜索按 300ms 防抖后再改查询键，避免逐键请求互相打断。
+  useEffect(() => {
+    const timer = setTimeout(() => setQ(queryInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [queryInput]);
 
   const toggle = (id: string) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -164,10 +171,10 @@ export function PendingTab({
         </select>
         <Input
           className="h-8 w-56"
-          value={q}
+          value={queryInput}
           placeholder={t(($) => $.page.filters.search)}
           aria-label={t(($) => $.page.filters.search)}
-          onChange={(e) => { setQ(e.target.value); setSelected([]); }}
+          onChange={(e) => { setQueryInput(e.target.value); setSelected([]); }}
         />
         {items.length > 0 ? (
           <label className="flex items-center gap-1.5 text-caption text-muted-foreground">

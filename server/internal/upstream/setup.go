@@ -271,6 +271,8 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 	return agentID, pilot, nil
 }
 
+// 修改 1. 上游把 410 租约过期写进了 setup.go 的 DailyPrompt，但本分支已把提示词收敛到
+// service.UpstreamSyncInstructions()（含同一条 410 说明），因此保留 upsertSchedule、丢弃重复的常量。
 // upsertSchedule 维护唯一的每日调度。reschedule=false 时保留仍在未来的下次运行时间，
 // 只有已过期或从未计算过才重新推到下一个整点。
 func upsertSchedule(ctx context.Context, tx pgx.Tx, pilot string, hour int, enabled, reschedule bool) error {
