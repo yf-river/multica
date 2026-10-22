@@ -33,6 +33,7 @@ import type { ChildProgress } from "./list-row";
 import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { IssueReviewBadge } from "./issue-review-badge";
 import { TAPDSourceBadge } from "./tapd-source-badge";
 import { CustomStatusChip, useIsCustomStatus } from "./custom-status-chip";
 import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
@@ -193,7 +194,10 @@ export const BoardCardContent = memo(function BoardCardContent({
           {priorityIconNode}
           <p className="text-caption text-muted-foreground truncate">{issue.identifier}</p>
         </div>
-        <IssueAgentActivityIndicator issueId={issue.id} />
+        <span className="flex shrink-0 items-center gap-1.5">
+          <IssueReviewBadge issue={issue} />
+          <IssueAgentActivityIndicator issueId={issue.id} />
+        </span>
       </div>
 
       {/* 第 2 行：标题 */}

@@ -1,4 +1,5 @@
 import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, type SupervisionEvidencePage, type SupervisionConfig, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback } from "../supervision/schema";
+import { reviewSettingsSchema, reviewInstructionsSchema, type ReviewSettings } from "../review/schema";
 import { TaskOutputPageSchema, TaskMessagePayloadSchema, type TaskOutputPage } from "./schemas";
 import { MealsSchema, mealWire, type MealsData, type MealCommand } from "../meals/schema";
 import { CookingListSchema, CookingDetailSchema, CookingCategoriesSchema, type CookingList, type CookingDetail, type CookingCategory } from "../cooking/schema";
@@ -789,6 +790,15 @@ export class ApiClient {
   }
   async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds"> & { investigation_enabled?: boolean }) {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/", { method: "PUT", body: JSON.stringify(config) }), supervisionSnapshotSchema, { endpoint: "PUT /api/supervision", sensitive: true, mayHaveCommitted: true });
+  }
+  async getReviewSettings() {
+    return parseOrThrow<ReviewSettings>(await this.fetch<unknown>("/api/review/settings"), reviewSettingsSchema, { endpoint: "GET /api/review/settings", sensitive: true });
+  }
+  async updateReviewSettings(config: { enabled: boolean; runtime_id?: string | null; model?: string | null; thinking_level?: string | null; instructions?: string | null }) {
+    return parseOrThrow<ReviewSettings>(await this.fetch<unknown>("/api/review/settings", { method: "PUT", body: JSON.stringify(config) }), reviewSettingsSchema, { endpoint: "PUT /api/review/settings", sensitive: true, mayHaveCommitted: true });
+  }
+  async getReviewInstructions() {
+    return parseOrThrow<{ instructions: string; version: string }>(await this.fetch<unknown>("/api/review/instructions"), reviewInstructionsSchema, { endpoint: "GET /api/review/instructions", sensitive: true });
   }
   async checkSupervision(body: { issue_id?: string; full?: boolean; stop?: boolean; retry_failed?: boolean }) {
     return this.fetch<{ scheduled?: boolean; stopped?: boolean }>("/api/supervision/check", { method: "POST", body: JSON.stringify(body) });

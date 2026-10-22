@@ -1661,12 +1661,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/delivery-plan/confirm", h.ConfirmIssuePlan)
 					r.Post("/delivery-plan/revoke-release", h.RevokeIssueReleaseAuthorization)
 					r.Post("/deliveries/{deliveryId}/action", h.ActIssueDelivery)
+					r.Post("/review-verdict", h.SubmitIssueReviewVerdict)
 				})
 			})
 
 			r.Get("/api/delivery-queue", h.ListDeliveryQueue)
 			r.Post("/api/delivery-queue/advance", h.AdvanceDelivery)
 			r.Get("/api/delivery-queue/{deliveryId}/authorization", h.CheckDeliveryAuthorization)
+
+			// 审核中列的审查设置：运行时、模型与提示词。
+			r.Route("/api/review", func(r chi.Router) {
+				r.Get("/settings", h.GetReviewSettings)
+				r.Put("/settings", h.UpdateReviewSettings)
+				r.Get("/instructions", h.GetReviewInstructions)
+			})
 
 			// 任务消息（面向用户，非 daemon 认证）
 			r.Route("/api/supervision", func(r chi.Router) {

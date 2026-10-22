@@ -868,5 +868,31 @@
       "pending_mcp_fetch": "等待读取",
       "unread": "尚未读取"
     }
+  },
+  "review": {
+    "settings": "审查设置",
+    "settings_description": "任务进入审核中后，先由审查员核对需求、代码与证据；通过才交给你确认。",
+    "loading": "正在读取审查设置…",
+    "saved": "审查设置已保存",
+    "enable": "启用自动审查",
+    "enable_hint": "关闭后，任务进入审核中不会自动派发审查。",
+    "runtime": "运行时",
+    "runtime_hint": "审查员在这台机器上读取代码、提交与测试结果。",
+    "runtime_placeholder": "选择运行时",
+    "model": "模型",
+    "model_default": "跟随运行时默认",
+    "thinking": "思考等级",
+    "thinking_default": "跟随运行时默认",
+    "instructions": "审查提示词",
+    "instructions_default_hint": "当前是内置默认提示词，会跟随平台更新。",
+    "instructions_custom_hint": "当前是自定义提示词，保存后按此执行。",
+    "restore_default": "恢复默认",
+    "policy": "打回与停止",
+    "policy_description": "必须改和质量问题自动打回并唤醒开发；上一轮问题在最新提交里原样未动，或累计 {{rounds}} 轮仍未通过，就停止自动返工，把分歧交给你。",
+    "save": "保存",
+    "saving": "保存中…",
+    "cancel": "取消",
+    "review_passed": "审查通过",
+    "review_passed_hint": "审查员已通过；任务仍在审核中，等你确认。"
   }
 }

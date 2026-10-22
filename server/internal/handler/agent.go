@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/review"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -988,6 +989,10 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
+		// 审查员由审核中列的审查设置托管，不属于可指派或可编辑的 Agent。
+		if a.SystemKey.Valid && a.SystemKey.String == review.SystemKey {
+			continue
+		}
 		targets := targetsByAgent[uuidToString(a.ID)]
 		if actorType == "member" {
 			if !memberAllowedToViewAgent(a, targets, actorID, member.Role) {
@@ -1645,6 +1650,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	existing, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
+		return
+	}
+	// 托管审查 Agent 的运行时/模型/提示词只在审核中列的审查设置里改。
+	if existing.SystemKey.Valid && existing.SystemKey.String == review.SystemKey {
+		writeError(w, http.StatusForbidden, "该 Agent 由审查设置托管，请到审核中列的审查设置中修改")
 		return
 	}
 	if !h.canManageAgent(w, r, existing) {

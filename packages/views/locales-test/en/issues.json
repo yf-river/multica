@@ -941,5 +941,31 @@
     "authorization_execute": "Execute plan",
     "authorization_revoke": "Revoke release authorization",
     "authorization_revoked": "Revoked"
+  },
+  "review": {
+    "settings": "Review settings",
+    "settings_description": "When a task enters review, a reviewer checks the requirement, code and evidence first; you confirm only after it passes.",
+    "loading": "Loading review settings…",
+    "saved": "Review settings saved",
+    "enable": "Enable automatic review",
+    "enable_hint": "When off, tasks entering review are not reviewed automatically.",
+    "runtime": "Runtime",
+    "runtime_hint": "The reviewer reads code, commits and test output on this machine.",
+    "runtime_placeholder": "Select a runtime",
+    "model": "Model",
+    "model_default": "Runtime default",
+    "thinking": "Thinking level",
+    "thinking_default": "Runtime default",
+    "instructions": "Review prompt",
+    "instructions_default_hint": "Using the built-in prompt; it follows platform updates.",
+    "instructions_custom_hint": "Using a custom prompt.",
+    "restore_default": "Restore default",
+    "policy": "Reject and stop",
+    "policy_description": "Blocking and quality issues are sent back automatically. If previous findings are untouched, or {{rounds}} rounds have passed without approval, automation stops and hands the disagreement to you.",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "review_passed": "Review passed",
+    "review_passed_hint": "The reviewer approved; the task is still in review for your confirmation."
   }
 }

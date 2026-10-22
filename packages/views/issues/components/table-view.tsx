@@ -158,6 +158,7 @@ import {
 import type { ChildProgress } from "./list-row";
 import { ListLoadMoreFooter } from "./list-load-more-footer";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { IssueReviewBadge } from "./issue-review-badge";
 
 // 足够覆盖典型视口的占位行数；虚拟化只挂载放得下的行，多铺几行零成本。
 const SKELETON_ROW_COUNT = 12;
@@ -727,6 +728,7 @@ export function InlineTitle({
         {row.issue.identifier}
       </span>
       <IssueAgentActivityIndicator issueId={row.issue.id} />
+      <IssueReviewBadge issue={row.issue} />
       {editing ? (
         <Input
           autoFocus

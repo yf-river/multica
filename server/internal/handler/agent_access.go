@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	"github.com/multica-ai/multica/server/internal/review"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -51,6 +52,10 @@ import (
 // （除非 actor 就是所有者）。对 public_to agent，workspace target 仍接收工作区
 // 内部的 agent/system 主体，但 member/team target 在没有匹配人类时失败关闭。
 func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType, actorID, originatorUserID, workspaceID string) bool {
+	// 托管审查 Agent 只接受服务端的审查派发，不能被成员 @、指派或聊天调用。
+	if agent.SystemKey.Valid && agent.SystemKey.String == review.SystemKey {
+		return false
+	}
 	allowed := h.invokeAgentDecision(ctx, agent, actorType, actorID, originatorUserID, workspaceID)
 	if !allowed && actorType != "member" && originatorUserID == "" {
 		// MUL-6490：线格式原因保持刻意通用的 invocation_not_allowed

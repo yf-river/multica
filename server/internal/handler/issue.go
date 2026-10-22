@@ -3070,6 +3070,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// 理解了 label_ids，从而跳过它旧的「创建后补挂标签」回退逻辑。
 	labelResponses := labelsToResponse(res.Labels)
 	resp.Labels = &labelResponses
+	// 直接创建在审核中的任务同样需要审查接手。
+	if issuestatus.Effective(r.Context(), h.Queries, issue.WorkspaceID, issue.Status) == issuestatus.InReview {
+		h.startReviewRound(r.Context(), issue)
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -3614,6 +3618,8 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// 先看「确为转入 + 有父级」再动作，失败也是尽力而为。
 	if statusChanged {
 		h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
+		// 任务进入审核中时交给审查 Agent 接手；只在类别变化时派发。
+		h.afterIssueStatusChangeForReview(r.Context(), prevIssue, issue)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -4322,6 +4328,10 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// 两边都解析成它们继承的 canonical 状态，这样把最后一个子任务移到「自定义的
 		// done/cancelled」上的批次仍然会走进关卡屏障。字面比较会让 childDoneCompleted 为空、
 		// 整个 notifyParentsOfBatchChildDone 被悄悄跳过。 (MUL-6243)
+		if statusChanged {
+			h.afterIssueStatusChangeForReview(r.Context(), prevIssue, issue)
+		}
+
 		if statusChanged && issue.ParentIssueID.Valid {
 			prevTerminal := isTerminalChildStatus(
 				issuestatus.Effective(r.Context(), h.Queries, prevIssue.WorkspaceID, prevIssue.Status))
