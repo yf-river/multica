@@ -63,7 +63,17 @@
     },
     "setup": {
       "hint": "No sync agent bound yet. Add one to run incremental sync daily.",
-      "copy_prompt": "Copy agent instructions"
+      "copy_prompt": "Copy agent instructions",
+      "runtime": "Runtime",
+      "runtime_hint": "Pick a connected machine to run the sync. Only runtimes usable for code tasks are listed.",
+      "runtime_empty": "No runtime available. Connect one on the Runtimes page first.",
+      "batch_size": "Commits per batch",
+      "instructions": "Built-in instructions",
+      "instructions_hint": "Published with the code; no agent-page editing needed.",
+      "save": "Save",
+      "saved": "Saved",
+      "no_agent": "No runtime selected yet",
+      "title": "Settings"
     }
   }
 }

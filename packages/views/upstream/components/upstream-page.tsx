@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GitMerge } from "lucide-react";
+import { GitMerge, Settings } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { upstreamSnapshotOptions } from "@multica/core/upstream/queries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
@@ -12,6 +12,8 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useT } from "../../i18n";
 import { PendingTab } from "./pending-tab";
 import { RunsTab } from "./runs-tab";
+import { UpstreamSettings } from "./settings-panel";
+import { Button } from "@multica/ui/components/ui/button";
 
 function shortSha(sha: string): string {
   return sha ? sha.slice(0, 8) : "";
@@ -21,6 +23,7 @@ export function UpstreamPage() {
   const { t } = useT("upstream");
   const wsId = useWorkspaceId();
   const [tab, setTab] = useState("pending");
+  const [showSettings, setShowSettings] = useState(false);
   const { data, isLoading } = useQuery(upstreamSnapshotOptions(wsId));
 
   const config = data?.config;
@@ -37,7 +40,12 @@ export function UpstreamPage() {
           </div>
           <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.page.tagline)}</p>
         </div>
-        <div className="shrink-0 text-right text-caption text-muted-foreground">
+        <div className="flex shrink-0 items-start gap-3">
+        <Button size="sm" variant="ghost" onClick={() => setShowSettings((v) => !v)}>
+          <Settings className="mr-1 h-3.5 w-3.5" />
+          {t(($) => $.page.setup.title)}
+        </Button>
+        <div className="text-right text-caption text-muted-foreground">
           {isLoading ? (
             <Skeleton className="h-4 w-32" />
           ) : (
@@ -53,6 +61,7 @@ export function UpstreamPage() {
             </>
           )}
         </div>
+        </div>
       </header>
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
@@ -66,6 +75,11 @@ export function UpstreamPage() {
           </TabsList>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          {showSettings ? (
+            <div className="mb-4">
+              <UpstreamSettings snapshot={data} />
+            </div>
+          ) : null}
           <TabsContent value="pending" className="mt-0">
             <PendingTab wsId={wsId} />
           </TabsContent>

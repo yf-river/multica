@@ -3222,6 +3222,7 @@ export type TaskOutputPage = z.output<typeof TaskOutputPageSchema>;
 // ─── 上游同步 ────────────────────────────────────────────────────────────
 export const UpstreamConfigSchema = z.object({
   upstream_url: z.string(), upstream_branch: z.string(), local_ref: z.string(),
+  runtime_id: z.string().default(""),
   agent_id: z.string().default(""), autopilot_id: z.string().default(""),
   batch_size: z.number(), sync_state: z.string(),
   bootstrap_base_sha: z.string(), cursor_sha: z.string(), head_sha: z.string(),
@@ -3229,7 +3230,7 @@ export const UpstreamConfigSchema = z.object({
 });
 export const UpstreamSnapshotSchema = z.object({
   config: UpstreamConfigSchema, pending: z.number(), adopted: z.number(),
-  active_run_id: z.string().default(""),
+  active_run_id: z.string().default(""), instructions: z.string().default(""),
 });
 export const UpstreamItemSchema = z.object({
   id: z.string(), run_id: z.string(), cluster_key: z.string(), title: z.string(),

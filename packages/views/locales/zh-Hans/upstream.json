@@ -63,7 +63,17 @@
     },
     "setup": {
       "hint": "还没绑定同步智能体，添加后可每天自动跑增量。",
-      "copy_prompt": "复制智能体设定"
+      "copy_prompt": "复制智能体设定",
+      "runtime": "运行时",
+      "runtime_hint": "选一台已连接的机器来跑同步，只列出可用于代码任务的运行时。",
+      "runtime_empty": "还没有可用运行时，先在「运行时」页面连接一台机器。",
+      "batch_size": "每批提交数",
+      "instructions": "内置提示词",
+      "instructions_hint": "这段说明随代码发布，不需要在智能体页面维护。",
+      "save": "保存",
+      "saved": "已保存",
+      "no_agent": "尚未选择运行时",
+      "title": "设置"
     }
   }
 }

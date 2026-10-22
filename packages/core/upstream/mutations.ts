@@ -15,3 +15,21 @@ export function useMarkUpstreamItems() {
     },
   });
 }
+
+export function useUpdateUpstreamConfig() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (body: {
+      upstream_url: string;
+      upstream_branch: string;
+      local_ref: string;
+      batch_size: number;
+      runtime_id?: string;
+    }) => api.updateUpstreamConfig(body),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: upstreamKeys.all(wsId) });
+    },
+  });
+}
+

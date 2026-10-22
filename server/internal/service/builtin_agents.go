@@ -29,3 +29,11 @@ func MikaDefaultInstructions(displayName string) string {
 	}
 	return strings.ReplaceAll(strings.TrimRight(mikaDefaultInstructions, "\n"), "{{AGENT_NAME}}", name)
 }
+
+//go:embed builtin_agents/upstream_sync/INSTRUCTIONS.md
+var upstreamSyncInstructions string
+
+// UpstreamSyncInstructions 是内置"上游观察员"的完整提示词。
+// 与 Mika 一样：只在创建/刷新执行体时写入数据库，之后以数据库为准。
+func UpstreamSyncInstructions() string { return upstreamSyncInstructions }
+

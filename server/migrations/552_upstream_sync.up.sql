@@ -1,8 +1,9 @@
 CREATE TABLE upstream_sync_config (
-    workspace_id uuid NOT NULL,
+    singleton smallint NOT NULL DEFAULT 1 CHECK (singleton = 1),
     upstream_url text NOT NULL DEFAULT 'https://github.com/multica-ai/multica.git',
     upstream_branch text NOT NULL DEFAULT 'main',
     local_ref text NOT NULL DEFAULT 'main',
+    runtime_id uuid,
     agent_id uuid,
     autopilot_id uuid,
     batch_size integer NOT NULL DEFAULT 200 CHECK (batch_size BETWEEN 1 AND 500),
@@ -12,12 +13,12 @@ CREATE TABLE upstream_sync_config (
     head_sha text NOT NULL DEFAULT '',
     last_run_at timestamptz,
     error text NOT NULL DEFAULT '',
+    created_by uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE upstream_sync_run (
     id uuid NOT NULL,
-    workspace_id uuid NOT NULL,
     mode text NOT NULL DEFAULT 'incremental' CHECK (mode IN ('bootstrap','incremental')),
     trigger_source text NOT NULL DEFAULT 'manual' CHECK (trigger_source IN ('manual','schedule','api','webhook')),
     task_id uuid,
@@ -41,7 +42,6 @@ CREATE TABLE upstream_sync_run (
 );
 CREATE TABLE upstream_sync_item (
     id uuid NOT NULL,
-    workspace_id uuid NOT NULL,
     run_id uuid NOT NULL,
     cluster_key text NOT NULL,
     title text NOT NULL DEFAULT '',
@@ -62,7 +62,6 @@ CREATE TABLE upstream_sync_item (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE upstream_sync_commit (
-    workspace_id uuid NOT NULL,
     commit_sha text NOT NULL,
     patch_id text NOT NULL DEFAULT '',
     item_id uuid,

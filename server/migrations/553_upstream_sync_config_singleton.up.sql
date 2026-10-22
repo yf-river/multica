@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY upstream_sync_config_singleton ON upstream_sync_config(singleton);
