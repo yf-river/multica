@@ -7,7 +7,7 @@ import (
 )
 
 func TestEnvironmentCookiesAndCSRF(t *testing.T) {
-	for _, env := range []string{"", "int", "prod"} {
+	for _, env := range []string{"", "int", "prod", "verify-1", "verify-2", "verify-3"} {
 		t.Run(env, func(t *testing.T) {
 			t.Setenv("MULTICA_ENV_ID", env)
 			if err := ValidateEnvironmentID(); err != nil {

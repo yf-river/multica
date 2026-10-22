@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -17,8 +16,8 @@ func TestServerHealthChecksSnapshotAndLaterMigrationsInRealDatabase(t *testing.T
 		t.Skip("requires explicit isolated readiness database")
 	}
 	u, err := url.Parse(raw)
-	if err != nil || !strings.HasPrefix(strings.TrimPrefix(u.Path, "/"), "upstream_fresh_") {
-		t.Fatal("readiness test requires an owned upstream_fresh_* database")
+	if err != nil || u.Hostname() != "127.0.0.1" || u.Path != "/verification_full_test" {
+		t.Fatal("readiness test requires isolated verification_full_test")
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, raw)
@@ -31,7 +30,7 @@ func TestServerHealthChecksSnapshotAndLaterMigrationsInRealDatabase(t *testing.T
 	if response, status := h.readiness(ctx); status != http.StatusOK {
 		t.Fatalf("snapshot plus deltas not ready: %d %+v", status, response)
 	}
-	const version = "566_task_trace_identity_compatibility"
+	const version = "573_verification_slot_delivery"
 	var applied time.Time
 	if err = pool.QueryRow(ctx, `SELECT applied_at FROM schema_migrations WHERE version=$1`, version).Scan(&applied); err != nil {
 		t.Fatal(err)

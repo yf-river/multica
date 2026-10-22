@@ -47,6 +47,7 @@ The active product is Web, Server, Daemon, PostgreSQL, and Agent Runtime.
 - 生产发布允许短暂维护。停止服务前核对环境身份、源码、产物和数据库结构；数据库变更要兼容恢复旧程序。启动或验收失败先安全恢复旧程序与配置，保留数据并报告。
 - 发布成功并完成真实浏览器验收后记录结果，任务等待用户最终确认，不自动标记 done。清理交付工作区和已合入临时分支；不默认创建 PR、标签或 GitHub Release。
 - 读 `docs/operations/environment-releases.md` 后选择环境。使用固定 int；仅用户明确要求时才允许 `MULTICA_LOCAL_DEV=1` 的独立环境。不得使用生产账号或数据作联调测试，不编辑已安装制品、不清库或重置数据。
+- 并行验收使用专属 `verify-1/2/3`，固定 `int` 负责最终集成，`prod` 只接收经过 int 和发布授权的候选。验收种子只从 int 只读导出并在导入时清理认证、外部凭据和租约；种子重置仅限专属验收库，入口和恢复边界见 `docs/operations/environment-releases.md`。
 - 明确的分析、仅本地修改、禁止部署等范围优先。Commit、push、数据库删除须有对应授权；确认包含具体提交和推送动作的计划可覆盖该任务，无需重复索取。
 
 ## State Rules

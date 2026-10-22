@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """固定 int 验证后更新 prod；Git 保存历史，运行目录仅在切换期间保留旧副本。"""
+import pwd
 import argparse, contextlib, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 
 ROOT = Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().parent.parent)).resolve()
 RUN = ROOT / '.run'
 ENVS = ('int', 'prod')
+VERIFICATION_ENVS = ('verify-1', 'verify-2', 'verify-3')
 
 class RecoveryRequired(RuntimeError):
     """自动恢复未完成，禁止后续更新覆盖恢复资料。"""
 
 
 def require_environment(env):
-    if env not in ENVS: raise RuntimeError(f'未知环境: {env}')
+    if env not in (*ENVS, *VERIFICATION_ENVS): raise RuntimeError(f'未知环境: {env}')
 
 def run(args, **kw):
     return subprocess.run([str(a) for a in args], check=True, **kw)
@@ -198,16 +200,20 @@ def build(source, target):
             run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs'):
         script=source/'scripts'/name
         if script.exists():(operations/name).write_bytes(script.read_bytes())
+    for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
+        destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
+        destination.write_bytes((source/'scripts'/name).read_bytes())
     if checked_source(source)[1] != sha or source_digest(source)[0] != digest:
         raise RuntimeError('构建期间源码变化，请重新联调')
     queries = []
     for file in sorted((source/'server/pkg/db/generated').glob('*.sql.go')):
         for name, sql in re.findall(r'^const (\w+) = `(.*?)`\n', file.read_text(), re.M | re.S):
             queries.append(dict(name=name, sql=sql.replace('` + "`" + `', '`')))
-    for file in (source/'server/internal/handler').glob('issue_delivery*.go'):
+    query_files = [*(source/'server/internal/handler').glob('issue_delivery*.go'), *(source/'server/internal/handler').glob('verification_slot.go'), *(source/'server/internal/verification').glob('slots.go')]
+    for file in query_files:
         for sql in re.findall(r'`([^`]+)`',file.read_text()):
             if re.match(r'^\s*(SELECT|INSERT|UPDATE|DELETE|WITH)\b',sql) and not sql.rstrip().endswith('FROM'):
                 queries.append(dict(name='delivery_'+str(len(queries)),sql=sql))
@@ -263,6 +269,49 @@ def owned_stop(pid, role, expected_cwd):
         if role=='web': os.kill(pid,signal.SIGKILL)
         else: raise RuntimeError(f'{role} 未完成退出，发布终止')
 
+def service_credentials(env):
+    identity = env.get('MULTICA_ENV_ID', '')
+    if identity not in VERIFICATION_ENVS:
+        return {}
+    name = env.get('MULTICA_SERVICE_USER', '')
+    if name not in (f'multica-{identity}-app', f'multica-{identity}-agent'):
+        raise RuntimeError('验收服务缺少专用执行身份')
+    account = pwd.getpwnam(name)
+    if account.pw_uid == 0 or account.pw_gid == 0:
+        raise RuntimeError('验收服务不能使用 root 身份')
+    return dict(user=account.pw_uid, group=account.pw_gid, extra_groups=[])
+
+
+def validate_verification_config(env, cfg):
+    if env not in VERIFICATION_ENVS:
+        return
+    for role in ('server','web','daemon'):
+        expected = f'multica-{env}-'+('agent' if role == 'daemon' else 'app')
+        if cfg[role].get('MULTICA_ENV_ID') != env or cfg[role].get('MULTICA_SERVICE_USER') != expected:
+            raise RuntimeError('验收环境执行身份不匹配')
+        service_credentials(cfg[role])
+    database = urllib.parse.urlparse(cfg['server']['DATABASE_URL'])
+    if database.scheme not in ('postgres', 'postgresql') or not database.hostname or not database.username or not database.path.strip('/'):
+        raise RuntimeError('验收数据库必须使用明确实例、账号和库名')
+    if database.username != env.replace('-', '_') or database.path != '/multica_'+env.replace('-', '_'):
+        raise RuntimeError('验收数据库不属于登记槽位')
+    for other in (*ENVS, *VERIFICATION_ENVS):
+        if other == env or not config_path(other).exists():
+            continue
+        other_cfg = read(config_path(other))
+        if cfg['server']['JWT_SECRET'] == other_cfg['server']['JWT_SECRET']:
+            raise RuntimeError('验收环境不能共享认证密钥')
+        own_ports = {cfg[r][k] for r,k in [('server','PORT'),('server','PPROF_PORT'),('web','PORT')]}
+        other_ports = {other_cfg[r][k] for r,k in [('server','PORT'),('server','PPROF_PORT'),('web','PORT')]}
+        if own_ports & other_ports or len(own_ports) != 3:
+            raise RuntimeError('验收环境端口冲突')
+        for role, key in [('server','LOCAL_UPLOAD_DIR'),('daemon','MULTICA_ENV_WRITABLE_ROOT'),('daemon','HOME')]:
+            own = Path(cfg[role][key]).resolve()
+            foreign = Path(other_cfg[role][key]).resolve()
+            if own == foreign or own in foreign.parents or foreign in own.parents:
+                raise RuntimeError('验收环境目录重叠')
+
+
 def start(cmd,cwd,env,log):
     # 服务已停止后才整理日志，避免移动仍被写入的文件。
     logfile=Path(log)
@@ -271,7 +320,7 @@ def start(cmd,cwd,env,log):
             stream.seek(-16*1024*1024,2); tail=stream.read()
         logfile.write_bytes(tail)
     with open(log,'ab') as f:
-        p=subprocess.Popen([str(x) for x in cmd],cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=f,stderr=f,start_new_session=True)
+        p=subprocess.Popen([str(x) for x in cmd],cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=f,stderr=f,start_new_session=True,**service_credentials(env))
     return p.pid
 
 def drain(env,m,timeout=900):
@@ -374,7 +423,7 @@ def launch(env, release, cfg, m):
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
     # 以 CLI 管理的 profile 启动；PID 来自健康端点，不猜测子进程。
-    run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=cfg['daemon'],stdout=subprocess.DEVNULL)
+    run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=cfg['daemon'],stdout=subprocess.DEVNULL,**service_credentials(cfg['daemon']))
     h=ready(health_url(env)+'/health')
     if h['profile']!=m['daemon_profile']: raise RuntimeError('Daemon profile 不匹配')
     result['daemon']=h['pid']
@@ -410,6 +459,7 @@ def deploy(env, release, timeout=900):
     if any(actual.get(k) != v for k,v in manifest['files'].items()): raise RuntimeError('运行文件校验失败')
     with lock(env):
         cfg=read(config_path(env)); m=read(meta_path(env))
+        validate_verification_config(env, cfg)
         check_process_ownership(env,m)
         isolation_check(config_only=True)
         check_live_environment(env, m, cfg)
@@ -484,7 +534,7 @@ def isolation_check(config_only=False):
 
 def verify_browser(env='prod'):
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
-    run(['node',ROOT/'scripts/verify-release-browser.mjs'],cwd=ROOT,env=child_env)
+    run(['node',Path(__file__).with_name('verify-release-browser.mjs')],cwd=ROOT,env=child_env)
 
 def restore(env, timeout=900):
     require_environment(env)
@@ -539,11 +589,10 @@ def publish(env, directory, timeout=900):
         verify_browser(env)
         verify_logs(env)
         operations=Path(directory)/'operations'
-        if (operations/'issue-delivery-worker.py').exists():
+        if env in ENVS and (operations/'issue-delivery-worker.py').exists():
             bundle=RUN/'publisher'/('activate-delivery-'+env)
             bundle.mkdir(parents=True,exist_ok=True)
-            for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py'):
-                (bundle/name).write_bytes((operations/name).read_bytes())
+            copy_tree(operations,bundle)
             run([sys.executable,bundle/'issue-delivery-worker.py','--env',env,'--install'],env={**os.environ,'MULTICA_RELEASE_ROOT':str(ROOT)})
     except Exception:
         try:
@@ -552,12 +601,40 @@ def publish(env, directory, timeout=900):
             raise RecoveryRequired(f'{env} 验收失败且恢复未完成: {recovery_error}') from recovery_error
         raise
 
-def candidate_path(): return RUN/'candidate.json'
+def candidate_path(env='int'):
+    if env not in ('int', *VERIFICATION_ENVS):
+        raise RuntimeError('非法验收环境')
+    # 旧 int 记录仍由原入口读取，活动交付不因升级丢失。
+    return RUN/'candidate.json' if env == 'int' else RUN/'candidates'/env/'current.json'
 
-def candidate(version=None):
-    record=read(candidate_path())
-    if version and record['id'] != version: raise RuntimeError('int 已由其他候选占用')
+
+def candidate_record_path(version):
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+', version):
+        raise RuntimeError('非法候选编号')
+    return RUN/'candidates'/'records'/f'{version}.json'
+
+
+def save_candidate(record):
+    env = record.get('environment', 'int')
+    target = candidate_path(env)
+    # 调用者持有该环境的候选锁；历史记录先保存，当前引用随后原子替换。
+    write(candidate_record_path(record['id']), record, True)
+    write(target, record, True)
+
+
+def candidate(version=None, env='int'):
+    record=read(candidate_path(env))
+    if record.get('environment', 'int') != env:
+        raise RuntimeError('候选环境与登记不一致')
+    if version and record['id'] != version:
+        raise RuntimeError('验收环境已由其他候选占用')
     return record
+
+
+def candidate_lock(env):
+    candidate_path(env)
+    # int 仍与已有生产发布器共用锁；任务验收槽位使用独立锁。
+    return 'publisher' if env == 'int' else 'candidate-'+env
 
 def prepare_int(source, timeout=900, delivery=None):
     if os.environ.get('MULTICA_TASK_ID') and os.environ.get('MULTICA_SERVER_URL','').rstrip('/') == read(meta_path('int'))['backend_url'].rstrip('/'):
@@ -576,7 +653,7 @@ def prepare_int(source, timeout=900, delivery=None):
                         task_id=os.environ.get('MULTICA_TASK_ID',''), server_url=os.environ.get('MULTICA_SERVER_URL',''),
                         workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''),publisher_pid=os.getpid(),previous_int_release=read(meta_path('int'))['release_id'])
             if delivery:record.update(delivery)
-            write(candidate_path(), record, True)
+            save_candidate(record)
             try:
                 directory=idle_slot('int')
                 manifest=build(source, directory)
@@ -587,13 +664,65 @@ def prepare_int(source, timeout=900, delivery=None):
             except Exception as error:
                 record.update(status='recovery_required' if isinstance(error,RecoveryRequired) else 'failed', error=str(error))
                 raise
-            finally: write(candidate_path(), record, True)
+            finally: save_candidate(record)
             print(json.dumps(record,ensure_ascii=False));return record
     except BlockingIOError:
         raise RuntimeError('其他候选正在构建或发布；结束当前运行后重试') from None
 
+def build_verification(source, delivery_id):
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+', delivery_id):
+        raise RuntimeError('非法交付编号')
+    source, sha = checked_source(source)
+    target = RUN/'verification-builds'/'commits'/sha
+    with lock('verification-build', wait=True):
+        if (target/'release.json').exists():
+            manifest = read(target/'release.json')
+            if manifest['source_commit'] != sha or checksums(target) != manifest['files']:
+                raise RuntimeError('验收构建产物身份不匹配')
+            return target
+        if target.exists():
+            assert_unused(target)
+            shutil.rmtree(target)
+        build(source, target)
+    return target
+
+
+def prepare_verification(source, artifact, lease):
+    env = lease['name']
+    if env not in VERIFICATION_ENVS:
+        raise RuntimeError('非法任务验收槽位')
+    with lock(candidate_lock(env)):
+        active = candidate(env=env) if candidate_path(env).exists() else None
+        if active and active['status'] not in ('released','failed','succeeded'):
+            raise RuntimeError('验收槽位仍被候选占用')
+        source, sha = checked_source(source)
+        manifest = read(Path(artifact)/'release.json')
+        if manifest['source_commit'] != sha or manifest['files'] != checksums(artifact):
+            raise RuntimeError('构建产物与候选提交不匹配')
+        record = dict(id=sha+'-'+str(time.time_ns()), environment=env,
+                      generation=lease['generation'], delivery_id=lease['delivery_id'],
+                      commit=sha, source=str(source), status='building',
+                      git_common=output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),
+                      branch=output(['git','symbolic-ref','HEAD'],cwd=source),
+                      previous_release=read(meta_path(env))['release_id'])
+        save_candidate(record)
+        try:
+            target = idle_slot(env)
+            copy_tree(artifact, target)
+            publish(env, target)
+            record.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],deployed_at=read(meta_path(env))['deployed_at'])
+        except Exception as error:
+            record.update(status='recovery_required',error=str(error))
+            raise
+        finally:
+            save_candidate(record)
+        return record
+
+
 def validate_candidate(record, allow_finalized=False):
-    current=read(meta_path('int'))
+    env = record.get('environment', 'int')
+    candidate_path(env)
+    current=read(meta_path(env))
     if any(current.get(k) != record.get(k) for k in ('release_id','source_digest','deployed_at')):
         raise RuntimeError('int 在验收后发生变化，必须重新验证')
     if Path(record['source']).exists():
@@ -610,9 +739,9 @@ def validate_candidate(record, allow_finalized=False):
         raise RuntimeError('候选未包含最新生产提交')
     return current
 
-def accept(version, evidence_file):
-    with lock('publisher', wait=True):
-        record=candidate(version)
+def accept(version, evidence_file, env='int'):
+    with lock(candidate_lock(env), wait=True):
+        record=candidate(version, env)
         if record['status'] != 'verifying': raise RuntimeError('候选不在功能验证阶段')
         validate_candidate(record)
         evidence=read(evidence_file)
@@ -621,11 +750,11 @@ def accept(version, evidence_file):
         if any(not isinstance(c,dict) or not c.get('name') or c.get('status')!='passed' or not c.get('evidence') for c in evidence['checks']):
             raise RuntimeError('每项功能检查需要 name、passed 状态和实际 evidence')
         record.update(status='accepted', acceptance=evidence)
-        write(candidate_path(), record, True)
+        save_candidate(record)
 
-def release_candidate(version):
-    with lock('publisher', wait=True):
-        record=candidate(version)
+def release_candidate(version, env='int'):
+    with lock(candidate_lock(env), wait=True):
+        record=candidate(version, env)
         if record['status'] in ('queued','publishing'): raise RuntimeError('生产更新已提交，不能释放')
         if record['status']=='recovery_required':
             isolation_check()
@@ -633,13 +762,15 @@ def release_candidate(version):
             current=read(meta_path('prod'))
             if published['commit'] != current['commit'] or published['source_digest'] != current['source_digest']:
                 raise RuntimeError('生产尚未恢复到已发布基线')
-        record.update(status='released');write(candidate_path(),record,True)
+        record.update(status='released');save_candidate(record)
 
 def request_path(request_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',request_id): raise RuntimeError('非法请求编号')
     return RUN/'publish-requests'/f'{request_id}.json'
 
 def check_delivery_approval(record):
+    if record.get('environment', 'int') != 'int':
+        raise RuntimeError('任务验收候选不能直接发布生产，必须完成 int 集成验收')
     if not record.get('delivery_id') or record.get('delivery_env')!='prod':
         raise RuntimeError('生产更新需要原任务的交付审核记录，请在任务中确认生产发布')
     meta=read(meta_path('prod'));profile=read(meta['daemon_profile_path'])
@@ -675,12 +806,12 @@ def request_release(version,timeout=900):
         runner.parent.mkdir(parents=True,exist_ok=True)
         runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
         (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
-        write(target,record,True);write(candidate_path(),record,True)
+        write(target,record,True);save_candidate(record)
         try:
             run(['systemd-run','--quiet','--collect','--unit',record['unit'],'--property=Type=exec','--property=KillMode=process',
                  '--working-directory',ROOT,'--setenv=MULTICA_RELEASE_ROOT='+str(ROOT),sys.executable,runner,'worker',version])
         except Exception:
-            record.update(status='accepted');write(candidate_path(),record,True)
+            record.update(status='accepted');save_candidate(record)
             target.unlink();raise
         print(json.dumps(record,ensure_ascii=False));return record
 
@@ -780,18 +911,18 @@ def worker(request_id):
                 if current_record['status']!='queued': raise RuntimeError('候选已释放或更新不在队列中')
                 current=validate_candidate(record, allow_finalized=True)
                 check_delivery_approval(record)
-                record.update(status='publishing');write(target,record,True);write(candidate_path(),record,True)
+                record.update(status='publishing');write(target,record,True);save_candidate(record)
                 directory=idle_slot('prod')
                 copy_tree(Path(current['release_dir']),directory,excludes=('**/.next/cache/***',))
                 publish('prod',directory,record['timeout'])
                 write(RUN/'published.json',{'commit':record['commit'],'source_digest':record['source_digest'],'candidate':request_id},True)
-                record.update(status='succeeded');write(target,record,True);write(candidate_path(),record,True)
+                record.update(status='succeeded');write(target,record,True);save_candidate(record)
                 finish_cleanup(record)
         except Exception as error:
             record.update(status='recovery_required' if isinstance(error,RecoveryRequired) else 'failed',error=str(error))
             write(target,record,True)
             with lock('publisher',wait=True):
-                if candidate_path().exists() and candidate()['id']==request_id: write(candidate_path(),record,True)
+                if candidate_path().exists() and candidate()['id']==request_id: save_candidate(record)
             try: report_result(record)
             except Exception as report_error:
                 record['report_error']=str(report_error);write(target,record,True)
@@ -809,6 +940,10 @@ def verify_logs(env='prod'):
     m=read(meta_path(env));results={}
     for role,path in m['log_paths'].items():
         p=Path(path)
+        # Daemon 使用独立 profile 日志，标准发布日志路径可能没有文件；缺失本身不是致命日志。
+        if not p.exists():
+            results[role]={'exists':False,'fatal_errors':0}
+            continue
         with p.open('rb') as f:
             f.seek(m.get('log_offsets',{}).get(role,0));data=f.read().decode(errors='replace')
         errors=[line for line in data.splitlines() if re.search(r'panic:|fatal error:|UnhandledPromiseRejection|EADDRINUSE|Cannot find module',line)]

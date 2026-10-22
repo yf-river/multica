@@ -39,7 +39,7 @@ func (h *Handler) ListDeliveryQueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR d.id=NULLIF($2,'')::uuid) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND q.trigger_comment_id=CASE WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END ORDER BY q.created_at DESC LIMIT 1) AS verification_run,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR d.id=NULLIF($2,'')::uuid) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付队列失败")
 		return
@@ -138,6 +138,20 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token, "issue_id": issue})
 		return
 	}
+	// 池化交付的回执同时核对候选及有效占用；旧 int 交付没有槽位记录。
+	if body.Action == "prepared" || body.Action == "accepted" || body.Action == "notify" {
+		var valid bool
+		candidate := body.Candidate
+		err = tx.QueryRow(r.Context(), `SELECT NOT EXISTS(SELECT 1 FROM verification_slot WHERE delivery_id=$1) OR EXISTS(SELECT 1 FROM verification_slot s JOIN issue_delivery d ON d.id=s.delivery_id WHERE s.delivery_id=$1 AND s.workspace_id=$2 AND s.worker_token::text=$3 AND s.source_commit=$4 AND s.state='verifying' AND s.lease_expires_at>now() AND s.candidate_id=CASE WHEN $5='' THEN d.candidate_id ELSE $5 END)`, body.ID, ws, token, commit, candidate).Scan(&valid)
+		if err != nil {
+			writeError(w, 500, "核对验收占用失败")
+			return
+		}
+		if !valid {
+			writeError(w, 409, "验收槽位或候选已失效")
+			return
+		}
+	}
 	next := phase
 	switch body.Action {
 	case "claim":
@@ -167,8 +181,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	default:
 		if body.Action == "fail" && token == "" && (phase == "waiting_int" || phase == "approved") {
 			token = dbid.NewV7().String()
+			body.Token = token
 		}
-		if body.Action != "fail" && (token == "" || token != body.Token) {
+		if token == "" || token != body.Token {
 			writeError(w, 403, "发布器领取凭据已失效")
 			return
 		}
