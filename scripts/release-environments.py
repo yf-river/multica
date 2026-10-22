@@ -455,13 +455,18 @@ def release_task_window(env,directory):
     window=dict(id=str(uuid.uuid4()),daemon_id=h['daemon_id'],release_id=read(Path(directory)/'release.json')['id'],state='draining',publisher_pid=os.getpid(),publisher_started=process_identity(os.getpid()))
     write(path,window,True)
     try:
-        release_window_api(env,dict(window,action='begin'))
+        try:release_window_api(env,dict(window,action='begin'))
+        except Exception:
+            # begin 没成立时清掉本地意向：否则 finally 会去 resume 一个服务端不存在的窗口，
+            # 把"已有未完成窗口"这类真实原因掩盖成恢复失败。
+            path.unlink(missing_ok=True);raise
         yield
     finally:
-        try:resume_release_window(env)
-        except Exception as error:
-            window.update(error=str(error));write(path,window,True)
-            raise RecoveryRequired('发布暂停任务等待自动恢复：'+str(error)) from error
+        if path.exists():
+            try:resume_release_window(env)
+            except Exception as error:
+                window.update(error=str(error));write(path,window,True)
+                raise RecoveryRequired('发布暂停任务等待自动恢复：'+str(error)) from error
 
 def recover_release_windows():
     for env in (*ENVS,*VERIFICATION_ENVS):

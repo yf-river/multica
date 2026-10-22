@@ -162,6 +162,52 @@ func recordEvent(ctx context.Context, tx pgx.Tx, l Lease, stage, detail string) 
 	return err
 }
 
+// Reset 由管理员收回无法自愈的槽位：隔离态可直接收回，其他非空闲态必须等租约过期。
+// 只改槽位归属，不触碰交付记录，原交付再领取会拿到新代次而不是旧现场。
+func (s Store) Reset(ctx context.Context, name, actor, reason string) (Lease, error) {
+	if name != "verify-1" && name != "verify-2" && name != "verify-3" {
+		return Lease{}, fmt.Errorf("未知验收槽位")
+	}
+	if reason == "" {
+		return Lease{}, fmt.Errorf("缺少收回原因")
+	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return Lease{}, err
+	}
+	defer tx.Rollback(ctx)
+	var l Lease
+	var state string
+	var expired bool
+	err = tx.QueryRow(ctx, `SELECT state,COALESCE(workspace_id::text,''),COALESCE(delivery_id::text,''),COALESCE(worker_token::text,''),source_commit,candidate_id,generation,COALESCE(lease_expires_at<=now(),true) FROM verification_slot WHERE name=$1 FOR UPDATE`, name).Scan(&state, &l.Workspace, &l.Delivery, &l.Token, &l.Source, &l.Candidate, &l.Generation, &expired)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Lease{}, ErrStale
+	}
+	if err != nil {
+		return Lease{}, err
+	}
+	l.Name = name
+	l.State = state
+	if state == "idle" {
+		return l, tx.Commit(ctx)
+	}
+	if state != "quarantined" && !expired {
+		return Lease{}, ErrBusy
+	}
+	if _, err = tx.Exec(ctx, `UPDATE verification_slot SET state='idle',generation=generation+1,workspace_id=NULL,delivery_id=NULL,worker_token=NULL,source_commit='',candidate_id='',lease_expires_at=NULL,error='',updated_at=now() WHERE name=$1`, name); err != nil {
+		return Lease{}, err
+	}
+	l.State = "idle"
+	l.Generation++
+	// 事件表两列都是 NOT NULL；槽位行被手工清空归属时只能跳过审计写入。
+	if l.Workspace != "" && l.Delivery != "" {
+		if err = recordEvent(ctx, tx, l, "reset", actor+"："+reason); err != nil {
+			return Lease{}, err
+		}
+	}
+	return l, tx.Commit(ctx)
+}
+
 func (s Store) Progress(ctx context.Context, l Lease, stage string) error {
 	if stage != "building" && stage != "waiting_slot" {
 		return fmt.Errorf("非法构建阶段")

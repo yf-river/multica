@@ -8,6 +8,8 @@ r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
 class Busy(RuntimeError): pass
 
+class SlotWaitTimeout(RuntimeError): pass
+
 class Worker:
     def __init__(self,env):
         r.require_environment(env)
@@ -62,7 +64,9 @@ class Worker:
         if 'generation' not in lease:
             action='claim';r.write(path,lease,True)
         try:
-            result=self.api('delivery-queue/publication',dict(lease,action=action,snapshot=dict(source_commit=d['source_commit'])))
+            # 1. 接管过期占用要给出恢复依据：服务端只在原交付已不在活动阶段时放行。
+            evidence='发布器独占锁已取得、原占用已过期、原持有交付不在活动阶段' if action=='claim' else ''
+            result=self.api('delivery-queue/publication',dict(lease,action=action,recovery_evidence=evidence,snapshot=dict(source_commit=d['source_commit'])))
         except urllib.error.HTTPError as e:
             if e.code!=409:raise
             current=self.api('delivery-queue/publication')
@@ -295,10 +299,18 @@ class Worker:
                 else:
                     if d['phase'] not in ('waiting_int','testing'):return
                     if d['phase']=='waiting_int':self.advance(d,'claim')
-                    source=self.source(d,integrate=True)
-                    save('building')
-                    artifact=r.build_verification(source,delivery)
-                    save('waiting_slot',artifact=str(artifact))
+                    # 1. 等槽位超时退出后，下一轮直接复用已构建产物，避免每次空等都重新构建。
+                    reuse=job.get('stage')=='waiting_slot' and job.get('source_commit')==d['source_commit'] and bool(job.get('artifact')) and Path(job['artifact']).exists()
+                    if reuse:
+                        artifact=Path(job['artifact'])
+                        save('waiting_slot',artifact=str(artifact),source_commit=d['source_commit'])
+                    else:
+                        source=self.source(d,integrate=True)
+                        save('building',source_commit=d['source_commit'])
+                        artifact=r.build_verification(source,delivery)
+                        save('waiting_slot',artifact=str(artifact),source_commit=d['source_commit'])
+                    # 2. 等槽位必须有上限：槽位被隔离时无限等待会让这个单元长期占住并发名额。
+                    deadline=time.monotonic()+600
                     while lease is None:
                         d=refresh()
                         if not d or d['phase']!='testing':return
@@ -307,6 +319,11 @@ class Worker:
                         except urllib.error.HTTPError as e:
                             detail=json.loads(e.read().decode()) if e.code==409 else {}
                             if detail.get('error')!='没有可用验收槽位':raise
+                            if time.monotonic()>=deadline:
+                                # 超时只记录现场，进度回执失败不能把交付判成故障。
+                                try:save('waiting_slot',artifact=str(artifact),source_commit=d['source_commit'],timeout=True)
+                                except Exception:pass
+                                raise SlotWaitTimeout('等待验收槽位超过 10 分钟，交给下一轮续接')
                             time.sleep(5)
                     save('preparing',lease=lease,artifact=str(artifact))
                 def heartbeat():
@@ -341,6 +358,9 @@ class Worker:
                     time.sleep(5)
                 stopped.set();heartbeat_thread.join(timeout=25)
                 release(lease,c)
+            except SlotWaitTimeout:
+                # 3. 等槽位超时不是交付失败：保留构建产物与现场，交给下一轮重新排队。
+                stopped.set();return
             except Exception as e:
                 stopped.set()
                 if lease:
