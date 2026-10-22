@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { upstreamItemsOptions, type UpstreamItem } from "@multica/core/upstream/queries";
 import { useMarkUpstreamItems } from "@multica/core/upstream/mutations";
@@ -24,9 +24,9 @@ export function PendingTab({ wsId }: { wsId: string }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery(upstreamItemsOptions(wsId, { status, verdict, q }));
+  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery(upstreamItemsOptions(wsId, { status, verdict, q }));
   const mark = useMarkUpstreamItems();
-  const items = useMemo(() => data?.items ?? [], [data]);
+  const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
 
   const toggle = (id: string) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -88,8 +88,9 @@ export function PendingTab({ wsId }: { wsId: string }) {
         ))}
         <select
           className="h-8 rounded-md border border-input bg-background px-2 text-caption"
+          aria-label={t(($) => $.page.filters.any_verdict)}
           value={verdict}
-          onChange={(e) => setVerdict(e.target.value)}
+          onChange={(e) => { setVerdict(e.target.value); setSelected([]); }}
         >
           {VERDICT_FILTERS.map((value) => (
             <option key={value || "any"} value={value}>
@@ -101,10 +102,13 @@ export function PendingTab({ wsId }: { wsId: string }) {
           className="h-8 w-56"
           value={q}
           placeholder={t(($) => $.page.filters.search)}
-          onChange={(e) => setQ(e.target.value)}
+          aria-label={t(($) => $.page.filters.search)}
+          onChange={(e) => { setQ(e.target.value); setSelected([]); }}
         />
       </div>
 
+      {error ? <p role="alert" className="text-caption text-danger">{error.message}</p> : null}
+      {mark.isError ? <p role="alert" className="text-caption text-danger">{mark.error.message}</p> : null}
       {isLoading ? (
         <div className="space-y-2">
           <Skeleton className="h-20 w-full" />
@@ -138,8 +142,9 @@ export function PendingTab({ wsId }: { wsId: string }) {
         </ul>
       )}
 
+      {hasNextPage ? <Button size="sm" variant="ghost" disabled={isFetchingNextPage} onClick={() => void fetchNextPage()}>{t(($) => $.page.pending.load_more)}</Button> : null}
       {selected.length > 0 ? (
-        <div className="sticky bottom-3 flex items-center justify-between rounded-lg border border-surface-border bg-background px-3 py-2 shadow-sm">
+        <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-surface-border bg-background px-3 py-2 shadow-sm">
           <span className="text-caption text-muted-foreground">
             {t(($) => $.page.bulk.selected, { count: selected.length })}
           </span>
@@ -192,7 +197,7 @@ function ItemRow({
       <div className="flex items-start gap-3">
         <Checkbox className="mt-1" checked={checked} onCheckedChange={onToggle} aria-label={item.title} />
         <div className="min-w-0 flex-1">
-          <button type="button" className="flex w-full items-start gap-1.5 text-left" onClick={onExpand}>
+          <button type="button" className="flex w-full items-start gap-1.5 break-words text-left" aria-expanded={expanded} onClick={onExpand}>
             <ChevronRight className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`} />
             <span className="min-w-0">
               <span className="block text-body font-medium">{item.title}</span>
@@ -221,7 +226,7 @@ function ItemRow({
               {item.rationale ? (
                 <div>
                   <div className="text-caption font-medium text-muted-foreground">{rationaleLabel}</div>
-                  <p className="mt-0.5 text-caption">{item.rationale}</p>
+                  <p className="mt-0.5 break-words text-caption">{item.rationale}</p>
                 </div>
               ) : null}
               {item.paths.length > 0 ? (

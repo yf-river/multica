@@ -18,7 +18,7 @@ function formatTime(value: string | null): string {
 
 export function RunsTab({ wsId }: { wsId: string }) {
   const { t } = useT("upstream");
-  const { data, isLoading } = useQuery(upstreamRunsOptions(wsId));
+  const { data, isLoading, error } = useQuery(upstreamRunsOptions(wsId));
   const snapshot = useQuery(upstreamSnapshotOptions(wsId));
   const runs = data?.runs ?? [];
   const boundAgent = !!snapshot.data?.config.agent_id;
@@ -65,6 +65,7 @@ export function RunsTab({ wsId }: { wsId: string }) {
         </div>
       )}
 
+      {error ? <p role="alert" className="text-caption text-danger">{error.message}</p> : null}
       {isLoading ? (
         <div className="space-y-2">
           <Skeleton className="h-12 w-full" />
@@ -116,7 +117,7 @@ function RunRow({
   triggerLabel: string;
 }) {
   return (
-    <li className="flex items-start justify-between gap-3 px-3 py-2.5">
+    <li className="flex flex-wrap items-start justify-between gap-3 px-3 py-2.5">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge variant="outline">{modeLabel}</Badge>

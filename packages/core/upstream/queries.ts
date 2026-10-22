@@ -1,6 +1,6 @@
 // 上游同步的查询 key 与 query options。清单按筛选条件缓存，
 // 标记操作统一失效整个 upstream 前缀，避免跨页签状态不一致。
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 
 export const upstreamKeys = {
@@ -22,9 +22,11 @@ export function upstreamItemsOptions(
   params: { status?: string; verdict?: string; presence?: string; q?: string },
 ) {
   const key = JSON.stringify(params);
-  return queryOptions({
+  return infiniteQueryOptions({
     queryKey: upstreamKeys.items(wsId, key),
-    queryFn: () => api.listUpstreamItems({ ...params, limit: 100 }),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => api.listUpstreamItems({ ...params, limit: 100, offset: pageParam }),
+    getNextPageParam: (lastPage, pages) => lastPage.items.length === 100 ? pages.length * 100 : undefined,
   });
 }
 
