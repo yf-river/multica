@@ -28,7 +28,7 @@ func BuildManifest(ctx context.Context, mirror string, c Config, processed []str
 	if strings.HasPrefix(c.UpstreamURL, "-") || strings.HasPrefix(c.UpstreamBranch, "-") {
 		return m, fmt.Errorf("无效的上游配置")
 	}
-	if !fullSHA.MatchString(c.BootstrapBaseSHA) {
+	if c.BootstrapBaseSHA != "" && !fullSHA.MatchString(c.BootstrapBaseSHA) {
 		return m, fmt.Errorf("扫描基线不可用：请先配置有效的基线提交 SHA")
 	}
 	var err error
@@ -56,10 +56,26 @@ func BuildManifest(ctx context.Context, mirror string, c Config, processed []str
 		}
 	}
 	m.BaseSHA = c.BootstrapBaseSHA
+	if m.BaseSHA == "" {
+		// 首次扫描从上游自身的根提交建立起点，包含根提交，不依赖本地工作树。
+		roots, rootErr := gitOutput(ctx, mirror, "rev-list", "--max-parents=0", m.HeadSHA)
+		if rootErr != nil {
+			return m, rootErr
+		}
+		allRoots := strings.Fields(roots)
+		if len(allRoots) == 0 {
+			return m, fmt.Errorf("上游没有可用的扫描起点")
+		}
+		m.BaseSHA = allRoots[0]
+	}
 	if _, err = gitOutput(ctx, mirror, "merge-base", "--is-ancestor", m.BaseSHA, m.HeadSHA); err != nil {
 		return m, fmt.Errorf("原扫描起点已不属于当前上游历史")
 	}
-	all, err := gitOutput(ctx, mirror, "rev-list", "--reverse", "--topo-order", m.HeadSHA, "^"+m.BaseSHA)
+	args := []string{"rev-list", "--reverse", "--topo-order", m.HeadSHA}
+	if c.BootstrapBaseSHA != "" {
+		args = append(args, "^"+m.BaseSHA)
+	}
+	all, err := gitOutput(ctx, mirror, args...)
 	if err != nil {
 		return m, err
 	}

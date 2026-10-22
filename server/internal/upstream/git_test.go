@@ -49,6 +49,17 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	git(up, "commit", "-m", "same title")
 	git(up, "merge", "--no-ff", "topic", "-m", "merge feature")
 	cfg := Config{UpstreamURL: up, UpstreamBranch: "main", LocalRef: "origin/personal-studio-upstream", BootstrapBaseSHA: base, BatchSize: 2}
+	// 新安装没有本地仓库和扫描起点时，应自动覆盖包括根提交在内的上游历史。
+	fresh := cfg
+	fresh.BootstrapBaseSHA = ""
+	fresh.BatchSize = 100
+	initial, err := BuildManifest(ctx, filepath.Join(root, "initial-mirror"), fresh, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.BaseSHA != base || len(initial.Commits) != 4 || initial.Commits[0].SHA != base {
+		t.Fatalf("initial scan omitted upstream history: %+v", initial)
+	}
 	first, err := BuildManifest(ctx, mirror, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
