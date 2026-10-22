@@ -1297,6 +1297,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
+		r.Post("/tasks/{taskId}/release-pause-ack", h.AckReleasePause)
 
 		r.Post("/workspaces/{workspaceId}/issues/gc-check", h.BatchIssueGCCheck)
 		r.Get("/issues/{issueId}/gc-check", h.GetIssueGCCheck)
@@ -1655,6 +1656,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/pull-requests", h.LinkPullRequestToIssue)
 					r.Post("/merge-requests/create", h.CreateMergeRequestForIssue)
 					r.Post("/source-fetch", h.RecordIssueSourceFetch)
+					r.Get("/delivery-owner", h.ManageDeliveryOwner)
+					r.Post("/delivery-owner", h.ManageDeliveryOwner)
 					r.Get("/deliveries", h.GetIssueDeliveries)
 					r.Post("/deliveries", h.SubmitIssueDelivery)
 					r.Put("/delivery-plan", h.RegisterIssuePlan)
@@ -1664,6 +1667,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			r.Get("/api/delivery-queue/window", h.ReleaseWindow)
+			r.Post("/api/delivery-queue/window", h.ReleaseWindow)
+			r.Get("/api/delivery-queue/publication", h.PublicationLease)
+			r.Post("/api/delivery-queue/publication", h.PublicationLease)
 			r.Get("/api/delivery-queue", h.ListDeliveryQueue)
 			r.Post("/api/delivery-queue/advance", h.AdvanceDelivery)
 			r.Post("/api/delivery-queue/slots/advance", h.AdvanceVerificationSlot)

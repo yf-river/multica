@@ -183,7 +183,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_business_failure_restores_exact_previous_program(self):
         with patch.object(r,'deploy') as deploy, patch.object(r,'restore') as restore, patch.object(r,'verify_browser',side_effect=RuntimeError('bad page')):
-            with self.assertRaisesRegex(RuntimeError,'bad page'): r.publish('prod','new')
+            with self.assertRaisesRegex(RuntimeError,'bad page'): r.publish_in_window('prod','new')
             deploy.assert_called_once_with('prod','new',900)
             restore.assert_called_once_with('prod',900)
 

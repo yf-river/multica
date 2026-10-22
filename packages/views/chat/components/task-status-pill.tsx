@@ -156,6 +156,7 @@ function useResolveStage(): (
     // 用户能看到那是另一个兄弟任务，而不是挂死的 agent，从而决定取消是否值得。
     // 旧版服务端不传原因，所以裸文案必须仍然可用。
     const reason = waitReason?.trim();
+    if (status === "deferred" && reason) return { label: reason, static: true };
     if (decision.needsWaitReason && reason) {
       return {
         label: t(($) => $.status_pill.stages.waiting_local_directory_reason, {
@@ -212,7 +213,9 @@ export function TaskStatusPill({
     status,
     taskMessages,
     availability,
-    status === "waiting_local_directory" ? pendingTask.wait_reason : undefined,
+    status === "waiting_local_directory" || status === "deferred"
+      ? pendingTask.wait_reason
+      : undefined,
   );
 
   return (

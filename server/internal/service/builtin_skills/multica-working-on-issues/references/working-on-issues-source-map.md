@@ -223,3 +223,12 @@ grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.g
 ```
 
 Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`runIssueRunMessages`), `server/internal/handler/task_output.go`, and `server/pkg/protocol/task_output.go`.
+
+## Delivery and publication continuation
+
+- `server/cmd/multica/cmd_issue_delivery.go`: task/session ownership, private token storage, explicit recovery, and immutable delivery commands.
+- `server/internal/handler/delivery_coordination.go`: delivery owner and global publication generation fencing.
+- `server/internal/handler/release_window.go`: persisted pause requests, daemon acknowledgements, and unique continuation lineage.
+- `server/internal/daemon/release_pause.go`: preserved execution checkpoint and source/agent ownership validation.
+- `scripts/issue-delivery-worker.py`: asynchronous final integration, acceptance and publication notifications.
+- `scripts/release-environments.py`: bounded publication pause, identical artifact promotion and task recovery.

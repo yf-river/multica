@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """外部交付接力：数据库保存审核真源，复用固定发布器执行联调和生产更新。"""
-import argparse, importlib.util, json, os, pwd, subprocess, sys, threading, time, urllib.request, urllib.error
+import contextlib, argparse, importlib.util, json, os, pwd, subprocess, sys, threading, time, urllib.request, urllib.error
 from pathlib import Path
 
 spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name('release-environments.py'))
@@ -20,7 +20,7 @@ class Worker:
             headers={'Authorization':'Bearer '+self.profile['token'],'X-Workspace-ID':self.profile['workspace_id'],'Content-Type':'application/json'})
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=30) as response:return json.load(response)
     def advance(self,d,action,**extra):
-        receipt=self.api('delivery-queue/advance',dict(id=d['id'],revision=d['revision'],worker_token=d.get('worker_token') or '',action=action,source_commit=d['source_commit'],**extra))
+        receipt=self.api('delivery-queue/advance',dict(id=d['id'],revision=d['revision'],worker_token=d.get('worker_token') or '',action=action,source_commit=d['source_commit'],publication_generation=d.get('publication_generation',0),**extra))
         d.update(receipt)
         return d
     def pin(self,d):
@@ -49,7 +49,59 @@ class Worker:
     def busy(self,d):
         c=r.candidate() if r.candidate_path().exists() else None
         return c and c.get('status') not in ('released','succeeded','failed') and c.get('delivery_id')!=d['id']
+    def publication_path(self,d):
+        import uuid
+        return r.RUN/'publication-leases'/(str(uuid.UUID(d['id']))+'.json')
+    def publication(self,d,action='check'):
+        if not hasattr(self,'_publication_lock'):self._publication_lock=threading.RLock()
+        with self._publication_lock:return self.publication_owned(d,action)
+    def publication_owned(self,d,action='check'):
+        path=self.publication_path(d)
+        lease=r.read(path) if path.exists() else dict(delivery_id=d['id'],worker_token=d['worker_token'])
+        if lease.get('worker_token')!=d['worker_token']:raise r.RecoveryRequired('发布执行身份变化，需要核对原占用')
+        if 'generation' not in lease:action='claim'
+        try:
+            result=self.api('delivery-queue/publication',dict(lease,action=action,snapshot=dict(source_commit=d['source_commit'])))
+        except urllib.error.HTTPError as e:
+            if e.code!=409:raise
+            current=self.api('delivery-queue/publication')
+            if action in ('check','heartbeat') and current.get('delivery_id')==d['id'] and current.get('generation')==lease.get('generation') and current.get('expired'):
+                with r.lock('publisher'):
+                    c=self.own_candidate(d)
+                    if c and c.get('publisher_pid')!=os.getpid() and r.exists(c.get('publisher_pid',0)):
+                        raise r.RecoveryRequired('旧发布进程仍存活，不能交接')
+                    request=r.request_path(c['id']) if c else None
+                    if request and request.exists() and subprocess.run(['systemctl','is-active','--quiet',r.read(request)['unit']]).returncode==0:
+                        raise r.RecoveryRequired('生产切换进程仍在运行，不能交接')
+                    r.check_process_ownership('int',r.read(r.meta_path('int')))
+                    result=self.api('delivery-queue/publication',dict(lease,action='resume',recovery_evidence='publisher锁已独占、旧执行进程已退出、int进程与部署身份已核对'))
+                    if c:
+                        c['publication_lease']=result;r.save_candidate(c)
+            else:raise Busy('最终发布占用尚不可用；保留原交付等待或恢复核对') from e
+        r.write(path,result,True);d['publication_generation']=result['generation']
+        return result
+    @contextlib.contextmanager
+    def publication_guard(self,d):
+        lease=self.publication(d)
+        stopped=threading.Event();failures=[]
+        def renew():
+            while not stopped.wait(20):
+                try:self.publication(d,'heartbeat')
+                except Exception as e:failures.append(str(e));return
+        thread=threading.Thread(target=renew,daemon=True);thread.start()
+        def fence():
+            if failures:raise r.RecoveryRequired('发布占用续期失败：'+failures[0])
+            self.publication(d,'check')
+        try:yield lease,fence
+        finally:stopped.set();thread.join(timeout=21)
+    def finish_publication(self,d):
+        path=self.publication_path(d)
+        if path.exists():
+            self.publication(d,'check');self.publication(d,'release');path.unlink()
     def prepare(self,d):
+        with self.publication_guard(d) as (lease,fence):
+            return self.prepare_owned(d,lease,fence)
+    def prepare_owned(self,d,lease,fence):
         if self.busy(d):raise Busy('联调正由另一项交付使用')
         c=self.own_candidate(d)
         if c and c['status']=='building':
@@ -62,16 +114,39 @@ class Worker:
                     r.check_process_ownership('int',live);r.isolation_check()
                     c['status']='failed';r.write(r.candidate_path(),c,True)
         if not c or c['status'] in ('released','succeeded','failed'):
+            fence()
             path=self.source(d,integrate=True)
-            try:c=r.prepare_int(path,delivery=dict(delivery_id=d['id'],delivery_env=self.env,approved_source=d['source_commit']))
-            except RuntimeError as e:
-                if '占用' in str(e) or '构建或发布' in str(e):raise Busy(str(e)) from e
-                raise
+            snapshot=dict(source_commit=d['source_commit'],base_commit=r.output(['git','rev-parse','origin/personal-studio-upstream'],cwd=path),production_commit=r.read(r.meta_path('prod'))['commit'])
+            self.api('delivery-queue/publication',dict(lease,action='freeze',snapshot=snapshot))
+            previous=r.read(r.candidate_record_path(d['candidate_id'])) if d.get('candidate_id') and r.candidate_record_path(d['candidate_id']).exists() else None
+            plan=r.validation_plan(path,previous)
+            # 只有同提交、同产物且所有验证输入一致时复用构建。
+            archive=Path(previous.get('accepted_artifact','')) if previous else None
+            if previous and plan['mode']=='reuse' and r.output(['git','rev-parse','HEAD'],cwd=path)==previous['commit'] and archive and (archive/'release.json').exists():
+                manifest=r.read(archive/'release.json')
+                if r.checksums(archive)!=manifest['files']:raise r.RecoveryRequired('已验收产物归档被修改')
+                fence();target=r.idle_slot('int');r.copy_tree(archive,target);r.publish('int',target)
+                c=dict(previous,status='accepted',publication_lease=lease,source=str(path),branch=r.output(['git','symbolic-ref','HEAD'],cwd=path),deployed_at=r.read(r.meta_path('int'))['deployed_at'])
+                r.save_candidate(c)
+            else:
+                try:c=r.prepare_int(path,delivery=dict(delivery_id=d['id'],delivery_env=self.env,approved_source=d['source_commit'],publication_lease=lease),fence=fence)
+                except RuntimeError as e:
+                    if '占用' in str(e) or '构建或发布' in str(e):raise Busy(str(e)) from e
+                    raise
+            c['validation_plan']=plan;r.save_candidate(c)
         elif c['status'] in ('verifying','accepted'):
             r.validate_candidate(c)
         else:raise r.RecoveryRequired('交付构建或恢复未完成，请先检查原发布记录')
-        self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path('int'))['frontend_url'])
-        self.advance(d,'notify')
+        self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path('int'))['frontend_url'],candidate_identity=c.get('validation_identity',{}),validation_plan=c.get('validation_plan',{}),candidate_commit=c['commit'])
+        if not d.get('acceptance_submitted'):
+            recipe=Path(c['source'])/'scripts/run-delivery-acceptance.py'
+            if recipe.exists():
+                spec=importlib.util.spec_from_file_location('delivery_acceptance',recipe)
+                acceptance=importlib.util.module_from_spec(spec);spec.loader.exec_module(acceptance)
+                evidence=acceptance.execute(c['id'],'int')
+                if evidence:
+                    self.advance(d,'tested',evidence=evidence['checks']);d['acceptance_submitted']=True
+            if not d.get('acceptance_submitted'):self.advance(d,'notify')
     def accept(self,d,release=False):
         c=self.own_candidate(d)
         if not c or c['id']!=d['candidate_id']:raise RuntimeError('联调版本已被替换，需要重新排队验证')
@@ -83,6 +158,7 @@ class Worker:
         else:
             self.advance(d,'accepted')
             r.release_candidate(c['id'])
+            self.finish_publication(d)
     def publish(self,d):
         if self.env!='prod':raise RuntimeError('联调交付队列不能更新生产')
         c=self.own_candidate(d)
@@ -90,13 +166,12 @@ class Worker:
         path=Path(c['source']);tested=c['commit']
         r.run(['git','fetch','origin','personal-studio-upstream'],cwd=r.ROOT)
         if subprocess.run(['git','merge-base','--is-ancestor','origin/personal-studio-upstream',tested],cwd=r.ROOT).returncode:
-            self.advance(d,'retry',error='主分支已前进，重新整合并联调');r.release_candidate(c['id']);return
-        if r.output(['git','status','--porcelain','--untracked-files=all'],cwd=r.ROOT):raise Busy('主工作区有未保存改动，等待处理')
-        if r.output(['git','branch','--show-current'],cwd=r.ROOT)!='personal-studio-upstream':raise RuntimeError('主工作区不在交付分支')
+            self.advance(d,'fail',error='队列外主分支发生变化，候选与证据已保留，需要核对后重排');r.release_candidate(c['id']);self.finish_publication(d);return
+        self.publication(d,'check')
         if d.get('phase')=='publishing':r.check_delivery_approval(c)
         else:self.advance(d,'publishing')
-        r.run(['git','merge','--ff-only',tested],cwd=r.ROOT)
-        r.run(['git','push','origin','HEAD:personal-studio-upstream'],cwd=r.ROOT)
+        self.publication(d,'check')
+        r.run(['git','push','origin',tested+':refs/heads/personal-studio-upstream'],cwd=path)
         if r.output(['git','ls-remote','origin','refs/heads/personal-studio-upstream'],cwd=r.ROOT).split()[0]!=tested:raise RuntimeError('远端主分支核对失败')
         r.request_release(c['id'])
     def pool_enabled(self):
@@ -248,9 +323,12 @@ class Worker:
                 stopped.set()
 
     def tick(self):
+        # 固定 int/prod 只由生产控制队列调度，int 数据库不能另建同名占用抢写环境。
+        if self.env!='prod':return
+        r.recover_release_windows()
         with r.lock('delivery-worker-'+self.env):
             current=r.candidate() if r.candidate_path().exists() else None
-            current_id=current.get('delivery_id') if current else None
+            current_id=current.get('delivery_id') if current and current.get('status') not in ('released','succeeded','failed') else None
             rows=self.api('delivery-queue'+('?current='+current_id if current_id else ''))
             if self.pool_enabled():
                 managed=self.pool_dispatch(rows,current_id)
@@ -258,28 +336,34 @@ class Worker:
                 managed=self.pool_dispatch(rows,current_id,allow_new=False)
             rows=[d for d in rows if d['id'] not in managed]
             owner=next((d for d in rows if d['id']==current_id),None)
-            if current and owner and owner['phase'] in ('cancelled','needs_changes','awaiting_review') and current['status'] in ('verifying','accepted'):
+            if current and owner and (owner['phase'] in ('cancelled','needs_changes') or (owner['phase']=='awaiting_review' and not owner.get('plan_snapshot',{}).get('authorization_pending'))) and current['status'] in ('verifying','accepted'):
                 r.release_candidate(current['id'])
             for d in rows:
                 if d['phase'] not in ('cancelled','needs_changes'):
                     try:self.pin(d)
                     except Exception as e:self.advance(d,'fail',error='无法固定交付提交：'+str(e)[:1500]);return
             # 先完成已占用环境的交付，再按创建顺序处理排队项。
-            active=[d for d in rows if d['phase'] in ('testing','preparing_release','publishing') or (d['phase']=='awaiting_review' and d.get('plan_snapshot',{}).get('authorization_pending'))]
+            active=[d for d in rows if d['phase'] in ('testing','preparing_release','publishing','published','needs_changes') or (d['phase']=='awaiting_review' and d.get('plan_snapshot',{}).get('authorization_pending'))]
             queued=[d for d in rows if d['phase'] in ('waiting_int','approved')]
             for d in active+queued:
                 try:
                     phase=d['phase']
+                    if phase in ('published','needs_changes'):
+                        self.advance(d,'notify-result');return
                     if phase=='awaiting_review':
+                        if self.publication_path(d).exists():self.publication(d,'heartbeat')
                         self.advance(d,'notify-authorization');return
                     if phase in ('waiting_int','approved'):
                         if self.busy(d):return
                         self.advance(d,'claim');self.prepare(d);return
                     if phase=='testing':
+                        if self.publication_path(d).exists():self.publication(d,'heartbeat')
                         if d['acceptance_submitted']:self.accept(d)
                         elif not d['candidate_id']:self.prepare(d)
                         else:self.advance(d,'notify')
                         return
+                    if phase in ('preparing_release','publishing'):
+                        self.publication(d,'heartbeat')
                     if phase=='preparing_release':
                         if not d['candidate_id'] or not self.own_candidate(d):self.prepare(d)
                         elif d.get('release_validated'):self.publish(d)
@@ -290,7 +374,8 @@ class Worker:
                         target=r.request_path(d['candidate_id'])
                         if not target.exists():self.publish(d);return
                         result=r.read(target)
-                        if result['status']=='succeeded':self.advance(d,'published')
+                        if result['status']=='succeeded':
+                            self.advance(d,'published');self.finish_publication(d)
                         elif result['status'] not in ('queued','publishing'):self.advance(d,'fail',error=result.get('error','生产更新失败'))
                         return
                 except Busy:
@@ -301,17 +386,19 @@ class Worker:
                 except Exception as e:
                     self.advance(d,'fail',error=str(e)[:2000])
                     c=self.own_candidate(d)
-                    if c and c['status'] in ('verifying','accepted'):r.release_candidate(c['id'])
+                    if c and c['status'] in ('verifying','accepted'):r.release_candidate(c['id']);self.finish_publication(d)
+                    elif not c:self.finish_publication(d)
                     return
 
 def install(env):
     r.require_control_directory()
-    names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py')
+    names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py') + r.BROWSER_OPERATIONS
     digest=r.hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in names)).hexdigest()[:16]
     directory=r.RUN/'publisher'/('delivery-'+env+'-'+digest)
     directory.mkdir(parents=True,exist_ok=True)
     for name in names:
         target=directory/name
+        target.parent.mkdir(parents=True,exist_ok=True)
         if not target.exists():target.write_bytes((Path(__file__).parent/name).read_bytes())
     unit='multica-delivery-'+env
     units=Path('/etc/systemd/system')

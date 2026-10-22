@@ -356,3 +356,9 @@ Offsets count Unicode characters. Continue with `next_offset` while `has_more`
 is true. Search starts at `offset` and checks the full stored output. These
 records contain the provider-delivered output after secret redaction; historical
 outputs truncated before storage cannot be recovered through this command.
+
+## Multica delivery ownership and release pauses
+
+For Multica code delivery, use `multica issue delivery` with the current task identity (`MULTICA_TASK_ID`, `CODEX_THREAD_ID`, or `--execution`). Reuse the existing delivery for the same plan and source commit. Inspect `owner` and delivery history before any recovery; another execution requires `recover-owner --recovery-evidence` and must not overwrite active work. Keep the existing source branch and acceptance evidence.
+
+Submit actual acceptance evidence, then finish this execution. The external publisher advances the release and posts the next-stage result; do not poll synchronously for the restart of your own daemon. A publication pause is not user cancellation: preserve the original task and work directory. On automatic continuation, inspect Git refs, delivery state, deployment identity, and the last external operation before resuming; never repeat an operation with an unknown result blindly. Report a precise task-level blocker if its outcome cannot be established.

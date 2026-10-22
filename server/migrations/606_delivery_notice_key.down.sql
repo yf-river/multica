@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS delivery_notice_key;

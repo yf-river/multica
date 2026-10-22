@@ -341,6 +341,8 @@ type TaskIssueStatusData struct {
 // autopilot / quick_create / 直接指派）由 Kind 判别，各自的来源上下文
 // （TriggerCommentID / ChatSessionID / AutopilotRunID 等）按需携带。
 type AgentTaskResponse struct {
+	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
+	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
 	ID                   string                 `json:"id"`
 	AgentID              string                 `json:"agent_id"`
 	RuntimeID            string                 `json:"runtime_id"`

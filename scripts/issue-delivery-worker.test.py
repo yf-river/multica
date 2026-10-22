@@ -33,7 +33,7 @@ class DeliveryTests(unittest.TestCase):
     def test_invalid_authorization_stops_before_merge_and_push(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         candidate={'status':'accepted','source':'/fixture','commit':'a'*40,'id':'candidate'}
-        with patch.object(worker,'own_candidate',return_value=candidate),patch.object(r,'run') as command,patch.object(r,'output',side_effect=['','personal-studio-upstream']),patch.object(subprocess,'run') as ancestry,patch.object(worker,'advance',side_effect=RuntimeError('authorization changed')),patch.object(r,'request_release') as request:
+        with patch.object(worker,'own_candidate',return_value=candidate),patch.object(r,'run') as command,patch.object(r,'output',side_effect=['','personal-studio-upstream']),patch.object(subprocess,'run') as ancestry,patch.object(worker,'advance',side_effect=RuntimeError('authorization changed')),patch.object(r,'request_release') as request,patch.object(worker,'publication'):
             ancestry.return_value.returncode=0
             with self.assertRaisesRegex(RuntimeError,'authorization changed'):worker.publish({'id':'delivery'})
             self.assertEqual([call.args[0][1] for call in command.call_args_list],['fetch'])
@@ -43,10 +43,10 @@ class DeliveryTests(unittest.TestCase):
         worker=object.__new__(w.Worker);worker.env='prod'
         candidate={'status':'accepted','source':'/fixture','commit':'a'*40,'id':'candidate'}
         events=[]
-        with patch.object(worker,'own_candidate',return_value=candidate),patch.object(r,'run',side_effect=lambda args,**kw:events.append(args[1])),patch.object(r,'output',side_effect=['','personal-studio-upstream','a'*40+' refs/heads/personal-studio-upstream']),patch.object(subprocess,'run') as ancestry,patch.object(worker,'advance') as advance,patch.object(r,'check_delivery_approval',side_effect=lambda c:events.append('authorization')),patch.object(r,'request_release',side_effect=lambda c:events.append('request')):
+        with patch.object(worker,'own_candidate',return_value=candidate),patch.object(r,'run',side_effect=lambda args,**kw:events.append(args[1])),patch.object(r,'output',side_effect=['a'*40+' refs/heads/personal-studio-upstream']),patch.object(subprocess,'run') as ancestry,patch.object(worker,'advance') as advance,patch.object(r,'check_delivery_approval',side_effect=lambda c:events.append('authorization')),patch.object(r,'request_release',side_effect=lambda c:events.append('request')),patch.object(worker,'publication'):
             ancestry.return_value.returncode=0
             worker.publish({'id':'delivery','phase':'publishing'})
-            self.assertEqual(events,['fetch','authorization','merge','push','request'])
+            self.assertEqual(events,['fetch','authorization','push','request'])
             advance.assert_not_called()
 
     def test_normal_request_requires_human_approved_delivery(self):
@@ -73,8 +73,8 @@ class DeliveryTests(unittest.TestCase):
             worker.tick();release.assert_called_once_with('candidate')
     def test_verifying_candidate_is_not_remerged_on_resume(self):
         worker=object.__new__(w.Worker);worker.env='prod';d={'id':'one','source_commit':'a'*40}
-        candidate={'id':'candidate','status':'verifying'}
-        with patch.object(worker,'busy',return_value=False),patch.object(worker,'own_candidate',return_value=candidate),patch.object(worker,'source') as source,patch.object(worker,'advance'),patch.object(r,'validate_candidate') as validate,patch.object(r,'read',return_value={'frontend_url':'http://int'}):
+        candidate={'id':'candidate','status':'verifying','commit':'a'*40,'source':'/fixture'}
+        with patch.object(worker,'busy',return_value=False),patch.object(worker,'own_candidate',return_value=candidate),patch.object(worker,'source') as source,patch.object(worker,'advance'),patch.object(r,'validate_candidate') as validate,patch.object(r,'read',return_value={'frontend_url':'http://int'}),patch.object(worker,'publication',return_value={'generation':1}):
             worker.prepare(d);source.assert_not_called();validate.assert_called_once_with(candidate)
 
     def test_dead_startup_process_fails_without_waiting_for_http_timeout(self):

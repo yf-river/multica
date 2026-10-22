@@ -1,0 +1,61 @@
+{
+  "groups": [
+    {
+      "name": "delivery-api",
+      "paths": [
+        "server/internal/handler/",
+        "server/internal/cli/",
+        "server/cmd/",
+        "server/migrations/"
+      ],
+      "command": [
+        "python3",
+        "scripts/verify-delivery-coordination.py"
+      ]
+    },
+    {
+      "name": "delivery-runtime",
+      "paths": [
+        "server/internal/daemon/",
+        "server/internal/service/",
+        "packages/views/chat/"
+      ],
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "./internal/daemon",
+        "-run",
+        "^TestReleasePause|^TestDeploymentDrain",
+        "-count=1"
+      ]
+    },
+    {
+      "name": "delivery-worker",
+      "paths": [
+        "scripts/"
+      ],
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts",
+        "-p",
+        "*delivery*.test.py"
+      ]
+    },
+    {
+      "name": "delivery-publisher",
+      "paths": [
+        "scripts/"
+      ],
+      "command": [
+        "python3",
+        "scripts/release-environments.test.py"
+      ]
+    }
+  ]
+}

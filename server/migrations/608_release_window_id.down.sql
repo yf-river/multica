@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS release_window_id;

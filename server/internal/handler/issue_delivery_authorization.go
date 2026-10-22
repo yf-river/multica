@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -275,5 +276,12 @@ func (h *Handler) CheckDeliveryAuthorization(w http.ResponseWriter, r *http.Requ
 		writeError(w, 500, "核对失败")
 		return
 	}
-	writeJSON(w, 200, map[string]bool{"ready": ready && planValid})
+	var generation int64
+	var leased bool
+	leaseErr := tx.QueryRow(r.Context(), `SELECT generation,state='active' AND expires_at>now() FROM delivery_publication WHERE resource='int-prod' AND workspace_id=$1 AND delivery_id=$2`, ws, id).Scan(&generation, &leased)
+	if leaseErr != nil && !errors.Is(leaseErr, pgx.ErrNoRows) {
+		writeError(w, 500, "核对发布占用失败")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ready": ready && planValid && leased, "publication_generation": generation})
 }

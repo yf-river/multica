@@ -4848,7 +4848,7 @@ func shouldInterruptAgent(status string, err error) bool {
 	if err != nil {
 		return isTaskNotFoundError(err)
 	}
-	return isAgentTaskTerminal(status)
+	return status == "release_paused" || isAgentTaskTerminal(status)
 }
 
 // watchTaskCancellation 按给定间隔轮询服务器上任务的状态，并返回一个 channel——
@@ -4868,6 +4868,11 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 		defer ticker.Stop()
 		check := func() bool {
 			status, err := d.client.GetTaskStatus(ctx, taskID)
+			if status == "release_paused" {
+				if p, ok := ctx.Value(releasePauseKey{}).(*atomic.Bool); ok {
+					p.Store(true)
+				}
+			}
 			if !shouldInterruptAgent(status, err) {
 				return false
 			}
@@ -4991,7 +4996,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	// 建立可取消的 ctx，当服务器信号"任务应停止"时能中断正在运行的 agent——
 	// 任务到达终态（completed/failed/cancelled）或任务行被删（404）都会触发。
-	runCtx, runCancel := context.WithCancel(ctx)
+	pauseFlag := &atomic.Bool{}
+	runCtx, runCancel := context.WithCancel(context.WithValue(ctx, releasePauseKey{}, pauseFlag))
 	defer runCancel()
 
 	// 轮询间隔是 d.cancelPollInterval（生产 5s，测试经直接字段覆盖缩短）。对零值
@@ -5010,6 +5016,16 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}()
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+	if pauseFlag.Load() {
+		if !releaseCheckpointReady(task, result) {
+			taskLog.Error("发布暂停检查点未保存，禁止确认停止")
+			return
+		}
+		if ackErr := d.client.AckReleasePause(ctx, task.ID, result); ackErr != nil {
+			taskLog.Error("发布暂停确认失败", "error", ackErr)
+		}
+		return
+	}
 
 	// 在任何提前返回前先上报用量——无论任务完成、出错还是被轮询 goroutine 中途
 	// 取消，agent 都会累计 token。即使 runCtx 被取消，claude.go 与 codex.go 也会
@@ -6823,13 +6839,44 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	envReused := false
-	priorClaim, priorWorkDir, lockedPriorInfo, reusable, reuseErr := d.lockReusablePriorEnvRoot(ctx, task, localAssignment, envClaim.RootDir())
+	savedPause, pauseRestoreErr := releaseCheckpointForTask(task, d.cfg.WorkspacesRoot)
+	if pauseRestoreErr != nil {
+		return TaskResult{}, fmt.Errorf("恢复发布暂停任务: %w", pauseRestoreErr)
+	}
+	if savedPause != nil {
+		wsRoot, openErr := os.OpenRoot(d.cfg.WorkspacesRoot)
+		if openErr != nil {
+			return TaskResult{}, openErr
+		}
+		defer wsRoot.Close()
+		rel, relErr := filepath.Rel(d.cfg.WorkspacesRoot, savedPause.Root)
+		if relErr != nil {
+			return TaskResult{}, relErr
+		}
+		pauseClaim, _, lockErr := execenv.LockEnvRootForReuse(wsRoot, rel, savedPause.Root)
+		if lockErr != nil {
+			return TaskResult{}, lockErr
+		}
+		defer pauseClaim.Release()
+		var pauseReuseErr error
+		env, pauseReuseErr = d.reuseExecutionEnvironment(prepareCtx, execenv.ReuseParams{WorkspacesRoot: d.cfg.WorkspacesRoot, Profile: d.cfg.Profile, WorkDir: savedPause.WorkDir, RootDir: savedPause.Root, LocalDirectory: savedPause.LocalDirectory, Provider: provider, CodexVersion: codexVersion, ResumeSessionID: task.PriorSessionID, McpConfig: effectiveMcpConfig, CursorMcpAuthSource: cursorMcpAuthSource, HermesSourceHome: hermesSourceHome, HermesSourceMustExist: hermesSourceMustExist, HermesEnv: hermesEnv, HermesMemoryStore: hermesMemoryStore, HermesSessionStore: hermesSessionStore, ReasonixEnv: reasonixEnv, CodexCustomArgs: codexSandboxArgs, Task: taskCtx})
+		if pauseReuseErr != nil || env == nil {
+			return TaskResult{}, fmt.Errorf("恢复发布暂停环境失败: %v", pauseReuseErr)
+		}
+		env.LocalWorktree = savedPause.Worktree
+		envReused = true
+	}
+	normalReuseTask := task
+	if savedPause != nil {
+		normalReuseTask.PriorWorkDir = ""
+	}
+	priorClaim, priorWorkDir, lockedPriorInfo, reusable, reuseErr := d.lockReusablePriorEnvRoot(ctx, normalReuseTask, localAssignment, envClaim.RootDir())
 	if reuseErr != nil {
 		// 等待上一运行放开目录期间被取消。在这里结束就是正确行为：继续往下会给
 		// 一份已经没人等的工作准备整套环境——包括仓库 checkout。
 		return TaskResult{}, reuseErr
 	}
-	if reusable {
+	if reusable && env == nil {
 		defer priorClaim.Release()
 		// 最后一窗口回归的确定性接缝：测试在认领尘埃落定之后、Reuse 按名字解析
 		// 路径之前，在这里换目录。
@@ -6992,6 +7039,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			if taskResult.EnvRoot == "" {
 				taskResult.EnvRoot = env.RootDir
 			}
+			if pauseErr := d.preserveReleaseTask(ctx, task, env); pauseErr != nil {
+				returnErr = errors.Join(returnErr, pauseErr)
+				return
+			}
+			if releasePaused(ctx) {
+				return
+			}
 			outcome, finalizeErr := env.LocalWorktree.Finalize(taskLog)
 			if outcome.Branch != "" {
 				taskResult.BranchName = outcome.Branch
@@ -7023,6 +7077,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}()
 	}
+	defer func() {
+		if pauseErr := d.preserveReleaseTask(ctx, task, env); pauseErr != nil {
+			returnErr = errors.Join(returnErr, pauseErr)
+			return
+		}
+		if !releasePaused(ctx) && savedPause != nil {
+			if removeErr := os.Remove(filepath.Join(env.RootDir, ".release-pause.json")); removeErr != nil && !os.IsNotExist(removeErr) {
+				returnErr = errors.Join(returnErr, removeErr)
+			}
+		}
+		if releasePaused(ctx) {
+			taskResult.WorkDir = env.WorkDir
+			taskResult.EnvRoot = env.RootDir
+		}
+	}()
 	// 云模式下，workdir 留给同（agent, issue）对的未来任务复用；work_dir 路径在
 	// 任务完成时存进 DB、下次认领时经 PriorWorkDir 传回，所以原地重写标记块正是
 	// 正确行为。
@@ -7088,6 +7157,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// 用 RemoveTaskTempDir 而不是 os.RemoveAll：这样在删除失败时 .task_lock
 		// 标记能留下——没有它，下一次清扫无法把该目录与"上锁之前"的残留区分开。
 		execenv.ReleaseTaskTempLock(taskTempLock)
+		if pauseErr := d.preserveReleaseTask(ctx, task, env); pauseErr != nil {
+			returnErr = errors.Join(returnErr, pauseErr)
+			return
+		}
+		if releasePaused(ctx) {
+			return
+		}
 		if cerr := execenv.RemoveTaskTempDir(taskTempDir); cerr != nil {
 			taskLog.Warn("task temp dir cleanup failed", "path", taskTempDir, "error", cerr)
 		}

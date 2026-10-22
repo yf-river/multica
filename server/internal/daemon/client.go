@@ -1200,3 +1200,8 @@ func (c *Client) InvokeAgentPluginHook(ctx context.Context, daemonToken, taskID,
 	}
 	return response.Output, nil
 }
+
+// AckReleasePause 重试保存执行上下文，发布器据此确认任务已停止。
+func (c *Client) AckReleasePause(ctx context.Context, taskID string, result TaskResult) error {
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/release-pause-ack", taskID), map[string]any{"session_id": result.SessionID, "work_dir": result.WorkDir, "root_dir": result.EnvRoot}, nil, defaultTerminalRetrySchedule)
+}

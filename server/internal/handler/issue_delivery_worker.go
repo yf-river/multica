@@ -39,7 +39,7 @@ func (h *Handler) ListDeliveryQueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND q.trigger_comment_id=CASE WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END ORDER BY q.created_at DESC LIMIT 1) AS verification_run,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR d.id=NULLIF($2,'')::uuid) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND q.trigger_comment_id=CASE WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END ORDER BY q.created_at DESC LIMIT 1) AS verification_run,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付队列失败")
 		return
@@ -53,14 +53,19 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID        string `json:"id"`
-		Revision  int64  `json:"revision"`
-		Action    string `json:"action"`
-		Token     string `json:"worker_token"`
-		Candidate string `json:"candidate_id"`
-		URL       string `json:"candidate_url"`
-		Error     string `json:"error"`
-		Source    string `json:"source_commit"`
+		ID              string          `json:"id"`
+		Revision        int64           `json:"revision"`
+		Action          string          `json:"action"`
+		Token           string          `json:"worker_token"`
+		Candidate       string          `json:"candidate_id"`
+		URL             string          `json:"candidate_url"`
+		Error           string          `json:"error"`
+		Source          string          `json:"source_commit"`
+		Identity        json.RawMessage `json:"candidate_identity"`
+		Generation      int64           `json:"publication_generation"`
+		ValidationPlan  json.RawMessage `json:"validation_plan"`
+		CandidateCommit string          `json:"candidate_commit"`
+		Checks          []deliveryCheck `json:"evidence"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil {
 		writeError(w, 400, "交付更新格式错误")
@@ -90,6 +95,22 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if rev != body.Revision {
 		writeError(w, 409, "交付已变化")
+		return
+	}
+	if body.Action == "notify-result" {
+		if token == "" || token != body.Token || (phase != "published" && phase != "needs_changes") {
+			writeError(w, 409, "当前交付不允许通知结果")
+			return
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			writeError(w, 500, "读取通知状态失败")
+			return
+		}
+		if err = h.notifyDeliveryResult(r, ws, issue, body.ID, phase); err != nil {
+			writeError(w, 500, "结果通知失败，后台将重试")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token})
 		return
 	}
 	if (body.Action == "validated" || body.Action == "publishing") && (phase != "preparing_release" || token == "" || token != body.Token) {
@@ -139,7 +160,17 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 池化交付的回执同时核对候选及有效占用；旧 int 交付没有槽位记录。
-	if body.Action == "prepared" || body.Action == "accepted" || body.Action == "notify" {
+	if phase == "preparing_release" || phase == "publishing" {
+		if body.Action != "notify-authorization" {
+			var owned bool
+			err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM delivery_publication WHERE resource='int-prod' AND workspace_id=$1 AND delivery_id=$2 AND worker_token::text=$3 AND generation=$4 AND state='active' AND expires_at>now())`, ws, body.ID, body.Token, body.Generation).Scan(&owned)
+			if err != nil || !owned {
+				writeError(w, 409, "最终发布占用已失效；禁止旧发布器继续推进")
+				return
+			}
+		}
+	}
+	if body.Action == "prepared" || body.Action == "accepted" || body.Action == "notify" || body.Action == "tested" {
 		var valid bool
 		candidate := body.Candidate
 		err = tx.QueryRow(r.Context(), `SELECT NOT EXISTS(SELECT 1 FROM verification_slot WHERE delivery_id=$1) OR EXISTS(SELECT 1 FROM verification_slot s JOIN issue_delivery d ON d.id=s.delivery_id WHERE s.delivery_id=$1 AND s.workspace_id=$2 AND s.worker_token::text=$3 AND s.source_commit=$4 AND s.state='verifying' AND s.lease_expires_at>now() AND s.candidate_id=CASE WHEN $5='' THEN d.candidate_id ELSE $5 END)`, body.ID, ws, token, commit, candidate).Scan(&valid)
@@ -195,6 +226,20 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			}
 			if strings.TrimSpace(body.Candidate) == "" || !strings.HasPrefix(body.URL, "http") {
 				writeError(w, 400, "缺少联调版本或地址")
+				return
+			}
+		case "tested":
+			if (phase != "testing" && phase != "preparing_release") || !validDeliveryChecks(body.Checks) {
+				writeError(w, 409, "当前候选缺少实际自动验收证据")
+				return
+			}
+			checks, _ := json.Marshal(body.Checks)
+			_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,workspace_id,issue_id,id,candidate_id,COALESCE(plan_snapshot->>'candidate_commit',source_commit),COALESCE(plan_snapshot->'candidate_identity','{}'),$3 FROM issue_delivery WHERE id=$2 AND candidate_id<>'' ON CONFLICT(delivery_id,candidate_id) DO NOTHING`, dbid.NewV7(), body.ID, checks)
+			if err == nil {
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=true,evidence=$2 WHERE id=$1 AND candidate_id<>''`, body.ID, checks)
+			}
+			if err != nil {
+				writeError(w, 500, "记录自动验收证据失败")
 				return
 			}
 		case "accepted":
@@ -278,7 +323,32 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Action != "notify" {
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=CASE WHEN $8 IN ('claim','retry') THEN false ELSE acceptance_submitted END,release_comment_id=CASE WHEN $8='claim' AND phase='approved' THEN gen_random_uuid() ELSE release_comment_id END,release_validated=CASE WHEN $8='validated' THEN true WHEN $8 IN ('claim','retry') THEN false ELSE release_validated END,phase=$3,worker_token=$4,candidate_id=CASE WHEN $8='claim' THEN '' WHEN $5='' THEN candidate_id ELSE $5 END,candidate_url=CASE WHEN $6='' THEN candidate_url ELSE $6 END,error=$7,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, body.ID, next, token, body.Candidate, body.URL, body.Error, body.Action)
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=CASE WHEN $8='prepared' THEN EXISTS(SELECT 1 FROM delivery_evidence e WHERE e.delivery_id=issue_delivery.id AND e.identity=$9::jsonb AND e.identity<>'{}'::jsonb) ELSE acceptance_submitted END,release_comment_id=CASE WHEN $8='claim' AND phase='approved' THEN gen_random_uuid() ELSE release_comment_id END,release_validated=CASE WHEN $8='validated' THEN true WHEN $8 IN ('claim','retry') THEN false ELSE release_validated END,phase=$3,worker_token=$4,candidate_id=CASE WHEN $5='' THEN candidate_id ELSE $5 END,candidate_url=CASE WHEN $6='' THEN candidate_url ELSE $6 END,error=$7,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, body.ID, next, token, body.Candidate, body.URL, body.Error, body.Action, identityOrEmpty(body.Identity))
+	}
+	if err == nil && body.Action == "prepared" && len(body.Identity) > 0 {
+		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,d.workspace_id,d.issue_id,d.id,d.candidate_id,COALESCE(NULLIF($4,''),d.source_commit),e.identity,e.evidence FROM issue_delivery d JOIN LATERAL(SELECT identity,evidence FROM delivery_evidence WHERE delivery_id=d.id AND identity=$3::jsonb AND identity<>'{}'::jsonb ORDER BY created_at DESC LIMIT 1)e ON true WHERE d.id=$2 ON CONFLICT(delivery_id,candidate_id) DO NOTHING`, dbid.NewV7(), body.ID, body.Identity, body.CandidateCommit)
+		if err != nil {
+			writeError(w, 500, "保存复用依据失败")
+			return
+		}
+
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{candidate_identity}',$2::jsonb) WHERE id=$1`, body.ID, body.Identity)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET evidence=e.evidence FROM delivery_evidence e WHERE e.delivery_id=d.id AND e.candidate_id=d.candidate_id AND d.id=$1 AND d.acceptance_submitted`, body.ID)
+		}
+	}
+	if err == nil && body.Action == "prepared" && len(body.ValidationPlan) > 0 {
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{validation_plan}',$2::jsonb) WHERE id=$1`, body.ID, body.ValidationPlan)
+	}
+	if err == nil && body.Action == "prepared" && body.CandidateCommit != "" {
+		if !deliveryCommit.MatchString(body.CandidateCommit) {
+			writeError(w, 400, "候选需要完整提交")
+			return
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{candidate_commit}',to_jsonb($2::text)) WHERE id=$1`, body.ID, body.CandidateCommit)
+	}
+	if err == nil && (next == "published" || next == "needs_changes") {
+		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,$2,$3) ON CONFLICT(delivery_id,stage) DO NOTHING`, body.ID, next, dbid.NewV7())
 	}
 	var issueEvent *events.Event
 	if err == nil && (next == "awaiting_review" || body.Action == "accepted") {
@@ -327,6 +397,12 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			if assignee != "" && (kind == "agent" || kind == "squad") {
 				mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
 			}
+			var validation json.RawMessage
+			if err = h.DB.QueryRow(r.Context(), `SELECT COALESCE(plan_snapshot->'validation_plan','{}') FROM issue_delivery WHERE id=$1`, body.ID).Scan(&validation); err != nil {
+				writeError(w, 500, "读取补测计划失败")
+				return
+			}
+			mention += "验收范围与依据：" + string(validation) + "。提交证据后结束当前运行，平台会在下一阶段通知续接，禁止在本运行中等待生产重启。\n\n"
 			payload, _ := json.Marshal(map[string]any{"id": operation, "content": mention + "交付 " + body.ID + " 的联调已准备，源码提交 " + commit + "，入口 " + url + "。请按已确认计划进行实际功能验收，使用 multica issue delivery accept 提交证据；本轮不要合入主分支或发布生产。"})
 			rr := r.Clone(r.Context())
 			rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(operation)))
@@ -350,4 +426,11 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 		return rev + 1
 	}(), "worker_token": token, "issue_id": issue})
+}
+
+func identityOrEmpty(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return raw
 }

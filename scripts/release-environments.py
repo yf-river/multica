@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """固定 int 验证后更新 prod；Git 保存历史，运行目录仅在切换期间保留旧副本。"""
 import pwd
+import threading
 import argparse, contextlib, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 
@@ -8,6 +9,7 @@ ROOT = Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().pare
 RUN = ROOT / '.run'
 ENVS = ('int', 'prod')
 VERIFICATION_ENVS = ('verify-1', 'verify-2', 'verify-3')
+BROWSER_OPERATIONS=('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs')
 
 class RecoveryRequired(RuntimeError):
     """自动恢复未完成，禁止后续更新覆盖恢复资料。"""
@@ -26,16 +28,25 @@ def read(path):
     return json.loads(Path(path).read_text())
 
 def write(path, data, private=False):
-    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.tmp')
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if private else 0o644)
-    with os.fdopen(fd, 'w') as f: json.dump(data, f, indent=2); f.write('\n')
-    os.replace(tmp, path)
+    import tempfile
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    fd,tmp=tempfile.mkstemp(prefix=path.name+'.',suffix='.tmp',dir=path.parent)
+    try:
+        os.fchmod(fd,0o600 if private else 0o644)
+        with os.fdopen(fd,'w') as stream:
+            json.dump(data,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
 
 def meta_path(env): return RUN / 'deployments' / f'goal-test-{env}.json'
 def config_path(env): return RUN / 'env' / f'{env}-services.json'
 def process_env(pid):
     return dict(x.split('=', 1) for x in Path(f'/proc/{pid}/environ').read_text().split('\0') if '=' in x)
+def process_identity(pid):
+    try:return Path(f'/proc/{pid}/stat').read_text().split(') ')[1].split()[19]
+    except FileNotFoundError:return None
+
 def exists(pid):
     try: return Path(f'/proc/{pid}/stat').read_text().split(') ')[1][0] != 'Z'
     except FileNotFoundError: return False
@@ -74,6 +85,39 @@ def source_digest(root):
         if not name or not p.is_file() or name.startswith('.run/'): continue
         h.update(name.encode() + b'\0'); h.update(p.read_bytes()); files.append(name)
     return h.hexdigest(), files
+
+def validation_identity(source):
+    """业务输入和验收程序独立于版本戳；缺少可靠映射时选择完整验收。"""
+    _, names = source_digest(Path(source))
+    runtime = hashlib.sha256(); schema = hashlib.sha256(); suite = hashlib.sha256()
+    for name in names:
+        data = (Path(source)/name).read_bytes()
+        if name.startswith(('docs/', 'apps/docs/', '.github/', '.agents/')) or ('/' not in name and name.endswith('.md')):
+            continue
+        runtime.update(name.encode()+b'\0'+data)
+        if name.startswith('server/migrations/'):schema.update(name.encode()+b'\0'+data)
+        if name.startswith('scripts/') or 'test' in Path(name).name:suite.update(name.encode()+b'\0'+data)
+    return dict(runtime_inputs=runtime.hexdigest(), schema=schema.hexdigest(), suite=suite.hexdigest(),
+                configuration=hashlib.sha256(config_path('int').read_bytes()).hexdigest())
+
+def validation_plan(source, previous):
+    identity=validation_identity(source)
+    if previous and identity==previous.get('validation_identity'):
+        return dict(mode='reuse',reason='业务输入、验收程序、结构与配置相同',identity=identity,checks=[])
+    changed=[]
+    if previous:
+        changed=output(['git','diff','--name-only',previous['commit'],'HEAD'],cwd=source).splitlines()
+    recipe=Path(source)/'scripts/delivery-acceptance.json'
+    groups=read(recipe).get('groups',[]) if recipe.exists() else []
+    checks=[]; uncovered=[]
+    for name in changed:
+        matched=[g for g in groups if any(name.startswith(p) for p in g.get('paths',[]))]
+        if not matched:uncovered.append(name)
+        for g in matched:
+            if g['name'] not in checks:checks.append(g['name'])
+    full=not previous or not changed or bool(uncovered) or any(n.startswith(('server/migrations/','pnpm-lock.yaml')) for n in changed)
+    return dict(mode='full' if full else 'affected',reason='缺少完整覆盖映射或存在结构/依赖变化' if full else '按声明的覆盖范围补测',
+                identity=identity,changed_paths=changed,checks=checks,uncovered=uncovered)
 
 def checksums(root):
     result = {}
@@ -328,16 +372,75 @@ def drain(env,m,timeout=900):
     if h['profile'] != m['daemon_profile'] or h['pid'] != m['pids']['daemon']: raise RuntimeError('Daemon 所属环境不匹配')
     try:
         http(health_url(env)+'/drain','POST')
-        deadline=time.monotonic()+timeout
+        started=time.monotonic();deadline=started+timeout;pause_requested=False
         while time.monotonic()<deadline:
             s=http(health_url(env)+'/drain')
             if s['ready_to_stop']: return True
+            if s.get('release_pause_supported') and time.monotonic()-started>=120 and not pause_requested:
+                if s['claims_in_flight']!=0:
+                    time.sleep(.2);continue
+                window=read(release_window_path(env))
+                release_window_api(env,dict(id=window['id'],action='pause'))
+                pause_requested=True;deadline=min(deadline,time.monotonic()+60)
             print(env,'等待任务完成',s,flush=True);time.sleep(min(2,max(0,deadline-time.monotonic())))
         raise RuntimeError('等待已有任务完成超时')
     except BaseException:
         http(health_url(env)+'/drain','DELETE')
         print('已恢复接单',flush=True)
         raise
+
+def release_window_path(env):return RUN/'release-windows'/(env+'.json')
+
+def release_window_api(env,body=None):
+    meta=read(meta_path(env));profile=read(meta['daemon_profile_path'])
+    req=urllib.request.Request(meta['backend_url'].rstrip('/')+'/api/delivery-queue/window',
+        data=None if body is None else json.dumps(body).encode(),
+        headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id'],'Content-Type':'application/json'})
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=20) as response:return json.load(response)
+
+def resume_release_window(env):
+    path=release_window_path(env)
+    if not path.exists():return
+    window=read(path)
+    if window.get('state')=='finished':return
+    live=read(meta_path(env));check_process_ownership(env,live)
+    ready(live['backend_url']+'/health',timeout=10)
+    ready(live['frontend_url']+'/login',timeout=10)
+    # 任务停止确认与恢复入队在同一数据库窗口中核对，失败时保留清单供下次恢复。
+    release_window_api(env,dict(id=window['id'],action='resume'))
+    window.update(state='finished',resumed_at=time.time());write(path,window,True)
+    http(health_url(env)+'/drain','DELETE')
+
+@contextlib.contextmanager
+def release_task_window(env,directory):
+    path=release_window_path(env);meta=read(meta_path(env))
+    h=http(health_url(env)+'/health')
+    if h.get('pid')!=meta['pids']['daemon'] or h.get('profile')!=meta['daemon_profile']:raise RecoveryRequired('暂停前运行环境身份不符')
+    if not http(health_url(env)+'/drain').get('release_pause_supported'):
+        # 首次升级由旧协议正常排空；不能假设旧 daemon 会保存暂停检查点。
+        yield;return
+    if path.exists() and read(path).get('state')!='finished':raise RecoveryRequired('上次发布的暂停清单尚未恢复')
+    import uuid
+    window=dict(id=str(uuid.uuid4()),daemon_id=h['daemon_id'],release_id=read(Path(directory)/'release.json')['id'],state='draining',publisher_pid=os.getpid(),publisher_started=process_identity(os.getpid()))
+    write(path,window,True)
+    try:
+        release_window_api(env,dict(window,action='begin'))
+        yield
+    finally:
+        try:resume_release_window(env)
+        except Exception as error:
+            window.update(error=str(error));write(path,window,True)
+            raise RecoveryRequired('发布暂停任务等待自动恢复：'+str(error)) from error
+
+def recover_release_windows():
+    for env in (*ENVS,*VERIFICATION_ENVS):
+        path=release_window_path(env)
+        if not path.exists():continue
+        window=read(path)
+        if window.get('state')=='finished' or (exists(window.get('publisher_pid',0)) and process_identity(window['publisher_pid'])==window.get('publisher_started')):continue
+        # 发布器独占锁以及真实服务检查都通过，才允许恢复任务。
+        with lock('publisher'):
+            resume_release_window(env)
 
 def migrate(release, cfg, action='up', previous=None):
     args=[Path(release)/'server/bin/migrate', action]
@@ -572,6 +675,10 @@ def discard_previous(env):
     metadata=read(meta_path(env));metadata.pop('previous_release_id',None);write(meta_path(env),metadata)
 
 def publish(env, directory, timeout=900):
+    with release_task_window(env,directory):
+        return publish_in_window(env,directory,timeout)
+
+def publish_in_window(env, directory, timeout=900):
     try:
         deploy(env, directory, timeout)
     except Exception:
@@ -631,7 +738,9 @@ def candidate_lock(env):
     # int 仍与已有生产发布器共用锁；任务验收槽位使用独立锁。
     return 'publisher' if env == 'int' else 'candidate-'+env
 
-def prepare_int(source, timeout=900, delivery=None):
+def prepare_int(source, timeout=900, delivery=None, fence=None):
+    if not delivery or not delivery.get('publication_lease') or fence is None: raise RuntimeError('int 只能由持有最终集成占用的交付队列准备')
+    fence()
     if os.environ.get('MULTICA_TASK_ID') and os.environ.get('MULTICA_SERVER_URL','').rstrip('/') == read(meta_path('int'))['backend_url'].rstrip('/'):
         raise RuntimeError('int 中运行的任务不能同步更新自身，请从生产运行时发起')
     # 生产升级需要等待所有运行退出，不能让其他运行阻塞在联调锁上。
@@ -652,8 +761,9 @@ def prepare_int(source, timeout=900, delivery=None):
             try:
                 directory=idle_slot('int')
                 manifest=build(source, directory)
+                fence()
                 publish('int', directory, timeout)
-                record.update(status='verifying', release_id=manifest['id'], source_digest=manifest['source_digest'],
+                record.update(status='verifying', validation_identity=validation_identity(source), release_id=manifest['id'], source_digest=manifest['source_digest'],
                               deployed_at=read(meta_path('int'))['deployed_at'])
                 discard_previous('int')
             except Exception as error:
@@ -744,7 +854,12 @@ def accept(version, evidence_file, env='int'):
             raise RuntimeError('验收记录需要 candidate、summary 和 checks')
         if any(not isinstance(c,dict) or not c.get('name') or c.get('status')!='passed' or not c.get('evidence') for c in evidence['checks']):
             raise RuntimeError('每项功能检查需要 name、passed 状态和实际 evidence')
-        record.update(status='accepted', acceptance=evidence)
+        archive=RUN/'accepted-artifacts'/record['id']
+        current=read(meta_path(env))
+        if not (archive/'release.json').exists():copy_tree(current['release_dir'],archive,excludes=('**/.next/cache/***',))
+        manifest=read(archive/'release.json')
+        if manifest['files']!=checksums(archive):raise RuntimeError('验收归档产物身份不匹配')
+        record.update(status='accepted', acceptance=evidence, accepted_artifact=str(archive))
         save_candidate(record)
 
 def release_candidate(version, env='int'):
@@ -775,6 +890,7 @@ def check_delivery_approval(record):
     authorization_url=meta['backend_url'].rstrip('/')+'/api/delivery-queue/'+record['delivery_id']+'/authorization'
     authorization_request=urllib.request.Request(authorization_url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(authorization_request,timeout=15) as response: authorization=json.load(response)
+    if authorization.get('publication_generation') != record.get('publication_lease',{}).get('generation'):raise RuntimeError('最终发布占用代次不匹配')
     if not authorization.get('ready'):raise RuntimeError('发布授权或用户要求已变化，需要负责人重新核对')
     if not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by') or not delivery.get('release_validated') or delivery['source_commit']!=record.get('approved_source') or delivery['candidate_id']!=record['id']:
         raise RuntimeError('生产批准或联调复核已失效')
@@ -801,6 +917,8 @@ def request_release(version,timeout=900):
         runner.parent.mkdir(parents=True,exist_ok=True)
         runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
         (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
+        for name in BROWSER_OPERATIONS:
+            dep=runner.parent/name;dep.parent.mkdir(parents=True,exist_ok=True);dep.write_bytes((Path(__file__).parent/name).read_bytes())
         write(target,record,True);save_candidate(record)
         try:
             run(['systemd-run','--quiet','--collect','--unit',record['unit'],'--property=Type=exec','--property=KillMode=process',
@@ -891,6 +1009,30 @@ def finish_cleanup(record):
     write(request_path(record['id']),record,True)
 
 
+def publication_api(record,action):
+    meta=read(meta_path('prod')); profile=read(meta['daemon_profile_path'])
+    body=dict(record['publication_lease'],action=action)
+    req=urllib.request.Request(meta['backend_url'].rstrip('/')+'/api/delivery-queue/publication', data=json.dumps(body).encode(),
+        headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id'],'Content-Type':'application/json'})
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=10) as response:return json.load(response)
+
+@contextlib.contextmanager
+def publication_guard(record):
+    publication_api(record,'check')
+    stopped=threading.Event(); failures=[]
+    def renew():
+        last=time.monotonic()
+        while not stopped.wait(10):
+            try:publication_api(record,'heartbeat');last=time.monotonic()
+            except Exception as e:
+                if time.monotonic()-last>45:failures.append(str(e));return
+    thread=threading.Thread(target=renew,daemon=True);thread.start()
+    def check():
+        if failures:raise RecoveryRequired('发布占用续期失败：'+failures[0])
+        publication_api(record,'check')
+    try:yield check
+    finally:stopped.set();thread.join(timeout=11)
+
 def worker(request_id):
     if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('worker 必须由外部进程启动')
     target=request_path(request_id);record=read(target)
@@ -909,7 +1051,9 @@ def worker(request_id):
                 record.update(status='publishing');write(target,record,True);save_candidate(record)
                 directory=idle_slot('prod')
                 copy_tree(Path(current['release_dir']),directory,excludes=('**/.next/cache/***',))
-                publish('prod',directory,record['timeout'])
+                with publication_guard(record) as fence:
+                    fence()
+                    publish('prod',directory,record['timeout'])
                 write(RUN/'published.json',{'commit':record['commit'],'source_digest':record['source_digest'],'candidate':request_id},True)
                 record.update(status='succeeded');write(target,record,True);save_candidate(record)
                 finish_cleanup(record)

@@ -3265,6 +3265,9 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 // agent 当前绑定的 runtime。把 SQL 认领本身收敛到 runtime，可防止 runtime A 上一个离线的候选 agent 导致该
 // agent 在 runtime B 上的任务被派发后又被调用方的 runtime 守卫丢弃。
 func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
+	if blocked, err := s.releaseClaimsBlocked(ctx); err != nil || blocked {
+		return nil, err
+	}
 	start := time.Now()
 	outcome := "unknown"
 	var getAgentMs, countRunningMs, claimAgentMs, reanchorMs, updateStatusMs, dispatchMs int64
@@ -3401,6 +3404,9 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 // 空认领快路径：配置了 EmptyClaim 且最近一次检查确认该 runtime 无排队任务时，直接返回、不碰 Postgres。
 // 缓存会在每次入队时（notifyTaskAvailable）同步失效，因此刚入队的任务在下次调用即可认领，不必等 TTL。
 func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
+	if blocked, err := s.releaseClaimsBlocked(ctx); err != nil || blocked {
+		return nil, err
+	}
 	start := time.Now()
 	var (
 		outcome          = "no_task"
@@ -3637,6 +3643,9 @@ func (s *TaskService) RequeueTaskAfterClaimFailure(ctx context.Context, task db.
 //
 // 返回切片同时含回收与全新认领的任务，每条已带 runtime_id，daemon 据此在本地路由到对应 runtime。
 func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pgtype.UUID, maxTasks int) ([]db.AgentTaskQueue, error) {
+	if blocked, err := s.releaseClaimsBlocked(ctx); err != nil || blocked {
+		return nil, err
+	}
 	if len(runtimeIDs) == 0 || maxTasks <= 0 {
 		return nil, nil
 	}

@@ -662,6 +662,8 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 // （如 CodexVersion），使调用方在首次运行与复用两条路径上都能传同一个已解析的
 // 二进制路径。
 type ReuseParams struct {
+	RootDir string
+
 	// WorkspacesRoot 是 daemon 自有、承载所有任务环境的总根目录。复用路径上也要
 	// 传它，好在这里自愈根级 fail-closed 标记——daemon 运行期间被删的标记会在复用
 	// 任务启动前恢复，而不只是全新 Prepare 时才恢复。
@@ -731,6 +733,9 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		// local_directory 的 workdir，因此复用时的空 RootDir 对现有调用方无害（GC 用
 		// Prepare 的结果而非 Reuse 的结果来写 meta）。
 		rootDir = ""
+	}
+	if params.RootDir != "" {
+		rootDir = params.RootDir
 	}
 	env := &Environment{
 		RootDir:        rootDir,

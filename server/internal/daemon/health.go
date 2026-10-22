@@ -366,9 +366,10 @@ func (d *Daemon) drainHandler() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"draining":      d.deploymentDrain,
-			"ready_to_stop": d.deploymentDrain && d.claimsInFlight == 0 && d.activeTasks.Load() == 0,
-			"active_tasks":  d.activeTasks.Load(), "claims_in_flight": d.claimsInFlight,
+			"draining":                d.deploymentDrain,
+			"release_pause_supported": true,
+			"ready_to_stop":           d.deploymentDrain && d.claimsInFlight == 0 && d.activeTasks.Load() == 0,
+			"active_tasks":            d.activeTasks.Load(), "claims_in_flight": d.claimsInFlight,
 		})
 	}
 }

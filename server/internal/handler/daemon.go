@@ -3291,6 +3291,20 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 	}
 
+	if task.RerunOfTaskID.Valid {
+		var source, root, workdir, session string
+		pauseErr := h.DB.QueryRow(r.Context(), `SELECT p.task_id::text,p.root_dir,p.work_dir,p.session_id FROM release_paused_task p WHERE p.resume_task_id=$1 AND p.task_id=$2 AND p.state='queued'`, task.ID, task.RerunOfTaskID).Scan(&source, &root, &workdir, &session)
+		if pauseErr == nil {
+			if root != "" {
+				resp.ReleaseResumeTaskID = source
+				resp.ReleaseResumeRoot = root
+			}
+			resp.PriorWorkDir = workdir
+			resp.PriorSessionID = session
+		} else if !errors.Is(pauseErr, pgx.ErrNoRows) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, pauseErr, "release resume", uuidToString(task.ID))
+		}
+	}
 	// Last gate before dispatch: refuse to hand a worktree-mode local_directory
 	// task to a daemon that cannot implement the mode.
 	//
@@ -4610,7 +4624,11 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": task.Status})
+	status := task.Status
+	if task.Status == "deferred" && task.FailureReason.String == "release_pause" {
+		status = "release_paused"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": status})
 }
 
 // FailTask marks a running task as failed.

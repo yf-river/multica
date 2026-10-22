@@ -48,12 +48,14 @@ func normalizeGOOS(goos string) string {
 // APIClient 是访问 Multica 服务器 API 的 REST 客户端，供 ctrl 子命令（agent、runtime、
 // status 等）使用。请求会自动带上鉴权与执行上下文相关的头（配置了的情况下）。
 type APIClient struct {
-	BaseURL     string
-	WorkspaceID string
-	Token       string
-	AgentID     string // 设置后，请求归因到该 agent 而不是用户
-	TaskID      string // 设置后，作为 X-Task-ID 发送，供 agent-task 校验
-	HTTPClient  *http.Client
+	BaseURL            string
+	WorkspaceID        string
+	Token              string
+	AgentID            string // 设置后，请求归因到该 agent 而不是用户
+	TaskID             string // 设置后，作为 X-Task-ID 发送，供 agent-task 校验
+	DeliveryToken      string
+	DeliveryGeneration int64
+	HTTPClient         *http.Client
 
 	// 身份覆盖项。留空则回退到包级 ClientPlatform / ClientVersion / ClientOS。
 	Platform string
@@ -191,6 +193,10 @@ const clientCapabilities = "stable_attachment_urls"
 // setHeaders 给请求统一设置能力声明、鉴权与执行上下文相关的头。
 func (c *APIClient) setHeaders(req *http.Request) {
 	req.Header.Set("X-Client-Capabilities", clientCapabilities)
+	if c.DeliveryToken != "" {
+		req.Header.Set("X-Delivery-Token", c.DeliveryToken)
+		req.Header.Set("X-Delivery-Generation", strconv.FormatInt(c.DeliveryGeneration, 10))
+	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}

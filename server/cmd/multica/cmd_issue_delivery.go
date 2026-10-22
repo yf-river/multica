@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
@@ -13,7 +15,7 @@ import (
 // 交付命令与页面使用同一套版本和确认接口。
 func init() {
 	group := &cobra.Command{Use: "delivery", Short: "Plan confirmation, integration queue and production review"}
-	for _, action := range []string{"status", "plan", "confirm-plan", "revoke-release", "submit", "accept", "approve", "retest", "cancel"} {
+	for _, action := range []string{"status", "plan", "confirm-plan", "revoke-release", "submit", "accept", "approve", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
 		action := action
 		cmd := &cobra.Command{Use: action + " <issue-id>", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newAPIClient(cmd)
@@ -27,6 +29,21 @@ func init() {
 				return err
 			}
 			path := "/api/issues/" + ref.ID
+			if action == "owner" {
+				var result json.RawMessage
+				if err = client.GetJSON(ctx, path+"/delivery-owner", &result); err != nil {
+					return err
+				}
+				return cli.PrintJSON(os.Stdout, result)
+			}
+			if action != "status" && action != "confirm-plan" && action != "revoke-release" {
+				if err = deliveryCLIClaim(ctx, cmd, client, path, action); err != nil {
+					return err
+				}
+				if action == "claim-owner" || action == "recover-owner" || action == "release-owner" {
+					return cli.PrintJSON(os.Stdout, map[string]any{"status": "ok", "generation": client.DeliveryGeneration})
+				}
+			}
 			var result json.RawMessage
 			if action == "status" {
 				err = client.GetJSON(ctx, path+"/deliveries", &result)
@@ -69,7 +86,66 @@ func init() {
 		cmd.Flags().String("file", "", "JSON request file (preserve operation_id on retries)")
 		cmd.Flags().String("delivery", "", "Delivery UUID")
 		cmd.Flags().String("output", "json", "Output format")
+		cmd.Flags().String("execution", "", "Stable execution identity (defaults to MULTICA_TASK_ID or CODEX_THREAD_ID)")
+		cmd.Flags().String("recovery-evidence", "", "Observed old execution and environment state for explicit handoff")
 		group.AddCommand(cmd)
 	}
 	issueCmd.AddCommand(group)
+}
+
+// deliveryCLIClaim 将会话凭据保存在私有配置目录，独立 worktree 不共享写入身份。
+func deliveryCLIClaim(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, path, action string) error {
+	execution, _ := cmd.Flags().GetString("execution")
+	if execution == "" {
+		execution = os.Getenv("MULTICA_TASK_ID")
+	}
+	if execution == "" {
+		execution = os.Getenv("CODEX_THREAD_ID")
+	}
+	if execution == "" {
+		return fmt.Errorf("delivery writes require --execution <stable-session-id>")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(client.BaseURL+client.WorkspaceID+path+execution)))
+	dir := filepath.Join(home, ".multica", "delivery-owners")
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	file := filepath.Join(dir, key+".json")
+	var saved struct {
+		Token      string `json:"token"`
+		Generation int64  `json:"generation"`
+	}
+	if raw, e := os.ReadFile(file); e == nil {
+		if e = json.Unmarshal(raw, &saved); e != nil {
+			return e
+		}
+	} else if !os.IsNotExist(e) {
+		return e
+	}
+	operation := "claim"
+	if action == "recover-owner" {
+		operation = "recover"
+	}
+	if action == "release-owner" {
+		operation = "release"
+	}
+	evidence, _ := cmd.Flags().GetString("recovery-evidence")
+	body := map[string]any{"action": operation, "execution_id": execution, "token": saved.Token, "generation": saved.Generation, "recovery_evidence": evidence}
+	if err = client.PostJSON(ctx, path+"/delivery-owner", body, &saved); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		return err
+	}
+	if err = os.WriteFile(file, raw, 0600); err != nil {
+		return err
+	}
+	client.DeliveryToken = saved.Token
+	client.DeliveryGeneration = saved.Generation
+	return nil
 }

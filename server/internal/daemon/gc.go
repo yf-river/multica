@@ -386,6 +386,10 @@ const (
 // shouldCleanTaskDir 决定是否应删除一个任务目录。按 meta.Kind 分派，让 chat /
 // autopilot / quick-create 任务各自跟随真正管辖其生命周期的父记录。
 func (d *Daemon) shouldCleanTaskDir(ctx context.Context, taskDir string) gcAction {
+	if _, err := os.Stat(filepath.Join(taskDir, ".release-pause.json")); err == nil {
+		return gcActionSkip
+	}
+
 	// 当前正跑在这个 env root 上的任务绝不回收——连 done/cancelled 或 orphan-404 路径
 	// 也不行。一个重派发或仍在运行的任务可能复用一个“已完成、且 updated_at 比 TTL 还
 	// 老”的 issue 的旧 workdir（任务重新认领不推进 updated_at），所以光靠常规 TTL 检查

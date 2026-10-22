@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS delivery_evidence_key;

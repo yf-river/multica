@@ -80,6 +80,8 @@ type IssueStatusData struct {
 // Task 表示一条从服务器认领（claim）到的任务。
 // Agent 数据（name、skills）由 claim 端点填充。
 type Task struct {
+	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
+	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
 	ID                   string                 `json:"id"`
 	AgentID              string                 `json:"agent_id"`
 	RuntimeID            string                 `json:"runtime_id"`
