@@ -1607,10 +1607,11 @@ export class ApiClient {
 
   // Agents（agent 管理区）
   /** 列出 workspace 的 agent，可选是否包含已归档。 */
-  async listAgents(params?: { workspace_id?: string; include_archived?: boolean }): Promise<Agent[]> {
+  async listAgents(params?: { workspace_id?: string; include_archived?: boolean; include_managed?: boolean }): Promise<Agent[]> {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.include_archived) search.set("include_archived", "true");
+    if (params?.include_managed) search.set("include_managed", "true");
     return this.fetch(`/api/agents?${search}`);
   }
 

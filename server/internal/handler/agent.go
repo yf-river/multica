@@ -987,10 +987,12 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")
 		return
 	}
+	// 托管审查 Agent 不属于可指派/可编辑目录，但评论需要解析作者名，所以允许
+	// 显式用 include_managed=true 读取（不参与选择器与智能体页面）。
+	includeManaged := r.URL.Query().Get("include_managed") == "true"
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
-		// 审查员由审核中列的审查设置托管，不属于可指派或可编辑的 Agent。
-		if a.SystemKey.Valid && a.SystemKey.String == review.SystemKey {
+		if !includeManaged && a.SystemKey.Valid && a.SystemKey.String == review.SystemKey {
 			continue
 		}
 		targets := targetsByAgent[uuidToString(a.ID)]

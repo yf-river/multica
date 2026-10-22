@@ -59,6 +59,17 @@ export function agentListOptions(wsId: string) {
   });
 }
 
+/**
+ * 查询工作区的托管 Agent（如审查员）。它们不出现在选择器里，只用于把评论/活动
+ * 的作者 id 解析成可读名字；与 agentListOptions 分开缓存，避免混进可选目录。
+ */
+export function managedAgentListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: [...workspaceKeys.agents(wsId), "managed"] as const,
+    queryFn: () => api.listAgents({ workspace_id: wsId, include_managed: true }),
+  });
+}
+
 /** 查询单个 agent 详情。 */
 export function agentDetailOptions(wsId: string, agentId: string) {
   return queryOptions({

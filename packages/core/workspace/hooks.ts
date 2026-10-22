@@ -10,6 +10,7 @@ import { useWorkspaceId } from "../hooks";
 import {
   memberListOptions,
   agentListOptions,
+  managedAgentListOptions,
   squadListOptions,
   workspaceListOptions,
 } from "./queries";
@@ -127,6 +128,11 @@ export function useActorName(
     ...agentListOptions(wsId),
     enabled: !!wsId && scope.agents !== false,
   });
+  // 托管 Agent（审查员）不在可选目录里，但它们会写评论，作者名仍需能解析。
+  const { data: managedAgents = EMPTY_AGENTS } = useQuery({
+    ...managedAgentListOptions(wsId),
+    enabled: !!wsId && scope.agents !== false,
+  });
   const { data: squads = EMPTY_SQUADS } = useQuery({
     ...squadListOptions(wsId),
     enabled: !!wsId && scope.squads !== false,
@@ -144,10 +150,15 @@ export function useActorName(
     return m?.name ?? "Unknown";
   }, [members]);
 
+  const directoryAgents = useMemo(
+    () => [...agents, ...managedAgents],
+    [agents, managedAgents],
+  );
+
   const getAgentName = useCallback((agentId: string) => {
-    const a = agents.find((a) => a.id === agentId);
+    const a = directoryAgents.find((a) => a.id === agentId);
     return a?.name ?? "Unknown Agent";
-  }, [agents]);
+  }, [directoryAgents]);
 
   const getSquadName = useCallback((squadId: string) => {
     const s = squads.find((s) => s.id === squadId);
@@ -155,8 +166,8 @@ export function useActorName(
   }, [squads]);
 
   const getActorName = useMemo(
-    () => buildActorNameResolver({ members, agents, squads, plugins: pluginData?.plugins }),
-    [agents, members, squads, pluginData],
+    () => buildActorNameResolver({ members, agents: directoryAgents, squads, plugins: pluginData?.plugins }),
+    [directoryAgents, members, squads, pluginData],
   );
 
   const getActorInitials = useCallback((type: string, id: string) => {
@@ -171,7 +182,7 @@ export function useActorName(
 
   const getActorAvatarUrl = useCallback((type: string, id: string): string | null => {
     if (type === "member") return resolvePublicFileUrl(members.find((m) => m.user_id === id)?.avatar_url);
-    if (type === "agent") return resolvePublicFileUrl(agents.find((a) => a.id === id)?.avatar_url);
+    if (type === "agent") return resolvePublicFileUrl(directoryAgents.find((a) => a.id === id)?.avatar_url);
     if (type === "squad") return resolvePublicFileUrl(squads.find((s) => s.id === id)?.avatar_url);
     return null;
   }, [agents, members, squads]);

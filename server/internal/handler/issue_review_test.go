@@ -128,6 +128,14 @@ func TestReviewSettingsManageHiddenAgent(t *testing.T) {
 		t.Fatalf("managed review agent leaked into the agent list: %s", listW.Body.String())
 	}
 
+	// 显式 include_managed 时可见：评论作者名需要解析它。
+	managedReq := withChatTestWorkspaceCtx(t, newRequest("GET", "/api/agents?include_managed=true", nil))
+	managedW := httptest.NewRecorder()
+	testHandler.ListAgents(managedW, managedReq)
+	if !strings.Contains(managedW.Body.String(), agentID) {
+		t.Fatalf("include_managed did not return the review agent: %s", managedW.Body.String())
+	}
+
 	// 通用 Agent 更新入口拒绝修改托管审查员。
 	updateReq := withChatTestWorkspaceCtx(t, newRequest("PUT", "/api/agents/"+agentID, map[string]any{"name": "改名"}))
 	updateReq = withURLParam(updateReq, "id", agentID)
