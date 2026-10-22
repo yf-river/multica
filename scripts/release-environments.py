@@ -149,6 +149,16 @@ def build_version(source, sha):
         raise RuntimeError('构建版本串不可被版本门槛解析: '+version+'（scripts/build-version.sh 应输出 vX.Y.Z 或 vX.Y.Z-N-g<sha>）')
     return version
 
+def reusable_build(previous, current_files, version):
+    """当前 int 运行目录里的产物能否整体复用。
+
+    源码输入一致还不够：产物里的 `-X main.version` 与 web 的 NEXT_PUBLIC_APP_VERSION
+    都不在源码里，只按 inputs 判断会把上一轮用旧规则构建的二进制原样搬进新候选，
+    联调核对版本串时才发现修复没有进产物。所以版本串也要一致。
+    """
+    if previous.get('version') != version: return False
+    return all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
+
 def build(source, target):
     source, sha = checked_source(source)
     version = build_version(source, sha)
@@ -164,9 +174,9 @@ def build(source, target):
     inputs = {name: value.hexdigest() for name, value in groups.items()}
     current = Path(read(meta_path('int'))['release_dir'])
     previous = read(current/'release.json') if (current/'release.json').exists() else {}
-    # 运行目录只允许增加缓存，包内源码与程序必须仍然匹配。
+    # 运行目录只允许增加缓存，包内源码与程序必须仍然匹配，注入的版本串也要一致。
     current_files = checksums(current) if previous.get('inputs') else {}
-    reusable = all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
+    reusable = reusable_build(previous, current_files, version)
     target.mkdir(parents=True)
     env = os.environ.copy()
     for key in list(env):
@@ -203,7 +213,7 @@ def build(source, target):
                 queries.append(dict(name='delivery_'+str(len(queries)),sql=sql))
     write(target/'server/queries.json', queries)
     manifest = dict(id=sha+'-'+str(time.time_ns()), source_commit=sha, source_directory=str(source), source_digest=digest,
-                    inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+                    version=version, inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     write(target/'release.json', manifest)
     for cache in (source/'apps/web/.next/cache', source/'.turbo'):
         if cache.exists() and sum(p.stat().st_size for p in cache.rglob('*') if p.is_file() and not p.is_symlink()) > 1024**3:
