@@ -1683,6 +1683,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Patch("/findings/{findingId}", h.UpdateSupervisionFinding)
 				r.Post("/findings/{findingId}/feedback", h.FeedbackSupervisionFinding)
 			})
+			// 上游同步：人类侧读配置与清单，Agent 侧领批次、回传、推进游标。
+			r.Route("/api/upstream", func(r chi.Router) {
+				r.Get("/", h.GetUpstream)
+				r.Put("/", h.UpdateUpstreamConfig)
+				r.Get("/items", h.ListUpstreamItems)
+				r.With(handler.RequireHumanActor).Patch("/items/status", h.MarkUpstreamItems)
+				r.Get("/runs", h.ListUpstreamRuns)
+				r.Post("/runs/start", h.StartUpstreamRun)
+				r.Post("/runs/{runId}/items", h.AppendUpstreamItems)
+				r.Post("/runs/{runId}/finish", h.FinishUpstreamRun)
+				r.Post("/runs/{runId}/fail", h.FailUpstreamRun)
+			})
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 

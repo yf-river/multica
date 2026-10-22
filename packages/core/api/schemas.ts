@@ -3218,3 +3218,36 @@ export const TaskOutputPageSchema = z.object({
 }));
 
 export type TaskOutputPage = z.output<typeof TaskOutputPageSchema>;
+
+// ─── 上游同步 ────────────────────────────────────────────────────────────
+export const UpstreamConfigSchema = z.object({
+  upstream_url: z.string(), upstream_branch: z.string(), local_ref: z.string(),
+  agent_id: z.string().default(""), autopilot_id: z.string().default(""),
+  batch_size: z.number(), sync_state: z.string(),
+  bootstrap_base_sha: z.string(), cursor_sha: z.string(), head_sha: z.string(),
+  last_run_at: z.string().nullable(), error: z.string().default(""),
+});
+export const UpstreamSnapshotSchema = z.object({
+  config: UpstreamConfigSchema, pending: z.number(), adopted: z.number(),
+  active_run_id: z.string().default(""),
+});
+export const UpstreamItemSchema = z.object({
+  id: z.string(), run_id: z.string(), cluster_key: z.string(), title: z.string(),
+  summary: z.string(), rationale: z.string(), verdict: z.string(), confidence: z.string(),
+  presence: z.string(), paths: z.array(z.string()).default([]), commit_count: z.number(),
+  commit_shas: z.array(z.string()).default([]),
+  first_commit_at: z.string().nullable(), last_commit_at: z.string().nullable(),
+  status: z.string(), adopted_at: z.string().nullable(), created_at: z.string(),
+});
+export const UpstreamItemsSchema = z.object({ items: z.array(UpstreamItemSchema) });
+export const UpstreamRunSchema = z.object({
+  id: z.string(), mode: z.string(), trigger_source: z.string(), status: z.string(),
+  base_sha: z.string(), observed_head_sha: z.string(), cursor_sha: z.string(),
+  scanned_commits: z.number(), absorbed_commits: z.number(), item_count: z.number(),
+  has_more: z.boolean(), error: z.string(),
+  started_at: z.string().nullable(), completed_at: z.string().nullable(), created_at: z.string(),
+});
+export const UpstreamRunsSchema = z.object({ runs: z.array(UpstreamRunSchema) });
+export type UpstreamSnapshot = z.output<typeof UpstreamSnapshotSchema>;
+export type UpstreamItem = z.output<typeof UpstreamItemSchema>;
+export type UpstreamRun = z.output<typeof UpstreamRunSchema>;

@@ -26,6 +26,7 @@ import settings from "./zh-Hans/settings.json";
 import skills from "./zh-Hans/skills.json";
 import squads from "./zh-Hans/squads.json";
 import ui from "./zh-Hans/ui.json";
+import upstream from "./zh-Hans/upstream.json";
 import usage from "./zh-Hans/usage.json";
 import workspace from "./zh-Hans/workspace.json";
 
@@ -58,6 +59,7 @@ export const RESOURCES: Record<"zh-Hans", LocaleResources> = {
     skills: skills,
     squads: squads,
     ui: ui,
+    upstream: upstream,
     usage: usage,
     workspace: workspace,
   },

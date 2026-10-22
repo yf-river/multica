@@ -37,6 +37,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/supervision"
+	"github.com/multica-ai/multica/server/internal/upstream"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -752,6 +753,7 @@ func main() {
 	// 下缺 sys_cron_executions——的处理是在失败的那个 tick 记日志、下一个周期
 	// 重试，因此短暂故障不会让服务器崩掉。
 	h.Supervision = supervision.New(pool, h.TaskService)
+	h.Upstream = upstream.New(pool)
 	h.Supervision.Authorize = h.CanUseSupervisionAgent
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{TickInterval: supervision.PollInterval})
 	if err := schedulerMgr.Register(scheduler.QualitySupervisionJob(h.Supervision)); err != nil {

@@ -1,0 +1,69 @@
+{
+  "page": {
+    "title": "上游同步",
+    "tagline": "把上游仓库的改动汇总成待吸收清单，由你决定要不要采纳。",
+    "tabs": {
+      "pending": "待吸收",
+      "runs": "同步记录"
+    },
+    "status": {
+      "head": "上游 {{sha}}",
+      "last_run": "上次同步 {{time}}",
+      "never": "还没同步过",
+      "no_agent": "还没绑定同步智能体",
+      "running": "正在同步",
+      "error": "上次同步失败"
+    },
+    "filters": {
+      "status_open": "待定",
+      "status_adopted": "已采纳",
+      "status_ignored": "已忽略",
+      "any_verdict": "全部结论",
+      "any_presence": "全部范围",
+      "search": "搜索标题或摘要"
+    },
+    "pending": {
+      "empty": "暂无待吸收项",
+      "empty_hint": "跑一批同步后，上游的改动会出现在这里。",
+      "load_more": "加载更多"
+    },
+    "bulk": {
+      "selected": "已选 {{count}} 条",
+      "adopt": "标记已采纳",
+      "ignore": "忽略",
+      "restore": "撤销标记"
+    },
+    "item": {
+      "absorb": "值得吸收",
+      "review": "待评估",
+      "skip": "可跳过",
+      "local": "本地已有",
+      "partial": "部分存在",
+      "absent": "本地无此模块",
+      "commits": "{{count}} 个提交",
+      "rationale": "判断依据",
+      "paths": "涉及路径"
+    },
+    "runs": {
+      "title": "同步记录",
+      "start_bootstrap": "开始存量同步",
+      "continue": "继续下一批",
+      "empty": "还没有同步记录",
+      "mode_bootstrap": "存量",
+      "mode_incremental": "增量",
+      "status_running": "进行中",
+      "status_completed": "已完成",
+      "status_failed": "失败",
+      "status_interrupted": "已中断",
+      "scanned": "扫描 {{count}}",
+      "items": "条目 {{count}}",
+      "has_more": "还有剩余",
+      "trigger_manual": "手动",
+      "trigger_schedule": "定时"
+    },
+    "setup": {
+      "hint": "还没绑定同步智能体，添加后可每天自动跑增量。",
+      "copy_prompt": "复制智能体设定"
+    }
+  }
+}

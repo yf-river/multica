@@ -25,7 +25,8 @@
     "meals": "饮食",
     "goals": "目标",
     "mcp": "MCP",
-    "quick_actions": "快捷操作"
+    "quick_actions": "快捷操作",
+    "upstream": "上游同步"
   },
   "living_pages": {
     "health": {

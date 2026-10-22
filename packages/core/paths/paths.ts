@@ -69,6 +69,7 @@ function workspaceScoped(slug: string) {
     skills: () => `${ws}/skills`,
     mcp: () => `${ws}/mcp`,
     quickActions: () => `${ws}/quick-actions`,
+    upstream: () => `${ws}/upstream`,
     health: () => `${ws}/health`,
     healthReport: (id: string) => `${ws}/health?report=${encode(id)}`,
     meals: () => `${ws}/meals`,

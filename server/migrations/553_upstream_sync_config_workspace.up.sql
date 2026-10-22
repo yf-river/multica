@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY upstream_sync_config_workspace ON upstream_sync_config(workspace_id);

@@ -61,6 +61,7 @@ func init() {
 	squadCmd.GroupID = groupCore
 	lifeCmd.GroupID = groupCore
 	chatCmd.GroupID = groupCore
+	upstreamCmd.GroupID = groupCore
 
 	// 运行时（Runtime）命令组
 	daemonCmd.GroupID = groupRuntime
@@ -88,6 +89,7 @@ func init() {
 	rootCmd.AddCommand(squadCmd)
 	rootCmd.AddCommand(lifeCmd)
 	rootCmd.AddCommand(chatCmd)
+	rootCmd.AddCommand(upstreamCmd)
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(runtimeCmd)
 	rootCmd.AddCommand(authCmd)

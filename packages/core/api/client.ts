@@ -316,6 +316,12 @@ import {
   IssueTableGroupsResponseSchema,
   IssueTableRowsResponseSchema,
   ListAutopilotsResponseSchema,
+  UpstreamSnapshotSchema,
+  UpstreamItemsSchema,
+  UpstreamRunsSchema,
+  type UpstreamSnapshot,
+  type UpstreamItem,
+  type UpstreamRun,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
@@ -769,6 +775,25 @@ export class ApiClient {
     this.options.onUnauthorized?.();
   }
 
+  async getUpstreamSnapshot() {
+    return parseOrThrow<UpstreamSnapshot>(await this.fetch<unknown>("/api/upstream/"), UpstreamSnapshotSchema, { endpoint: "GET /api/upstream" });
+  }
+  async listUpstreamItems(params: { status?: string; verdict?: string; presence?: string; q?: string; limit?: number; offset?: number }) {
+    const q = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") q.set(key, String(value));
+    }
+    return parseOrThrow<{ items: UpstreamItem[] }>(await this.fetch<unknown>(`/api/upstream/items?${q}`), UpstreamItemsSchema, { endpoint: "GET /api/upstream/items" });
+  }
+  async listUpstreamRuns(limit = 30) {
+    return parseOrThrow<{ runs: UpstreamRun[] }>(await this.fetch<unknown>(`/api/upstream/runs?limit=${limit}`), UpstreamRunsSchema, { endpoint: "GET /api/upstream/runs" });
+  }
+  async updateUpstreamConfig(body: { upstream_url: string; upstream_branch: string; local_ref: string; batch_size: number; agent_id?: string; autopilot_id?: string }) {
+    return this.fetch<{ ok: boolean }>("/api/upstream/", { method: "PUT", body: JSON.stringify(body) });
+  }
+  async markUpstreamItems(body: { ids: string[]; status: "adopted" | "ignored" | "open" }) {
+    return this.fetch<{ updated: number }>("/api/upstream/items/status", { method: "PATCH", body: JSON.stringify(body) });
+  }
   async getSupervision() {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/"), supervisionSnapshotSchema, { endpoint: "GET /api/supervision", sensitive: true });
   }

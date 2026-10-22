@@ -42,6 +42,9 @@ describe("paths.workspace() shape", () => {
         "cookingFavorites",
         "life",
         "companion",
+        "mcp",
+        "quickActions",
+        "upstream",
       ]),
     );
   });

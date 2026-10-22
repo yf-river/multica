@@ -111,6 +111,7 @@ const PAGE_KEYWORDS: Record<WorkspacePageKey, string[]> = {
   quickActions: ["quick actions", "快捷操作"],
   skills: ["skills", "library", "技能"],
   settings: ["settings", "config", "preferences", "设置", "配置"],
+  upstream: ["upstream", "sync", "fork", "上游", "同步"],
   cooking: ["cooking", "recipes", "烹饪", "菜谱", "做饭"],
   health: ["health", "身体", "健康", "身高", "体重", "指标"],
   meals: ["meals", "饮食", "餐单", "备餐", "采购"],
