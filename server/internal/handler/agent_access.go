@@ -58,7 +58,7 @@ func (h *Handler) canInvokeAgent(ctx context.Context, agent db.Agent, actorType,
 		return false
 	}
 	// 上游同步执行体只接受自动化派发，不能被成员 @、指派或聊天调用。
-	if agent.SystemKey.Valid && agent.SystemKey.String == upstream.ExecutorSystemKey {
+	if agent.SystemKey.Valid && upstream.IsExecutorSystemKey(agent.SystemKey.String) {
 		return false
 	}
 	allowed := h.invokeAgentDecision(ctx, agent, actorType, actorID, originatorUserID, workspaceID)

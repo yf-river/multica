@@ -96,9 +96,12 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 	var currentURL, currentBranch, currentRef, base, currentAgent, currentPilot, currentRuntime, currentInstructions string
 	var currentHour int
 	var currentState string
-	if err = tx.QueryRow(ctx, `SELECT upstream_url,upstream_branch,local_ref,bootstrap_base_sha,
- COALESCE(agent_id::text,''),COALESCE(autopilot_id::text,''),COALESCE(runtime_id::text,''),schedule_hour,sync_state,instructions
- FROM upstream_sync_config WHERE singleton=1 FOR UPDATE`).
+	// 提示词与整点存在独立的设置表，配置表保持升级前的结构；没有设置行时按默认值处理。
+	if err = tx.QueryRow(ctx, `SELECT c.upstream_url,c.upstream_branch,c.local_ref,c.bootstrap_base_sha,
+ COALESCE(c.agent_id::text,''),COALESCE(c.autopilot_id::text,''),COALESCE(c.runtime_id::text,''),
+ COALESCE(ss.schedule_hour,9),c.sync_state,COALESCE(ss.instructions,'')
+ FROM upstream_sync_config c LEFT JOIN upstream_sync_settings ss ON ss.singleton=1
+ WHERE c.singleton=1 FOR UPDATE OF c`).
 		Scan(&currentURL, &currentBranch, &currentRef, &base, &currentAgent, &currentPilot, &currentRuntime, &currentHour, &currentState, &currentInstructions); err != nil {
 		return "", "", err
 	}
@@ -117,16 +120,23 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		}
 	}
 
-	// 先定位已有执行体：配置里记录的 id 优先，其次按固定 system_key 查找。
+	// 先定位已有执行体：配置里记录的 id 优先，其次按系统标识查找。
+	// 执行体保持 kind='system' 且键按运行时派生：升级期间仍在服务的旧程序按同一个
+	// 键找到它，不会另建一条 Agent 和自动化；回退旧版本也不需要改数据库。
 	var agentID, agentOwner, agentRuntime, agentModel, agentThinking, agentWorkspace string
 	err = tx.QueryRow(ctx, `SELECT id::text,COALESCE(owner_id::text,''),COALESCE(runtime_id::text,''),
  COALESCE(model,''),COALESCE(thinking_level,''),workspace_id::text
- FROM agent WHERE id=NULLIF($1,'')::uuid AND kind='user' AND system_key=$2`, currentAgent, ExecutorSystemKey).
+ FROM agent WHERE id=NULLIF($1,'')::uuid AND kind='system' AND (system_key=$2 OR system_key LIKE $3)`,
+		currentAgent, ExecutorSystemKey, ExecutorSystemKeyPrefix+"%").
 		Scan(&agentID, &agentOwner, &agentRuntime, &agentModel, &agentThinking, &agentWorkspace)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// 没有配置记录的执行体时，优先接管旧版为这次选择的运行时建的那条，
+		// 其次才退回任意历史执行体。
 		err = tx.QueryRow(ctx, `SELECT id::text,COALESCE(owner_id::text,''),COALESCE(runtime_id::text,''),
  COALESCE(model,''),COALESCE(thinking_level,''),workspace_id::text
- FROM agent WHERE system_key=$1 AND kind='user' ORDER BY created_at LIMIT 1`, ExecutorSystemKey).
+ FROM agent WHERE kind='system' AND (system_key=$1 OR system_key LIKE $2)
+ ORDER BY (system_key=$3) DESC, created_at LIMIT 1`,
+			ExecutorSystemKey, ExecutorSystemKeyPrefix+"%", ExecutorSystemKeyFor(runtimeID)).
 			Scan(&agentID, &agentOwner, &agentRuntime, &agentModel, &agentThinking, &agentWorkspace)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = nil
@@ -184,18 +194,27 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 			agentID = newID()
 			if _, err = tx.Exec(ctx, `INSERT INTO agent(id,workspace_id,name,description,avatar_url,runtime_mode,runtime_id,
  instructions,visibility,permission_mode,max_concurrent_tasks,kind,system_key,status,owner_id,model,thinking_level)
- VALUES($1,$2,'上游观察员','由上游同步设置自动维护，请到上游同步页面修改','🛰',$3,$4,$5,'private','private',1,'user',$6,'offline',$7,NULLIF($8,''),NULLIF($9,''))`,
-				agentID, workspaceID, runtimeMode, runtimeID, effective, ExecutorSystemKey, effectiveOwner, model, thinking); err != nil {
+ VALUES($1,$2,'上游观察员','由上游同步设置自动维护，请到上游同步页面修改','🛰',$3,$4,$5,'private','private',1,'system',$6,'offline',$7,NULLIF($8,''),NULLIF($9,''))`,
+				agentID, workspaceID, runtimeMode, runtimeID, effective, ExecutorSystemKeyFor(runtimeID), effectiveOwner, model, thinking); err != nil {
 				return "", "", err
 			}
-		} else if _, err = tx.Exec(ctx, `UPDATE agent SET workspace_id=$2,runtime_id=$3,runtime_mode=$4,instructions=$5,
+		} else {
+			// 目标运行时可能还留着旧版为它建的另一条执行体。先把它改成孤儿键：否则两条
+			// Agent 共用一个键，旧程序按键读取时会拿到不一定是配置绑定的那条。
+			if _, err = tx.Exec(ctx, `UPDATE agent SET system_key=$1::text||id::text,updated_at=now()
+ WHERE kind='system' AND system_key=$2 AND id<>$3`,
+				ExecutorOrphanPrefix, ExecutorSystemKeyFor(runtimeID), agentID); err != nil {
+				return "", "", err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE agent SET workspace_id=$2,runtime_id=$3,runtime_mode=$4,instructions=$5,
  owner_id=$6,system_key=$7,model=NULLIF($8,''),thinking_level=NULLIF($9,''),archived_at=NULL,archived_by=NULL,updated_at=now() WHERE id=$1`,
-			agentID, workspaceID, runtimeID, runtimeMode, effective, effectiveOwner, ExecutorSystemKey, model, thinking); err != nil {
-			return "", "", err
+				agentID, workspaceID, runtimeID, runtimeMode, effective, effectiveOwner, ExecutorSystemKeyFor(runtimeID), model, thinking); err != nil {
+				return "", "", err
+			}
 		}
 	} else if agentID != "" {
 		// 未改绑定：只同步提示词，暂停状态下也能先把设置保存好。
-		if _, err = tx.Exec(ctx, `UPDATE agent SET instructions=$2,system_key=$3,updated_at=now() WHERE id=$1`, agentID, effective, ExecutorSystemKey); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE agent SET instructions=$2,updated_at=now() WHERE id=$1`, agentID, effective); err != nil {
 			return "", "", err
 		}
 	}
@@ -216,8 +235,14 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		}
 		pilot = currentPilot
 		if pilot != "" {
-			var owner string
-			if err = tx.QueryRow(ctx, `SELECT COALESCE(assignee_id::text,'') FROM autopilot WHERE id=$1 AND status<>'archived'`, pilot).Scan(&owner); err != nil || owner != agentID {
+			// 按配置记住的 id 复用自动化：执行体可能随运行时删除被重建，自动化仍是同一条，
+			// 下面统一把它的指派改到当前执行体。
+			var exists bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM autopilot WHERE id=$1 AND workspace_id=$2 AND status<>'archived')`,
+				pilot, agentWorkspace).Scan(&exists); err != nil {
+				return "", "", err
+			}
+			if !exists {
 				pilot = ""
 			}
 		}
@@ -236,7 +261,7 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 				return "", "", err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE autopilot SET description=$2,status=CASE WHEN $3 THEN 'active' ELSE 'paused' END,pause_reason=NULL,updated_at=now() WHERE id=$1`, pilot, effective, in.Enabled); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE autopilot SET assignee_id=$2,description=$3,status=CASE WHEN $4 THEN 'active' ELSE 'paused' END,pause_reason=NULL,updated_at=now() WHERE id=$1`, pilot, agentID, effective, in.Enabled); err != nil {
 			return "", "", err
 		}
 		if currentPilot != "" && currentPilot != pilot {
@@ -250,17 +275,23 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		}
 	}
 
+	// 设置页新增的两项单独落表，配置表保持升级前的列，旧程序读写同一行不受影响。
+	if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_settings(singleton,instructions,schedule_hour,updated_at)
+ VALUES(1,$1,$2,now()) ON CONFLICT(singleton) DO UPDATE
+ SET instructions=EXCLUDED.instructions,schedule_hour=EXCLUDED.schedule_hour,updated_at=now()`, override, in.ScheduleHour); err != nil {
+		return "", "", err
+	}
 	state := "bootstrap"
 	if !in.Enabled {
 		state = "paused"
 	}
 	_, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET upstream_url=$1,upstream_branch=$2,local_ref=$3,batch_size=$4,
- schedule_hour=$5,instructions=$6,created_by=COALESCE(created_by,$7),runtime_id=NULLIF($8,'')::uuid,
- agent_id=NULLIF($9,'')::uuid,autopilot_id=NULLIF($10,'')::uuid,
- sync_state=CASE WHEN $11='paused' THEN 'paused' WHEN sync_state IN ('idle','paused') THEN
+ created_by=COALESCE(created_by,$5),runtime_id=NULLIF($6,'')::uuid,
+ agent_id=NULLIF($7,'')::uuid,autopilot_id=NULLIF($8,'')::uuid,
+ sync_state=CASE WHEN $9='paused' THEN 'paused' WHEN sync_state IN ('idle','paused') THEN
    CASE WHEN cursor_sha<>'' AND NOT COALESCE((SELECT has_more FROM upstream_sync_run WHERE status='completed' ORDER BY completed_at DESC LIMIT 1),true) THEN 'incremental' ELSE 'bootstrap' END
    ELSE sync_state END,updated_at=now() WHERE singleton=1`,
-		in.UpstreamURL, in.UpstreamBranch, in.LocalRef, in.BatchSize, in.ScheduleHour, override, actorID,
+		in.UpstreamURL, in.UpstreamBranch, in.LocalRef, in.BatchSize, actorID,
 		boundRuntime, agentID, pilot, state)
 	if err != nil {
 		return "", "", err

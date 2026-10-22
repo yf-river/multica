@@ -109,13 +109,16 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 	var out Snapshot
 	var agentID, autopilotID, createdBy *string
 	var agentRow, boundRuntime bool
-	var runtimeStatus string
+	var runtimeStatus, savedRuntime string
+	// 设置页新增的两项存在独立的设置表里，配置表保持升级期的旧结构；
+	// 没有设置行时按默认值展示，等同于用户没有改过。
 	if err := s.Pool.QueryRow(ctx, `SELECT c.upstream_url, c.upstream_branch, c.local_ref,
- c.agent_id::text, c.autopilot_id::text, c.batch_size, c.schedule_hour, c.sync_state, c.bootstrap_base_sha,
- c.cursor_sha, c.head_sha, c.last_run_at, c.error, c.created_by::text, c.instructions,
+ c.agent_id::text, c.autopilot_id::text, c.batch_size, COALESCE(ss.schedule_hour,9), c.sync_state, c.bootstrap_base_sha,
+ c.cursor_sha, c.head_sha, c.last_run_at, c.error, c.created_by::text, COALESCE(ss.instructions,''),
  COALESCE(a.runtime_id::text,''), COALESCE(a.model,''), COALESCE(a.thinking_level,''),
- (a.id IS NOT NULL), COALESCE(r.status,'')
+ (a.id IS NOT NULL), COALESCE(r.status,''), COALESCE(c.runtime_id::text,'')
  FROM upstream_sync_config c
+ LEFT JOIN upstream_sync_settings ss ON ss.singleton=1
  LEFT JOIN agent a ON a.id=c.agent_id
  LEFT JOIN agent_runtime r ON r.id=a.runtime_id
  WHERE c.singleton=1`).
@@ -124,7 +127,7 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 			&out.Config.BootstrapBaseSHA, &out.Config.CursorSHA, &out.Config.HeadSHA,
 			&out.Config.LastRunAt, &out.Config.Error, &createdBy, &out.Config.Instructions,
 			&out.Config.RuntimeID, &out.Config.Model, &out.Config.ThinkingLevel,
-			&agentRow, &runtimeStatus); err != nil {
+			&agentRow, &runtimeStatus, &savedRuntime); err != nil {
 		return nil, err
 	}
 	if agentID != nil {
@@ -138,13 +141,15 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 	}
 	boundRuntime = out.Config.RuntimeID != ""
 	out.RuntimeOnline = boundRuntime && runtimeStatus == "online"
+	// 执行体随运行时一起被删掉时，配置里仍留着 agent_id / runtime_id：
+	// 那是"失去运行时、要重新绑定"，不是"从未配置"。
 	switch {
-	case !agentRow:
-		out.ExecutorState = "none"
-	case !boundRuntime:
+	case agentRow && boundRuntime:
+		out.ExecutorState = "bound"
+	case agentRow || agentID != nil || savedRuntime != "":
 		out.ExecutorState = "unbound"
 	default:
-		out.ExecutorState = "bound"
+		out.ExecutorState = "none"
 	}
 	if err := s.Pool.QueryRow(ctx, `SELECT
  count(*) FILTER (WHERE status='open'),

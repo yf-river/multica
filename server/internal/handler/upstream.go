@@ -150,7 +150,7 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 	scheduleHour := upstream.DefaultScheduleHour
 	if body.ScheduleHour != nil {
 		scheduleHour = *body.ScheduleHour
-	} else if err := h.DB.QueryRow(r.Context(), `SELECT schedule_hour FROM upstream_sync_config WHERE singleton=1`).Scan(&scheduleHour); err != nil {
+	} else if err := h.DB.QueryRow(r.Context(), `SELECT schedule_hour FROM upstream_sync_settings WHERE singleton=1`).Scan(&scheduleHour); err != nil {
 		scheduleHour = upstream.DefaultScheduleHour
 	}
 

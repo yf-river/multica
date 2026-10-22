@@ -1,21 +1,12 @@
--- 上游同步的执行体与提示词改为设置页维护：
--- 1. instructions 保存用户改写后的提示词，空值表示继续跟随内置默认；
--- 2. schedule_hour 保存每天自动同步的北京时间整点；
--- 3. 执行体改用固定 system_key，换运行时只改绑定，不再新建第二条 Agent 和自动化。
---    旧 Agent 带上 id 后缀保留，历史任务与运行记录仍指向它们。
-ALTER TABLE upstream_sync_config
-    ADD COLUMN IF NOT EXISTS instructions text NOT NULL DEFAULT '',
-    ADD COLUMN IF NOT EXISTS schedule_hour integer NOT NULL DEFAULT 9;
-
-ALTER TABLE upstream_sync_config
-    ADD CONSTRAINT upstream_sync_config_schedule_hour_range
-    CHECK (schedule_hour BETWEEN 0 AND 23);
-
-UPDATE agent a
-SET kind = 'user', system_key = 'upstream_sync', updated_at = now()
-FROM upstream_sync_config c
-WHERE c.agent_id = a.id;
-
-UPDATE agent
-SET system_key = 'upstream_sync_orphan:' || id::text, updated_at = now()
-WHERE system_key LIKE 'upstream_sync:%';
+-- 上游同步设置：提示词改写与每日同步整点。
+-- 升级期间旧程序继续服务，且程序恢复不能撤销数据库变更，因此这里只新增一张表：
+-- 不改 upstream_sync_config 与 agent 的结构或数据，旧程序不读这张表也能照常跑完
+-- 同步、按原键找到执行体；回退旧版本同样不需要 down 任何语句。
+CREATE TABLE upstream_sync_settings (
+    singleton smallint PRIMARY KEY DEFAULT 1 CHECK (singleton = 1),
+    -- 用户改写后的提示词，空串表示继续跟随随代码发布的内置默认。
+    instructions text NOT NULL DEFAULT '',
+    -- 每天自动同步的北京时间整点。
+    schedule_hour integer NOT NULL DEFAULT 9 CHECK (schedule_hour BETWEEN 0 AND 23),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);

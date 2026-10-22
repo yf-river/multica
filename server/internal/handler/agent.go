@@ -997,7 +997,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	for _, a := range agents {
 
 		if a.SystemKey.Valid && (a.SystemKey.String == service.SupervisionSystemKey ||
-			a.SystemKey.String == upstream.ExecutorSystemKey ||
+			upstream.IsExecutorSystemKey(a.SystemKey.String) ||
 			(!includeManaged && a.SystemKey.String == review.SystemKey)) {
 			continue
 		}
@@ -1669,7 +1669,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "该 Agent 由质量监督托管，请到质量监督设置中修改")
 		return
 	}
-	if existing.SystemKey.Valid && existing.SystemKey.String == upstream.ExecutorSystemKey {
+	if existing.SystemKey.Valid && upstream.IsExecutorSystemKey(existing.SystemKey.String) {
 		writeError(w, http.StatusForbidden, "该 Agent 由上游同步设置托管，请到上游同步页面修改")
 		return
 	}

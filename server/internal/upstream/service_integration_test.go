@@ -29,7 +29,7 @@ func isolatedService(t *testing.T) *Service {
 	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"agent_runtime", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit", "upstream_sync_absorption_task"} {
+	for _, table := range []string{"agent_runtime", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_settings", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit", "upstream_sync_absorption_task"} {
 		if _, err = admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (LIKE public.%s INCLUDING ALL)", schema, table, table)); err != nil {
 			t.Fatal(err)
 		}
@@ -187,6 +187,12 @@ func TestSettingsKeepSingleExecutorAndSchedule(t *testing.T) {
 	if err = s.Pool.QueryRow(ctx, `SELECT runtime_id::text FROM agent WHERE id=$1`, first).Scan(&boundRuntime); err != nil || boundRuntime != ids[1] {
 		t.Fatalf("runtime rebind: %s %v", boundRuntime, err)
 	}
+	// 执行体仍是旧程序认识的形态：kind='system' 且键按运行时派生，升级期间旧程序
+	// 按同一个键找到它，不会另建第二条 Agent 和自动化。
+	var kind, systemKey string
+	if err = s.Pool.QueryRow(ctx, `SELECT kind,system_key FROM agent WHERE id=$1`, first).Scan(&kind, &systemKey); err != nil || kind != "system" || systemKey != ExecutorSystemKeyFor(ids[1]) {
+		t.Fatalf("executor identity kind=%s key=%s %v", kind, systemKey, err)
+	}
 	// 没有运行时也能保存：批量、时间与暂停不依赖绑定。
 	before, _, _ := s.SaveSettings(ctx, with(ids[1]), creator)
 	pausedNoRuntime := paused(base)
@@ -200,7 +206,7 @@ func TestSettingsKeepSingleExecutorAndSchedule(t *testing.T) {
 	}
 	var hour int
 	var enabled int
-	if err = s.Pool.QueryRow(ctx, `SELECT schedule_hour,(SELECT count(*) FROM autopilot_trigger WHERE enabled) FROM upstream_sync_config WHERE singleton=1`).Scan(&hour, &enabled); err != nil || hour != 23 || enabled != 0 {
+	if err = s.Pool.QueryRow(ctx, `SELECT schedule_hour,(SELECT count(*) FROM autopilot_trigger WHERE enabled) FROM upstream_sync_settings WHERE singleton=1`).Scan(&hour, &enabled); err != nil || hour != 23 || enabled != 0 {
 		t.Fatalf("paused settings: hour=%d enabled=%d %v", hour, enabled, err)
 	}
 	if err = s.Pool.QueryRow(ctx, `SELECT status FROM autopilot WHERE id=$1`, pilot).Scan(&status); err != nil || status != "paused" {
@@ -211,6 +217,98 @@ func TestSettingsKeepSingleExecutorAndSchedule(t *testing.T) {
 func paused(in Settings) Settings {
 	in.Enabled = false
 	return in
+}
+
+// 升级前建立的执行体（旧版按运行时派生的键、kind='system'）必须被直接接管：
+// 重复建行会让旧程序与新程序各跑一条，也会撞上 workspace 内的 Agent 名称唯一约束。
+func TestLegacyExecutorIsAdoptedWithoutDuplicate(t *testing.T) {
+	s := isolatedService(t)
+	ctx := context.Background()
+	ws, creator, runtime, legacy := newID(), newID(), newID(), newID()
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO agent_runtime(id,workspace_id,name,runtime_mode,provider) VALUES($1,$2,'legacy','local','codex')`, runtime, ws); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO agent(id,workspace_id,name,description,avatar_url,runtime_mode,runtime_id,
+ instructions,visibility,permission_mode,max_concurrent_tasks,kind,system_key,status,owner_id)
+ VALUES($1,$2,'上游观察员 · '||$3::uuid::text,'','🛰','local',$3,'','private','private',1,'system',$4,'offline',$5)`,
+		legacy, ws, runtime, ExecutorSystemKeyFor(runtime), creator); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config(singleton,agent_id,runtime_id,sync_state) VALUES(1,$1,$2,'bootstrap')`, legacy, runtime); err != nil {
+		t.Fatal(err)
+	}
+	// 旧版本没有设置行：保存前按内置默认展示，不要求迁移回填。
+	snap, err := s.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Config.ScheduleHour != DefaultScheduleHour || snap.Config.Instructions != "" || snap.ExecutorState != "bound" {
+		t.Fatalf("defaults before settings row: %+v", snap.Config)
+	}
+	agentID, _, err := s.SaveSettings(ctx, Settings{
+		UpstreamURL: "https://example.invalid/up.git", UpstreamBranch: "main", LocalRef: "origin/personal-studio-upstream",
+		BatchSize: 200, ScheduleHour: 10, Enabled: true, RuntimeID: runtime, DefaultInstructions: "默认提示词",
+	}, creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agents int
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM agent`).Scan(&agents); err != nil || agents != 1 {
+		t.Fatalf("legacy executor duplicated: agents=%d %v", agents, err)
+	}
+	if agentID != legacy {
+		t.Fatalf("legacy executor replaced: %s", agentID)
+	}
+	var hour int
+	if err := s.Pool.QueryRow(ctx, `SELECT schedule_hour FROM upstream_sync_settings WHERE singleton=1`).Scan(&hour); err != nil || hour != 10 {
+		t.Fatalf("settings row not written: hour=%d %v", hour, err)
+	}
+}
+
+// 换运行时如果目标运行时上还留着旧版建的执行体，只保留配置绑定的那条持有该键：
+// 两条 Agent 共用一个 system_key 会让按旧键读取的程序拿到不确定的行。
+func TestRebindRetiresLeftoverLegacyExecutor(t *testing.T) {
+	s := isolatedService(t)
+	ctx := context.Background()
+	ws, creator := newID(), newID()
+	first, second := newID(), newID()
+	for _, runtime := range []string{first, second} {
+		if _, err := s.Pool.Exec(ctx, `INSERT INTO agent_runtime(id,workspace_id,name,runtime_mode,provider) VALUES($1,$2,'r','local','codex')`, runtime, ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	leftover := newID()
+	base := Settings{UpstreamURL: "https://example.invalid/up.git", UpstreamBranch: "main", LocalRef: "origin/personal-studio-upstream",
+		BatchSize: 200, ScheduleHour: 9, Enabled: true, DefaultInstructions: "默认提示词"}
+	with := func(runtime string) Settings {
+		in := base
+		in.RuntimeID = runtime
+		return in
+	}
+	bound, _, err := s.SaveSettings(ctx, with(first), creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO agent(id,workspace_id,name,description,avatar_url,runtime_mode,runtime_id,
+ instructions,visibility,permission_mode,max_concurrent_tasks,kind,system_key,status,owner_id)
+ VALUES($1,$2,'上游观察员 · '||$3::uuid::text,'','🛰','local',$3,'','private','private',1,'system',$4,'offline',$5)`,
+		leftover, ws, second, ExecutorSystemKeyFor(second), creator); err != nil {
+		t.Fatal(err)
+	}
+	rebound, _, err := s.SaveSettings(ctx, with(second), creator)
+	if err != nil || rebound != bound {
+		t.Fatalf("rebind created a new executor: %s %v", rebound, err)
+	}
+	var key, leftoverKey string
+	if err := s.Pool.QueryRow(ctx, `SELECT system_key FROM agent WHERE id=$1`, bound).Scan(&key); err != nil || key != ExecutorSystemKeyFor(second) {
+		t.Fatalf("bound executor key %q %v", key, err)
+	}
+	if err := s.Pool.QueryRow(ctx, `SELECT system_key FROM agent WHERE id=$1`, leftover).Scan(&leftoverKey); err != nil || !strings.HasPrefix(leftoverKey, ExecutorOrphanPrefix) {
+		t.Fatalf("leftover executor not retired: %q %v", leftoverKey, err)
+	}
+	if IsExecutorSystemKey(leftoverKey) {
+		t.Fatalf("orphan still recognised as executor: %q", leftoverKey)
+	}
 }
 
 func TestExpiredLeaseCannotAdvanceAndPartialBatchIsRetried(t *testing.T) {
