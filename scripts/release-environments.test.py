@@ -12,6 +12,12 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_external_publish_bundle_contains_matching_browser_dependencies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r.copy_browser_operations(Path(tmp))
+            for name in r.BROWSER_OPERATIONS:
+                self.assertEqual((Path(tmp)/name).read_bytes(), (Path(r.__file__).parent/name).read_bytes())
+
     def test_supervision_index_replacement_is_exact_and_preserves_general_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             release=Path(tmp); migrations=release/'server/migrations'; migrations.mkdir(parents=True)
