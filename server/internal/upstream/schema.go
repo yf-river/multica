@@ -103,7 +103,7 @@ func ValidateReport(rep Report) error {
 			return ValidationError{Field: "absorbed_method", Message: "已吸收必须有补丁或祖先关系证据"}
 		}
 		if !validMethod[c.AbsorbedMethod] {
-			return ValidationError{Field: fmt.Sprintf("commits[%d].absorbed_method", i), Message: "只允许空、patch_id 或 subject"}
+			return ValidationError{Field: fmt.Sprintf("commits[%d].absorbed_method", i), Message: "只允许空、patch_id、ancestry 或 subject（已吸收必须是 patch_id 或 ancestry）"}
 		}
 	}
 

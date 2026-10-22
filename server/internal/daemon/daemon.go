@@ -5034,7 +5034,12 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	if pauseFlag.Load() {
 		if !releaseCheckpointReady(task, result) {
+			// 1. 保存不了检查点就不要静默返回：把原因回传，窗口能把该任务判为 skipped
+			// 继续收尾，否则这条 requested 记录会让 resume 永远 409、全平台停止认领。
 			taskLog.Error("发布暂停检查点未保存，禁止确认停止")
+			if ackErr := d.client.AckReleasePauseFailure(ctx, task.ID, "发布暂停检查点未保存，现场需人工核对"); ackErr != nil {
+				taskLog.Error("发布暂停失败结果回传失败", "error", ackErr)
+			}
 			return
 		}
 		if ackErr := d.client.AckReleasePause(ctx, task.ID, result); ackErr != nil {

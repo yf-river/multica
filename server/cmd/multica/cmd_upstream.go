@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/multica-ai/multica/server/internal/upstream"
@@ -104,7 +106,9 @@ func runUpstreamStart(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	mirror := filepath.Join(home, "multica-upstream", out.RunID)
+	// 1. 镜像按仓库+分支做稳定键，同一上游只保留一份裸库，第二次起走增量 fetch；
+	// 以前按 run_id 建目录，等于每天重新完整克隆一次，中断还会留下整份残留。
+	mirror := filepath.Join(home, "multica-upstream", syncMirrorKey(out.Config))
 	gitCtx, stop := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer stop()
 	if out.Manifest != nil {
@@ -180,10 +184,6 @@ func runUpstreamFinish(cmd *cobra.Command, _ []string) error {
 	if err := client.PostJSON(ctx, path, map[string]any{"cursor_sha": cursor, "has_more": hasMore}, &out); err != nil {
 		return fmt.Errorf("finish batch: %w", err)
 	}
-	runID, _ := cmd.Flags().GetString("run")
-	if home, e := os.UserCacheDir(); e == nil && len(runID) == 36 && filepath.Base(runID) == runID {
-		_ = os.RemoveAll(filepath.Join(home, "multica-upstream", runID))
-	}
 	return cli.PrintJSON(os.Stdout, out)
 }
 
@@ -205,9 +205,12 @@ func runUpstreamFail(cmd *cobra.Command, _ []string) error {
 	if err := client.PostJSON(ctx, path, map[string]any{"error": message}, &out); err != nil {
 		return fmt.Errorf("fail batch: %w", err)
 	}
-	runID, _ := cmd.Flags().GetString("run")
-	if home, e := os.UserCacheDir(); e == nil && len(runID) == 36 && filepath.Base(runID) == runID {
-		_ = os.RemoveAll(filepath.Join(home, "multica-upstream", runID))
-	}
 	return cli.PrintJSON(os.Stdout, out)
+}
+
+// syncMirrorKey 用仓库地址与分支生成稳定的镜像目录名：镜像复用同一份裸库，
+// 上游 URL/分支在配置生效后不可更换，因此这个键在一次台账生命周期内稳定。
+func syncMirrorKey(c upstream.Config) string {
+	sum := sha256.Sum256([]byte(c.UpstreamURL + "\x00" + c.UpstreamBranch))
+	return hex.EncodeToString(sum[:8])
 }

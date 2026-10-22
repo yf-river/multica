@@ -67,7 +67,8 @@ func (h *Handler) ManageDeliveryOwner(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	// 任务行锁覆盖首次创建，两个客户端不能同时成为负责人。
 	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "delivery-owner:"+ws+":"+issue); err != nil {
-		writeError(w, 404, "任务不存在")
+		// 2. 这里是锁失败而不是任务缺失，报 404 会把排障引到错误方向。
+		writeError(w, 500, "锁定交付归属失败")
 		return
 	}
 	var old, token string
@@ -190,8 +191,21 @@ func (h *Handler) PublicationLease(w http.ResponseWriter, r *http.Request) {
 	switch b.Action {
 	case "claim":
 		if state != "idle" {
-			writeError(w, 409, "最终集成正由另一交付使用，查询现有占用而非重复登记")
-			return
+			// 1. 过期占用不再永久挡路：只有原持有交付已不在活动阶段、且调用方给出恢复依据时
+			// 才允许跨交付接管，代次继续递增，旧进程持有的凭据随即失效。
+			if live || owner == b.Delivery || strings.TrimSpace(b.Evidence) == "" || state != "active" {
+				writeError(w, 409, "最终集成正由另一交付使用，查询现有占用而非重复登记")
+				return
+			}
+			var holderActive bool
+			if err = tx.QueryRow(r.Context(), `SELECT COALESCE((SELECT phase IN ('waiting_int','approved','testing','preparing_release','publishing') FROM issue_delivery WHERE workspace_id=$1 AND id=$2),false)`, ws, owner).Scan(&holderActive); err != nil {
+				writeError(w, 500, "核对原发布占用失败")
+				return
+			}
+			if holderActive {
+				writeError(w, 409, "原发布交付仍在活动中，不能接管")
+				return
+			}
 		}
 		generation++
 		if len(b.Snapshot) == 0 {

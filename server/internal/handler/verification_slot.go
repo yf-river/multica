@@ -3,27 +3,52 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"net/http"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/multica-ai/multica/server/internal/verification"
 )
 
 // ConfigureVerificationSlot 允许人工管理员启停调度；停用不打断已有验收。
 func (h *Handler) ConfigureVerificationSlot(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.deliveryOperator(w, r); !ok {
+	user, ok := h.deliveryOperator(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
 		Name    string `json:"name"`
 		Enabled *bool  `json:"enabled"`
+		Action  string `json:"action"`
+		Reason  string `json:"reason"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil || body.Enabled == nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil || (body.Enabled == nil && body.Action != "reset") {
 		writeError(w, 400, "缺少槽位名称或启用状态")
 		return
 	}
 	if body.Name != "verify-1" && body.Name != "verify-2" && body.Name != "verify-3" {
 		writeError(w, 400, "未知验收槽位")
+		return
+	}
+	// 1. 收回动作单独走 Reset：隔离态可立即收回，其余状态必须等租约过期；
+	// 没有这个入口时，一次验收异常就会永久烧掉一个槽位，只能改库。
+	if body.Action == "reset" {
+		store := verification.Store{DB: h.TxStarter}
+		lease, err := store.Reset(r.Context(), body.Name, user, strings.TrimSpace(body.Reason))
+		if errors.Is(err, verification.ErrBusy) {
+			writeError(w, 409, "槽位仍在使用中，等租约过期后再收回")
+			return
+		}
+		if errors.Is(err, verification.ErrStale) {
+			writeError(w, 404, "槽位不存在")
+			return
+		}
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"name": lease.Name, "state": lease.State, "generation": lease.Generation})
 		return
 	}
 	var state string

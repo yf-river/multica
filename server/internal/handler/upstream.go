@@ -75,6 +75,10 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, &verr):
 		writeError(w, 400, verr.Error())
+	case errors.Is(err, upstream.ErrRunExpired):
+		// 1. 用 410 而不是 409：提示词把 409 定义为"没有新工作，正常结束"，
+		// 租约失效必须显式区分出来，否则 Agent 会静默收工。
+		writeError(w, 410, err.Error())
 	case errors.Is(err, upstream.ErrBusy):
 		writeError(w, 409, "另一批次正在运行")
 	case errors.Is(err, upstream.ErrRunGone):

@@ -17,6 +17,9 @@ import (
 var (
 	ErrBusy    = errors.New("另一批次正在运行")
 	ErrRunGone = errors.New("批次不存在或已结束")
+	// ErrRunExpired 与 ErrRunGone 分开：前者是"本任务的租约已过期，需要新任务重新领取"，
+	// 后者才表示"没有新工作"。混用会让 Agent 把租约失效当成当天没有提交而正常结束。
+	ErrRunExpired = errors.New("本任务批次租约已过期，需要新任务重新领取")
 )
 
 type Service struct{ Pool *pgxpool.Pool }
@@ -58,7 +61,12 @@ func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource stri
 	var alive bool
 	err = tx.QueryRow(ctx, `SELECT id::text,status,result,COALESCE(lease_expires_at>now(),false) FROM upstream_sync_run WHERE task_id=$1`, taskID).Scan(&id, &status, &frozen, &alive)
 	if err == nil {
-		if !alive || (status != "preparing" && status != "running") {
+		// 1. 本任务已有批次但租约过期时单独报 ErrRunExpired：返回 ErrRunGone 会让调用方
+		// 把"需要换任务重跑"当成"今天没有新提交"而正常结束。
+		if !alive {
+			return nil, ErrRunExpired
+		}
+		if status != "preparing" && status != "running" {
 			return nil, ErrRunGone
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {

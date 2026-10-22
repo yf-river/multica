@@ -1205,3 +1205,9 @@ func (c *Client) InvokeAgentPluginHook(ctx context.Context, daemonToken, taskID,
 func (c *Client) AckReleasePause(ctx context.Context, taskID string, result TaskResult) error {
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/release-pause-ack", taskID), map[string]any{"session_id": result.SessionID, "work_dir": result.WorkDir, "root_dir": result.EnvRoot}, nil, defaultTerminalRetrySchedule)
 }
+
+// AckReleasePauseFailure 在无法保存暂停检查点时回传原因，让发布窗口能把该任务判为
+// skipped 继续收尾，而不是永远等一个不会到来的停止确认。
+func (c *Client) AckReleasePauseFailure(ctx context.Context, taskID, reason string) error {
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/release-pause-ack", taskID), map[string]any{"error": reason}, nil, defaultTerminalRetrySchedule)
+}

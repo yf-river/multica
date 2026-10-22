@@ -2,10 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
@@ -22,7 +25,9 @@ func (h *Handler) ReleaseWindow(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		var raw json.RawMessage
-		err := h.DB.QueryRow(r.Context(), `SELECT COALESCE((SELECT to_jsonb(x) FROM (SELECT w.*,(SELECT COALESCE(jsonb_agg(to_jsonb(p)||jsonb_build_object('task_status',q.status,'failure_reason',q.failure_reason,'task_started_at',q.started_at)),'[]') FROM release_paused_task p LEFT JOIN agent_task_queue q ON q.id=p.task_id WHERE p.window_id=w.id) AS tasks FROM release_window w WHERE w.environment_id=$1 AND w.state<>'finished' AND NOT EXISTS(SELECT 1 FROM agent_runtime a WHERE a.daemon_id=w.daemon_id::text AND NOT EXISTS(SELECT 1 FROM member m WHERE m.workspace_id=a.workspace_id AND m.user_id=$2 AND m.role IN('owner','admin'))))x),'{}')`, env, requestUserID(r)).Scan(&raw)
+		// 1. 只返回仍在有效期内、未结束的窗口；与认领屏障使用同一个 2 小时判据，
+		// 避免过期窗口继续被当成生效，发布器也就不会拿它去 resume。
+		err := h.DB.QueryRow(r.Context(), `SELECT COALESCE((SELECT to_jsonb(x) FROM (SELECT w.*,(SELECT COALESCE(jsonb_agg(to_jsonb(p)||jsonb_build_object('task_status',q.status,'failure_reason',q.failure_reason,'task_started_at',q.started_at)),'[]') FROM release_paused_task p LEFT JOIN agent_task_queue q ON q.id=p.task_id WHERE p.window_id=w.id) AS tasks FROM release_window w WHERE w.environment_id=$1 AND w.state<>'finished' AND w.updated_at>now()-interval '2 hours' AND NOT EXISTS(SELECT 1 FROM agent_runtime a WHERE a.daemon_id=w.daemon_id::text AND NOT EXISTS(SELECT 1 FROM member m WHERE m.workspace_id=a.workspace_id AND m.user_id=$2 AND m.role IN('owner','admin'))))x),'{}')`, env, requestUserID(r)).Scan(&raw)
 		if err != nil {
 			writeError(w, 500, "读取发布窗口失败")
 			return
@@ -85,6 +90,26 @@ func (h *Handler) ReleaseWindow(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "运行环境不存在")
 			return
 		}
+		// 2. 先把本环境过期未收尾的窗口标成 finished：609 之后同一环境只允许一个活动窗口，
+		// 否则上一次发布的残留会让新发布直接撞唯一索引、且报错指向别处。
+		// 这些窗口的暂停任务记为 skipped 保留现场，与 abandon 的处理保持一致。
+		if _, err = tx.Exec(r.Context(), `UPDATE release_paused_task SET state='skipped',error='发布窗口已过期，由新发布收尾',updated_at=now() WHERE state IN ('requested','stopped') AND window_id IN (SELECT id FROM release_window WHERE environment_id=$1 AND state<>'finished' AND updated_at<=now()-interval '2 hours')`, env); err != nil {
+			writeError(w, 409, "清理过期发布任务失败")
+			return
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE release_window SET state='finished',updated_at=now() WHERE environment_id=$1 AND state<>'finished' AND updated_at<=now()-interval '2 hours'`, env); err != nil {
+			writeError(w, 409, "清理过期发布窗口失败")
+			return
+		}
+		var active string
+		if err = tx.QueryRow(r.Context(), `SELECT id::text FROM release_window WHERE environment_id=$1 AND state<>'finished' LIMIT 1`, env).Scan(&active); err == nil {
+			writeError(w, 409, "已有未完成的发布窗口 "+active+"，请先 resume 或 abandon")
+			return
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 409, "读取发布窗口失败")
+			return
+		}
+		err = nil
 		_, err = tx.Exec(r.Context(), `INSERT INTO release_window(id,environment_id,daemon_id,release_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING`, b.ID, env, b.Daemon, b.Release)
 	} else {
 		var state string
@@ -166,6 +191,13 @@ func (h *Handler) ReleaseWindow(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				_, err = tx.Exec(r.Context(), `UPDATE release_window SET state='finished',updated_at=now() WHERE id=$1`, b.ID)
 			}
+		case "abandon":
+			// 3. 运维兜底：发布器已经不可能回来时，管理员可以显式收尾，未确认停止的任务
+			// 记为 skipped 保留现场，窗口随即不再阻塞认领；任务本身保持 deferred 等待人工重派。
+			_, err = tx.Exec(r.Context(), `UPDATE release_paused_task SET state='skipped',error=CASE WHEN error='' THEN '发布窗口由管理员强制收尾' ELSE error END,updated_at=now() WHERE window_id=$1 AND state IN ('requested','stopped')`, b.ID)
+			if err == nil {
+				_, err = tx.Exec(r.Context(), `UPDATE release_window SET state='finished',updated_at=now() WHERE id=$1`, b.ID)
+			}
 		default:
 			writeError(w, 400, "未知窗口操作")
 			return
@@ -191,6 +223,7 @@ func (h *Handler) AckReleasePause(w http.ResponseWriter, r *http.Request) {
 		Session string `json:"session_id"`
 		WorkDir string `json:"work_dir"`
 		RootDir string `json:"root_dir"`
+		Error   string `json:"error"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&b) != nil {
 		writeError(w, 400, "暂停结果格式错误")
@@ -198,12 +231,27 @@ func (h *Handler) AckReleasePause(w http.ResponseWriter, r *http.Request) {
 	}
 	b.Session = util.SanitizeTextForPostgres(b.Session)
 	b.WorkDir = util.SanitizeTextForPostgres(b.WorkDir)
+	b.Error = util.SanitizeTextForPostgres(b.Error)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "记录暂停失败")
 		return
 	}
 	defer tx.Rollback(r.Context())
+	// 1. 保存检查点失败时由 daemon 回传原因：记为 skipped 保留现场，窗口不必再等
+	// 一个不会到来的停止确认，任务本身继续保持 deferred 等人工重派。
+	if strings.TrimSpace(b.Error) != "" {
+		_, err = tx.Exec(r.Context(), `UPDATE release_paused_task SET state='skipped',error=$2,updated_at=now() WHERE task_id=$1 AND state='requested'`, task.ID, b.Error)
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+		if err != nil {
+			writeError(w, 500, "记录暂停失败")
+			return
+		}
+		writeJSON(w, 200, map[string]string{"status": "skipped"})
+		return
+	}
 	_, err = tx.Exec(r.Context(), `UPDATE agent_task_queue SET session_id=COALESCE(NULLIF($2,''),session_id),work_dir=COALESCE(NULLIF($3,''),work_dir) WHERE id=$1 AND status='deferred' AND failure_reason='release_pause'`, task.ID, b.Session, b.WorkDir)
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE release_paused_task SET state='stopped',session_id=COALESCE(NULLIF($2,''),(SELECT session_id FROM agent_task_queue WHERE id=$1),''),work_dir=$3,root_dir=$4,updated_at=now() WHERE task_id=$1 AND state='requested'`, task.ID, b.Session, b.WorkDir, b.RootDir)
