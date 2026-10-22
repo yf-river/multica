@@ -25,6 +25,14 @@ case "$#" in
     ;;
 esac
 
+# Claude Code 在 root/sudo 下拒绝 bypassPermissions，与之相关的子进程取消测试会直接失败。
+# 测试本身不需要真实的权限提升，所以在 root 下显式声明为沙箱运行——只影响测试进程，
+# 不改变 daemon 运行时的行为。
+if [ "$(id -u)" = "0" ] && [ "${IS_SANDBOX:-}" = "" ]; then
+  export IS_SANDBOX=1
+  echo "test-go: running as root; setting IS_SANDBOX=1 for Claude-backed agent tests" >&2
+fi
+
 cd "$REPO_ROOT/server"
 packages=$(go list ./...)
 regular_packages=()
