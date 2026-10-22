@@ -239,10 +239,17 @@ vi.mock("@multica/core/auth", () => ({
     (selector ? selector({ user: { id: "user-1" } }) : { user: { id: "user-1" } }),
 }));
 
+const mockCheckQuickCreateCliVersion = vi.hoisted(() =>
+  vi.fn(() => ({ state: "ok", min: "1.0.0", current: "1.2.3" })),
+);
+const mockCheckQuickCreateFieldsCliVersion = vi.hoisted(() =>
+  vi.fn(() => ({ state: "ok", min: "1.0.0", current: "1.2.3" })),
+);
+
 vi.mock("@multica/core/runtimes", () => ({
   runtimeListOptions: () => ({ queryKey: ["runtimes"] }),
-  checkQuickCreateCliVersion: () => ({ state: "ok", min: "1.0.0" }),
-  checkQuickCreateFieldsCliVersion: () => ({ state: "ok", min: "1.0.0" }),
+  checkQuickCreateCliVersion: mockCheckQuickCreateCliVersion,
+  checkQuickCreateFieldsCliVersion: mockCheckQuickCreateFieldsCliVersion,
   readRuntimeCliVersion: () => "1.2.3",
   MIN_QUICK_CREATE_CLI_VERSION: "1.0.0",
 }));
@@ -541,6 +548,37 @@ describe("AgentCreatePanel", () => {
     mockSetKeepOpen.mockImplementation((value: boolean) => {
       mockQuickCreateStore.keepOpen = value;
     });
+    mockCheckQuickCreateCliVersion.mockReturnValue({ state: "ok", min: "1.0.0", current: "1.2.3" });
+    mockCheckQuickCreateFieldsCliVersion.mockReturnValue({ state: "ok", min: "1.0.0", current: "1.2.3" });
+  });
+
+  // 用户看到「没有报告 CLI 版本」时，daemon 其实上报了一个解析不了的值
+  // （固定发布入口曾用裸提交哈希打戳）。文案必须说清是「无法识别」，否则用户会去
+  // 排查一个并不存在的上报问题。
+  it("reports an unrecognized daemon version instead of claiming none was reported", () => {
+    mockCheckQuickCreateCliVersion.mockReturnValue({
+      state: "missing",
+      current: "9283f784db88",
+      min: "0.2.21",
+    });
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    expect(screen.getByText(/9283f784db88/)).toBeInTheDocument();
+    expect(screen.queryByText(/doesn't report a CLI version/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Create/ })).toBeDisabled();
+  });
+
+  it("keeps the missing-version copy when the daemon reported nothing", () => {
+    mockCheckQuickCreateCliVersion.mockReturnValue({
+      state: "missing",
+      current: "",
+      min: "0.2.21",
+    });
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    expect(screen.getByText(/doesn't report a CLI version/)).toBeInTheDocument();
   });
 
   it("loads the persisted prompt draft when no transient prompt is provided", () => {

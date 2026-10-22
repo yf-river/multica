@@ -618,7 +618,12 @@ export function AgentCreatePanel({
         {selectedAgent && versionBlocked && (
           <div className="mx-5 mb-2 shrink-0 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-caption text-amber-700 dark:text-amber-300">
             {versionCheck.state === "missing"
-              ? t(($) => $.create_issue.agent.version_missing, { min: versionCheck.min })
+              ? versionCheck.current
+                ? t(($) => $.create_issue.agent.version_unrecognized, {
+                    current: versionCheck.current,
+                    min: versionCheck.min,
+                  })
+                : t(($) => $.create_issue.agent.version_missing, { min: versionCheck.min })
               : t(($) => $.create_issue.agent.version_below, {
                   current: versionCheck.current,
                   min: versionCheck.min,
