@@ -6,7 +6,7 @@ export const repoRoot = path.resolve(process.env.MULTICA_RELEASE_ROOT || path.jo
 
 export function loadProductionDeployment() {
   const environment = process.env.GOAL_TEST_ENV || 'prod';
-  if (!['int', 'prod'].includes(environment)) throw Error('未知运行环境: ' + environment);
+  if (!['int', 'prod', 'verify-1', 'verify-2', 'verify-3'].includes(environment)) throw Error('未知运行环境: ' + environment);
   return JSON.parse(readFileSync(path.join(repoRoot, `.run/deployments/goal-test-${environment}.json`), 'utf8'));
 }
 
@@ -15,7 +15,7 @@ export function loadGoalTestEnv() {
   if (!deployment.runtime_config_file) throw Error('部署记录缺少 runtime_config_file');
   const config = JSON.parse(readFileSync(deployment.runtime_config_file, 'utf8'));
   const environment = process.env.GOAL_TEST_ENV || 'prod';
-  if (!['int', 'prod'].includes(environment)) throw Error('未知运行环境: ' + environment);
+  if (!['int', 'prod', 'verify-1', 'verify-2', 'verify-3'].includes(environment)) throw Error('未知运行环境: ' + environment);
   return { ...process.env, ...config.server, ...config.web, GOAL_TEST_ENV: environment,
     FRONTEND_ORIGIN: deployment.frontend_url, FRONTEND_PORT: deployment.frontend_port,
     REMOTE_API_URL: deployment.backend_url };

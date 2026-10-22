@@ -22,7 +22,7 @@ const read = async (url, workspace) => {
 };
 try {
   const config = await read('/api/config');
-  const environment = process.env.GOAL_TEST_ENV === 'int' ? 'int' : 'prod';
+  const environment = process.env.GOAL_TEST_ENV || 'prod';
   if (config.environment_id !== environment) throw Error('wrong environment identity');
   const me = await read('/api/me');
   const workspaces = await read('/api/workspaces');

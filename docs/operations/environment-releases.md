@@ -4,6 +4,12 @@
 
 Multica 程序改动从确认计划、独立分支开发、固定 int 验证进入待审核；用户确认生产后，由现有外部发布器整合并发布。生产批准、代码提交、测试证据和实际运行版本分别保存，不能相互代替。
 
+## 固定验收槽位
+
+需要并行验收时使用专属 `verify-1`、`verify-2`、`verify-3` 三套环境；固定 `int` 仍是最终集成入口，`prod` 只接受经过 int 和用户发布授权的候选。验收槽位默认关闭，启用、排空和占用由现有交付记录及槽位接口驱动，候选历史按环境保留，verify 候选不能直接晋级生产。
+
+槽位安装、重启核对和种子维护入口位于发布制品的 `operations/`，源码入口为 `scripts/verification-environments.py`、`scripts/verification-seed.py` 和 `scripts/verification-seed-copy.mjs`。种子从 int 只读采集，导入时使用当前版本迁移建表，再复制公共样本；个人访问令牌、任务/Daemon 令牌、外部凭据、VCS 凭据、渠道安装密钥和租约字段会清理，槽位登录密码按本槽位安装记录重新生成。只允许重置专属验收数据库，禁止触碰 int、prod 和事故留证库。
+
 ## 需求与开发
 
 ida-developer、multica-developer 的沟通约定保存在各自 Agent 指令中：先查项目事实，澄清目标和边界，输出编号行动摘要及完整计划，用户确认一次后执行已授权动作。Multica 新任务从 `origin/personal-studio-upstream` 创建任务分支；已有任务续接原分支。保留其他任务的未提交内容。
