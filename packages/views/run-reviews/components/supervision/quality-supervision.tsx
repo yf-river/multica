@@ -332,7 +332,8 @@ export function QualitySupervision() {
         </>
       )}
 
-      <SupervisionSettings open={settings} close={() => setSettings(false)} config={config} />
+      {/* 只在打开时挂载：每次打开都从服务端配置重新初始化运行时、型号和提示词。 */}
+      {settings && <SupervisionSettings open close={() => setSettings(false)} config={config} />}
       <SupervisionDetail issueId={selected} canManage={data.can_manage} enabled={config.enabled} close={() => route({ selected: null })} />
     </div>
   );

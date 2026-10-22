@@ -994,7 +994,8 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	includeManaged := r.URL.Query().Get("include_managed") == "true"
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
-		if !includeManaged && a.SystemKey.Valid && a.SystemKey.String == review.SystemKey {
+
+		if a.SystemKey.Valid && (a.SystemKey.String == service.SupervisionSystemKey || (!includeManaged && a.SystemKey.String == review.SystemKey)) {
 			continue
 		}
 		targets := targetsByAgent[uuidToString(a.ID)]
@@ -1656,9 +1657,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// 托管审查 Agent 的运行时/模型/提示词只在审核中列的审查设置里改。
+
 	if existing.SystemKey.Valid && existing.SystemKey.String == review.SystemKey {
 		writeError(w, http.StatusForbidden, "该 Agent 由审查设置托管，请到审核中列的审查设置中修改")
+		return
+	}
+	if existing.SystemKey.Valid && existing.SystemKey.String == service.SupervisionSystemKey {
+		writeError(w, http.StatusForbidden, "该 Agent 由质量监督托管，请到质量监督设置中修改")
 		return
 	}
 	if !h.canManageAgent(w, r, existing) {

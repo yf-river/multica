@@ -27,7 +27,9 @@ type SupervisionContext struct {
 }
 
 // EnqueueSupervisionTaskTx 与调用方的批次认领共用事务，避免重复创建运行。
-func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Queries, ws, owner, agentID, batch pgtype.UUID, prompt string, investigation bool) (db.AgentTaskQueue, error) {
+// instructions 是该工作区本次实际生效的监督提示词（自定义或内置默认），不再从
+// Agent 行读取：托管 Agent 只承载运行时、型号和归属。
+func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Queries, ws, owner, agentID, batch pgtype.UUID, prompt string, investigation bool, instructions string) (db.AgentTaskQueue, error) {
 	agent, err := q.GetAgent(ctx, agentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, err
@@ -35,12 +37,8 @@ func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Querie
 	if agent.WorkspaceID != ws || agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 不可用")
 	}
-	runtime, err := q.GetAgentRuntime(ctx, agent.RuntimeID)
-	if err != nil {
+	if _, err := q.GetAgentRuntime(ctx, agent.RuntimeID); err != nil {
 		return db.AgentTaskQueue{}, err
-	}
-	if runtime.Provider != "codex" && runtime.Provider != "codebuddy" {
-		return db.AgentTaskQueue{}, fmt.Errorf("首版监督支持 Codex 或 CodeBuddy 运行时")
 	}
 	ready, err := AgentReadiness(ctx, s.runtimeLookup(), agent)
 	if err != nil {
@@ -49,11 +47,11 @@ func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Querie
 	if !ready.Ready() {
 		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 暂不可用：%s", ready.Detail)
 	}
-	if strings.TrimSpace(agent.Instructions) == "" {
-		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 的指令为空，请先在 Agent 设置中填写监督提示词")
+	if strings.TrimSpace(instructions) == "" {
+		return db.AgentTaskQueue{}, fmt.Errorf("监督提示词为空，请在质量监督设置中保存提示词")
 	}
-	digest := sha256.Sum256([]byte(agent.Instructions))
-	raw, err := json.Marshal(SupervisionContext{Type: "quality_supervision", WorkspaceID: util.UUIDToString(ws), BatchID: util.UUIDToString(batch), Prompt: prompt, Investigation: investigation, Instructions: agent.Instructions, InstructionsSHA256: hex.EncodeToString(digest[:])})
+	digest := sha256.Sum256([]byte(instructions))
+	raw, err := json.Marshal(SupervisionContext{Type: "quality_supervision", WorkspaceID: util.UUIDToString(ws), BatchID: util.UUIDToString(batch), Prompt: prompt, Investigation: investigation, Instructions: instructions, InstructionsSHA256: hex.EncodeToString(digest[:])})
 	if err != nil {
 		return db.AgentTaskQueue{}, err
 	}

@@ -4,7 +4,11 @@ const time = z.string().nullable();
 export const supervisionConfigSchema = z.object({
   concurrency: z.number().int().positive().nullable().optional(), enabled: z.boolean(), investigation_enabled: z.boolean().default(false), agent_id: z.string().nullable(), interval_seconds: z.number(),
   inventory_complete: z.boolean(), last_scan_at: time.optional(), last_success_at: time.optional(), error: z.string(),
+  runtime_id: z.string().nullable().optional(), model: z.string().nullable().optional(), thinking_level: z.string().nullable().optional(),
+  instructions: z.string().default(""), instructions_customized: z.boolean().default(false), instructions_version: z.string().optional(),
 }).loose();
+export const supervisionInstructionsSchema = z.object({ instructions: z.string(), version: z.string() }).loose();
+export type SupervisionInstructions = z.infer<typeof supervisionInstructionsSchema>;
 export const supervisionSnapshotSchema = z.object({
   config: supervisionConfigSchema, can_manage: z.boolean(),
   summary: z.object({ total: z.number(), covered: z.number(), pending: z.number(), running: z.number(), no_runs: z.number(),
@@ -53,7 +57,7 @@ export const supervisionEvidencePageSchema = z.object({ kind: z.string(), id: z.
 export type SupervisionEvidencePage = z.infer<typeof supervisionEvidencePageSchema>;
 
 export const EMPTY_SUPERVISION: SupervisionSnapshot = {
-  config: { enabled: false, investigation_enabled:false, agent_id: null, interval_seconds: 300, inventory_complete: false, error: "" }, can_manage: false,
+  config: { enabled: false, investigation_enabled:false, agent_id: null, interval_seconds: 300, inventory_complete: false, error: "", instructions: "", instructions_customized: false }, can_manage: false,
   summary: { total: 0, covered: 0, pending: 0, running: 0, no_runs: 0, incomplete: 0, failed: 0, retrying:0, open_findings: 0, issues_with_findings: 0, oldest_pending_at: null },
 };
 export const EMPTY_SUPERVISION_LIST: SupervisionList = { items: [], has_more: false, offset: 0 };

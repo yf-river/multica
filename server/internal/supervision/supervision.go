@@ -342,7 +342,8 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	var agent, owner string
 	var interval int
 	var investigation bool
-	err = tx.QueryRow(ctx, `SELECT COALESCE(agent_id::text,''),owner_id::text,interval_seconds,investigation_enabled FROM supervision_config WHERE workspace_id=$1 AND enabled FOR UPDATE SKIP LOCKED`, ws).Scan(&agent, &owner, &interval, &investigation)
+	var instructions string
+	err = tx.QueryRow(ctx, `SELECT COALESCE(agent_id::text,''),owner_id::text,interval_seconds,investigation_enabled,instructions FROM supervision_config WHERE workspace_id=$1 AND enabled FOR UPDATE SKIP LOCKED`, ws).Scan(&agent, &owner, &interval, &investigation, &instructions)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -412,7 +413,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	if err != nil {
 		return err
 	}
-	task, err := s.Tasks.EnqueueSupervisionTaskTx(ctx, db.New(tx), uuid(ws), uuid(owner), uuid(agent), uuid(batch), prompt, investigation)
+	task, err := s.Tasks.EnqueueSupervisionTaskTx(ctx, db.New(tx), uuid(ws), uuid(owner), uuid(agent), uuid(batch), prompt, investigation, EffectiveInstructions(instructions))
 	if err != nil {
 		return err
 	}

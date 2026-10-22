@@ -54,17 +54,14 @@ func TestIntSupervisionInstructionSnapshot(t *testing.T) {
 	ws, _ := util.ParseUUID(f.WorkspaceID)
 	owner, _ := util.ParseUUID(f.UserID)
 	aid, _ := util.ParseUUID(agent)
-	enqueue := func() (db.AgentTaskQueue, error) {
-		return svc.EnqueueSupervisionTaskTx(ctx, db.New(tx), ws, owner, aid, dbid.NewV7(), `{"materials":[]}`, false)
+	enqueue := func(instructions string) (db.AgentTaskQueue, error) {
+		return svc.EnqueueSupervisionTaskTx(ctx, db.New(tx), ws, owner, aid, dbid.NewV7(), `{"materials":[]}`, false, instructions)
 	}
-	first, err := enqueue()
+	first, err := enqueue("原始监督规则")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, "UPDATE agent SET instructions='新的监督规则' WHERE id=$1", agent); err != nil {
-		t.Fatal(err)
-	}
-	second, err := enqueue()
+	second, err := enqueue("新的监督规则")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,10 +82,7 @@ func TestIntSupervisionInstructionSnapshot(t *testing.T) {
 			t.Fatalf("wrong frozen instructions: %+v", snapshot)
 		}
 	}
-	if _, err = tx.Exec(ctx, "UPDATE agent SET instructions='  ' WHERE id=$1", agent); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = enqueue(); err == nil || !strings.Contains(err.Error(), "指令为空") {
+	if _, err = enqueue("  "); err == nil || !strings.Contains(err.Error(), "提示词为空") {
 		t.Fatalf("empty policy accepted: %v", err)
 	}
 }

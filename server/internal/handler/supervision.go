@@ -14,7 +14,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/supervision"
+	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type supervisionFeedbackResponse struct {
@@ -145,9 +148,16 @@ func (h *Handler) GetSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var config json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('enabled',enabled,'agent_id',agent_id,'concurrency',(SELECT max_concurrent_tasks FROM agent WHERE id=agent_id),'interval_seconds',interval_seconds,'investigation_enabled',investigation_enabled,'inventory_complete',inventory_complete,'last_scan_at',last_scan_at,'last_success_at',last_success_at,'error',error) FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&config)
+	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object(
+      'enabled',c.enabled,'agent_id',c.agent_id,'concurrency',a.max_concurrent_tasks,
+      'interval_seconds',c.interval_seconds,'investigation_enabled',c.investigation_enabled,
+      'inventory_complete',c.inventory_complete,'last_scan_at',c.last_scan_at,'last_success_at',c.last_success_at,'error',c.error,
+      'instructions',c.instructions,'instructions_customized',c.instructions<>'',
+      'instructions_version',CASE WHEN c.instructions='' THEN $2::text ELSE 'custom'::text END,
+      'runtime_id',a.runtime_id,'model',a.model,'thinking_level',a.thinking_level)
+      FROM supervision_config c LEFT JOIN agent a ON a.id=c.agent_id WHERE c.workspace_id=$1`, ws, supervision.InstructionsVersion).Scan(&config)
 	if errors.Is(err, pgx.ErrNoRows) {
-		config = json.RawMessage(`{"enabled":false,"agent_id":null,"interval_seconds":300,"inventory_complete":false,"error":""}`)
+		config = json.RawMessage(`{"enabled":false,"agent_id":null,"concurrency":null,"interval_seconds":300,"investigation_enabled":false,"inventory_complete":false,"error":"","instructions":"","instructions_customized":false,"instructions_version":"` + supervision.InstructionsVersion + `","runtime_id":null,"model":null,"thinking_level":null}`)
 	} else if err != nil {
 		writeError(w, 500, "读取监督配置失败")
 		return
@@ -172,18 +182,33 @@ func (h *Handler) GetSupervision(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"config": config, "summary": summary, "can_manage": member.Role == "owner" || member.Role == "admin"})
 }
 
+// GetSupervisionInstructions 返回内置默认提示词，供设置页展示和「恢复默认」。
+// 单独成接口，避免每次轮询监督快照都带上近八千字。
+func (h *Handler) GetSupervisionInstructions(w http.ResponseWriter, r *http.Request) {
+	// 与设置页的其他写操作同权限：只有 owner/admin 需要看到完整默认提示词。
+	if _, _, ok := h.supervisionScope(w, r, true); !ok {
+		return
+	}
+	writeJSON(w, 200, map[string]any{"instructions": supervision.DefaultInstructions, "version": supervision.InstructionsVersion})
+}
+
+// UpdateSupervision 保存监督运行时、型号、提示词与周期。监督员由系统托管：
+// 首次保存自动创建，已有配置指向的手工 Agent 会被接管并隐藏。
 func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 	ws, user, ok := h.supervisionScope(w, r, true)
 	if !ok {
 		return
 	}
 	var body struct {
-		AgentID       string `json:"agent_id"`
-		Enabled       bool   `json:"enabled"`
-		Interval      int    `json:"interval_seconds"`
-		Investigation bool   `json:"investigation_enabled"`
+		RuntimeID     *string `json:"runtime_id"`
+		Model         *string `json:"model"`
+		ThinkingLevel *string `json:"thinking_level"`
+		Instructions  *string `json:"instructions"`
+		Enabled       bool    `json:"enabled"`
+		Interval      int     `json:"interval_seconds"`
+		Investigation *bool   `json:"investigation_enabled"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 512*1024)).Decode(&body) != nil {
 		writeError(w, 400, "配置格式错误")
 		return
 	}
@@ -194,40 +219,173 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "检查间隔应为60至3600秒")
 		return
 	}
-	if body.AgentID != "" {
-		agentUUID, ok := parseUUIDOrBadRequest(w, body.AgentID, "agent_id")
-		if !ok {
-			return
-		}
-		agent, err := h.Queries.GetAgent(r.Context(), agentUUID)
-		if err != nil || uuidToString(agent.WorkspaceID) != ws || agent.ArchivedAt.Valid || !h.canInvokeAgent(r.Context(), agent, "member", user, user, ws) {
-			writeError(w, 403, "无法使用所选监督 Agent")
-			return
-		}
-		if body.Enabled && strings.TrimSpace(agent.Instructions) == "" {
-			writeError(w, 400, "监督 Agent 的指令为空，请先在 Agent 设置中填写监督提示词")
-			return
-		}
-		if !agent.RuntimeID.Valid {
-			writeError(w, 400, "所选 Agent 尚未绑定运行时")
-			return
-		}
-		runtime, err := h.Queries.GetAgentRuntime(r.Context(), agent.RuntimeID)
-		if err != nil || (runtime.Provider != "codex" && runtime.Provider != "codebuddy") {
-			writeError(w, 400, "请选择使用 Codex 或 CodeBuddy 运行时的 Agent")
-			return
-		}
-	} else if body.Enabled {
-		writeError(w, 400, "请选择监督 Agent")
+	if body.Instructions != nil && len(*body.Instructions) > 200_000 {
+		writeError(w, 400, "提示词过长，请控制在20万字符以内")
 		return
 	}
-	_, err := h.DB.Exec(r.Context(), `INSERT INTO supervision_config(workspace_id,agent_id,owner_id,enabled,interval_seconds,investigation_enabled)
-      VALUES($1,NULLIF($2,'')::uuid,$3,$4,$5,$6) ON CONFLICT(workspace_id) DO UPDATE SET agent_id=EXCLUDED.agent_id,owner_id=EXCLUDED.owner_id,enabled=EXCLUDED.enabled,interval_seconds=EXCLUDED.interval_seconds,investigation_enabled=EXCLUDED.investigation_enabled,error='',updated_at=now()`, ws, body.AgentID, user, body.Enabled, body.Interval, body.Investigation)
+	member, err := h.getWorkspaceMember(r.Context(), user, ws)
+	if err != nil {
+		writeError(w, 403, "需要工作区成员权限")
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		writeError(w, 500, "保存监督配置失败")
 		return
 	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+
+	var agentID, ownerID, currentInstructions string
+	var currentInvestigation bool
+	err = tx.QueryRow(ctx, `SELECT COALESCE(agent_id::text,''),COALESCE(owner_id::text,''),instructions,investigation_enabled FROM supervision_config WHERE workspace_id=$1 FOR UPDATE`, ws).Scan(&agentID, &ownerID, &currentInstructions, &currentInvestigation)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 500, "读取监督配置失败")
+		return
+	}
+
+	var current db.Agent
+	hasAgent := agentID != ""
+	if hasAgent {
+		current, err = qtx.GetAgent(ctx, parseUUID(agentID))
+		if err != nil || uuidToString(current.WorkspaceID) != ws {
+			writeError(w, 409, "原监督 Agent 已不可用，请重新选择运行时后再保存")
+			return
+		}
+		if current.SystemKey.Valid && current.SystemKey.String != service.SupervisionSystemKey {
+			writeError(w, 409, "监督 Agent 配置异常，请联系工作区管理员")
+			return
+		}
+	}
+
+	// 目标运行时：显式传入优先，否则沿用已保存的绑定。
+	var targetRuntime db.AgentRuntime
+	hasRuntime := false
+	runtimeChanged := false
+	if body.RuntimeID != nil && strings.TrimSpace(*body.RuntimeID) != "" {
+		runtimeUUID, valid := parseUUIDOrBadRequest(w, *body.RuntimeID, "runtime_id")
+		if !valid {
+			return
+		}
+		targetRuntime, err = qtx.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{ID: runtimeUUID, WorkspaceID: parseUUID(ws)})
+		if err != nil {
+			writeError(w, 400, "运行时不存在或不属于当前工作区")
+			return
+		}
+		hasRuntime = true
+		runtimeChanged = !hasAgent || !current.RuntimeID.Valid || uuidToString(current.RuntimeID) != uuidToString(targetRuntime.ID)
+		if runtimeChanged && !canUseRuntimeForAgent(member, targetRuntime) {
+			writeError(w, 403, "该运行时仅其所有者可用，请选择自己的运行时")
+			return
+		}
+	} else if hasAgent && current.RuntimeID.Valid {
+		if targetRuntime, err = qtx.GetAgentRuntime(ctx, current.RuntimeID); err == nil {
+			hasRuntime = true
+		}
+	}
+	if body.Enabled && !hasRuntime {
+		writeError(w, 400, "请选择监督运行时")
+		return
+	}
+	if body.ThinkingLevel != nil && hasRuntime {
+		level := strings.TrimSpace(*body.ThinkingLevel)
+		if level != "" && !agentpkg.IsKnownThinkingValue(targetRuntime.Provider, level) {
+			writeError(w, 400, "思考等级不适用于所选运行时")
+			return
+		}
+	}
+
+	instructions := currentInstructions
+	if body.Instructions != nil {
+		text := strings.TrimSpace(*body.Instructions)
+		if text == "" || text == strings.TrimSpace(supervision.DefaultInstructions) {
+			// 与内置默认一致时不落库，继续跟随平台升级。
+			instructions = ""
+		} else {
+			instructions = *body.Instructions
+		}
+	}
+
+	// 监督员归属于当前运行身份：换运行时或首次创建时归保存者；沿用原绑定时以
+	// Agent 的所有者为调用身份，避免第二个管理员只改间隔却让私有运行时失去调用资格。
+	effectiveOwner := ownerID
+	if hasAgent && current.OwnerID.Valid {
+		effectiveOwner = uuidToString(current.OwnerID)
+	}
+	if !hasAgent || runtimeChanged || effectiveOwner == "" {
+		effectiveOwner = user
+	}
+
+	if !hasAgent {
+		// 尚未选运行时时只保存周期/开关，等真正启用时再创建托管 Agent。
+		if hasRuntime {
+			err = tx.QueryRow(ctx, `INSERT INTO agent (
+          workspace_id,name,description,runtime_mode,runtime_config,runtime_id,visibility,permission_mode,
+          max_concurrent_tasks,owner_id,instructions,custom_env,custom_args,mcp_config,model,thinking_level,service_tier,system_key)
+        VALUES ($1,'质量监督','由质量监督设置自动维护，请到质量监督页面修改',$2,'{}'::jsonb,$3,'private','private',
+          3,$4,'','{}'::jsonb,'[]'::jsonb,'{}'::jsonb,NULLIF($5,''),NULLIF($6,''),'',$7)
+        RETURNING id::text`, ws, targetRuntime.RuntimeMode, targetRuntime.ID, effectiveOwner,
+				derefString(body.Model), derefString(body.ThinkingLevel), service.SupervisionSystemKey).Scan(&agentID)
+			if err != nil {
+				writeError(w, 500, "创建监督 Agent 失败")
+				return
+			}
+		}
+	} else {
+		model := current.Model.String
+		if body.Model != nil {
+			model = strings.TrimSpace(*body.Model)
+		}
+		thinking := current.ThinkingLevel.String
+		if body.ThinkingLevel != nil {
+			thinking = strings.TrimSpace(*body.ThinkingLevel)
+		}
+		if hasRuntime {
+			if thinking != "" && !agentpkg.IsKnownThinkingValue(targetRuntime.Provider, thinking) {
+				writeError(w, 400, "思考等级不适用于所选运行时")
+				return
+			}
+			if body.Model == nil && runtimeChanged && model != "" && agentpkg.ModelKnownIncompatibleWithProvider(targetRuntime.Provider, model) {
+				model = ""
+			}
+			if _, err = tx.Exec(ctx, `UPDATE agent SET runtime_id=$2,runtime_mode=$3,model=NULLIF($4,''),thinking_level=NULLIF($5,''),
+              owner_id=$6,system_key=$7,instructions='',archived_at=NULL,archived_by=NULL,updated_at=now() WHERE id=$1`,
+				agentID, targetRuntime.ID, targetRuntime.RuntimeMode, model, thinking, effectiveOwner, service.SupervisionSystemKey); err != nil {
+				writeError(w, 500, "更新监督 Agent 失败")
+				return
+			}
+		} else if _, err = tx.Exec(ctx, `UPDATE agent SET system_key=$2,instructions='',updated_at=now() WHERE id=$1`, agentID, service.SupervisionSystemKey); err != nil {
+			writeError(w, 500, "更新监督 Agent 失败")
+			return
+		}
+	}
+
+	if body.Investigation != nil {
+		currentInvestigation = *body.Investigation
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO supervision_config(workspace_id,agent_id,owner_id,enabled,interval_seconds,investigation_enabled,instructions)
+      VALUES($1,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7) ON CONFLICT(workspace_id) DO UPDATE SET
+      agent_id=EXCLUDED.agent_id,owner_id=EXCLUDED.owner_id,enabled=EXCLUDED.enabled,interval_seconds=EXCLUDED.interval_seconds,
+      investigation_enabled=EXCLUDED.investigation_enabled,instructions=EXCLUDED.instructions,error='',updated_at=now()`,
+		ws, agentID, effectiveOwner, body.Enabled, body.Interval, currentInvestigation, instructions)
+	if err != nil {
+		writeError(w, 500, "保存监督配置失败")
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		writeError(w, 500, "保存监督配置失败")
+		return
+	}
 	h.GetSupervision(w, r)
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func (h *Handler) ListSupervisionSubjects(w http.ResponseWriter, r *http.Request) {

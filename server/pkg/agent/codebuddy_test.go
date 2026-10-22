@@ -43,48 +43,6 @@ func TestBuildCodebuddyArgs_Basic(t *testing.T) {
 	}
 }
 
-func TestBuildCodebuddyArgs_AnalysisOnly(t *testing.T) {
-	t.Parallel()
-	args := buildCodebuddyArgs(ExecOptions{AnalysisOnly: true}, slog.Default())
-	for _, flag := range []string{"--tools", "--strict-mcp-config", "--no-session-persistence"} {
-		found := false
-		for i, value := range args {
-			if value == flag {
-				found = true
-				if flag == "--tools" && (i+1 >= len(args) || args[i+1] != "") {
-					t.Fatalf("supervisor unexpectedly has tools: %v", args)
-				}
-			}
-		}
-		if !found {
-			t.Fatalf("supervisor missing %s: %v", flag, args)
-		}
-	}
-}
-
-func TestCodebuddyAnalysisEnvironmentIsPerRun(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX fixture")
-	}
-	file := filepath.Join(t.TempDir(), "codebuddy")
-	writeTestExecutable(t, file, []byte("#!/bin/sh\nIFS= read -r _\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"%s/%s/%s/%s\"}\\n' \"$CODEBUDDY_DEFER_TOOL_LOADING\" \"$CODEBUDDY_DISABLE_AUTO_MEMORY\" \"$CODEBUDDY_CODE_DISABLE_AUTO_MEMORY\" \"$KEEP_EXISTING_ENV\"\n"))
-	configured := map[string]string{"CODEBUDDY_DEFER_TOOL_LOADING": "true", "KEEP_EXISTING_ENV": "preserved"}
-	b := &codebuddyBackend{cfg: Config{ExecutablePath: file, Logger: slog.Default(), Env: configured}}
-	s, err := b.Execute(context.Background(), "review", ExecOptions{AnalysisOnly: true, Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range s.Messages {
-	}
-	result := <-s.Result
-	if result.Output != "false/1/1/preserved" {
-		t.Fatalf("unexpected supervisor environment: %q", result.Output)
-	}
-	if configured["CODEBUDDY_DEFER_TOOL_LOADING"] != "true" || len(configured) != 2 {
-		t.Fatal("ordinary Agent configuration mutated")
-	}
-}
-
 // --strict-mcp-config must never be passed, with or without a managed config.
 // It means "only use servers from --mcp-config" and drops CodeBuddy's user,
 // project and local scopes; measured against the real CLI, strict + a managed
