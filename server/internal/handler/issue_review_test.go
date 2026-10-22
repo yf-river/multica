@@ -123,6 +123,16 @@ func TestReviewSettingsManageHiddenAgent(t *testing.T) {
 		t.Fatalf("system_key = %q, want %q", systemKey, review.SystemKey)
 	}
 
+	// 1. The managed reviewer cannot use the avatar upload path, so creation must
+	// leave it with the default avatar.
+	var avatarURL string
+	if err := testPool.QueryRow(context.Background(), `SELECT coalesce(avatar_url, '') FROM agent WHERE id = $1`, agentID).Scan(&avatarURL); err != nil {
+		t.Fatalf("load managed agent avatar: %v", err)
+	}
+	if avatarURL != review.DefaultAvatar {
+		t.Fatalf("avatar_url = %q, want %q", avatarURL, review.DefaultAvatar)
+	}
+
 	// 智能体列表不出现审查员。
 	listReq := withChatTestWorkspaceCtx(t, newRequest("GET", "/api/agents", nil))
 	listW := httptest.NewRecorder()

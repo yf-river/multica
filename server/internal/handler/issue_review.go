@@ -221,13 +221,15 @@ func (h *Handler) UpdateReviewSettings(w http.ResponseWriter, r *http.Request) {
 
 	if !hasAgent {
 		if hasRuntime {
+			// 1. The managed reviewer cannot be updated through the generic agent
+			// endpoint, so its avatar has to be written at creation time.
 			err = tx.QueryRow(ctx, `INSERT INTO agent (
 				workspace_id,name,description,runtime_mode,runtime_config,runtime_id,visibility,permission_mode,
-				max_concurrent_tasks,owner_id,instructions,custom_env,custom_args,mcp_config,model,thinking_level,service_tier,system_key)
+				max_concurrent_tasks,owner_id,instructions,custom_env,custom_args,mcp_config,model,thinking_level,service_tier,system_key,avatar_url)
 			VALUES ($1,$2,'由审查设置自动维护，请到审核中列的审查设置里修改',$3,'{}'::jsonb,$4,'private','private',
-				1,$5,$6,'{}'::jsonb,'[]'::jsonb,'{}'::jsonb,NULLIF($7,''),NULLIF($8,''),'',$9)
+				1,$5,$6,'{}'::jsonb,'[]'::jsonb,'{}'::jsonb,NULLIF($7,''),NULLIF($8,''),'',$9,$10)
 			RETURNING id::text`, ws, review.DefaultName, targetRuntime.RuntimeMode, targetRuntime.ID,
-				effectiveOwner, effective, derefTrimmed(body.Model), derefTrimmed(body.ThinkingLevel), review.SystemKey).Scan(&agentID)
+				effectiveOwner, effective, derefTrimmed(body.Model), derefTrimmed(body.ThinkingLevel), review.SystemKey, review.DefaultAvatar).Scan(&agentID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "创建审查 Agent 失败")
 				return

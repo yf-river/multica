@@ -15,6 +15,10 @@ const (
 	SystemKey = "issue_review"
 	// DefaultName 是托管审查 Agent 的显示名，设置页改名不生效。
 	DefaultName = "审查员"
+	// 1. Managed review agents cannot use the generic avatar upload path, so the
+	// reviewer is created with a fixed avatar; otherwise comments and review
+	// badges render without one.
+	DefaultAvatar = "emoji:🧐"
 	// MaxRounds 是单个 issue 连续审查轮次上限。正常情况下打回会带来实质改动，
 	// 这只是一道成本闸门，避免两个 Agent 无限对撞。
 	MaxRounds = 6
