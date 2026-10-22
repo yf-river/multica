@@ -31,6 +31,7 @@ import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { CustomStatusChip } from "./custom-status-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { IssueReviewBadge } from "./issue-review-badge";
 import { TAPDSourceBadge } from "./tapd-source-badge";
 import { useIssueSurfaceSelection } from "../surface/selection-context";
 import { useLocale } from "../../i18n";
@@ -122,6 +123,7 @@ function ListRowContent({
             {issue.identifier}
           </span>
           <IssueAgentActivityIndicator issueId={issue.id} />
+          <IssueReviewBadge issue={issue} />
 
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{issue.title}</span>

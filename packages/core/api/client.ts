@@ -1,4 +1,5 @@
 import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, type SupervisionEvidencePage, type SupervisionConfig, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback } from "../supervision/schema";
+import { reviewSettingsSchema, type ReviewSettings } from "../review/schema";
 import { TaskOutputPageSchema, TaskMessagePayloadSchema, type TaskOutputPage } from "./schemas";
 import { MealsSchema, mealWire, type MealsData, type MealCommand } from "../meals/schema";
 import { CookingListSchema, CookingDetailSchema, CookingCategoriesSchema, type CookingList, type CookingDetail, type CookingCategory } from "../cooking/schema";
@@ -818,6 +819,12 @@ export class ApiClient {
   async updateSupervision(config: Pick<SupervisionConfig, "enabled" | "agent_id" | "interval_seconds"> & { investigation_enabled?: boolean }) {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/", { method: "PUT", body: JSON.stringify(config) }), supervisionSnapshotSchema, { endpoint: "PUT /api/supervision", sensitive: true, mayHaveCommitted: true });
   }
+  async getReviewSettings() {
+    return parseOrThrow<ReviewSettings>(await this.fetch<unknown>("/api/review/settings"), reviewSettingsSchema, { endpoint: "GET /api/review/settings", sensitive: true });
+  }
+  async updateReviewSettings(config: { enabled: boolean; runtime_id?: string | null; model?: string | null; thinking_level?: string | null; instructions?: string | null }) {
+    return parseOrThrow<ReviewSettings>(await this.fetch<unknown>("/api/review/settings", { method: "PUT", body: JSON.stringify(config) }), reviewSettingsSchema, { endpoint: "PUT /api/review/settings", sensitive: true, mayHaveCommitted: true });
+  }
   async checkSupervision(body: { issue_id?: string; full?: boolean; stop?: boolean; retry_failed?: boolean }) {
     return this.fetch<{ scheduled?: boolean; stopped?: boolean }>("/api/supervision/check", { method: "POST", body: JSON.stringify(body) });
   }
@@ -1625,10 +1632,11 @@ export class ApiClient {
 
   // Agents（agent 管理区）
   /** 列出 workspace 的 agent，可选是否包含已归档。 */
-  async listAgents(params?: { workspace_id?: string; include_archived?: boolean }): Promise<Agent[]> {
+  async listAgents(params?: { workspace_id?: string; include_archived?: boolean; include_managed?: boolean }): Promise<Agent[]> {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.include_archived) search.set("include_archived", "true");
+    if (params?.include_managed) search.set("include_managed", "true");
     return this.fetch(`/api/agents?${search}`);
   }
 

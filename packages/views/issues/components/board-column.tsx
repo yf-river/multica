@@ -8,7 +8,7 @@
 
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Virtuoso } from "react-virtuoso";
-import { EyeOff, FolderMinus, MoreHorizontal, Plus, UserMinus } from "lucide-react";
+import { EyeOff, FolderMinus, MoreHorizontal, Plus, ScanEye, UserMinus } from "lucide-react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type {
@@ -30,6 +30,7 @@ import { useViewStoreApi } from "@multica/core/issues/stores/view-store-context"
 import { useViewBaseline } from "../surface/view-baseline-context";
 import { StatusHeading } from "./status-heading";
 import { DraggableBoardCard } from "./board-card";
+import { ReviewSettingsSheet } from "./review-settings-sheet";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -124,6 +125,7 @@ export const BoardColumn = memo(function BoardColumn({
 }) {
   const status = group.status;
   const cfg = status ? STATUS_CONFIG[status] : null;
+  const [reviewSettingsOpen, setReviewSettingsOpen] = useState(false);
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
   const viewStoreApi = useViewStoreApi();
   // 被已打开保存视图固定的状态不能在看板里被隐藏——那等于悄悄抽掉视图自身的
@@ -222,6 +224,13 @@ export const BoardColumn = memo(function BoardColumn({
                       <EyeOff className="size-3.5" />
                       {t(($) => $.board.hide_column)}
                     </DropdownMenuItem>
+                    {/* 审查配置只有一份，挂在「审核中」类别上；自定义的审核类列也走这里。 */}
+                    {status === "in_review" && (
+                      <DropdownMenuItem onClick={() => setReviewSettingsOpen(true)}>
+                        <ScanEye className="size-3.5" />
+                        {t(($) => $.review.settings)}
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
@@ -339,6 +348,9 @@ export const BoardColumn = memo(function BoardColumn({
           )}
         </div>
       </div>
+      {status === "in_review" && (
+        <ReviewSettingsSheet open={reviewSettingsOpen} onClose={() => setReviewSettingsOpen(false)} />
+      )}
     </div>
   );
 });

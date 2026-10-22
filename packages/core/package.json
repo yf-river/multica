@@ -163,7 +163,8 @@
     "./workspace/mcp-checks": "./workspace/mcp-checks.ts",
     "./supervision/*": "./supervision/*.ts",
     "./upstream/queries": "./upstream/queries.ts",
-    "./upstream/mutations": "./upstream/mutations.ts"
+    "./upstream/mutations": "./upstream/mutations.ts",
+    "./review/*": "./review/*.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",
