@@ -332,14 +332,10 @@ cli: ## Run the multica CLI with ARGS or MULTICA_ARGS from source
 multica: ## Run the multica CLI entrypoint directly from the Go source tree
 	cd server && go run -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" ./cmd/multica $(MULTICA_ARGS)
 
-VERSION ?= $(shell description=$$(git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || true); \
-	if printf '%s' "$$description" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+'; then \
-		printf '%s' "$$description"; \
-	else \
-		base=$$(node -p "require('./apps/web/package.json').version" 2>/dev/null || printf '0.0.0'); \
-		dirty=$$(git diff --quiet --ignore-submodules HEAD -- 2>/dev/null || printf '%s' '-dirty'); \
-		printf 'v%s-0-g%s%s' "$$base" "$$(git rev-parse --short HEAD 2>/dev/null || printf unknown)" "$$dirty"; \
-	fi)
+# 版本串的推导放在 scripts/build-version.sh 里，固定发布入口构建 int/prod 时调同一个
+# 脚本——两边各写一份的话，发布构建报的版本就会和本地自建不一致（交接说明/快速创建
+# 的版本门槛读到的是 daemon 上报值，格式对不上就把新构建误判成旧运行时）。
+VERSION ?= $(shell bash scripts/build-version.sh 2>/dev/null)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 # Windows will not execute an extensionless binary, so a source build there has

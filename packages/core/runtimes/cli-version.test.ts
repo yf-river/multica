@@ -66,6 +66,12 @@ describe("handoffSupported", () => {
     expect(handoffSupported("v0.3.0-5-gabc1234")).toBe(true);
     expect(handoffSupported("v0.1.0-235-gdaf0e935-dirty")).toBe(true);
   });
+
+  // 固定环境的源码构建在仓库没有 tag 时会合成 `v<apps/web 版本>-0-g<sha>`
+  // （scripts/build-version.sh）；daemon 上报的正是这个串，必须与服务端一致放行。
+  it("supports a source build synthesized without tags", () => {
+    expect(handoffSupported("v0.4.37-0-g9283f784db88")).toBe(true);
+  });
 });
 
 describe("chatProjectContextSupported", () => {
