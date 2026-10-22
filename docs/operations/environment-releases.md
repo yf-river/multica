@@ -122,4 +122,3 @@ pnpm --dir /data/ida/multica release delivery-worker --env prod
 CLI 写入交付时使用 `MULTICA_TASK_ID`、`CODEX_THREAD_ID` 或显式 `--execution` 标识当前执行，凭据保存在私有配置目录。`owner` 查询，`claim-owner` 领取，`recover-owner --recovery-evidence` 显式交接，`release-owner` 释放；旧代次不能覆盖新负责人。相同凭据的原执行可以续期，另一执行即使看到超时也必须提供恢复核对依据。
 
 候选可通过 `scripts/delivery-acceptance.json` 声明检查组、路径覆盖和参数数组命令，由 `run-delivery-acceptance.py` 在候选源码上执行。验收命令只访问 int/verify 环境，实际日志和不可变验收记录独立保存。声明只覆盖它真实验证的行为，真实 Agent 续接与生产浏览器结果仍需要对应证据。Agent 提交验收后结束本轮，外部发布器通知下一阶段，禁止同步等待自身执行进程被更新。
-

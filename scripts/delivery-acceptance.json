@@ -38,13 +38,7 @@
       ],
       "command": [
         "python3",
-        "-m",
-        "unittest",
-        "discover",
-        "-s",
-        "scripts",
-        "-p",
-        "*delivery*.test.py"
+        "scripts/issue-delivery-worker.test.py"
       ]
     },
     {
@@ -55,6 +49,16 @@
       "command": [
         "python3",
         "scripts/release-environments.test.py"
+      ]
+    },
+    {
+      "name": "delivery-coordination",
+      "paths": [
+        "scripts/"
+      ],
+      "command": [
+        "python3",
+        "scripts/delivery-coordination.test.py"
       ]
     }
   ]
