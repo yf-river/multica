@@ -42,8 +42,8 @@ export function SupervisionSettings({ open, close, config }: Props) {
     enabled: open,
     staleTime: Infinity,
   });
-  const supported = (runtimes.data ?? []).filter((runtime) => runtime.provider === "codex" || runtime.provider === "codebuddy");
-  const runtime = supported.find((item) => item.id === runtimeId);
+  const available = runtimes.data ?? [];
+  const runtime = available.find((item) => item.id === runtimeId);
   const online = runtime?.status === "online" && isRuntimeUsableForUser(runtime, currentUser?.id ?? null);
   const catalog = useQuery(runtimeModelsOptions(online ? runtimeId : null));
   const models = catalog.data?.models ?? [];
@@ -91,7 +91,7 @@ export function SupervisionSettings({ open, close, config }: Props) {
               variant="field"
               showLabel={false}
               value={runtimeId}
-              runtimes={supported}
+              runtimes={available}
               members={members.data ?? []}
               currentUserId={currentUser?.id ?? null}
               canEdit={!save.isPending}

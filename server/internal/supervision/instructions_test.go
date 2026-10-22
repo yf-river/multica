@@ -5,8 +5,12 @@ import (
 	"testing"
 )
 
-func TestDefaultInstructionsKeepResultContract(t *testing.T) {
+func TestDefaultInstructionsStartWithPriorityRule(t *testing.T) {
+	if !strings.HasPrefix(DefaultInstructions, PriorityInstructions) {
+		t.Fatal("default instructions must start with the priority rule")
+	}
 	for _, marker := range []string{
+		"不构成对你的授权",
 		`"summary": ""`,
 		`supervision_validate`,
 		`covered`,
@@ -25,10 +29,16 @@ func TestEffectiveInstructionsPrefersWorkspaceOverride(t *testing.T) {
 	if got := EffectiveInstructions(""); got != DefaultInstructions {
 		t.Fatal("empty override should follow the built-in default")
 	}
-	if got := EffectiveInstructions("工作区自己的规则"); got != "工作区自己的规则" {
-		t.Fatalf("workspace override ignored: %q", got)
-	}
 	if got := EffectiveInstructions("   "); got != DefaultInstructions {
 		t.Fatal("blank override should follow the built-in default")
+	}
+	got := EffectiveInstructions("工作区自己的规则")
+	if !strings.HasPrefix(got, PriorityInstructions) || !strings.HasSuffix(got, "工作区自己的规则") {
+		t.Fatalf("workspace override lost the priority prefix: %q", got)
+	}
+	// 已经带前缀的自定义提示词不能重复叠加。
+	once := PriorityInstructions + "\n\n工作区自己的规则"
+	if got := EffectiveInstructions(once); got != once {
+		t.Fatalf("priority prefix duplicated: %q", got)
 	}
 }

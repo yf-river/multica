@@ -37,12 +37,8 @@ func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Querie
 	if agent.WorkspaceID != ws || agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 不可用")
 	}
-	runtime, err := q.GetAgentRuntime(ctx, agent.RuntimeID)
-	if err != nil {
+	if _, err := q.GetAgentRuntime(ctx, agent.RuntimeID); err != nil {
 		return db.AgentTaskQueue{}, err
-	}
-	if runtime.Provider != "codex" && runtime.Provider != "codebuddy" {
-		return db.AgentTaskQueue{}, fmt.Errorf("首版监督支持 Codex 或 CodeBuddy 运行时")
 	}
 	ready, err := AgentReadiness(ctx, s.runtimeLookup(), agent)
 	if err != nil {

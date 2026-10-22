@@ -33,10 +33,8 @@ type Backend interface {
 
 // ExecOptions 配置单次执行（execute）的参数。
 type ExecOptions struct {
-	// AnalysisOnly 只限制本轮分析，不修改 Agent 配置。
-	AnalysisOnly bool
-	Cwd          string // 工作目录：agent 子进程在哪里启动
-	Model        string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
+	Cwd   string // 工作目录：agent 子进程在哪里启动
+	Model string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
 	// SystemPrompt 携带 Multica 的运行时简报（runtime brief），仅对少数无法
 	// 从磁盘读取该简报的 provider 有效。daemon 对其它所有 provider 都把它留空
 	// （见 daemon.providerNeedsInlineSystemPrompt），因为那份简报已经以"每次任务的

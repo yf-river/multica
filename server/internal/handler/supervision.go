@@ -274,10 +274,6 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "运行时不存在或不属于当前工作区")
 			return
 		}
-		if targetRuntime.Provider != "codex" && targetRuntime.Provider != "codebuddy" {
-			writeError(w, 400, "质量监督目前只支持 Codex 或 CodeBuddy 运行时")
-			return
-		}
 		hasRuntime = true
 		runtimeChanged = !hasAgent || !current.RuntimeID.Valid || uuidToString(current.RuntimeID) != uuidToString(targetRuntime.ID)
 		if runtimeChanged && !canUseRuntimeForAgent(member, targetRuntime) {

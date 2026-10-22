@@ -177,7 +177,7 @@
     "agent": "监督 Agent",
     "select_agent": "选择监督 Agent",
     "runtime": "运行时",
-    "runtime_hint": "质量监督目前支持 Codex 和 CodeBuddy 运行时；本地运行时只有其所有者可用。",
+    "runtime_hint": "监督运行会加载本轮授权的调查工具；请选择用于审查的运行时。本地运行时只有其所有者可用。",
     "model": "模型",
     "model_offline": "运行时离线时无法读取模型列表，会保留已保存的模型。",
     "thinking": "思考等级",
