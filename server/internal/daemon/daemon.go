@@ -4911,6 +4911,8 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 // 执行 agent，并根据"轮询是否已把任务判为应中断"来决定回传结果、取消确认还是
 // 终态回调。activeTasks 计数在派发点已加 1，本函数结束即代表该任务生命周期结束。
 func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
+	pauseFlag := &atomic.Bool{}
+	ctx = context.WithValue(ctx, releasePauseKey{}, pauseFlag)
 	d.mu.Lock()
 	rt, tracked := d.runtimeIndex[task.RuntimeID]
 	d.mu.Unlock()
@@ -4967,6 +4969,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// 的消费者可以解析 workdir 路径，不会与 daemon 的 os.MkdirAll 竞争。
 	localRelease, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, taskLog)
 	if abort {
+		if pauseFlag.Load() {
+			if ackErr := d.client.AckReleasePause(ctx, task.ID, TaskResult{}); ackErr != nil {
+				taskLog.Error("等待目录任务暂停确认失败", "error", ackErr)
+			}
+		}
 		return
 	}
 	if localRelease != nil {
@@ -4996,8 +5003,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	// 建立可取消的 ctx，当服务器信号"任务应停止"时能中断正在运行的 agent——
 	// 任务到达终态（completed/failed/cancelled）或任务行被删（404）都会触发。
-	pauseFlag := &atomic.Bool{}
-	runCtx, runCancel := context.WithCancel(context.WithValue(ctx, releasePauseKey{}, pauseFlag))
+	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
 	// 轮询间隔是 d.cancelPollInterval（生产 5s，测试经直接字段覆盖缩短）。对零值
@@ -5088,6 +5094,19 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// 或整体删除该行，则跳过上报——complete/fail 回调反正也会失败。复用
 	// shouldInterruptAgent，让该护栏与在途 watcher 遵循相同信号。
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
+		if status == "release_paused" {
+			pauseFlag.Store(true)
+			assignment, _ := localDirectoryAssignmentForTask(task, d.cfg.DaemonID)
+			pausedEnv := &execenv.Environment{RootDir: result.EnvRoot, WorkDir: result.WorkDir, LocalDirectory: assignment != nil && !assignment.UsesWorktree()}
+			if saveErr := d.preserveReleaseTask(runCtx, task, pausedEnv, result.SessionID); saveErr != nil {
+				taskLog.Error("保存发布暂停结果失败", "error", saveErr)
+				return
+			}
+			if ackErr := d.client.AckReleasePause(ctx, task.ID, result); ackErr != nil {
+				taskLog.Error("发布暂停确认失败", "error", ackErr)
+			}
+			return
+		}
 		taskLog.Info("task cancelled during execution, discarding result",
 			"status", status, "error", err, "branch_name", result.BranchName)
 		// 与轮询取消路径同一契约：transcript 已冲刷，让服务器结算其推迟的 chat
@@ -7039,7 +7058,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			if taskResult.EnvRoot == "" {
 				taskResult.EnvRoot = env.RootDir
 			}
-			if pauseErr := d.preserveReleaseTask(ctx, task, env); pauseErr != nil {
+			if pauseErr := d.preserveReleaseTask(ctx, task, env, taskResult.SessionID); pauseErr != nil {
 				returnErr = errors.Join(returnErr, pauseErr)
 				return
 			}
@@ -7078,7 +7097,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}()
 	}
 	defer func() {
-		if pauseErr := d.preserveReleaseTask(ctx, task, env); pauseErr != nil {
+		if pauseErr := d.preserveReleaseTask(ctx, task, env, taskResult.SessionID); pauseErr != nil {
 			returnErr = errors.Join(returnErr, pauseErr)
 			return
 		}
@@ -7157,7 +7176,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// 用 RemoveTaskTempDir 而不是 os.RemoveAll：这样在删除失败时 .task_lock
 		// 标记能留下——没有它，下一次清扫无法把该目录与"上锁之前"的残留区分开。
 		execenv.ReleaseTaskTempLock(taskTempLock)
-		if pauseErr := d.preserveReleaseTask(ctx, task, env); pauseErr != nil {
+		if pauseErr := d.preserveReleaseTask(ctx, task, env, taskResult.SessionID); pauseErr != nil {
 			returnErr = errors.Join(returnErr, pauseErr)
 			return
 		}

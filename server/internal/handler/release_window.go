@@ -22,7 +22,7 @@ func (h *Handler) ReleaseWindow(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		var raw json.RawMessage
-		err := h.DB.QueryRow(r.Context(), `SELECT COALESCE((SELECT to_jsonb(x) FROM (SELECT w.*,(SELECT COALESCE(jsonb_agg(to_jsonb(p)),'[]') FROM release_paused_task p WHERE p.window_id=w.id) AS tasks FROM release_window w WHERE w.environment_id=$1 AND w.state<>'finished' AND NOT EXISTS(SELECT 1 FROM agent_runtime a WHERE a.daemon_id=w.daemon_id::text AND NOT EXISTS(SELECT 1 FROM member m WHERE m.workspace_id=a.workspace_id AND m.user_id=$2 AND m.role IN('owner','admin'))))x),'{}')`, env, requestUserID(r)).Scan(&raw)
+		err := h.DB.QueryRow(r.Context(), `SELECT COALESCE((SELECT to_jsonb(x) FROM (SELECT w.*,(SELECT COALESCE(jsonb_agg(to_jsonb(p)||jsonb_build_object('task_status',q.status,'failure_reason',q.failure_reason,'task_started_at',q.started_at)),'[]') FROM release_paused_task p LEFT JOIN agent_task_queue q ON q.id=p.task_id WHERE p.window_id=w.id) AS tasks FROM release_window w WHERE w.environment_id=$1 AND w.state<>'finished' AND NOT EXISTS(SELECT 1 FROM agent_runtime a WHERE a.daemon_id=w.daemon_id::text AND NOT EXISTS(SELECT 1 FROM member m WHERE m.workspace_id=a.workspace_id AND m.user_id=$2 AND m.role IN('owner','admin'))))x),'{}')`, env, requestUserID(r)).Scan(&raw)
 		if err != nil {
 			writeError(w, 500, "读取发布窗口失败")
 			return

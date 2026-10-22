@@ -374,7 +374,12 @@ def drain(env,m,timeout=900):
         started=time.monotonic();deadline=started+timeout;pause_requested=False
         while time.monotonic()<deadline:
             s=http(health_url(env)+'/drain')
-            if s['ready_to_stop']: return True
+            if s['ready_to_stop']:
+                if pause_requested:
+                    window=release_window_api(env)
+                    if recover_pause_acknowledgements(env,window):window=release_window_api(env)
+                    if any(t['state']=='requested' and t.get('task_status')=='deferred' and t.get('failure_reason')=='release_pause' for t in window.get('tasks',[])):raise RecoveryRequired('任务已退出但暂停检查点尚未确认，禁止切换')
+                return True
             if s.get('release_pause_supported') and time.monotonic()-started>=120 and not pause_requested:
                 if s['claims_in_flight']!=0:
                     time.sleep(.2);continue
@@ -397,6 +402,32 @@ def release_window_api(env,body=None):
         headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id'],'Content-Type':'application/json'})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=20) as response:return json.load(response)
 
+def recover_pause_acknowledgements(env,window):
+    pending={t['task_id'] for t in window.get('tasks',[]) if t['state']=='requested' and t.get('task_status')=='deferred' and t.get('failure_reason')=='release_pause'}
+    if not pending:return False
+    state=http(health_url(env)+'/drain')
+    if state['active_tasks'] or state['claims_in_flight']:return False
+    meta=read(meta_path(env));root=Path(meta['daemon_workspaces_root']).resolve();recovered=False
+    for file in root.glob('*/*/.release-pause.json'):
+        saved=read(file);task=saved.get('task',{}).get('id')
+        if task not in pending:continue
+        directory=file.parent.resolve()
+        if root not in directory.parents or str(directory)!=saved.get('root'):raise RecoveryRequired('暂停检查点目录归属不符')
+        if not Path(saved['work_dir']).is_dir():raise RecoveryRequired('暂停任务工作目录缺失')
+        # 不能只根据 daemon 的计数认定旧 Agent 或工具子进程已经停止。
+        for process in Path('/proc').glob('[0-9]*'):
+            try:
+                if exists(int(process.name)) and process_env(int(process.name)).get('MULTICA_TASK_ID')==task:
+                    raise RecoveryRequired('原任务进程仍存活，不能补记停止确认')
+            except (FileNotFoundError,ProcessLookupError):continue
+        profile=read(meta['daemon_profile_path'])
+        request=urllib.request.Request(meta['backend_url'].rstrip('/')+'/api/daemon/tasks/'+task+'/release-pause-ack',
+            data=json.dumps(dict(session_id=saved.get('session_id',''),work_dir=saved['work_dir'],root_dir=str(directory))).encode(),
+            headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id'],'Content-Type':'application/json'})
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request,timeout=20) as response:json.load(response)
+        recovered=True
+    return recovered
+
 def resume_release_window(env):
     path=release_window_path(env)
     if not path.exists():return
@@ -405,6 +436,7 @@ def resume_release_window(env):
     live=read(meta_path(env));check_process_ownership(env,live)
     ready(live['backend_url']+'/health',timeout=10)
     ready(live['frontend_url']+'/login',timeout=10)
+    recover_pause_acknowledgements(env,release_window_api(env))
     # 任务停止确认与恢复入队在同一数据库窗口中核对，失败时保留清单供下次恢复。
     release_window_api(env,dict(id=window['id'],action='resume'))
     window.update(state='finished',resumed_at=time.time());write(path,window,True)

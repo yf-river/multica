@@ -19,6 +19,7 @@ type releaseCheckpoint struct {
 	WorkDir        string                 `json:"work_dir"`
 	LocalDirectory bool                   `json:"local_directory"`
 	Worktree       *execenv.LocalWorktree `json:"worktree,omitempty"`
+	SessionID      string                 `json:"session_id,omitempty"`
 }
 
 func releasePaused(ctx context.Context) bool {
@@ -26,7 +27,10 @@ func releasePaused(ctx context.Context) bool {
 	return p != nil && p.Load()
 }
 
-func (d *Daemon) preserveReleaseTask(ctx context.Context, task Task, env *execenv.Environment) error {
+func (d *Daemon) preserveReleaseTask(ctx context.Context, task Task, env *execenv.Environment, session ...string) error {
+	if !releasePaused(ctx) && env.LocalWorktree == nil {
+		return nil
+	}
 	if !releasePaused(ctx) {
 		check, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -41,7 +45,10 @@ func (d *Daemon) preserveReleaseTask(ctx context.Context, task Task, env *execen
 			p.Store(true)
 		}
 	}
-	checkpoint := releaseCheckpoint{task, env.RootDir, env.WorkDir, env.LocalDirectory, env.LocalWorktree}
+	checkpoint := releaseCheckpoint{Task: task, Root: env.RootDir, WorkDir: env.WorkDir, LocalDirectory: env.LocalDirectory, Worktree: env.LocalWorktree}
+	if len(session) > 0 {
+		checkpoint.SessionID = session[0]
+	}
 	data, err := json.Marshal(checkpoint)
 	if err != nil {
 		return err
