@@ -33,5 +33,7 @@ export function RunDiffCard({
   const task = tasks?.find((t) => t.id === taskId);
   // 3. Still running, or the run changed no files: CodeDiffCard renders nothing,
   //    so no empty placeholder is left under the comment.
-  return <CodeDiffCard result={task?.result} className={className} />;
+  // 修改 1. Under a comment the card speaks in file terms; the execution log,
+  //          execution transcript and run review keep the default run-level card.
+  return <CodeDiffCard result={task?.result} variant="attachment" className={className} />;
 }

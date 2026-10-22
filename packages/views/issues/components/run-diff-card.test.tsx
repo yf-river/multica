@@ -67,7 +67,7 @@ afterEach(() => {
 describe("RunDiffCard", () => {
   it("shows the run's snapshot for a finished run with changes", async () => {
     renderCard([makeTask()]);
-    expect(await screen.findByRole("button", { name: /查看本次代码修改/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /查看文件修改：notes.ts/ })).toBeTruthy();
   });
 
   it("renders nothing while the run has no diff yet", () => {
