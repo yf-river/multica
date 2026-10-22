@@ -158,6 +158,10 @@ func (h *Handler) UpdateReviewSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "原审查 Agent 已不可用，请重新选择运行时后再保存")
 			return
 		}
+		if current.SystemKey.Valid && current.SystemKey.String != review.SystemKey {
+			writeError(w, http.StatusConflict, "审查 Agent 配置异常，请联系工作区管理员")
+			return
+		}
 	}
 
 	// 运行时：显式传入优先，否则沿用已保存的绑定。
