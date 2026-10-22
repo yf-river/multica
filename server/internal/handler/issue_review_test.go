@@ -123,6 +123,57 @@ func TestReviewSettingsManageHiddenAgent(t *testing.T) {
 		t.Fatalf("system_key = %q, want %q", systemKey, review.SystemKey)
 	}
 
+	// 1. The managed reviewer cannot use the avatar upload path, so creation must
+	// leave it with the default avatar.
+	var avatarURL string
+	if err := testPool.QueryRow(context.Background(), `SELECT coalesce(avatar_url, '') FROM agent WHERE id = $1`, agentID).Scan(&avatarURL); err != nil {
+		t.Fatalf("load managed agent avatar: %v", err)
+	}
+	if avatarURL != review.DefaultAvatar {
+		t.Fatalf("avatar_url = %q, want %q", avatarURL, review.DefaultAvatar)
+	}
+
+	// 2. The Agent API is where comments resolve the reviewer, so rows created
+	// before the default existed must still serve a face without a data migration.
+	managedAvatar := func() string {
+		t.Helper()
+		req := withChatTestWorkspaceCtx(t, newRequest("GET", "/api/agents?include_managed=true", nil))
+		w := httptest.NewRecorder()
+		testHandler.ListAgents(w, req)
+		var agents []struct {
+			ID        string  `json:"id"`
+			AvatarURL *string `json:"avatar_url"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &agents); err != nil {
+			t.Fatalf("decode managed agents: %v", err)
+		}
+		for _, a := range agents {
+			if a.ID != agentID {
+				continue
+			}
+			if a.AvatarURL == nil {
+				return ""
+			}
+			return *a.AvatarURL
+		}
+		t.Fatalf("managed review agent missing from response: %s", w.Body.String())
+		return ""
+	}
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET avatar_url = NULL WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("clear managed agent avatar: %v", err)
+	}
+	if got := managedAvatar(); got != review.DefaultAvatar {
+		t.Fatalf("empty stored avatar renders %q, want %q", got, review.DefaultAvatar)
+	}
+
+	// 3. An avatar stored on the row still wins, so the fallback never hides real data.
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET avatar_url = 'emoji:🦊' WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("store managed agent avatar: %v", err)
+	}
+	if got := managedAvatar(); got != "emoji:🦊" {
+		t.Fatalf("stored avatar renders %q, want %q", got, "emoji:🦊")
+	}
+
 	// 智能体列表不出现审查员。
 	listReq := withChatTestWorkspaceCtx(t, newRequest("GET", "/api/agents", nil))
 	listW := httptest.NewRecorder()
