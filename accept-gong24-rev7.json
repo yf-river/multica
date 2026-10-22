@@ -1,0 +1,56 @@
+{
+ "action": "accept",
+ "revision": 7,
+ "candidate": "9283f784db8872c7d5f83577e832bd84f131cfad-1792634209784292480",
+ "summary": "任务负责人提交的实际功能验收（候选 9283f784d，int 重新准备后复测）",
+ "authorization_id": "01a16140-95d9-7a85-a0d0-fcfdd197aa1d",
+ "scope_review": "新候选 9283f784d 与用户已授权发布的 c8fa69fb5 相比，只多了一次基线 4299b66ad 的整合（唯一冲突是 docs/operations/environment-releases.md 的两段新增章节，均已保留），业务改动集不变；本次在重新准备的 int（9283f784d，01:56:57Z 启动）上重跑了卡片、逐行 diff、历史快照、无改动隐藏、共享目录五类检查，仍在「确认发布生产」授权范围内。",
+ "user_comments_version": "6d9ea56d69b03dc202a836c1165f0ebd",
+ "evidence": [
+  {
+   "name": "int 环境与版本核对",
+   "status": "passed",
+   "evidence": "/health 返回 commit 9283f784db8872c7d5f83577e832bd84f131cfad，进程启动于 2026-10-22T01:56:57Z，int release 9283f784d-1792634213429708912，入口 http://9.134.129.162:13682，与交付候选一致。"
+  },
+  {
+   "name": "真实代码任务产生差异卡片",
+   "status": "passed",
+   "evidence": "int 的 ai-studio 工作区独立 git 目录项目（/data/cbs/worktree/int/gong24-diff-acceptance/repo，worktree 模式）真实任务 AIS-165 在 src/notes.ts 追加一项；浏览器打开任务详情，执行日志出现卡片「查看本次代码修改 1 个文件 +1 −0」（本轮复测截图 rev9283-recheck-card.png）。"
+  },
+  {
+   "name": "文件列表与逐行 diff",
+   "status": "passed",
+   "evidence": "点击 AIS-165 卡片弹出「本次代码修改」，基线 f8a20ce9a4d9 → 846dacf29dd4，文件列表仅 src/notes.ts（+1 −0），逐行 diff 为 +\"第五条-9283复验\"，与任务实际改动一致（截图 rev9283-recheck-dialog.png）。"
+  },
+  {
+   "name": "历史快照不随仓库变化",
+   "status": "passed",
+   "evidence": "AIS-165 的 worktree 已回收、基础仓库后续提交 94115ee（第六条）后，刷新页面卡片仍在且补丁仍为 f8a20ce9a4d9→846dacf29dd4，未出现第六条；更早候选留下的 AIS-160 在当前版本上仍显示当时的 +\"第二条\"，刷新后内容一致。"
+  },
+  {
+   "name": "运行前已有改动不进入本次补丁",
+   "status": "passed",
+   "evidence": "执行 AIS-165 前在基础仓库留下的 README 未提交改动未出现在补丁中：code_diff 仅含 src/notes.ts，弹窗 diff 与文本均检索不到该 README 内容，卡片显示 1 个文件。"
+  },
+  {
+   "name": "无修改时隐藏卡片",
+   "status": "passed",
+   "evidence": "任务 AIS-166 要求不修改任何文件，结果 code_diff.files 为空（before=after=692279c954f0），任务页面无「查看本次代码修改」卡片（本轮复测 card_count=0，截图 rev9283-nochange-no-card.png）。"
+  },
+  {
+   "name": "共享目录不展示归属不明差异",
+   "status": "passed",
+   "evidence": "in_place 共享目录项目（/data/cbs/worktree/int/gong24-diff-acceptance/inplace-repo）的任务 AIS-167 修改了 src/notes.ts，但结果无 code_diff 字段，页面不显示卡片（本轮复测 card_count=0）。"
+  },
+  {
+   "name": "三个展示入口",
+   "status": "passed",
+   "evidence": "AIS-165 的执行日志行、执行实录弹窗头部、运行复盘详情三个入口打开的是同一份 diff（基线 f8a20ce9a4d9→846dacf29dd4，src/notes.ts +1 −0）。"
+  },
+  {
+   "name": "页面无脚本错误",
+   "status": "passed",
+   "evidence": "本轮 4 次浏览器复测（AIS-165/166/167/160）均无 pageerror 或 console error 记录，脚本输出 errors 为空。"
+  }
+ ]
+}
