@@ -132,8 +132,26 @@ def assert_unused(directory):
                 pass
 
 
+def build_version(source, sha):
+    """本次构建注入的版本串：daemon 上报的 cli_version、web 展示的 app 版本都用它。
+
+    必须走 scripts/build-version.sh（与 `make build` 同一个来源），不能直接塞提交
+    哈希。daemon 用这个串告诉前端/服务端"我是哪个版本、支不支持交接说明/快速创建"，
+    而两边的解析器只认 `vX.Y.Z` 和 git-describe 的 `vX.Y.Z-N-g<sha>`；裸哈希按
+    fail-closed 处理，于是新构建的运行时被当成旧版本（交接说明输入框置灰、快速创建
+    422）。这里再加一道格式校验，让这类版本串在构建阶段就失败，而不是等用户撞上。
+    """
+    script = source/'scripts/build-version.sh'
+    # 更早的任务分支没有这个脚本：保持改动前的裸哈希行为，不用新校验挡住它们构建。
+    if not script.exists(): return sha[:12]
+    version = output(['bash', str(script)], cwd=source)
+    if not re.match(r'^v?\d+\.\d+\.\d+(-\d+-g[0-9a-fA-F]+)?(-dirty)?$', version):
+        raise RuntimeError('构建版本串不可被版本门槛解析: '+version+'（scripts/build-version.sh 应输出 vX.Y.Z 或 vX.Y.Z-N-g<sha>）')
+    return version
+
 def build(source, target):
     source, sha = checked_source(source)
+    version = build_version(source, sha)
     digest, files = source_digest(source)
     groups = {'go': hashlib.sha256(), 'web': hashlib.sha256()}
     for name in files:
@@ -153,7 +171,7 @@ def build(source, target):
     env = os.environ.copy()
     for key in list(env):
         if key.startswith(('NEXT_PUBLIC_', 'MULTICA_', 'GOAL_TEST_')) or key in ('REMOTE_API_URL','FRONTEND_ORIGIN','DATABASE_URL','JWT_SECRET'): env.pop(key)
-    env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=sha[:12], NEXT_TELEMETRY_DISABLED='1')
+    env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=version, NEXT_TELEMETRY_DISABLED='1')
     if reusable and previous.get('inputs', {}).get('web') == inputs['web']:
         copy_tree(current, target, excludes=('/server/', '/release.json', '**/.next/cache/***'))
     else:
@@ -167,7 +185,7 @@ def build(source, target):
     else:
         (target/'server/bin').mkdir(parents=True, exist_ok=True)
         for binary in ('server', 'multica', 'migrate'):
-            run(['go', 'build', '-ldflags', f'-X main.version={sha[:12]} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
+            run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
     for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py'):

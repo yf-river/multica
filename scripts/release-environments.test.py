@@ -190,4 +190,29 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(r.read(r.config_path('prod')),{'config':'unchanged'})
             finally:r.RUN=original
 
+    def test_build_version_rejects_bare_commit_hash(self):
+        # 裸提交哈希是这次线上问题的形态：daemon 上报它以后，前端和服务端都判不出
+        # 新旧，交接说明被当成旧运行时、快速创建被 422 拒绝。构建阶段就该失败。
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d);(source/'scripts').mkdir()
+            (source/'scripts/build-version.sh').write_text('')
+            with patch.object(r,'output',return_value='9283f784db88'):
+                with self.assertRaisesRegex(RuntimeError,'不可被版本门槛解析'):
+                    r.build_version(source,'9283f784db8872c7d5f83577e832bd84f131cfad')
+
+    def test_build_version_accepts_forms_the_gates_can_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d);(source/'scripts').mkdir()
+            (source/'scripts/build-version.sh').write_text('')
+            for version in ('v0.4.37','v0.4.37-0-g9283f784db88','0.4.37-12-g9283f784-dirty'):
+                with patch.object(r,'output',return_value=version):
+                    self.assertEqual(r.build_version(source,'9'*40),version)
+
+    def test_build_version_falls_back_to_commit_without_helper(self):
+        # 发布器可能对着没有 build-version.sh 的更早任务分支构建；此时行为与改动前一致。
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(r,'output') as output:
+                self.assertEqual(r.build_version(Path(d),'9'*40),'9'*12)
+                output.assert_not_called()
+
 if __name__=='__main__':unittest.main()
