@@ -620,6 +620,7 @@
     "status_running": "Working",
     "status_completed": "Completed",
     "status_failed": "Failed",
+    "status_release_paused": "Paused for release",
     "status_cancelled": "Cancelled",
     "attribution": {
       "on_behalf_of": "On behalf of {{name}}",

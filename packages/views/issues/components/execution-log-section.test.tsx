@@ -243,6 +243,23 @@ describe("execution log failure reasons", () => {
     return queryClient;
   }
 
+  it("identifies a release pause in historical runs", () => {
+    const client = failedLogClient();
+    client.setQueryData(issueKeys.tasks("issue-1"), [
+      makeTask({ status: "cancelled", failure_reason: "release_pause", completed_at: "2026-06-08T08:04:00Z" }),
+    ]);
+    renderWithI18n(
+      <QueryClientProvider client={client}>
+        <ExecutionLogSection issueId="issue-1" />
+      </QueryClientProvider>,
+      { locale: "zh-Hans" },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "显示历史运行（1）" }));
+    expect(screen.getByTitle("发布暂停")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
+    expect(screen.queryByText("已取消")).not.toBeInTheDocument();
+  });
+
   it("renders a failed run's reason in the active locale", () => {
     renderWithI18n(
       <QueryClientProvider client={failedLogClient()}>

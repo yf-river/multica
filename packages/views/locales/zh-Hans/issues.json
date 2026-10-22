@@ -597,6 +597,7 @@
     "status_running": "正在工作",
     "status_completed": "已完成",
     "status_failed": "失败",
+    "status_release_paused": "发布暂停",
     "status_cancelled": "已取消",
     "attribution": {
       "on_behalf_of": "代表 {{name}}",

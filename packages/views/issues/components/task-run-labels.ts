@@ -52,8 +52,9 @@ export function useTriggerText(task: AgentTask): string {
 }
 
 /** 运行状态的 i18n 可读标签（排队/派发/等待本地目录/运行中/完成/失败/取消）。 */
-export function useStatusLabel(status: AgentTask["status"]): string {
+export function useStatusLabel(status: AgentTask["status"], failureReason?: string | null): string {
   const { t } = useT("issues");
+  if (failureReason === "release_pause") return t(($) => $.execution_log.status_release_paused);
   switch (status) {
     case "queued": return t(($) => $.execution_log.status_queued);
     case "dispatched": return t(($) => $.execution_log.status_dispatched);

@@ -27,10 +27,10 @@ def verify():
     if config.get('environment_id')!=env:raise RuntimeError('服务环境身份不匹配')
     me=api('GET','me')
     try:
-        issue=api('POST','issues',dict(title='交付协调自动验收 '+str(uuid.uuid4())[:8],status='in_progress',assignee_type='member',assignee_id=me['id']))
+        issue=api('POST','issues',dict(title='交付协调自动验收 '+str(uuid.uuid4())[:8],status='in_progress',assignee_type='member',assignee_id=me['id']),want=201)
         identity=issue['id'];created.append(identity);r.write(evidence,dict(created=created,checks=checks,environment=env),True)
         route='issues/'+identity
-        comment=api('POST',route+'/comments',dict(content='自动验收样本：交付幂等、执行归属及验收证据持久化。仅测试环境，不发布此任务。'))
+        comment=api('POST',route+'/comments',dict(content='自动验收样本：交付幂等、执行归属及验收证据持久化。仅测试环境，不发布此任务。'),want=201)
         owner=api('POST',route+'/delivery-owner',dict(action='claim',execution_id='api-verifier'))
         headers={'X-Delivery-Token':owner['token'],'X-Delivery-Generation':str(owner['generation'])}
         api('POST',route+'/delivery-owner',dict(action='claim',execution_id='competing-session'),want=409)

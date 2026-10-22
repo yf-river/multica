@@ -5022,6 +5022,16 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}()
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+
+	// 在任何提前返回前先上报用量——无论任务完成、出错还是被轮询 goroutine 中途
+	// 取消，agent 都会累计 token。即使 runCtx 被取消，claude.go 与 codex.go 也会
+	// 填充 result.Usage，因此在取消路径上丢弃它等于静默少报账单。
+	if len(result.Usage) > 0 {
+		if usageErr := d.client.ReportTaskUsage(ctx, task.ID, result.Usage); usageErr != nil {
+			taskLog.Warn("report task usage failed", "error", usageErr)
+		}
+	}
+
 	if pauseFlag.Load() {
 		if !releaseCheckpointReady(task, result) {
 			taskLog.Error("发布暂停检查点未保存，禁止确认停止")
@@ -5031,15 +5041,6 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			taskLog.Error("发布暂停确认失败", "error", ackErr)
 		}
 		return
-	}
-
-	// 在任何提前返回前先上报用量——无论任务完成、出错还是被轮询 goroutine 中途
-	// 取消，agent 都会累计 token。即使 runCtx 被取消，claude.go 与 codex.go 也会
-	// 填充 result.Usage，因此在取消路径上丢弃它等于静默少报账单。
-	if len(result.Usage) > 0 {
-		if usageErr := d.client.ReportTaskUsage(ctx, task.ID, result.Usage); usageErr != nil {
-			taskLog.Warn("report task usage failed", "error", usageErr)
-		}
 	}
 
 	// 检查我们是否被轮询 goroutine 取消了。

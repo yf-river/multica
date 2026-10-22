@@ -312,7 +312,7 @@ export function ActiveTaskRow({
   const [cancelling, setCancelling] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const tone = STATUS_TONE[task.status];
-  const label = useStatusLabel(task.status);
+  const label = useStatusLabel(task.status, task.failure_reason);
   const trigger = useTriggerText(task);
 
   // 运行中的行显示实时跳动的耗时（跳动的数字承载"活着"，时长承载
@@ -426,7 +426,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const { t: tAgents } = useT("agents");
   const timeAgo = useTimeAgo();
   const [retrying, setRetrying] = useState(false);
-  const label = useStatusLabel(task.status);
+  const label = useStatusLabel(task.status, task.failure_reason);
   const trigger = useTriggerText(task);
   const time = task.completed_at ? timeAgo(task.completed_at) : "—";
   // 失败运行总会自我解释。取消则只在该取消是 SERVER 因持久原因发起的
@@ -466,7 +466,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   // 重试只对"终态但非成功"的行有意义。传 task.id 精确定位这一行的 agent——
   // 不带它，重跑接口会回退到问题的当前负责人，于是行上 agent 已被换掉时
   //（例如改派、squad worker、或一次性 @-mention agent）会触发错的那个 agent。
-  const canRetry = task.status === "failed" || task.status === "cancelled";
+  const canRetry = task.failure_reason !== "release_pause" && (task.status === "failed" || task.status === "cancelled");
 
   const handleRetry = async () => {
     if (retrying) return;
