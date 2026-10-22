@@ -59,12 +59,19 @@ class Worker:
         path=self.publication_path(d)
         lease=r.read(path) if path.exists() else dict(delivery_id=d['id'],worker_token=d['worker_token'])
         if lease.get('worker_token')!=d['worker_token']:raise r.RecoveryRequired('发布执行身份变化，需要核对原占用')
-        if 'generation' not in lease:action='claim'
+        if 'generation' not in lease:
+            action='claim';r.write(path,lease,True)
         try:
             result=self.api('delivery-queue/publication',dict(lease,action=action,snapshot=dict(source_commit=d['source_commit'])))
         except urllib.error.HTTPError as e:
             if e.code!=409:raise
             current=self.api('delivery-queue/publication')
+            if action=='claim' and current.get('delivery_id')==d['id']:
+                # 领取响应丢失时核对原凭据，不创建新占用或改变代次。
+                lease['generation']=current['generation'];action='check'
+                if not current.get('expired'):
+                    result=self.api('delivery-queue/publication',dict(lease,action='check'))
+                    r.write(path,result,True);d['publication_generation']=result['generation'];return result
             if action in ('check','heartbeat') and current.get('delivery_id')==d['id'] and current.get('generation')==lease.get('generation') and current.get('expired'):
                 with r.lock('publisher'):
                     c=self.own_candidate(d)

@@ -100,6 +100,17 @@ class DeliveryTests(unittest.TestCase):
             with patch.object(worker,'api',return_value={'state':'idle','generation':3}),patch.object(worker,'publication') as publication:
                 worker.finish_publication(d)
                 self.assertFalse(path.exists());publication.assert_not_called()
+    def test_claim_response_loss_reuses_current_generation_with_original_credentials(self):
+        import uuid,urllib.error
+        d=dict(id=str(uuid.uuid4()),worker_token=str(uuid.uuid4()))
+        worker=object.__new__(w.Worker)
+        current=dict(delivery_id=d['id'],generation=7,expired=False)
+        receipt=dict(delivery_id=d['id'],worker_token=d['worker_token'],generation=7)
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(worker,'api',side_effect=[urllib.error.HTTPError('fixture',409,'conflict',{},None),current,receipt]) as api:
+            self.assertEqual(worker.publication(d),receipt)
+            self.assertEqual(d['publication_generation'],7)
+            check=api.call_args.args[1]
+            self.assertEqual((check['action'],check['worker_token'],check['generation']),('check',d['worker_token'],7))
     def test_verifying_candidate_is_not_remerged_on_resume(self):
         worker=object.__new__(w.Worker);worker.env='prod';d={'id':'one','source_commit':'a'*40}
         candidate={'id':'candidate','status':'verifying','commit':'a'*40,'source':'/fixture'}
