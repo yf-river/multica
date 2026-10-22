@@ -102,7 +102,7 @@ class DeliveryTests(unittest.TestCase):
                 self.assertFalse(path.exists());publication.assert_not_called()
     def test_claim_response_loss_reuses_current_generation_with_original_credentials(self):
         import uuid,urllib.error
-        d=dict(id=str(uuid.uuid4()),worker_token=str(uuid.uuid4()))
+        d=dict(id=str(uuid.uuid4()),worker_token=str(uuid.uuid4()),source_commit='a'*40)
         worker=object.__new__(w.Worker)
         current=dict(delivery_id=d['id'],generation=7,expired=False)
         receipt=dict(delivery_id=d['id'],worker_token=d['worker_token'],generation=7)
