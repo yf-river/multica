@@ -496,6 +496,69 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 	return i, err
 }
 
+const createMikaOnboardingOpening = `-- name: CreateMikaOnboardingOpening :one
+INSERT INTO chat_message (chat_session_id, role, content, message_kind, created_at, id)
+VALUES (
+    $1,
+    'assistant',
+    $2,
+    'onboarding_opening',
+    $3::timestamptz + interval '1 microsecond',
+    COALESCE($4::uuid, gen_random_uuid())
+)
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, channel_media_pending_until, channel_ingested, quick_actions, channel_context_revision, channel_outbound_type, channel_outbound_installation_id, channel_outbound_chat_id, channel_outbound_message_ids, health_report_ids
+`
+
+type CreateMikaOnboardingOpeningParams struct {
+	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
+	Content          string             `json:"content"`
+	KickoffCreatedAt pgtype.Timestamptz `json:"kickoff_created_at"`
+	ID               pgtype.UUID        `json:"id"`
+}
+
+// Mika's opening reply, written by the server rather than produced by an agent
+// run (MUL-5827). Paired with the hidden kickoff row in one transaction, which
+// is why created_at is derived instead of defaulted: now() is the TRANSACTION
+// timestamp, so both rows would land on the identical microsecond, and the
+// session-list LATERAL picks the last message with `ORDER BY created_at DESC
+// LIMIT 1` and no tiebreaker (ids are random UUIDs, not monotonic). A tie there
+// can select the kickoff, whose kind makes buildChatLastMessage return nil — so
+// a session that onboarded perfectly reports no last message and the "Start
+// with Mika" recovery card reappears. One microsecond makes the order total.
+//
+// task_id stays NULL: no agent run produced this row, and nothing may treat it
+// as a turn to regenerate or resume.
+func (q *Queries) CreateMikaOnboardingOpening(ctx context.Context, arg CreateMikaOnboardingOpeningParams) (ChatMessage, error) {
+	row := q.db.QueryRow(ctx, createMikaOnboardingOpening,
+		arg.ChatSessionID,
+		arg.Content,
+		arg.KickoffCreatedAt,
+		arg.ID,
+	)
+	var i ChatMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.Role,
+		&i.Content,
+		&i.TaskID,
+		&i.CreatedAt,
+		&i.FailureReason,
+		&i.ElapsedMs,
+		&i.MessageKind,
+		&i.ChannelMediaPendingUntil,
+		&i.ChannelIngested,
+		&i.QuickActions,
+		&i.ChannelContextRevision,
+		&i.ChannelOutboundType,
+		&i.ChannelOutboundInstallationID,
+		&i.ChannelOutboundChatID,
+		&i.ChannelOutboundMessageIds,
+		&i.HealthReportIds,
+	)
+	return i, err
+}
+
 const deferChatTaskForSealedPendingMedia = `-- name: DeferChatTaskForSealedPendingMedia :one
 UPDATE agent_task_queue AS task
 SET status = 'deferred', fire_at = pending.max_until

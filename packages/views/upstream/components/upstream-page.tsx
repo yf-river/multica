@@ -24,7 +24,7 @@ export function UpstreamPage() {
   const wsId = useWorkspaceId();
   const [tab, setTab] = useState("pending");
   const [showSettings, setShowSettings] = useState(false);
-  const { data, isLoading } = useQuery(upstreamSnapshotOptions(wsId));
+  const { data, isLoading, error } = useQuery(upstreamSnapshotOptions(wsId));
 
   const config = data?.config;
   const head = config?.head_sha ?? "";
@@ -32,17 +32,18 @@ export function UpstreamPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex items-start justify-between gap-4 border-b border-surface-border px-4 py-4 sm:px-6">
+      {error ? <p role="alert" className="px-4 py-2 text-body text-danger">{error.message}</p>:null}
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-surface-border px-4 py-4 sm:px-6">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <GitMerge className="h-4 w-4 text-muted-foreground" />
+            <GitMerge aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
             <h1 className="text-title font-semibold">{t(($) => $.page.title)}</h1>
           </div>
           <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.page.tagline)}</p>
         </div>
         <div className="flex shrink-0 items-start gap-3">
-        <Button size="sm" variant="ghost" onClick={() => setShowSettings((v) => !v)}>
-          <Settings className="mr-1 h-3.5 w-3.5" />
+        <Button size="sm" variant="ghost" aria-expanded={showSettings} onClick={() => setShowSettings((v) => !v)}>
+          <Settings aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
           {t(($) => $.page.setup.title)}
         </Button>
         <div className="text-right text-caption text-muted-foreground">

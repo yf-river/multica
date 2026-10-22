@@ -2,7 +2,7 @@ CREATE TABLE upstream_sync_config (
     singleton smallint NOT NULL DEFAULT 1 CHECK (singleton = 1),
     upstream_url text NOT NULL DEFAULT 'https://github.com/multica-ai/multica.git',
     upstream_branch text NOT NULL DEFAULT 'main',
-    local_ref text NOT NULL DEFAULT 'main',
+    local_ref text NOT NULL DEFAULT 'origin/personal-studio-upstream',
     runtime_id uuid,
     agent_id uuid,
     autopilot_id uuid,
@@ -67,7 +67,7 @@ CREATE TABLE upstream_sync_commit (
     item_id uuid,
     run_id uuid,
     absorbed boolean NOT NULL DEFAULT false,
-    absorbed_method text NOT NULL DEFAULT '' CHECK (absorbed_method IN ('','patch_id','subject')),
+    absorbed_method text NOT NULL DEFAULT '' CHECK (absorbed_method IN ('','patch_id','subject','ancestry')),
     subject text NOT NULL DEFAULT '',
     committed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now()

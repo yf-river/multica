@@ -25,6 +25,19 @@ class ReleaseTests(unittest.TestCase):
             replacement.write_text('CREATE INDEX something_else ON issue(id);')
             self.assertFalse(r.reviewed_supervision_index_change(release,migration,[statement]))
 
+    def test_snapshot_column_compatibility_requires_exact_reviewed_sql(self):
+        source=Path(__file__).parent.parent/'server/migrations/564_snapshot_column_compatibility.up.sql'
+        with tempfile.TemporaryDirectory() as tmp:
+            migration=Path(tmp)/source.name
+            migration.write_bytes(source.read_bytes())
+            self.assertTrue(r.reviewed_snapshot_column_change(migration))
+            migration.write_text(migration.read_text()+'DROP TABLE issue;')
+            self.assertFalse(r.reviewed_snapshot_column_change(migration))
+
+    def test_version_change_requires_rebuilding_artifacts(self):
+        self.assertFalse(r.reusable_build({'version':'v1.0.0','files':{}},{},'v1.0.1'))
+        self.assertTrue(r.reusable_build({'version':'v1.0.0','files':{}},{},'v1.0.0'))
+
     def test_task_cannot_restore_or_switch_production(self):
         with patch.dict(r.os.environ, {'MULTICA_TASK_ID':'task'}), patch.object(r,'read') as read, patch.object(r,'owned_stop') as stop:
             with self.assertRaisesRegex(RuntimeError,'request'): r.deploy('prod','missing')
@@ -48,7 +61,7 @@ class ReleaseTests(unittest.TestCase):
             (current/'server/bin/server').write_text('compiled server')
             (current/'apps/web/server.js').write_text('compiled web')
             inputs={key:r.hashlib.sha256().hexdigest() for key in ('go','web')}
-            r.write(current/'release.json',{'inputs':inputs,'files':r.checksums(current)})
+            r.write(current/'release.json',{'version':'a'*12,'inputs':inputs,'files':r.checksums(current)})
             with patch.object(r,'RUN',root/'state'), patch.object(r,'checked_source',return_value=(source,'a'*40)), patch.object(r,'source_digest',return_value=('b'*64,[])):
                 r.write(r.meta_path('int'),{'release_dir':str(current)})
                 first=r.build(source,root/'first'); second=r.build(source,root/'second')

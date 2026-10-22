@@ -55,9 +55,10 @@ export function RunsTab({ wsId }: { wsId: string }) {
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" disabled={trigger.isPending || !!snapshot.data?.active_run_id} onClick={() => trigger.mutate()}>
+          <Button size="sm" variant="secondary" disabled={trigger.isPending || !!snapshot.data?.active_run_id || snapshot.data?.config.sync_state==="paused"} onClick={() => trigger.mutate()}>
             {t(($) => $.page.runs.run_now)}
           </Button>
+          {trigger.isError ? <p role="alert" className="text-caption text-danger">{trigger.error.message}</p>:null}
           {trigger.isSuccess ? (
             <span className="text-caption text-muted-foreground">{t(($) => $.page.runs.triggered)}</span>
           ) : null}

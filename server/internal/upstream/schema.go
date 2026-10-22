@@ -6,6 +6,7 @@ package upstream
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -13,10 +14,10 @@ import (
 // 单次回传的上限。Agent 可能一次塞进上千条，服务端必须自己兜住，
 // 不依赖提示词约束。
 const (
-	MaxCommitsPerReport = 300
-	MaxItemsPerReport   = 60
+	MaxCommitsPerReport  = 300
+	MaxItemsPerReport    = 60
 	MaxCommitSHAsPerItem = 50
-	DefaultLease        = 10 * time.Minute
+	DefaultLease         = 10 * time.Minute
 )
 
 // CommitRef 是一条上游提交在本次回传里的自述。
@@ -63,11 +64,13 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }
 
+var fullSHA = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
 var (
 	validVerdict    = map[string]bool{"absorb": true, "review": true, "skip": true}
 	validConfidence = map[string]bool{"high": true, "medium": true, "low": true}
 	validPresence   = map[string]bool{"local": true, "partial": true, "absent": true}
-	validMethod     = map[string]bool{"": true, "patch_id": true, "subject": true}
+	validMethod     = map[string]bool{"": true, "patch_id": true, "subject": true, "ancestry": true}
 )
 
 // ValidateReport 校验一次回传。错误按"先结构、后引用"的顺序给出，
@@ -89,13 +92,16 @@ func ValidateReport(rep Report) error {
 	known := make(map[string]bool, len(rep.Commits))
 	for i, c := range rep.Commits {
 		sha := strings.TrimSpace(c.SHA)
-		if len(sha) < 7 || len(sha) > 64 {
-			return ValidationError{Field: fmt.Sprintf("commits[%d].sha", i), Message: "必须是 7-64 位十六进制提交号"}
+		if !fullSHA.MatchString(sha) {
+			return ValidationError{Field: fmt.Sprintf("commits[%d].sha", i), Message: "必须是完整的40或64位小写十六进制提交号"}
 		}
 		if known[sha] {
 			return ValidationError{Field: fmt.Sprintf("commits[%d].sha", i), Message: "本批内重复出现"}
 		}
 		known[sha] = true
+		if c.Absorbed && c.AbsorbedMethod != "patch_id" && c.AbsorbedMethod != "ancestry" {
+			return ValidationError{Field: "absorbed_method", Message: "已吸收必须有补丁或祖先关系证据"}
+		}
 		if !validMethod[c.AbsorbedMethod] {
 			return ValidationError{Field: fmt.Sprintf("commits[%d].absorbed_method", i), Message: "只允许空、patch_id 或 subject"}
 		}
@@ -127,6 +133,9 @@ func ValidateReport(rep Report) error {
 		if len(it.CommitSHAs) > MaxCommitSHAsPerItem {
 			return ValidationError{Field: fmt.Sprintf("items[%d].commit_shas", i), Message: fmt.Sprintf("最多 %d 条", MaxCommitSHAsPerItem)}
 		}
+		if len(it.CommitSHAs) == 0 || strings.TrimSpace(it.Title) == "" || strings.TrimSpace(it.Summary) == "" || strings.TrimSpace(it.Rationale) == "" {
+			return ValidationError{Field: "items", Message: "条目必须包含提交、标题、摘要和判断依据"}
+		}
 		for _, sha := range it.CommitSHAs {
 			sha = strings.TrimSpace(sha)
 			if !known[sha] {
@@ -137,6 +146,28 @@ func ValidateReport(rep Report) error {
 			}
 			assigned[sha] = key
 		}
+	}
+	return nil
+}
+
+// BatchManifest 来自运行机器上确定性的 Git 枚举；完成前核对整个冻结清单。
+type BatchManifest struct {
+	BaseSHA string      `json:"base_sha"`
+	HeadSHA string      `json:"head_sha"`
+	Commits []CommitRef `json:"commits"`
+	HasMore bool        `json:"has_more"`
+}
+
+func ValidateManifest(m BatchManifest, limit int) error {
+	if !fullSHA.MatchString(m.BaseSHA) || !fullSHA.MatchString(m.HeadSHA) || len(m.Commits) > limit {
+		return ValidationError{Field: "manifest", Message: "提交范围或批量大小无效"}
+	}
+	seen := map[string]bool{}
+	for _, c := range m.Commits {
+		if !fullSHA.MatchString(c.SHA) || seen[c.SHA] {
+			return ValidationError{Field: "commits", Message: "清单包含无效或重复提交"}
+		}
+		seen[c.SHA] = true
 	}
 	return nil
 }

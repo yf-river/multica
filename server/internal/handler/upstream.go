@@ -54,6 +54,13 @@ func (h *Handler) upstreamTaskScope(w http.ResponseWriter, r *http.Request) (str
 		writeError(w, 403, "同步 Agent 未绑定或任务已结束")
 		return "", false
 	}
+	if run := chi.URLParam(r, "runId"); run != "" {
+		var owner string
+		if err := h.DB.QueryRow(r.Context(), `SELECT task_id::text FROM upstream_sync_run WHERE id=$1`, run).Scan(&owner); err != nil || owner != taskID {
+			writeError(w, 403, "不能操作其他任务的同步批次")
+			return "", false
+		}
+	}
 	return taskID, true
 }
 
@@ -64,8 +71,6 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 		writeError(w, 400, verr.Error())
 	case errors.Is(err, upstream.ErrBusy):
 		writeError(w, 409, "另一批次正在运行")
-	case errors.Is(err, upstream.ErrNeedsManual):
-		writeError(w, 409, "存量同步只能由人工在页面上触发")
 	case errors.Is(err, upstream.ErrRunGone):
 		writeError(w, 409, "批次不存在或已结束")
 	default:
@@ -98,6 +103,7 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 		UpstreamBranch string `json:"upstream_branch"`
 		LocalRef       string `json:"local_ref"`
 		RuntimeID      string `json:"runtime_id"`
+		Enabled        *bool  `json:"enabled"`
 		BatchSize      int    `json:"batch_size"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -111,31 +117,29 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 		body.UpstreamBranch = "main"
 	}
 	if body.LocalRef == "" {
-		body.LocalRef = "main"
+		body.LocalRef = "origin/personal-studio-upstream"
 	}
 	if body.BatchSize == 0 {
 		body.BatchSize = 200
 	}
 
-	err := h.Upstream.UpsertConfig(r.Context(), upstream.Config{
-		UpstreamURL: body.UpstreamURL, UpstreamBranch: body.UpstreamBranch,
-		LocalRef: body.LocalRef, RuntimeID: body.RuntimeID, BatchSize: body.BatchSize,
-	}, nil, nil, user)
+	if body.RuntimeID != "" {
+		var runtimeWorkspace, runtimeStatus string
+		if err := h.DB.QueryRow(r.Context(), `SELECT workspace_id::text,status FROM agent_runtime WHERE id=$1 AND provider IN ('codex','codebuddy') AND (visibility='workspace' OR owner_id=$2 OR owner_id IS NULL)`, body.RuntimeID, user).Scan(&runtimeWorkspace, &runtimeStatus); err != nil || runtimeWorkspace != middleware.WorkspaceIDFromContext(r.Context()) {
+			writeError(w, 403, "只能绑定当前有管理权限工作区的运行时")
+			return
+		}
+		if (body.Enabled == nil || *body.Enabled) && runtimeStatus != "online" {
+			writeError(w, 400, "运行时离线，可暂停同步或选择其他在线运行时")
+			return
+		}
+	}
+	agentID, autopilotID, err := h.Upstream.SetupExecutor(r.Context(), upstream.Config{UpstreamURL: body.UpstreamURL, UpstreamBranch: body.UpstreamBranch, LocalRef: body.LocalRef, RuntimeID: body.RuntimeID, BatchSize: body.BatchSize}, user, service.UpstreamSyncInstructions(), body.Enabled == nil || *body.Enabled)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
-
-	result := map[string]any{"ok": true}
-	if strings.TrimSpace(body.RuntimeID) != "" {
-		agentID, autopilotID, err := h.Upstream.SetupExecutor(r.Context(), body.RuntimeID, user, service.UpstreamSyncInstructions())
-		if err != nil {
-			writeUpstreamError(w, err)
-			return
-		}
-		result["agent_id"] = agentID
-		result["autopilot_id"] = autopilotID
-	}
+	result := map[string]any{"ok": true, "agent_id": agentID, "autopilot_id": autopilotID}
 	writeJSON(w, 200, result)
 }
 
@@ -198,10 +202,9 @@ func (h *Handler) StartUpstreamRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	trigger := "manual"
-	var ai string
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(autopilot_run_id::text,'') FROM agent_task_queue WHERE id=$1`, taskID).Scan(&ai)
-	if err == nil && ai != "" {
-		trigger = "schedule"
+	if err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(a.source,'manual') FROM agent_task_queue t LEFT JOIN autopilot_run a ON a.id=t.autopilot_run_id WHERE t.id=$1`, taskID).Scan(&trigger); err != nil {
+		writeError(w, 403, "任务来源不可用")
+		return
 	}
 	res, err := h.Upstream.Start(r.Context(), taskID, r.Header.Get("X-Agent-ID"), trigger)
 	if err != nil {
@@ -263,6 +266,32 @@ func (h *Handler) FailUpstreamRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Upstream.Fail(r.Context(), chi.URLParam(r, "runId"), body.Error); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (h *Handler) PrepareUpstreamRun(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.upstreamTaskScope(w, r); !ok {
+		return
+	}
+	var m upstream.BatchManifest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&m); err != nil {
+		writeError(w, 400, "提交清单格式错误")
+		return
+	}
+	if err := h.Upstream.Prepare(r.Context(), chi.URLParam(r, "runId"), m); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+func (h *Handler) HeartbeatUpstreamRun(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.upstreamTaskScope(w, r); !ok {
+		return
+	}
+	if err := h.Upstream.Heartbeat(r.Context(), chi.URLParam(r, "runId")); err != nil {
 		writeUpstreamError(w, err)
 		return
 	}

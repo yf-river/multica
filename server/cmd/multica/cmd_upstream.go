@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/upstream"
 	"net/url"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -49,6 +52,7 @@ var upstreamFailCmd = &cobra.Command{
 
 func init() {
 	upstreamCmd.GroupID = groupCore
+	upstreamStartCmd.Flags().String("repo", ".", "local repository used only for comparison")
 	upstreamStartCmd.Flags().String("run", "", "run id from a previous start (optional; server resolves it from the task)")
 	upstreamReportCmd.Flags().String("run", "", "run id returned by 'upstream start'")
 	upstreamReportCmd.Flags().String("file", "", "path to the JSON report (required)")
@@ -58,9 +62,23 @@ func init() {
 	upstreamFailCmd.Flags().String("run", "", "run id returned by 'upstream start'")
 	upstreamFailCmd.Flags().String("error", "", "failure reason")
 	_ = upstreamReportCmd.MarkFlagRequired("file")
-	_ = upstreamFinishCmd.MarkFlagRequired("cursor")
 
-	upstreamCmd.AddCommand(upstreamStartCmd, upstreamReportCmd, upstreamFinishCmd, upstreamFailCmd)
+	heartbeat := &cobra.Command{Use: "heartbeat", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		p, err := upstreamRunPath(cmd, "/heartbeat")
+		if err != nil {
+			return err
+		}
+		client, err := newAPIClient(cmd)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := cli.APIContext(context.Background())
+		defer cancel()
+		var out map[string]any
+		return client.PostJSON(ctx, p, map[string]any{}, &out)
+	}}
+	heartbeat.Flags().String("run", "", "current run id")
+	upstreamCmd.AddCommand(upstreamStartCmd, upstreamReportCmd, upstreamFinishCmd, upstreamFailCmd, heartbeat)
 }
 
 func upstreamRunPath(cmd *cobra.Command, suffix string) (string, error) {
@@ -79,11 +97,41 @@ func runUpstreamStart(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	var out map[string]any
+	var out upstream.StartResult
 	if err := client.PostJSON(ctx, "/api/upstream/runs/start", map[string]any{}, &out); err != nil {
 		return fmt.Errorf("claim batch: %w", err)
 	}
-	return cli.PrintJSON(os.Stdout, out)
+	repo, _ := cmd.Flags().GetString("repo")
+	repo, err = filepath.Abs(repo)
+	if err != nil {
+		return err
+	}
+	home, err := os.UserCacheDir()
+	if err != nil {
+		return err
+	}
+	mirror := filepath.Join(home, "multica-upstream", out.RunID)
+	gitCtx, stop := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer stop()
+	if out.Manifest != nil {
+		return cli.PrintJSON(os.Stdout, map[string]any{"run_id": out.RunID, "manifest": out.Manifest, "mirror": mirror})
+	}
+	m, err := upstream.BuildManifest(gitCtx, repo, mirror, out.Config, out.Processed)
+	if err != nil {
+		var ignored map[string]any
+		_ = client.PostJSON(context.Background(), "/api/upstream/runs/"+out.RunID+"/fail", map[string]any{"error": err.Error()}, &ignored)
+		return err
+	}
+	for i := range m.Commits {
+		m.Commits[i].ClusterKey = out.Assignments[m.Commits[i].SHA]
+	}
+	var ack map[string]any
+	prepareCtx, cancelPrepare := cli.APIContext(context.Background())
+	defer cancelPrepare()
+	if err = client.PostJSON(prepareCtx, "/api/upstream/runs/"+out.RunID+"/prepare", m, &ack); err != nil {
+		return err
+	}
+	return cli.PrintJSON(os.Stdout, map[string]any{"run_id": out.RunID, "manifest": m, "mirror": mirror})
 }
 
 func runUpstreamReport(cmd *cobra.Command, _ []string) error {
@@ -138,6 +186,10 @@ func runUpstreamFinish(cmd *cobra.Command, _ []string) error {
 	if err := client.PostJSON(ctx, path, map[string]any{"cursor_sha": cursor, "has_more": hasMore}, &out); err != nil {
 		return fmt.Errorf("finish batch: %w", err)
 	}
+	runID, _ := cmd.Flags().GetString("run")
+	if home, e := os.UserCacheDir(); e == nil && len(runID) == 36 && filepath.Base(runID) == runID {
+		_ = os.RemoveAll(filepath.Join(home, "multica-upstream", runID))
+	}
 	return cli.PrintJSON(os.Stdout, out)
 }
 
@@ -158,6 +210,10 @@ func runUpstreamFail(cmd *cobra.Command, _ []string) error {
 	var out map[string]any
 	if err := client.PostJSON(ctx, path, map[string]any{"error": message}, &out); err != nil {
 		return fmt.Errorf("fail batch: %w", err)
+	}
+	runID, _ := cmd.Flags().GetString("run")
+	if home, e := os.UserCacheDir(); e == nil && len(runID) == 36 && filepath.Base(runID) == runID {
+		_ = os.RemoveAll(filepath.Join(home, "multica-upstream", runID))
 	}
 	return cli.PrintJSON(os.Stdout, out)
 }

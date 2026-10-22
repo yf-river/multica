@@ -12,6 +12,13 @@ import (
 
 const maxSearchDepth = 4
 
+// BaselineLastPrefix 对应 d91979d4c 中生成快照时已存在的历史迁移范围。
+const BaselineLastPrefix = "496"
+
+func CoveredByBaseline(version string) bool {
+	return len(version) > 4 && version[:3] >= "001" && version[:3] <= BaselineLastPrefix && version[3] == '_'
+}
+
 var candidateLeaves = []string{
 	"migrations",
 	filepath.Join("server", "migrations"),
@@ -58,13 +65,7 @@ func Files(direction string) ([]string, error) {
 	}
 
 	suffix := "." + direction + ".sql"
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_MIGRATION_BASELINE")), "true") {
-		baseline := filepath.Join(dir, "000_initial_schema"+suffix)
-		if _, err := os.Stat(baseline); err != nil {
-			return nil, fmt.Errorf("baseline migration not found: %w", err)
-		}
-		return []string{baseline}, nil
-	}
+	useBaseline := strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_MIGRATION_BASELINE")), "true")
 	files, err := filepath.Glob(filepath.Join(dir, "*"+suffix))
 	if err != nil {
 		return nil, err
@@ -72,9 +73,14 @@ func Files(direction string) ([]string, error) {
 	// The clean-install baseline is a snapshot of the schema produced by the
 	// historical migrations, so the two paths are mutually exclusive.
 	baseline := filepath.Join(dir, "000_initial_schema"+suffix)
+	if useBaseline {
+		if _, err := os.Stat(baseline); err != nil {
+			return nil, fmt.Errorf("baseline migration not found: %w", err)
+		}
+	}
 	filtered := files[:0]
 	for _, file := range files {
-		if file != baseline {
+		if (!useBaseline && file != baseline) || (useBaseline && !CoveredByBaseline(ExtractVersion(file))) {
 			filtered = append(filtered, file)
 		}
 	}

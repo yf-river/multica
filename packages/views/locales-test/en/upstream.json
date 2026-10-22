@@ -37,7 +37,7 @@
       "absorb": "Worth adopting",
       "review": "Needs review",
       "skip": "Can skip",
-      "local": "Exists locally",
+      "local": "Paths exist locally",
       "partial": "Partially exists",
       "absent": "No local module",
       "commits": "{{count}} commits",
@@ -75,7 +75,9 @@
       "save": "Save",
       "saved": "Saved",
       "no_agent": "No runtime selected yet",
-      "title": "Settings"
+      "title": "Settings",
+      "enabled": "Enable daily sync",
+      "schedule": "Runs at 09:00 Beijing time, catching up history before daily updates. No code is merged."
     }
   }
 }

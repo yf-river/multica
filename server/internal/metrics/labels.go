@@ -271,8 +271,6 @@ const (
 	RuntimeLookupSourceChat = "chat"
 	// RuntimeLookupSourceAutopilot 覆盖 autopilot 的准入与分发。
 	RuntimeLookupSourceAutopilot = "autopilot"
-	// RuntimeLookupSourceSupervision 覆盖质量监督的配置校验与任务入队。
-	RuntimeLookupSourceSupervision = "supervision"
 	// RuntimeLookupSourceSourceContext 覆盖源码上下文快捷创建的能力开关检查，
 	// 包括刻意加的那次「复制后复查」。
 	RuntimeLookupSourceSourceContext = "source_context"
@@ -307,7 +305,6 @@ func AllRuntimeLookupSources() []string {
 		RuntimeLookupSourceComment,
 		RuntimeLookupSourceChat,
 		RuntimeLookupSourceAutopilot,
-		RuntimeLookupSourceSupervision,
 		RuntimeLookupSourceSourceContext,
 		RuntimeLookupSourceTask,
 		RuntimeLookupSourceOther,

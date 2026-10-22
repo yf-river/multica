@@ -25,6 +25,7 @@ export function useUpdateUpstreamConfig() {
       upstream_branch: string;
       local_ref: string;
       batch_size: number;
+      enabled?: boolean;
       runtime_id?: string;
     }) => api.updateUpstreamConfig(body),
     onSettled: () => {

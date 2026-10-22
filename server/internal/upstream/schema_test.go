@@ -9,10 +9,10 @@ import (
 func baseReport() Report {
 	return Report{
 		ScannedCommits: 1,
-		Commits:        []CommitRef{{SHA: "aaaaaaaa", Absorbed: false}},
+		Commits:        []CommitRef{{SHA: strings.Repeat("a", 40), Absorbed: false}},
 		Items: []ItemInput{{
-			ClusterKey: "pr-1", Verdict: "absorb", Confidence: "high",
-			Presence: "absent", CommitSHAs: []string{"aaaaaaaa"},
+			Title: "功能变化", Summary: "具体改动", Rationale: "与本地有关", ClusterKey: "pr-1", Verdict: "absorb", Confidence: "high",
+			Presence: "absent", CommitSHAs: []string{strings.Repeat("a", 40)},
 		}},
 	}
 }
@@ -25,7 +25,7 @@ func TestValidateReportAcceptsMinimalReport(t *testing.T) {
 
 func TestValidateReportRejectsUnknownCommitReference(t *testing.T) {
 	rep := baseReport()
-	rep.Items[0].CommitSHAs = []string{"bbbbbbbb"}
+	rep.Items[0].CommitSHAs = []string{strings.Repeat("b", 40)}
 	err := ValidateReport(rep)
 	var verr ValidationError
 	if !errors.As(err, &verr) {
@@ -40,8 +40,8 @@ func TestValidateReportRejectsCommitClaimedTwice(t *testing.T) {
 	rep := baseReport()
 	rep.ScannedCommits = 1
 	rep.Items = append(rep.Items, ItemInput{
-		ClusterKey: "pr-2", Verdict: "review", Confidence: "low",
-		Presence: "local", CommitSHAs: []string{"aaaaaaaa"},
+		Title: "另一个变化", Summary: "具体改动", Rationale: "待核实", ClusterKey: "pr-2", Verdict: "review", Confidence: "low",
+		Presence: "local", CommitSHAs: []string{strings.Repeat("a", 40)},
 	})
 	err := ValidateReport(rep)
 	var verr ValidationError

@@ -48,6 +48,8 @@ Current delivery scope is Web + Server + Daemon + PostgreSQL + Agent Runtime. De
 
 ### Database Migrations (hard rules)
 
+Read `CLAUDE.md` → “环境身份与生产数据保护” and `docs/operations/environment-maintenance.md` before database maintenance or cleanup. Live connection configuration determines environment identity; a database name containing `test` does not imply disposable data.
+
 - Never add database foreign keys or cascading actions. Enforce relationships and perform dependent cleanup explicitly in the application layer, using transactions when the operation must be atomic.
 - Every index created by a migration, including unique indexes and indexes on new tables, must use `CREATE [UNIQUE] INDEX CONCURRENTLY`. Keep each concurrent index build in its own single-statement migration file.
 

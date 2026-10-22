@@ -1691,6 +1691,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.With(handler.RequireHumanActor).Patch("/items/status", h.MarkUpstreamItems)
 				r.Get("/runs", h.ListUpstreamRuns)
 				r.Post("/runs/start", h.StartUpstreamRun)
+				r.Post("/runs/{runId}/prepare", h.PrepareUpstreamRun)
+				r.Post("/runs/{runId}/heartbeat", h.HeartbeatUpstreamRun)
 				r.Post("/runs/{runId}/items", h.AppendUpstreamItems)
 				r.Post("/runs/{runId}/finish", h.FinishUpstreamRun)
 				r.Post("/runs/{runId}/fail", h.FailUpstreamRun)

@@ -132,8 +132,36 @@ def assert_unused(directory):
                 pass
 
 
+def build_version(source, sha):
+    """本次构建注入的版本串：daemon 上报的 cli_version、web 展示的 app 版本都用它。
+
+    必须走 scripts/build-version.sh（与 `make build` 同一个来源），不能直接塞提交
+    哈希。daemon 用这个串告诉前端/服务端"我是哪个版本、支不支持交接说明/快速创建"，
+    而两边的解析器只认 `vX.Y.Z` 和 git-describe 的 `vX.Y.Z-N-g<sha>`；裸哈希按
+    fail-closed 处理，于是新构建的运行时被当成旧版本（交接说明输入框置灰、快速创建
+    422）。这里再加一道格式校验，让这类版本串在构建阶段就失败，而不是等用户撞上。
+    """
+    script = source/'scripts/build-version.sh'
+    # 更早的任务分支没有这个脚本：保持改动前的裸哈希行为，不用新校验挡住它们构建。
+    if not script.exists(): return sha[:12]
+    version = output(['bash', str(script)], cwd=source)
+    if not re.match(r'^v?\d+\.\d+\.\d+(-\d+-g[0-9a-fA-F]+)?(-dirty)?$', version):
+        raise RuntimeError('构建版本串不可被版本门槛解析: '+version+'（scripts/build-version.sh 应输出 vX.Y.Z 或 vX.Y.Z-N-g<sha>）')
+    return version
+
+def reusable_build(previous, current_files, version):
+    """当前 int 运行目录里的产物能否整体复用。
+
+    源码输入一致还不够：产物里的 `-X main.version` 与 web 的 NEXT_PUBLIC_APP_VERSION
+    都不在源码里，只按 inputs 判断会把上一轮用旧规则构建的二进制原样搬进新候选，
+    联调核对版本串时才发现修复没有进产物。所以版本串也要一致。
+    """
+    if previous.get('version') != version: return False
+    return all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
+
 def build(source, target):
     source, sha = checked_source(source)
+    version = build_version(source, sha)
     digest, files = source_digest(source)
     groups = {'go': hashlib.sha256(), 'web': hashlib.sha256()}
     for name in files:
@@ -146,14 +174,14 @@ def build(source, target):
     inputs = {name: value.hexdigest() for name, value in groups.items()}
     current = Path(read(meta_path('int'))['release_dir'])
     previous = read(current/'release.json') if (current/'release.json').exists() else {}
-    # 运行目录只允许增加缓存，包内源码与程序必须仍然匹配。
+    # 运行目录只允许增加缓存，包内源码与程序必须仍然匹配，注入的版本串也要一致。
     current_files = checksums(current) if previous.get('inputs') else {}
-    reusable = all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
+    reusable = reusable_build(previous, current_files, version)
     target.mkdir(parents=True)
     env = os.environ.copy()
     for key in list(env):
         if key.startswith(('NEXT_PUBLIC_', 'MULTICA_', 'GOAL_TEST_')) or key in ('REMOTE_API_URL','FRONTEND_ORIGIN','DATABASE_URL','JWT_SECRET'): env.pop(key)
-    env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=sha[:12], NEXT_TELEMETRY_DISABLED='1')
+    env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=version, NEXT_TELEMETRY_DISABLED='1')
     if reusable and previous.get('inputs', {}).get('web') == inputs['web']:
         copy_tree(current, target, excludes=('/server/', '/release.json', '**/.next/cache/***'))
     else:
@@ -167,7 +195,7 @@ def build(source, target):
     else:
         (target/'server/bin').mkdir(parents=True, exist_ok=True)
         for binary in ('server', 'multica', 'migrate'):
-            run(['go', 'build', '-ldflags', f'-X main.version={sha[:12]} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
+            run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
     for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py'):
@@ -185,7 +213,7 @@ def build(source, target):
                 queries.append(dict(name='delivery_'+str(len(queries)),sql=sql))
     write(target/'server/queries.json', queries)
     manifest = dict(id=sha+'-'+str(time.time_ns()), source_commit=sha, source_directory=str(source), source_digest=digest,
-                    inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+                    version=version, inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     write(target/'release.json', manifest)
     for cache in (source/'apps/web/.next/cache', source/'.turbo'):
         if cache.exists() and sum(p.stat().st_size for p in cache.rglob('*') if p.is_file() and not p.is_symlink()) > 1024**3:
@@ -304,6 +332,11 @@ def stop_maintenance(env):
         owned_stop(pid,'maintenance',str(ROOT))
     marker.unlink(missing_ok=True)
 
+def reviewed_snapshot_column_change(migration):
+    # 精确审查的增量只补齐快照已存在的六个列，不更新或删除业务数据。
+    return (migration.name == '564_snapshot_column_compatibility.up.sql' and
+            hashlib.sha256(migration.read_bytes()).hexdigest() == '9d630812839f1a60141f22e3bf54403d81f5074cd0770593cae233a4344aac52')
+
 def reviewed_supervision_index_change(release, migration, statements):
     # 本次已评审的索引替换：配置行锁仍保护旧程序的串行派发，恢复程序无需恢复旧索引。
     replacement=Path(release)/'server/migrations/550_supervision_active_issue.up.sql'
@@ -322,7 +355,7 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if not additive and not reviewed_supervision_index_change(release,migration,statements):
+            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements):
                 raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)

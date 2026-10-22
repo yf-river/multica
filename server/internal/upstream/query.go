@@ -119,40 +119,11 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	err := s.Pool.QueryRow(ctx, `SELECT id::text FROM upstream_sync_run
- WHERE status IN ('preparing','running') LIMIT 1`).Scan(&out.ActiveRunID)
+ WHERE status IN ('preparing','running') AND lease_expires_at>now() LIMIT 1`).Scan(&out.ActiveRunID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	return &out, nil
-}
-
-// UpsertConfig 只接受可以安全变更的字段；游标由 Finish 推进。
-func (s *Service) UpsertConfig(ctx context.Context, c Config, patchAgent *string, patchAutopilot *string, actorID string) error {
-	if c.BatchSize < 1 || c.BatchSize > 500 {
-		return ValidationError{Field: "batch_size", Message: "必须在 1 到 500 之间"}
-	}
-	_, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config
- (singleton, upstream_url, upstream_branch, local_ref, runtime_id, batch_size, created_by)
- VALUES(1,$1,$2,$3,$4,$5,$6)
- ON CONFLICT (singleton) DO UPDATE SET
-   upstream_url=EXCLUDED.upstream_url, upstream_branch=EXCLUDED.upstream_branch,
-   local_ref=EXCLUDED.local_ref, runtime_id=EXCLUDED.runtime_id,
-   batch_size=EXCLUDED.batch_size, updated_at=now()`,
-		c.UpstreamURL, c.UpstreamBranch, c.LocalRef, nullableUUID(c.RuntimeID), c.BatchSize, nullableUUID(actorID))
-	if err != nil {
-		return err
-	}
-	if patchAgent != nil {
-		if _, err = s.Pool.Exec(ctx, `UPDATE upstream_sync_config SET agent_id=$1, updated_at=now() WHERE singleton=1`, nullableUUID(*patchAgent)); err != nil {
-			return err
-		}
-	}
-	if patchAutopilot != nil {
-		if _, err = s.Pool.Exec(ctx, `UPDATE upstream_sync_config SET autopilot_id=$1, updated_at=now() WHERE singleton=1`, nullableUUID(*patchAutopilot)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func nullableUUID(v string) any {

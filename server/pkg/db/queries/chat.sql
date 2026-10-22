@@ -1586,6 +1586,30 @@ SELECT
           AND typed.message_kind <> 'onboarding_kickoff'
     ) AS kickoff_only;
 
+-- name: CreateMikaOnboardingOpening :one
+-- Mika's opening reply, written by the server rather than produced by an agent
+-- run (MUL-5827). Paired with the hidden kickoff row in one transaction, which
+-- is why created_at is derived instead of defaulted: now() is the TRANSACTION
+-- timestamp, so both rows would land on the identical microsecond, and the
+-- session-list LATERAL picks the last message with `ORDER BY created_at DESC
+-- LIMIT 1` and no tiebreaker (ids are random UUIDs, not monotonic). A tie there
+-- can select the kickoff, whose kind makes buildChatLastMessage return nil — so
+-- a session that onboarded perfectly reports no last message and the "Start
+-- with Mika" recovery card reappears. One microsecond makes the order total.
+--
+-- task_id stays NULL: no agent run produced this row, and nothing may treat it
+-- as a turn to regenerate or resume.
+INSERT INTO chat_message (chat_session_id, role, content, message_kind, created_at, id)
+VALUES (
+    sqlc.arg(chat_session_id),
+    'assistant',
+    sqlc.arg(content),
+    'onboarding_opening',
+    sqlc.arg(kickoff_created_at)::timestamptz + interval '1 microsecond',
+    COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+)
+RETURNING *;
+
 -- name: AdoptOrphanOnboardingKickoff :exec
 -- Hands the session's unowned kickoff row to the member's first real turn.
 --
