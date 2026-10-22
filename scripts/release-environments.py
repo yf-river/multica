@@ -532,6 +532,17 @@ def isolation_check(config_only=False):
     print(json.dumps(checks,ensure_ascii=False))
     if not all(checks.values()): raise RuntimeError('生产运行检查失败')
 
+# 外部接力器与发布子进程使用同一版本的浏览器验收及其依赖。
+BROWSER_OPERATIONS = ('verify-release-browser.mjs', 'lib/goal-test-audit-env.mjs',
+                      'lib/goal-test-browser-audit.mjs', 'lib/acceptance-artifacts.mjs')
+
+def copy_browser_operations(destination):
+    source = Path(__file__).parent
+    for name in BROWSER_OPERATIONS:
+        target = Path(destination)/name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((source/name).read_bytes())
+
 def verify_browser(env='prod'):
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
     run(['node',Path(__file__).with_name('verify-release-browser.mjs')],cwd=ROOT,env=child_env)
@@ -805,6 +816,7 @@ def request_release(version,timeout=900):
         runner=RUN/'publisher'/version/'release.py'
         runner.parent.mkdir(parents=True,exist_ok=True)
         runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
+        copy_browser_operations(runner.parent)
         (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
         write(target,record,True);save_candidate(record)
         try:

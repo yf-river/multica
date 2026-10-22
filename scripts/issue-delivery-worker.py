@@ -306,12 +306,13 @@ class Worker:
 
 def install(env):
     r.require_control_directory()
-    names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py')
+    names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py') + r.BROWSER_OPERATIONS
     digest=r.hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in names)).hexdigest()[:16]
     directory=r.RUN/'publisher'/('delivery-'+env+'-'+digest)
     directory.mkdir(parents=True,exist_ok=True)
     for name in names:
         target=directory/name
+        target.parent.mkdir(parents=True,exist_ok=True)
         if not target.exists():target.write_bytes((Path(__file__).parent/name).read_bytes())
     unit='multica-delivery-'+env
     units=Path('/etc/systemd/system')
