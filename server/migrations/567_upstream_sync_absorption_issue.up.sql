@@ -6,6 +6,3 @@ CREATE TABLE upstream_sync_absorption_task (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
-
-CREATE UNIQUE INDEX CONCURRENTLY upstream_sync_absorption_task_item
-    ON upstream_sync_absorption_task(item_id);

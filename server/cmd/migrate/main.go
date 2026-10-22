@@ -118,7 +118,7 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
-	"567_upstream_sync_absorption_issue":          "upstream_sync_absorption_task_item",
+	"568_upstream_sync_absorption_item":           "upstream_sync_absorption_task_item",
 	"566_task_trace_identity_compatibility":       "task_trace_event_pkey",
 	"565_user_account_compatibility":              "user_account_key",
 	"553_upstream_sync_config_singleton":          "upstream_sync_config_singleton",
@@ -362,43 +362,6 @@ var concurrentIndexCleanups = map[string]string{
 	"494_task_trace_event_agent_index":                                         "idx_task_trace_event_agent_created",
 	"495_task_trace_event_squad_index":                                         "idx_task_trace_event_squad_created",
 	"496_external_credential_profile_provider_index":                           "idx_external_credential_profile_user_provider",
-	"353_autopilot_quota_period_scope_index":                                   "uq_autopilot_quota_period_scope",
-	"354_autopilot_quota_reservation_id_index":                                 "autopilot_quota_reservation_pkey_uidx",
-	"355_autopilot_quota_reservation_key_index":                                "uq_autopilot_quota_reservation_key",
-	"356_autopilot_run_quota_reservation_index":                                "uq_autopilot_run_quota_reservation",
-	"358_autopilot_quota_reservation_state_index":                              "idx_autopilot_quota_reservation_state",
-	"416_seat_capacity_operation_token_index":                                  "idx_seat_capacity_outbox_operation_token",
-	"418_seat_capacity_due_index":                                              "idx_seat_capacity_outbox_due",
-	"419_seat_capacity_share_join_index":                                       "idx_seat_capacity_outbox_share_join",
-	"502_health_state_unique":                                                  "health_state_scope_idx",
-	"503_health_observation_unique":                                            "health_observation_id_idx",
-	"504_health_revision_unique":                                               "health_revision_scope_idx",
-	"505_health_report_unique":                                                 "health_report_id_idx",
-	"506_health_report_digest":                                                 "health_report_digest_idx",
-	"507_health_report_result_unique":                                          "health_report_result_attempt_idx",
-	"512_meal_workspace_unique":                                                "meal_workspace_scope_idx",
-	"514_skill_asset_key":                                                      "skill_asset_key",
-	"516_workspace_mcp_check_unique":                                           "workspace_mcp_check_server_runtime",
-	"527_supervision_pending_index":                                            "supervision_pending",
-	"528_supervision_material_index":                                           "supervision_material_issue",
-	"529_supervision_active_index":                                             "supervision_active_workspace",
-	"530_supervision_fingerprint_index":                                        "supervision_fingerprint",
-	"531_supervision_operation_index":                                          "supervision_operation",
-	"532_supervision_config_key":                                               "supervision_config_pkey_idx",
-	"533_supervision_subject_key":                                              "supervision_subject_pkey_idx",
-	"534_supervision_material_key":                                             "supervision_material_pkey_idx",
-	"535_supervision_batch_key":                                                "supervision_batch_pkey_idx",
-	"536_supervision_finding_key":                                              "supervision_finding_pkey_idx",
-	"537_supervision_action_key":                                               "supervision_action_pkey_idx",
-	"540_supervision_investigation_key":                                        "supervision_investigation_key",
-	"541_supervision_investigation_batch":                                      "supervision_investigation_batch",
-	"543_issue_delivery_plan_key":                                              "issue_delivery_plan_key",
-	"544_issue_delivery_key":                                                   "issue_delivery_key",
-	"545_issue_delivery_operation":                                             "issue_delivery_operation",
-	"546_issue_delivery_queue":                                                 "issue_delivery_queue",
-	"548_delivery_authorization_key":                                           "issue_delivery_authorization_key",
-	"549_delivery_authorization_source":                                        "issue_delivery_authorization_source",
-	"550_supervision_active_issue":                                             "supervision_active_issue",
 }
 
 // concurrentDownIndexCleanups 覆盖每条"回滚方向会用 CREATE INDEX CONCURRENTLY
@@ -421,7 +384,6 @@ var concurrentDownIndexCleanups = map[string]string{
 	"375_drop_issue_last_activity_index":                    "idx_issue_workspace_last_activity",
 	"391_drop_agent_task_queue_dispatched_prepare_index":    "idx_agent_task_queue_dispatched_prepare",
 	"437_drop_agent_runtime_last_seen_at_index":             "idx_agent_runtime_last_seen_at",
-	"551_supervision_parallel":                              "supervision_active_workspace",
 }
 
 var preMigrationHooks = func() map[string]preMigrationHook {
