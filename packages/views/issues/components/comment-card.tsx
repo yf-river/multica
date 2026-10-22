@@ -49,6 +49,7 @@ import { selectStandaloneAttachments } from "@multica/core/attachments/image-seq
 import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { useT } from "../../i18n";
 import { CommentsFoldBar } from "./resolved-thread-bar";
+import { RunDiffCard } from "./run-diff-card";
 import { deriveThreadResolution } from "./thread-utils";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
 
@@ -133,6 +134,13 @@ interface CommentCardProps {
   onResolvedExpandChange?: (rootId: string, expand: boolean) => void;
   /** 要高亮（闪烁动画）的评论 id。 */
   highlightedCommentId?: string | null;
+  /**
+   * 1. task id → id of that run's newest comment. The run's diff card is rendered
+   * only here: the snapshot belongs to the run, so a run that posts several
+   * comments must not repeat it. Computed once over the whole timeline
+   * (`lastCommentIdByTaskId` in `issue-detail.tsx`), never per card.
+   */
+  runDiffCommentIds?: ReadonlyMap<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +604,7 @@ function CommentRow({
   onToggleReaction,
   onCreateSubIssue,
   onResolveToggle,
+  runDiffCommentIds,
 }: {
   issueId: string;
   entry: TimelineEntry;
@@ -610,6 +619,8 @@ function CommentRow({
   onToggleReaction: (commentId: string, emoji: string) => void;
   onCreateSubIssue?: (commentId: string) => void;
   onResolveToggle?: (commentId: string, resolved: boolean) => void;
+  /** See `CommentCardProps.runDiffCommentIds` — replies can be a run's newest comment. */
+  runDiffCommentIds?: ReadonlyMap<string, string>;
 }) {
   const { t } = useT("issues");
   const locale = useLocale();
@@ -624,6 +635,11 @@ function CommentRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const reactions = entry.reactions ?? [];
+  // 2. Replies are comments too: a run whose newest comment is a reply shows its card here.
+  const runDiffTaskId =
+    entry.source_task_id && runDiffCommentIds?.get(entry.source_task_id) === entry.id
+      ? entry.source_task_id
+      : null;
 
   return (
     <div className="py-1.5">
@@ -814,6 +830,13 @@ function CommentRow({
             <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4 max-md:pl-3 max-md:pr-3" />
+          {runDiffTaskId && (
+            <RunDiffCard
+              issueId={issueId}
+              taskId={runDiffTaskId}
+              className="mt-2 pl-12 pr-4 max-md:pl-3 max-md:pr-3"
+            />
+          )}
           {retryableAgentFailureComment(entry) && (
             <TaskCommentRetryButton
               issueId={issueId}
@@ -860,6 +883,7 @@ function CommentCardImpl({
   expandedResolvedIds,
   onResolvedExpandChange,
   highlightedCommentId,
+  runDiffCommentIds,
 }: CommentCardProps) {
   const { t } = useT("issues");
   const locale = useLocale();
@@ -887,6 +911,12 @@ function CommentCardImpl({
   const reactions = entry.reactions ?? [];
 
   const isHighlighted = highlightedCommentId === entry.id;
+
+  // 3. Same rule as the reply rows: only the run's newest comment carries the card.
+  const runDiffTaskId =
+    entry.source_task_id && runDiffCommentIds?.get(entry.source_task_id) === entry.id
+      ? entry.source_task_id
+      : null;
 
   // 回复即解决的展示。当*某条回复*是线程的解决者时，其余回复折到一根横条后面、
   // 解决者保持可见（根解决者在 issue-detail 的 resolved-bar 层处理，所以这里的
@@ -1141,6 +1171,13 @@ function CommentCardImpl({
                   <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10 max-md:pl-0" />
+                {runDiffTaskId && (
+                  <RunDiffCard
+                    issueId={issueId}
+                    taskId={runDiffTaskId}
+                    className="mt-2 pl-10 max-md:pl-0"
+                  />
+                )}
                 {retryableAgentFailureComment(entry) && (
                   <TaskCommentRetryButton
                     issueId={issueId}
@@ -1196,6 +1233,7 @@ function CommentCardImpl({
                     onToggleReaction={onToggleReaction}
                     onCreateSubIssue={onCreateSubIssue}
                     onResolveToggle={onResolveToggle}
+                    runDiffCommentIds={runDiffCommentIds}
                   />
                 </div>
               )}
@@ -1236,6 +1274,7 @@ function CommentCardImpl({
                     onToggleReaction={onToggleReaction}
                     onCreateSubIssue={onCreateSubIssue}
                     onResolveToggle={onResolveToggle}
+                    runDiffCommentIds={runDiffCommentIds}
                   />
                 </div>
               ))}

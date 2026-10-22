@@ -24,7 +24,8 @@
     "observers": "Observation seat",
     "chronicle": "Chronicle",
     "mcp": "MCP",
-    "quick_actions": "Quick actions"
+    "quick_actions": "Quick actions",
+    "upstream": "Upstream sync"
   },
   "tab": {
     "issue": "Issue",

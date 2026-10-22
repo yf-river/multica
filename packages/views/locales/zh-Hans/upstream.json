@@ -1,0 +1,86 @@
+{
+  "page": {
+    "title": "上游同步",
+    "tagline": "把上游仓库的改动汇总成待吸收清单，由你决定要不要采纳。",
+    "tabs": {
+      "pending": "待吸收",
+      "runs": "同步记录"
+    },
+    "status": {
+      "head": "上游 {{sha}}",
+      "last_run": "上次同步 {{time}}",
+      "never": "还没同步过",
+      "no_agent": "还没绑定同步智能体",
+      "running": "正在同步",
+      "error": "上次同步失败"
+    },
+    "filters": {
+      "status_open": "待定",
+      "status_adopted": "已采纳",
+      "status_ignored": "已忽略",
+      "any_verdict": "全部结论",
+      "any_presence": "全部范围",
+      "search": "搜索标题或摘要"
+    },
+    "pending": {
+      "empty": "暂无待吸收项",
+      "empty_hint": "跑一批同步后，上游的改动会出现在这里。",
+      "load_more": "加载更多"
+    },
+    "bulk": {
+      "selected": "已选 {{count}} 条",
+      "adopt": "标记已采纳",
+      "ignore": "忽略",
+      "restore": "撤销标记"
+      ,"create_task": "创建吸收任务"
+      ,"task_created": "已创建吸收任务"
+    },
+    "item": {
+      "absorb": "值得吸收",
+      "review": "待评估",
+      "skip": "可跳过",
+      "local": "本地存在相关路径",
+      "partial": "部分存在",
+      "absent": "本地无此模块",
+      "commits": "{{count}} 个提交",
+      "rationale": "判断依据",
+      "paths": "涉及路径"
+    },
+    "runs": {
+      "title": "同步记录",
+      "start_bootstrap": "开始存量同步",
+      "continue": "继续下一批",
+      "empty": "还没有同步记录",
+      "mode_bootstrap": "存量",
+      "mode_incremental": "增量",
+      "status_running": "进行中",
+      "status_completed": "已完成",
+      "status_failed": "失败",
+      "status_interrupted": "已中断",
+      "scanned": "扫描 {{count}}",
+      "items": "条目 {{count}}",
+      "has_more": "还有剩余",
+      "trigger_manual": "手动",
+      "trigger_schedule": "定时",
+      "run_now": "立即跑一批",
+      "triggered": "已触发",
+      "scope_hint": "请在绑定运行时所在的工作区执行，或在设置中选择当前工作区的运行时。"
+    },
+    "setup": {
+      "hint": "还没绑定同步智能体，添加后可每天自动跑增量。",
+      "copy_prompt": "复制智能体设定",
+      "runtime": "运行时",
+      "runtime_hint": "选一台已连接的机器来跑同步，只列出可用于代码任务的运行时。",
+      "runtime_empty": "还没有可用运行时，先在「运行时」页面连接一台机器。",
+      "batch_size": "每批提交数",
+      "instructions": "内置提示词",
+      "instructions_hint": "这段说明随代码发布，不需要在智能体页面维护。",
+      "save": "保存",
+      "saved": "已保存",
+      "no_agent": "尚未选择运行时",
+      "title": "设置",
+      "enabled": "每天自动同步",
+      "schedule": "北京时间每天 09:00 处理一批，先追平历史，再同步新增；不会自动合入代码。"
+    }
+  }
+}

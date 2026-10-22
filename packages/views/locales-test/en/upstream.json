@@ -1,0 +1,86 @@
+{
+  "page": {
+    "title": "Upstream sync",
+    "tagline": "Collect upstream changes into a review list; you decide what to adopt.",
+    "tabs": {
+      "pending": "To review",
+      "runs": "Sync history"
+    },
+    "status": {
+      "head": "Upstream {{sha}}",
+      "last_run": "Last synced {{time}}",
+      "never": "Never synced",
+      "no_agent": "No sync agent bound",
+      "running": "Syncing",
+      "error": "Last sync failed"
+    },
+    "filters": {
+      "status_open": "Open",
+      "status_adopted": "Adopted",
+      "status_ignored": "Ignored",
+      "any_verdict": "Any verdict",
+      "any_presence": "Any scope",
+      "search": "Search title or summary"
+    },
+    "pending": {
+      "empty": "Nothing to review",
+      "empty_hint": "Run a sync batch and upstream changes will appear here.",
+      "load_more": "Load more"
+    },
+    "bulk": {
+      "selected": "{{count}} selected",
+      "adopt": "Mark adopted",
+      "ignore": "Ignore",
+      "restore": "Undo"
+      ,"create_task": "Create absorption task"
+      ,"task_created": "Absorption task created"
+    },
+    "item": {
+      "absorb": "Worth adopting",
+      "review": "Needs review",
+      "skip": "Can skip",
+      "local": "Paths exist locally",
+      "partial": "Partially exists",
+      "absent": "No local module",
+      "commits": "{{count}} commits",
+      "rationale": "Why",
+      "paths": "Paths"
+    },
+    "runs": {
+      "title": "Sync history",
+      "start_bootstrap": "Start backlog sync",
+      "continue": "Continue next batch",
+      "empty": "No sync runs yet",
+      "mode_bootstrap": "Backlog",
+      "mode_incremental": "Incremental",
+      "status_running": "Running",
+      "status_completed": "Completed",
+      "status_failed": "Failed",
+      "status_interrupted": "Interrupted",
+      "scanned": "Scanned {{count}}",
+      "items": "Items {{count}}",
+      "has_more": "More remaining",
+      "trigger_manual": "Manual",
+      "trigger_schedule": "Scheduled",
+      "run_now": "Run a batch now",
+      "triggered": "Triggered",
+      "scope_hint": "Run from the workspace of the selected runtime, or select a runtime in this workspace in settings."
+    },
+    "setup": {
+      "hint": "No sync agent bound yet. Add one to run incremental sync daily.",
+      "copy_prompt": "Copy agent instructions",
+      "runtime": "Runtime",
+      "runtime_hint": "Pick a connected machine to run the sync. Only runtimes usable for code tasks are listed.",
+      "runtime_empty": "No runtime available. Connect one on the Runtimes page first.",
+      "batch_size": "Commits per batch",
+      "instructions": "Built-in instructions",
+      "instructions_hint": "Published with the code; no agent-page editing needed.",
+      "save": "Save",
+      "saved": "Saved",
+      "no_agent": "No runtime selected yet",
+      "title": "Settings",
+      "enabled": "Enable daily sync",
+      "schedule": "Runs at 09:00 Beijing time, catching up history before daily updates. No code is merged."
+    }
+  }
+}

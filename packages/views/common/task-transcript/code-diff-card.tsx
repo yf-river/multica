@@ -1,29 +1,61 @@
 "use client";
 
 import { useState } from "react";
-import { FileDiff } from "lucide-react";
+import { ChevronRight, FileDiff } from "lucide-react";
 import { codeDiffFromResult } from "@multica/core/types/code-diff";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@multica/ui/components/ui/dialog";
 import { cn } from "@multica/ui/lib/utils";
 
-export function CodeDiffCard({ result, runLabel }: { result: unknown; runLabel?: string }) {
+export function CodeDiffCard({ result, runLabel, className, variant = "default" }: { result: unknown; runLabel?: string; className?: string; variant?: "default" | "attachment" }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(0);
   const diff = codeDiffFromResult(result);
   if (!diff || (!diff.unavailable && diff.files.length === 0 && !diff.truncated)) return null;
-  if (diff.unavailable) return <p className="text-caption text-muted-foreground">本次代码差异采集失败，无法查看历史快照。</p>;
+  if (diff.unavailable) return <p className={cn("text-caption text-muted-foreground", className)}>{variant === "attachment" ? "本次文件差异采集失败，无法查看历史快照。" : "本次代码差异采集失败，无法查看历史快照。"}</p>;
   const file = diff.files[selected] ?? diff.files[0];
   const added = diff.files.reduce((sum, f) => sum + f.added, 0);
   const deleted = diff.files.reduce((sum, f) => sum + f.deleted, 0);
-  return <>
-    <button type="button" onClick={() => setOpen(true)} className="flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md border bg-card px-3 py-2 text-left text-body hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">
+  // 1. Comments render the card as a file attachment: the trigger spans the comment
+  //    body width and names the file (or a multi-file summary) instead of a run label,
+  //    while the diff itself stays in the shared dialog.
+  const attachment = variant === "attachment";
+  const singleFile = diff.files.length === 1 ? diff.files[0] : undefined;
+  const fileName = singleFile?.path.split("/").pop();
+  const directory = singleFile?.path.slice(0, singleFile.path.lastIndexOf("/") + 1);
+  const title = singleFile ? fileName : `${diff.files.length} 个文件已修改`;
+  const subtitle = singleFile ? directory : diff.files.slice(0, 2).map((f) => f.path.split("/").pop()).join("、") + (diff.files.length > 2 ? " 等" : "");
+  const trigger = attachment ? (
+    <div className={className}>
+      <DialogTrigger className="flex min-h-14 w-full min-w-0 items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" aria-label={`查看文件修改：${title}${diff.truncated ? "（部分）" : ""}`}>
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground"><FileDiff className="size-4" aria-hidden="true" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-body font-medium">{title}</span>
+            {diff.truncated && <span className="shrink-0 text-caption text-muted-foreground">部分</span>}
+          </span>
+          {subtitle && <span className="mt-0.5 block truncate text-caption text-muted-foreground">{subtitle}</span>}
+        </span>
+        <span className="flex shrink-0 items-center gap-2 text-caption tabular-nums">
+          {singleFile?.binary ? <span className="text-muted-foreground">二进制文件</span> : <>
+            {added > 0 && <span className="font-mono text-success">+{added}</span>}
+            {deleted > 0 && <span className="font-mono text-destructive">−{deleted}</span>}
+          </>}
+          <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+        </span>
+      </DialogTrigger>
+    </div>
+  ) : (
+    <DialogTrigger className={cn("flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md border bg-card px-3 py-2 text-left text-body hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring", className)}>
       <FileDiff className="size-4 shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1">查看本次代码修改 {runLabel && <span className="text-caption text-muted-foreground">{runLabel} · </span>}<span className="text-caption text-muted-foreground">{diff.files.length} 个文件{diff.truncated ? "（部分）" : ""}</span></span>
       <span className="shrink-0 font-mono text-caption tabular-nums"><span className="text-success">+{added}</span> <span className="text-destructive">−{deleted}</span></span>
-    </button>
+    </DialogTrigger>
+  );
+  return (
     <Dialog open={open} onOpenChange={setOpen}>
+      {trigger}
       <DialogContent className="flex h-[85vh] w-[calc(100vw-2rem)] min-w-0 flex-col gap-3 overflow-hidden sm:!max-w-6xl">
-        <DialogTitle>本次代码修改</DialogTitle>
+        <DialogTitle>{attachment ? "文件修改" : "本次代码修改"}</DialogTitle>
         <DialogDescription className="break-words text-caption">独立任务目录在运行前后的文件差异，包含已提交和未提交修改。历史快照不会随仓库更新。基线 {diff.before.slice(0, 12)} → {diff.after.slice(0, 12)}。</DialogDescription>
         {diff.truncated && <p role="status" className="text-caption text-muted-foreground">变更较大，部分文件或补丁未展示；行数统计仅覆盖列出的文件。</p>}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row">
@@ -42,5 +74,5 @@ export function CodeDiffCard({ result, runLabel }: { result: unknown; runLabel?:
         </div>
       </DialogContent>
     </Dialog>
-  </>;
+  );
 }

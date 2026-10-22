@@ -12,6 +12,12 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_external_publish_bundle_contains_matching_browser_dependencies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r.copy_browser_operations(Path(tmp))
+            for name in r.BROWSER_OPERATIONS:
+                self.assertEqual((Path(tmp)/name).read_bytes(), (Path(r.__file__).parent/name).read_bytes())
+
     def test_candidates_are_scoped_and_history_survives_reuse(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(r, 'RUN', Path(tmp)):
             for env in ('int', *r.VERIFICATION_ENVS):
@@ -53,6 +59,19 @@ class ReleaseTests(unittest.TestCase):
             replacement.write_text('CREATE INDEX something_else ON issue(id);')
             self.assertFalse(r.reviewed_supervision_index_change(release,migration,[statement]))
 
+    def test_snapshot_column_compatibility_requires_exact_reviewed_sql(self):
+        source=Path(__file__).parent.parent/'server/migrations/564_snapshot_column_compatibility.up.sql'
+        with tempfile.TemporaryDirectory() as tmp:
+            migration=Path(tmp)/source.name
+            migration.write_bytes(source.read_bytes())
+            self.assertTrue(r.reviewed_snapshot_column_change(migration))
+            migration.write_text(migration.read_text()+'DROP TABLE issue;')
+            self.assertFalse(r.reviewed_snapshot_column_change(migration))
+
+    def test_version_change_requires_rebuilding_artifacts(self):
+        self.assertFalse(r.reusable_build({'version':'v1.0.0','files':{}},{},'v1.0.1'))
+        self.assertTrue(r.reusable_build({'version':'v1.0.0','files':{}},{},'v1.0.0'))
+
     def test_task_cannot_restore_or_switch_production(self):
         with patch.dict(r.os.environ, {'MULTICA_TASK_ID':'task'}), patch.object(r,'read') as read, patch.object(r,'owned_stop') as stop:
             with self.assertRaisesRegex(RuntimeError,'request'): r.deploy('prod','missing')
@@ -79,9 +98,8 @@ class ReleaseTests(unittest.TestCase):
             (current/'server/bin/server').write_text('compiled server')
             (current/'apps/web/server.js').write_text('compiled web')
             inputs={key:r.hashlib.sha256().hexdigest() for key in ('go','web')}
-            # 复用还要求注入的版本串一致；这里 source 没有 build-version.sh，
-            # build_version 会退回提交哈希前 12 位，与实际构建时的值保持一致。
-            r.write(current/'release.json',{'inputs':inputs,'files':r.checksums(current),'version':'a'*12})
+            # 产物复用同时核对注入的版本串；测试源码无版本脚本，使用提交前缀。
+            r.write(current/'release.json',{'version':'a'*12,'inputs':inputs,'files':r.checksums(current)})
             with patch.object(r,'RUN',root/'state'), patch.object(r,'checked_source',return_value=(source,'a'*40)), patch.object(r,'source_digest',return_value=('b'*64,[])):
                 r.write(r.meta_path('int'),{'release_dir':str(current)})
                 first=r.build(source,root/'first'); second=r.build(source,root/'second')

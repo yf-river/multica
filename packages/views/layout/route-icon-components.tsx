@@ -24,6 +24,7 @@ import {
   FileAudio,
   FileVideo,
   FileQuestion,
+  GitMerge,
   type LucideIcon,
 } from "lucide-react";
 import { resolveRouteIconName, type RouteIconName } from "@multica/core/paths";
@@ -61,6 +62,7 @@ export const ROUTE_ICON_COMPONENTS: Record<RouteIconName, LucideIcon> = {
   FileAudio,
   FileVideo,
   FileQuestion,
+  GitMerge,
 };
 
 /**

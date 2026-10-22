@@ -25,6 +25,7 @@ import skills from "../locales-test/en/skills.json";
 import squads from "../locales-test/en/squads.json";
 import ui from "../locales-test/en/ui.json";
 import usage from "../locales-test/en/usage.json";
+import upstream from "../locales-test/en/upstream.json";
 import workspace from "../locales-test/en/workspace.json";
 
 export const TEST_EN_RESOURCES: Record<"en", LocaleResources> = {
@@ -55,6 +56,7 @@ export const TEST_EN_RESOURCES: Record<"en", LocaleResources> = {
     squads,
     ui,
     usage,
+    upstream,
     workspace,
   },
 };

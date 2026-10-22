@@ -3,7 +3,7 @@ import type { WorkspacePageKey } from "../paths/route-icons";
 /** Workspace-wide navigation preference; hiding an entry never changes access rights. */
 export const CONFIGURABLE_MENU_KEYS = [
   "inbox", "issues", "projects", "autopilots", "agents", "squads", "usage",
-  "runReviews", "runtimes", "skills", "mcp", "quickActions", "health", "meals", "goals", "life",
+  "runReviews", "runtimes", "skills", "mcp", "quickActions", "upstream", "health", "meals", "goals", "life",
 ] as const satisfies readonly WorkspacePageKey[];
 
 export function isWorkspaceMenuVisible(settings: Record<string, unknown> | undefined, key: string): boolean {

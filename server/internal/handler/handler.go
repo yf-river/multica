@@ -45,6 +45,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/supervision"
+	"github.com/multica-ai/multica/server/internal/upstream"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -183,6 +184,7 @@ type DaemonPendingWorkNotifier interface {
 // 聚合到一处，各资源 handler 以它的方法形式组织在各自文件里。
 type Handler struct {
 	Supervision            *supervision.Service
+	Upstream               *upstream.Service
 	Queries                *db.Queries
 	DB                     dbExecutor
 	TxStarter              txStarter

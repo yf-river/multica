@@ -83,6 +83,7 @@ import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { SubIssuesAgentWorkingChip } from "./sub-issues-agent-working-chip";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { CommentCard } from "./comment-card";
+import { lastCommentIdByTaskId } from "./run-diff";
 import { SourceContextBadge } from "./source-context-viewer";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
 import { CommentInput } from "./comment-input";
@@ -1385,6 +1386,26 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id);
 
+  // 1. Run diffs are shown on comments, but owned by runs: each run's card hangs
+  //    under its newest comment only. Derived once from the full timeline (roots
+  //    and replies) so no card has to scan the thread itself.
+  // 2. The map is stabilized like `threadReplies`: reactions or edits produce a new
+  //    timeline but the same mapping, and a fresh prop here would re-render every
+  //    memoized CommentCard on the page.
+  const prevRunDiffRef = useRef<Map<string, string>>(new Map());
+  const runDiffCommentIds = useMemo(() => {
+    const fresh = lastCommentIdByTaskId(timeline);
+    const previous = prevRunDiffRef.current;
+    if (
+      previous.size === fresh.size &&
+      [...fresh].every(([taskId, commentId]) => previous.get(taskId) === commentId)
+    ) {
+      return previous;
+    }
+    prevRunDiffRef.current = fresh;
+    return fresh;
+  }, [timeline]);
+
   // 解决/取消解决必须总是清掉会话内的展开记录，这样重新解决一条已经展开的线程
   // 会把它折回横条（展开集合只按 commentId 作键，不按解决状态）。没有这个包装的话，
   // "展开 → 取消解决 → 解决"的序列会在第二次解决后仍让线程保持展开。
@@ -2571,6 +2592,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             expandedResolvedIds={expandedResolved}
             onResolvedExpandChange={toggleResolvedExpand}
             highlightedCommentId={highlightedId}
+            runDiffCommentIds={runDiffCommentIds}
           />
         </div>
       );

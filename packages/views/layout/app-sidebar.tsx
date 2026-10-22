@@ -124,6 +124,7 @@ type NavKey =
   | "quickActions"
   | "skills"
   | "settings"
+  | "upstream"
   | "life";
 
 // 静态 schema（仅 key）——标签在渲染时通过 useT("layout") 解析，
@@ -143,6 +144,7 @@ type NavLabelKey =
   | "quick_actions"
   | "skills"
   | "settings"
+  | "upstream"
   | "life";
 
 // 导航图标不在这里声明：它们在渲染时从每项的目标路径推导，这样每个资源
@@ -166,6 +168,7 @@ const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "skills", labelKey: "skills" },
   { key: "mcp", labelKey: "mcp" },
   { key: "quickActions", labelKey: "quick_actions" },
+  { key: "upstream", labelKey: "upstream" },
   { key: "settings", labelKey: "settings" },
 ];
 

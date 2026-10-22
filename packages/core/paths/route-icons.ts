@@ -38,7 +38,8 @@ export type RouteIconName =
   | "FileArchive"
   | "FileAudio"
   | "FileVideo"
-  | "FileQuestion";
+  | "FileQuestion"
+  | "GitMerge";
 
 /** 页面的 i18n 文案 key（在 `layout.nav` 命名空间下）。 */
 export type NavLabelKey =
@@ -61,7 +62,8 @@ export type NavLabelKey =
   | "health"
   | "meals"
   | "goals"
-  | "life";
+  | "life"
+  | "upstream";
 
 /** 每个工作区导航页的稳定标识。 */
 export type WorkspacePageKey =
@@ -84,7 +86,8 @@ export type WorkspacePageKey =
   | "health"
   | "meals"
   | "goals"
-  | "life";
+  | "life"
+  | "upstream";
 
 /** 一个工作区导航页的注册条目。 */
 export interface WorkspacePage {
@@ -120,6 +123,7 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   meals: { segment: "meals", icon: "ChefHat", navKey: "meals" },
   goals: { segment: "goals", icon: "Target", navKey: "goals" },
   life: { segment: "life", icon: "Heart", navKey: "life" },
+  upstream: { segment: "upstream", icon: "GitMerge", navKey: "upstream" },
 };
 
 /** 反向查找：路由段 → 页面 key。 */

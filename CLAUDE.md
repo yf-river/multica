@@ -134,6 +134,18 @@ CI runs Node 22, the latest Go 1.26 patch, and a `pgvector/pgvector:pg17` Postgr
 
 ## Database and Migration Rules
 
+### 环境身份与生产数据保护
+
+- 数据库兼容性以实际结构和当前程序查询为准，不能用迁移文件数减 ledger 条数。快照 000 覆盖到 496，后续增量仍需执行；禁止改写已发布迁移身份或伪造覆盖范围内的 ledger。
+- 数据库测试显式指定本次创建的隔离目标；`make test` 还要求 `MULTICA_TEST_DATABASE_URL` 与配置目标一致，并在迁移前拒绝固定 prod/int 实例及冻结实例；该入口使用预先创建的隔离数据库，不启动或重建共享 Compose 容器。直接运行 Go 测试也须显式设置隔离连接；测试命令保存真实退出码、提交、目标和失败项，不能用输出过滤命令的成功状态代替测试结果。功能交付只包含必要变更，历史清理单独处理；代码完成、测试通过、联调验收和生产发布分别报告。
+- Agent 指令负责分析和表达，服务端与确定性工具负责权限、提交范围、幂等、覆盖核对和调度，不能仅靠提示词保证这些约束。
+
+- 环境维护入口为 `docs/operations/environment-maintenance.md`；数据库连接真源为固定控制仓库 `/data/ida/multica/.run/env/{prod,int}-services.json`。操作前核对运行后端进程的实际连接、目标 PostgreSQL 实例和库名。文档清单是带日期的核验记录，不能代替现场身份核对；禁止依据库名含 `test`、迁移条数或暂时无连接判断数据库可删除。
+- 生产数据库与业务表默认只读调查。普通开发、修复、清理或程序发布授权不包含删除、清空、重建库表、覆盖还原或直接批量修改生产业务数据；破坏性操作须单独明确实例、库表、影响、备份与恢复方式并获得用户明确授权。询问“是否可删”属于调查，不是删除授权。
+- 生产结构变更须属于已确认方案，先通过固定 int 验证，再核对可还原备份、旧新程序兼容性与恢复方案，通过既有发布流程实施。发布器的自动迁移范围以 `docs/operations/environment-releases.md` 为准；禁止手工改生产表或迁移 ledger 来绕过失败、满足测试或强行启动。
+- `make destroy`、`make db-drop`、`make remove-worktree`、`make gc` 和清理容器/卷等入口也受上述边界约束。执行前确认目标不被固定 prod/int、备份验证、其他任务或事故留证使用；未知用途先保留。联调数据优先级低不代表可以未经授权删除固定 int。
+- 恢复验收未确认前保留事故原盘、冻结容器、恢复副本和取证库；用户明确批准将指定副本或库归档后清理时，先实际还原验证，再按准确名单执行。已有备份不构成删除授权；恢复演练只清理本次明确创建且归属已核实的副本。
+
 These are hard requirements for every new or modified database design and production migration:
 
 - Do not add database foreign keys (`FOREIGN KEY` / `REFERENCES`), cascading deletes, or cascading updates. Resolve relationships, validation, and dependent cleanup explicitly in application code. Use an application transaction when cleanup and the parent operation must commit or roll back atomically.

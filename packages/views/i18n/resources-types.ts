@@ -28,6 +28,7 @@ import type modals from "../locales/zh-Hans/modals.json";
 import type runtimes from "../locales/zh-Hans/runtimes.json";
 import type layout from "../locales/zh-Hans/layout.json";
 import type usage from "../locales/zh-Hans/usage.json";
+import type upstream from "../locales/zh-Hans/upstream.json";
 import type squads from "../locales/zh-Hans/squads.json";
 import type life from "../locales/zh-Hans/life.json";
 import type runReviews from "../locales/zh-Hans/run-reviews.json";
@@ -72,6 +73,7 @@ declare global {
     runtimes: typeof runtimes;
     layout: typeof layout;
     usage: typeof usage;
+    upstream: typeof upstream;
     squads: typeof squads;
     life: typeof life;
     cooking: typeof cooking;

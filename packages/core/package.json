@@ -161,7 +161,9 @@
     "./cooking": "./cooking/index.ts",
     "./meals": "./meals/index.ts",
     "./workspace/mcp-checks": "./workspace/mcp-checks.ts",
-    "./supervision/*": "./supervision/*.ts"
+    "./supervision/*": "./supervision/*.ts",
+    "./upstream/queries": "./upstream/queries.ts",
+    "./upstream/mutations": "./upstream/mutations.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",

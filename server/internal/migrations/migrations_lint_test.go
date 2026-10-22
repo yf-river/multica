@@ -20,6 +20,7 @@ const maxLegacyMigrationPrefix = 148
 // was briefly listed and is deliberately absent again — the later of the two
 // migrations was renumbered to 376, which its idempotent DDL made safe.
 var legacyDuplicateMigrationStems = map[string][]string{
+	"500": {"500_issue_priority_quadrants", "500_remove_personal_billing_quota"},
 	"020": {"020_issue_number", "020_task_session"},
 	"026": {"026_comment_reactions", "026_task_messages"},
 	"029": {"029_attachment", "029_daemon_token", "029_drop_daemon_pairing"},

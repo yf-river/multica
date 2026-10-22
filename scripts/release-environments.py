@@ -9,7 +9,6 @@ ROOT = Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().pare
 RUN = ROOT / '.run'
 ENVS = ('int', 'prod')
 VERIFICATION_ENVS = ('verify-1', 'verify-2', 'verify-3')
-BROWSER_OPERATIONS=('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs')
 
 class RecoveryRequired(RuntimeError):
     """自动恢复未完成，禁止后续更新覆盖恢复资料。"""
@@ -484,6 +483,11 @@ def stop_maintenance(env):
         owned_stop(pid,'maintenance',str(ROOT))
     marker.unlink(missing_ok=True)
 
+def reviewed_snapshot_column_change(migration):
+    # 精确审查的增量只补齐快照已存在的六个列，不更新或删除业务数据。
+    return (migration.name == '564_snapshot_column_compatibility.up.sql' and
+            hashlib.sha256(migration.read_bytes()).hexdigest() == '9d630812839f1a60141f22e3bf54403d81f5074cd0770593cae233a4344aac52')
+
 def reviewed_supervision_index_change(release, migration, statements):
     # 本次已评审的索引替换：配置行锁仍保护旧程序的串行派发，恢复程序无需恢复旧索引。
     replacement=Path(release)/'server/migrations/550_supervision_active_issue.up.sql'
@@ -502,7 +506,7 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if not additive and not reviewed_supervision_index_change(release,migration,statements):
+            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements):
                 raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)
@@ -629,6 +633,17 @@ def isolation_check(config_only=False):
     checks['ports_distinct']=len(set(ports))==len(ports)
     print(json.dumps(checks,ensure_ascii=False))
     if not all(checks.values()): raise RuntimeError('生产运行检查失败')
+
+# 外部接力器与发布子进程使用同一版本的浏览器验收及其依赖。
+BROWSER_OPERATIONS = ('verify-release-browser.mjs', 'lib/goal-test-audit-env.mjs',
+                      'lib/goal-test-browser-audit.mjs', 'lib/acceptance-artifacts.mjs')
+
+def copy_browser_operations(destination):
+    source = Path(__file__).parent
+    for name in BROWSER_OPERATIONS:
+        target = Path(destination)/name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((source/name).read_bytes())
 
 def verify_browser(env='prod'):
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
@@ -916,9 +931,9 @@ def request_release(version,timeout=900):
         runner=RUN/'publisher'/version/'release.py'
         runner.parent.mkdir(parents=True,exist_ok=True)
         runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
+        copy_browser_operations(runner.parent)
         (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
-        for name in BROWSER_OPERATIONS:
-            dep=runner.parent/name;dep.parent.mkdir(parents=True,exist_ok=True);dep.write_bytes((Path(__file__).parent/name).read_bytes())
+
         write(target,record,True);save_candidate(record)
         try:
             run(['systemd-run','--quiet','--collect','--unit',record['unit'],'--property=Type=exec','--property=KillMode=process',
