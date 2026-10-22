@@ -6,17 +6,17 @@ import { codeDiffFromResult } from "@multica/core/types/code-diff";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { cn } from "@multica/ui/lib/utils";
 
-export function CodeDiffCard({ result, runLabel }: { result: unknown; runLabel?: string }) {
+export function CodeDiffCard({ result, runLabel, className }: { result: unknown; runLabel?: string; className?: string }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(0);
   const diff = codeDiffFromResult(result);
   if (!diff || (!diff.unavailable && diff.files.length === 0 && !diff.truncated)) return null;
-  if (diff.unavailable) return <p className="text-caption text-muted-foreground">本次代码差异采集失败，无法查看历史快照。</p>;
+  if (diff.unavailable) return <p className={cn("text-caption text-muted-foreground", className)}>本次代码差异采集失败，无法查看历史快照。</p>;
   const file = diff.files[selected] ?? diff.files[0];
   const added = diff.files.reduce((sum, f) => sum + f.added, 0);
   const deleted = diff.files.reduce((sum, f) => sum + f.deleted, 0);
   return <>
-    <button type="button" onClick={() => setOpen(true)} className="flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md border bg-card px-3 py-2 text-left text-body hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">
+    <button type="button" onClick={() => setOpen(true)} className={cn("flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md border bg-card px-3 py-2 text-left text-body hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring", className)}>
       <FileDiff className="size-4 shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1">查看本次代码修改 {runLabel && <span className="text-caption text-muted-foreground">{runLabel} · </span>}<span className="text-caption text-muted-foreground">{diff.files.length} 个文件{diff.truncated ? "（部分）" : ""}</span></span>
       <span className="shrink-0 font-mono text-caption tabular-nums"><span className="text-success">+{added}</span> <span className="text-destructive">−{deleted}</span></span>
