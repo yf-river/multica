@@ -118,6 +118,17 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
+	"553_upstream_sync_config_singleton":                                        "upstream_sync_config_singleton",
+	"554_upstream_sync_run_id":                                                  "upstream_sync_run_id",
+	"555_upstream_sync_run_active":                                              "upstream_sync_run_active",
+	"556_upstream_sync_run_task":                                                "upstream_sync_run_task",
+	"557_upstream_sync_run_list":                                                "upstream_sync_run_list",
+	"558_upstream_sync_item_id":                                                 "upstream_sync_item_id",
+	"559_upstream_sync_item_cluster":                                            "upstream_sync_item_cluster",
+	"560_upstream_sync_item_pending":                                            "upstream_sync_item_pending",
+	"561_upstream_sync_item_run":                                                "upstream_sync_item_run",
+	"562_upstream_sync_commit_unique":                                           "upstream_sync_commit_unique",
+	"563_upstream_sync_commit_item":                                             "upstream_sync_commit_item",
 	"520_repository_id":              "repository_id_idx",
 	"521_repository_identity":        "repository_identity_idx",
 	"522_repository_location_id":     "repository_location_id_idx",
