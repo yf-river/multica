@@ -794,6 +794,9 @@ export class ApiClient {
   async markUpstreamItems(body: { ids: string[]; status: "adopted" | "ignored" | "open" }) {
     return this.fetch<{ updated: number }>("/api/upstream/items/status", { method: "PATCH", body: JSON.stringify(body) });
   }
+  async createUpstreamAbsorptionTask(itemId: string) {
+    return this.fetch<{ issue_id: string; status: string; existing: boolean }>(`/api/upstream/items/${encodeURIComponent(itemId)}/absorption-task`, { method: "POST" });
+  }
   async getSupervision() {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/"), supervisionSnapshotSchema, { endpoint: "GET /api/supervision", sensitive: true });
   }

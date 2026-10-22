@@ -3,7 +3,6 @@ package upstream
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +13,6 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	ctx := context.Background()
 	root := t.TempDir()
 	up := filepath.Join(root, "up")
-	local := filepath.Join(root, "local")
 	mirror := filepath.Join(root, "mirror")
 	if err := os.Mkdir(up, 0700); err != nil {
 		t.Fatal(err)
@@ -39,26 +37,19 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	write("base", "base")
 	git(up, "add", ".")
 	git(up, "commit", "-m", "base")
-	cmd := exec.Command("git", "clone", up, local)
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("clone: %v %s", err, b)
-	}
-	git(local, "config", "user.name", "test")
-	git(local, "config", "user.email", "test@example.invalid")
+	base := git(up, "rev-parse", "HEAD")
 	git(up, "checkout", "-b", "topic")
 	write("topic", "new feature")
 	git(up, "add", ".")
 	git(up, "commit", "-m", "feature")
-	topic := git(up, "rev-parse", "HEAD")
+	git(up, "rev-parse", "HEAD")
 	git(up, "checkout", "main")
 	write("main", "another change")
 	git(up, "add", ".")
 	git(up, "commit", "-m", "same title")
 	git(up, "merge", "--no-ff", "topic", "-m", "merge feature")
-	git(local, "fetch", "origin", "topic")
-	git(local, "cherry-pick", "-x", topic)
-	cfg := Config{UpstreamURL: up, UpstreamBranch: "main", LocalRef: "HEAD", BatchSize: 2}
-	first, err := BuildManifest(ctx, local, mirror, cfg, nil)
+	cfg := Config{UpstreamURL: up, UpstreamBranch: "main", LocalRef: "origin/personal-studio-upstream", BootstrapBaseSHA: base, BatchSize: 2}
+	first, err := BuildManifest(ctx, mirror, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,19 +57,12 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 		t.Fatalf("first batch %+v", first)
 	}
 	done := []string{}
-	foundEquivalent := false
 	for _, c := range first.Commits {
 		done = append(done, c.SHA)
-		if c.SHA == topic && c.Absorbed && c.AbsorbedMethod == "patch_id" {
-			foundEquivalent = true
-		}
-	}
-	if !foundEquivalent {
-		t.Fatal("equivalent patch not recognized")
 	}
 	cfg.BootstrapBaseSHA = first.BaseSHA
 	cfg.HeadSHA = first.HeadSHA
-	next, err := BuildManifest(ctx, local, mirror, cfg, done)
+	next, err := BuildManifest(ctx, mirror, cfg, done)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +70,7 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 		t.Fatalf("merge not covered exactly once: %+v", next)
 	}
 	done = append(done, next.Commits[0].SHA)
-	empty, err := BuildManifest(ctx, local, mirror, cfg, done)
+	empty, err := BuildManifest(ctx, mirror, cfg, done)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,15 +81,15 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	write("main", "different content")
 	git(up, "add", ".")
 	git(up, "commit", "-m", "same title")
-	delta, err := BuildManifest(ctx, local, mirror, cfg, done)
+	delta, err := BuildManifest(ctx, mirror, cfg, done)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(delta.Commits) != 1 || delta.Commits[0].Absorbed {
-		t.Fatalf("same subject is not patch equivalence: %+v", delta)
+	if len(delta.Commits) != 1 {
+		t.Fatalf("same subject must remain a distinct upstream commit: %+v", delta)
 	}
 	git(up, "reset", "--hard", first.BaseSHA)
-	if _, err = BuildManifest(ctx, local, mirror, cfg, done); err == nil {
+	if _, err = BuildManifest(ctx, mirror, cfg, done); err == nil {
 		t.Fatal("rewritten upstream history must require review")
 	}
 }

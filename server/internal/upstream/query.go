@@ -36,23 +36,25 @@ type Snapshot struct {
 }
 
 type Item struct {
-	ID            string     `json:"id"`
-	RunID         string     `json:"run_id"`
-	ClusterKey    string     `json:"cluster_key"`
-	Title         string     `json:"title"`
-	Summary       string     `json:"summary"`
-	Rationale     string     `json:"rationale"`
-	Verdict       string     `json:"verdict"`
-	Confidence    string     `json:"confidence"`
-	Presence      string     `json:"presence"`
-	Paths         []string   `json:"paths"`
-	CommitCount   int        `json:"commit_count"`
-	CommitSHAs    []string   `json:"commit_shas"`
-	FirstCommitAt *time.Time `json:"first_commit_at"`
-	LastCommitAt  *time.Time `json:"last_commit_at"`
-	Status        string     `json:"status"`
-	AdoptedAt     *time.Time `json:"adopted_at"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID                string     `json:"id"`
+	RunID             string     `json:"run_id"`
+	ClusterKey        string     `json:"cluster_key"`
+	Title             string     `json:"title"`
+	Summary           string     `json:"summary"`
+	Rationale         string     `json:"rationale"`
+	Verdict           string     `json:"verdict"`
+	Confidence        string     `json:"confidence"`
+	Presence          string     `json:"presence"`
+	Paths             []string   `json:"paths"`
+	CommitCount       int        `json:"commit_count"`
+	CommitSHAs        []string   `json:"commit_shas"`
+	FirstCommitAt     *time.Time `json:"first_commit_at"`
+	LastCommitAt      *time.Time `json:"last_commit_at"`
+	Status            string     `json:"status"`
+	AdoptedAt         *time.Time `json:"adopted_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+	AbsorptionIssueID string     `json:"absorption_issue_id,omitempty"`
+	AbsorptionStatus  string     `json:"absorption_status"`
 }
 
 type ItemFilter struct {
@@ -140,14 +142,16 @@ func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, error) {
 	if f.Status == "" {
 		f.Status = "open"
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT id::text, run_id::text, cluster_key, title, summary, rationale,
+	rows, err := s.Pool.Query(ctx, `SELECT i.id::text, i.run_id::text, i.cluster_key, i.title, i.summary, i.rationale,
  verdict, confidence, presence, paths, commit_count, commit_shas,
- first_commit_at, last_commit_at, status, adopted_at, created_at
- FROM upstream_sync_item
- WHERE status=$1
-   AND ($2 = '' OR verdict=$2)
-   AND ($3 = '' OR presence=$3)
-   AND ($4 = '' OR title ILIKE '%'||$4||'%' OR summary ILIKE '%'||$4||'%' OR cluster_key ILIKE '%'||$4||'%')
+ first_commit_at, last_commit_at, status, adopted_at, created_at,
+ COALESCE(a.issue_id::text,''), COALESCE(a.status,'none')
+ FROM upstream_sync_item i
+ LEFT JOIN upstream_sync_absorption_task a ON a.item_id=i.id
+ WHERE i.status=$1
+   AND ($2 = '' OR i.verdict=$2)
+   AND ($3 = '' OR i.presence=$3)
+   AND ($4 = '' OR i.title ILIKE '%'||$4||'%' OR i.summary ILIKE '%'||$4||'%' OR i.cluster_key ILIKE '%'||$4||'%')
  ORDER BY created_at DESC, id DESC
  LIMIT $5 OFFSET $6`,
 		f.Status, f.Verdict, f.Presence, f.Query, f.Limit, f.Offset)
@@ -161,7 +165,8 @@ func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, error) {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.RunID, &it.ClusterKey, &it.Title, &it.Summary, &it.Rationale,
 			&it.Verdict, &it.Confidence, &it.Presence, &it.Paths, &it.CommitCount, &it.CommitSHAs,
-			&it.FirstCommitAt, &it.LastCommitAt, &it.Status, &it.AdoptedAt, &it.CreatedAt); err != nil {
+			&it.FirstCommitAt, &it.LastCommitAt, &it.Status, &it.AdoptedAt, &it.CreatedAt,
+			&it.AbsorptionIssueID, &it.AbsorptionStatus); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

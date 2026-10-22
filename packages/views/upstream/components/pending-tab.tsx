@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { upstreamItemsOptions, type UpstreamItem } from "@multica/core/upstream/queries";
-import { useMarkUpstreamItems } from "@multica/core/upstream/mutations";
+import { useCreateUpstreamAbsorptionTask, useMarkUpstreamItems } from "@multica/core/upstream/mutations";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -26,6 +26,7 @@ export function PendingTab({ wsId }: { wsId: string }) {
 
   const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery(upstreamItemsOptions(wsId, { status, verdict, q }));
   const mark = useMarkUpstreamItems();
+  const createTask = useCreateUpstreamAbsorptionTask();
   const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
 
   const toggle = (id: string) => {
@@ -137,6 +138,9 @@ export function PendingTab({ wsId }: { wsId: string }) {
               adoptedLabel={statusLabel("adopted")}
               restoreLabel={t(($) => $.page.bulk.restore)}
               onRestore={() => mark.mutate({ ids: [item.id], status: "open" })}
+              createTaskLabel={t(($) => $.page.bulk.create_task)}
+              taskCreatedLabel={t(($) => $.page.bulk.task_created)}
+              onCreateTask={() => createTask.mutate(item.id)}
             />
           ))}
         </ul>
@@ -176,6 +180,9 @@ function ItemRow({
   adoptedLabel,
   restoreLabel,
   onRestore,
+  createTaskLabel,
+  taskCreatedLabel,
+  onCreateTask,
 }: {
   item: UpstreamItem;
   checked: boolean;
@@ -190,6 +197,9 @@ function ItemRow({
   adoptedLabel: string;
   restoreLabel: string;
   onRestore: () => void;
+  createTaskLabel: string;
+  taskCreatedLabel: string;
+  onCreateTask: () => void;
 }) {
   const verdictVariant = item.verdict === "absorb" ? "default" : item.verdict === "skip" ? "secondary" : "outline";
   return (
@@ -220,6 +230,13 @@ function ItemRow({
                 </button>
               </span>
             ) : null}
+            {item.absorption_issue_id ? (
+              <span className="text-caption text-muted-foreground">{taskCreatedLabel}</span>
+            ) : (
+              <Button size="sm" variant="ghost" className="h-6 px-2 text-caption" onClick={onCreateTask}>
+                {createTaskLabel}
+              </Button>
+            )}
           </div>
           {expanded ? (
             <div className="mt-2 space-y-2 rounded-md bg-muted/30 px-3 py-2 pl-5">

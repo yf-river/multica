@@ -3239,6 +3239,7 @@ export const UpstreamItemSchema = z.object({
   commit_shas: z.array(z.string()).default([]),
   first_commit_at: z.string().nullable(), last_commit_at: z.string().nullable(),
   status: z.string(), adopted_at: z.string().nullable(), created_at: z.string(),
+  absorption_issue_id: z.string().default(""), absorption_status: z.string().default("none"),
 });
 export const UpstreamItemsSchema = z.object({ items: z.array(UpstreamItemSchema) });
 export const UpstreamRunSchema = z.object({

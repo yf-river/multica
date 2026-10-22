@@ -1,16 +1,22 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/upstream"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // upstreamScope 是人类侧入口：成员可读，owner/admin 可写。
@@ -181,6 +187,73 @@ func (h *Handler) MarkUpstreamItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]int{"updated": n})
+}
+
+// CreateUpstreamAbsorptionTask creates a normal issue for a human-selected suggestion.
+// It records the link atomically with issue creation; it never applies code or starts a release.
+func (h *Handler) CreateUpstreamAbsorptionTask(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.upstreamScope(w, r, true)
+	if !ok {
+		return
+	}
+	itemID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "itemId"), "item_id")
+	if !ok {
+		return
+	}
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	wsID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var title, summary, rationale string
+	var paths, shas []string
+	var existing *string
+	err := h.DB.QueryRow(r.Context(), `SELECT i.title,i.summary,i.rationale,i.paths,i.commit_shas,COALESCE(a.issue_id::text,'')
+ FROM upstream_sync_item i LEFT JOIN upstream_sync_absorption_task a ON a.item_id=i.id WHERE i.id=$1`, itemID).Scan(&title, &summary, &rationale, &paths, &shas, &existing)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "上游建议不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取上游建议失败")
+		return
+	}
+	if existing != nil && *existing != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"issue_id": *existing, "status": "task_created", "existing": true})
+		return
+	}
+	description := fmt.Sprintf("上游吸收建议\n\n%s\n\n判断依据：%s\n\n上游提交：%s\n涉及路径：%s\n\n请在联调环境验证实际收益、兼容性和维护成本；不要直接发布生产。", summary, rationale, strings.Join(shas, ", "), strings.Join(paths, ", "))
+	creatorUUID, err := uuid.Parse(user)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "当前用户身份无效")
+		return
+	}
+	creator := pgtype.UUID{Bytes: creatorUUID, Valid: true}
+	result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
+		WorkspaceID:    wsID,
+		Title:          "评估上游改动：" + title,
+		Description:    pgtype.Text{String: description, Valid: true},
+		Status:         "todo",
+		Priority:       "not_important_not_urgent",
+		CreatorType:    "member",
+		CreatorID:      creator,
+		AllowDuplicate: true,
+	}, service.IssueCreateOpts{
+		ActorID:  user,
+		Platform: "web",
+		RelatedRecord: func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
+			if _, err := tx.Exec(ctx, `INSERT INTO upstream_sync_absorption_task(item_id,issue_id,status) VALUES($1,$2,'task_created') ON CONFLICT(item_id) DO NOTHING`, itemID, issue.ID); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `UPDATE upstream_sync_item SET status='adopted',adopted_at=COALESCE(adopted_at,now()),adopted_by=COALESCE(adopted_by,$2),updated_at=now() WHERE id=$1`, itemID, creator)
+			return err
+		},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "创建吸收任务失败")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"issue_id": result.Issue.ID, "status": "task_created", "existing": false})
 }
 
 func (h *Handler) ListUpstreamRuns(w http.ResponseWriter, r *http.Request) {

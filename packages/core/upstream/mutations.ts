@@ -16,6 +16,17 @@ export function useMarkUpstreamItems() {
   });
 }
 
+export function useCreateUpstreamAbsorptionTask() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (itemId: string) => api.createUpstreamAbsorptionTask(itemId),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: upstreamKeys.all(wsId) });
+    },
+  });
+}
+
 export function useUpdateUpstreamConfig() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();

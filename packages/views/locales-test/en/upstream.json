@@ -32,6 +32,8 @@
       "adopt": "Mark adopted",
       "ignore": "Ignore",
       "restore": "Undo"
+      ,"create_task": "Create absorption task"
+      ,"task_created": "Absorption task created"
     },
     "item": {
       "absorb": "Worth adopting",

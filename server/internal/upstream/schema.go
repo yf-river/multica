@@ -150,7 +150,7 @@ func ValidateReport(rep Report) error {
 	return nil
 }
 
-// BatchManifest 来自运行机器上确定性的 Git 枚举；完成前核对整个冻结清单。
+// BatchManifest 来自专用上游镜像和持久化基线的确定性 Git 枚举；完成前核对整个冻结清单。
 type BatchManifest struct {
 	BaseSHA string      `json:"base_sha"`
 	HeadSHA string      `json:"head_sha"`

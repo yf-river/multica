@@ -32,6 +32,8 @@
       "adopt": "标记已采纳",
       "ignore": "忽略",
       "restore": "撤销标记"
+      ,"create_task": "创建吸收任务"
+      ,"task_created": "已创建吸收任务"
     },
     "item": {
       "absorb": "值得吸收",

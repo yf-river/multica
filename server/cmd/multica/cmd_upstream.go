@@ -52,7 +52,6 @@ var upstreamFailCmd = &cobra.Command{
 
 func init() {
 	upstreamCmd.GroupID = groupCore
-	upstreamStartCmd.Flags().String("repo", ".", "local repository used only for comparison")
 	upstreamStartCmd.Flags().String("run", "", "run id from a previous start (optional; server resolves it from the task)")
 	upstreamReportCmd.Flags().String("run", "", "run id returned by 'upstream start'")
 	upstreamReportCmd.Flags().String("file", "", "path to the JSON report (required)")
@@ -101,11 +100,6 @@ func runUpstreamStart(cmd *cobra.Command, _ []string) error {
 	if err := client.PostJSON(ctx, "/api/upstream/runs/start", map[string]any{}, &out); err != nil {
 		return fmt.Errorf("claim batch: %w", err)
 	}
-	repo, _ := cmd.Flags().GetString("repo")
-	repo, err = filepath.Abs(repo)
-	if err != nil {
-		return err
-	}
 	home, err := os.UserCacheDir()
 	if err != nil {
 		return err
@@ -116,7 +110,7 @@ func runUpstreamStart(cmd *cobra.Command, _ []string) error {
 	if out.Manifest != nil {
 		return cli.PrintJSON(os.Stdout, map[string]any{"run_id": out.RunID, "manifest": out.Manifest, "mirror": mirror})
 	}
-	m, err := upstream.BuildManifest(gitCtx, repo, mirror, out.Config, out.Processed)
+	m, err := upstream.BuildManifest(gitCtx, mirror, out.Config, out.Processed)
 	if err != nil {
 		var ignored map[string]any
 		_ = client.PostJSON(context.Background(), "/api/upstream/runs/"+out.RunID+"/fail", map[string]any{"error": err.Error()}, &ignored)
