@@ -256,6 +256,15 @@ class Worker:
         return record.get('seed_id')==current.get('seed_id') and record.get('seed_sha256')==current.get('dump_sha256') and record.get('verified') is True
 
     def ensure_seed(self):
+        if not self.current_seed():return
+        try:
+            # 恢复、登记和恢复接单共用外部维护锁；另一交付等待下一轮，不能重置同一槽位。
+            with r.lock('verification-seed-maintenance'):
+                return self.ensure_seed_locked()
+        except BlockingIOError:
+            raise Busy('其他交付正在恢复验收种子，等待下一轮') from None
+
+    def ensure_seed_locked(self):
         # 修改 1. 换任务前先核对槽位数据版本：与当前种子不一致就按单槽位维护恢复，
         # 复用上一任务的残留数据比多等一次恢复更容易给出错误结论。
         current=self.current_seed()
@@ -267,6 +276,9 @@ class Worker:
             completed=subprocess.run([sys.executable,str(script),'ensure','--environment',item['name'],
                 '--postgres-config',str(r.RUN/'verification-postgres.json')],capture_output=True,text=True)
             if completed.returncode:
+                detail=(completed.stderr or completed.stdout).strip()[-1200:]
+                if 'HTTP Error 409' in detail:
+                    raise Busy('槽位维护状态已变化，等待下一轮')
                 raise r.RecoveryRequired('种子恢复失败，槽位保持维护：'+(completed.stderr or completed.stdout).strip()[-1200:])
             return
         raise Busy('没有可用的干净验收槽位，等待其他验收结束')
@@ -368,17 +380,14 @@ class Worker:
                         save('building',source_commit=d['source_commit'])
                         artifact=r.build_verification(source,delivery)
                         save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
-                    # 2. 等槽位必须有上限：槽位被隔离时无限等待会让这个单元长期占住并发名额。
-                    # 修改 10. 三槽全忙时 ensure_seed 抛 Busy，这只说明第四项要排队；
-                    # 旧代码让它落到通用异常被记成 needs_changes，D 永远走不到后面的等槽逻辑。
-                    try:self.ensure_seed()
-                    except Busy:
-                        # job 已是 waiting_slot 且带产物，下一轮直接从这里续接。
-                        stopped.set();return
+                    # 等槽位有上限；种子维护和全忙均正常排队，下一轮复用现有构建。
                     deadline=time.monotonic()+600
                     while lease is None:
                         d=refresh()
                         if not d or d['phase']!='testing':return
+                        try:self.ensure_seed()
+                        except Busy:
+                            stopped.set();return
                         try:
                             lease=slot(dict(delivery_id=delivery,worker_token=d['worker_token'],source_commit=d['source_commit']),'claim')
                         except urllib.error.HTTPError as e:

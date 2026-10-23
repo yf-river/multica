@@ -525,7 +525,7 @@ func (h *Handler) publishDeliveryBatch(r *http.Request, tx pgx.Tx, current deliv
 	return err
 }
 
-// failDeliveryBatch 保留有效证据：只有冲突成员回到待修改，其余成员保留授权等待下一批。
+// failDeliveryBatch 区分成员冲突与整批失败；真正失败保留授权，等待修复或显式重试。
 func (h *Handler) failDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, current deliveryBatch, message, conflict string, demoted *[]string) error {
 	if conflict != "" {
 		if _, parseErr := util.ParseUUID(conflict); parseErr != nil {
@@ -547,13 +547,18 @@ func (h *Handler) failDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, curre
 			return err
 		}
 	} else {
-		// 组合验收失败时整批退出，但成员仍然拥有有效授权，下一批可以重新组批。
+		// 失败成员保留具体原因及有效授权，不能由下一轮调度自动重开同一组合。
 		if _, err := tx.Exec(r.Context(), `UPDATE delivery_batch_member SET result='pending',error=$2::text WHERE batch_id=$1 AND result='pending'`, current.ID, message); err != nil {
 			return err
 		}
 	}
 	if err := h.resetPendingBatchMembers(r, tx, current.ID, message); err != nil {
 		return err
+	}
+	if conflict == "" {
+		if _, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='needs_changes',revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, current.ID); err != nil {
+			return err
+		}
 	}
 	_, err := tx.Exec(r.Context(), `UPDATE delivery_batch SET status='needs_changes',error=$2::text,updated_at=now() WHERE id=$1`, current.ID, message)
 	return err

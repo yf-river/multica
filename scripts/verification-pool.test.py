@@ -45,7 +45,11 @@ class PoolFlowTests(unittest.TestCase):
                     self.assertEqual(d['phase'],'testing')
                     self.assertEqual(r.read(worker.pool_job_path(identity))['stage'],'waiting_slot')
                     self.assertNotIn('delivery:fail',events)
-                worker.pool_delivery(identity)
+                if resume:
+                    with patch.object(worker,'ensure_seed',side_effect=AssertionError('同一候选续接不得恢复数据')):
+                        worker.pool_delivery(identity)
+                else:
+                    worker.pool_delivery(identity)
                 if busy:
                     self.assertEqual(build.call_count,1,'D续接重复构建')
                     self.assertEqual(prepare.call_args.args[0],source,'D续接丢失固定源码')
@@ -91,7 +95,7 @@ class SeedGateTests(unittest.TestCase):
             api.assert_not_called()
             self.assertTrue(worker.seed_matches('verify-1'))
 
-    def test_verified_current_seed_slot_is_reused(self):
+    def test_unused_verified_seed_does_not_need_restore(self):
         worker=self.worker()
         slot=dict(name='verify-1',enabled=True,state='idle',seed_id='seed-a',seed_sha256='a'*64,seed_verified=True)
         # 单槽位查询的实际响应是 verified，列表接口才是 seed_verified；两种字段名不能混用。
@@ -101,6 +105,30 @@ class SeedGateTests(unittest.TestCase):
             worker.ensure_seed()
             run.assert_not_called()
             self.assertTrue(worker.seed_matches('verify-1'))
+
+
+
+    def test_concurrent_seed_maintenance_is_normal_wait(self):
+        worker=self.worker()
+        with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a')),patch.object(r,'lock',side_effect=BlockingIOError),patch.object(worker,'api') as api:
+            with self.assertRaises(w.Busy):worker.ensure_seed()
+            api.assert_not_called()
+
+    def test_seed_maintenance_conflict_waits_instead_of_failing_delivery(self):
+        worker=self.worker()
+        slot=dict(name='verify-1',enabled=True,state='idle',seed_verified=False)
+        done=type('R',(),{'returncode':1,'stdout':'','stderr':'urllib.error.HTTPError: HTTP Error 409: Conflict'})()
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(r,'current_seed',return_value=dict(seed_id='seed-a')),patch.object(worker,'api',return_value=[slot]),patch.object(w.subprocess,'run',return_value=done):
+            with self.assertRaises(w.Busy):worker.ensure_seed()
+
+    def test_released_task_same_seed_is_restored_before_new_claim(self):
+        worker=self.worker()
+        slot=dict(name='verify-1',enabled=True,state='idle',seed_id='seed-a',seed_sha256='a'*64,seed_verified=False)
+        done=type('R',(),{'returncode':0,'stdout':'{}','stderr':''})()
+        with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',return_value=[slot]),patch.object(w.subprocess,'run',return_value=done) as run:
+            worker.ensure_seed()
+            self.assertEqual(run.call_count,1)
+            self.assertIn('ensure',run.call_args.args[0])
 
     def test_unverified_or_other_seed_slot_is_rejected(self):
         worker=self.worker()

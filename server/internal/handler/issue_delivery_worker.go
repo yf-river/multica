@@ -375,7 +375,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			}
 			next = "needs_changes"
 		case "retry":
-			if phase != "testing" && phase != "preparing_release" {
+			if phase != "testing" && phase != "preparing_release" && !(phase == "needs_changes" && approved) {
 				writeError(w, 409, "当前阶段不能排队")
 				return
 			}

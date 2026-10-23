@@ -273,6 +273,7 @@ func TestDeliveryBatchConflictStaysOnItsMemberAndPublishesOthers(t *testing.T) {
 	}
 	batchCleanup(t)
 	conflicting, _ := batchFixture(t)
+	remaining, _ := batchFixture(t)
 	batch, _ := openBatch(t, 60)
 	batch, _ = freezeBatch(t, batch.ID)
 	batchAction(t, map[string]any{"action": "fail", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "error": "提交无法合并到最新主分支", "conflict_delivery_id": conflicting}).Want(200)
@@ -284,7 +285,10 @@ func TestDeliveryBatchConflictStaysOnItsMemberAndPublishesOthers(t *testing.T) {
 	if result != "failed" || !strings.Contains(detail, "无法合并") {
 		t.Fatalf("冲突结果没有回填到具体成员: %s %s", result, detail)
 	}
-	// 批次失败只影响成员阶段，回填通知可在下一批重新组批。
+	if deliveryPhase(t, remaining) != "approved" {
+		t.Fatal("单个合并冲突阻塞了无冲突成员")
+	}
+	// 无冲突成员可以进入下批，失败成员等待原分支修复。
 	batchCleanup(t)
 }
 
@@ -442,4 +446,38 @@ func TestDeliveryBatchAbortRestoresRemainingApprovedCandidate(t *testing.T) {
 	if next.ID == batch.ID || next.WorkerToken == batch.WorkerToken || len(members) != 1 || members[0].DeliveryID != second {
 		t.Fatalf("新批次没有独立身份: %+v %+v", next, members)
 	}
+}
+
+// 真正组合失败保留授权和证据，后续自动收集排除失败成员，显式重试才恢复。
+func TestDeliveryBatchFailureWaitsForExplicitRetry(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	first, token := batchFixture(t)
+	second, _ := batchFixture(t)
+	batch, _ := openBatch(t, 60)
+	batch, _ = freezeBatch(t, batch.ID)
+	batchAction(t, map[string]any{"action": "fail", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "error": "生产浏览器失败"}).Want(200)
+	for _, id := range []string{first, second} {
+		var phase string
+		var approved bool
+		dbfx.QueryRow(t, `SELECT phase,approved_by IS NOT NULL FROM issue_delivery WHERE id=$1`, id).Scan(&phase, &approved)
+		if phase != "needs_changes" || !approved {
+			t.Fatalf("failed member automatically retriable: %s %v", phase, approved)
+		}
+	}
+	// 即使再来一次open/freeze，也不能自动带入原失败组合。
+	next, _ := openBatch(t, 60)
+	_, members := freezeBatch(t, next.ID)
+	if len(members) != 0 {
+		t.Fatalf("failed batch was recollected: %v", members)
+	}
+	var rev int64
+	dbfx.QueryRow(t, `SELECT revision FROM issue_delivery WHERE id=$1`, first).Scan(&rev)
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": first, "revision": rev, "worker_token": token, "source_commit": strings.Repeat("a", 40), "action": "retry"})).Want(200)
+	if deliveryPhase(t, first) != "approved" || deliveryPhase(t, second) != "needs_changes" {
+		t.Fatal("explicit retry did not remain scoped to its delivery")
+	}
+	batchCleanup(t)
 }
