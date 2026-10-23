@@ -19,6 +19,7 @@ import {
   formatTokens,
   formatUsd,
   hasKnownCost,
+  hasKnownCacheSavings,
   summarizeTaskUsage,
   summarizeTaskUsageAcross,
   type TaskUsageSummary,
@@ -74,6 +75,11 @@ export function IssueUsageDialog({
   // 与统计页、执行日志同一个口径：整批没有可定价来源时显示未知，而不是 $0.00。
   const costKnown = useMemo(
     () => hasKnownCost(priced.flatMap((task) => task.usage ?? [])),
+    [priced, pricings],
+  );
+
+  const cacheSavingsKnown = useMemo(
+    () => hasKnownCacheSavings(priced.flatMap((task) => task.usage ?? [])),
     [priced, pricings],
   );
 
@@ -134,8 +140,10 @@ export function IssueUsageDialog({
               />
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_cache)}
-                value={costKnown ? formatUsd(total.cacheSavings) : "—"}
-                accent={total.cacheSavings > 0 ? "success" : "default"}
+                value={cacheSavingsKnown ? formatUsd(total.cacheSavings) : "—"}
+                accent={
+                  cacheSavingsKnown && total.cacheSavings > 0 ? "success" : "default"
+                }
                 hint={t(($) => $.usage_detail.kpi_cache_hint, {
                   pct: cacheHitRate,
                   reads: formatTokens(total.cacheRead),

@@ -222,7 +222,7 @@ describe("UsageSection — custom-pricing entry point", () => {
   it("reports the cost KPI as unknown instead of $0 while every row is unpriced", () => {
     // 回归：没有任何一行能定价时，$0.00 会被读成"这次运行免费"。实际是价格未知，
     // 必须显示破折号并说明原因。
-    usageOverride.rows = unpricedRows;
+    usageOverride.rows = unpricedRows.map(row => ({ ...row, cache_read_tokens: 100 }));
 
     render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
 
@@ -233,6 +233,30 @@ describe("UsageSection — custom-pricing entry point", () => {
     expect(unknown).toHaveLength(2);
     for (const node of unknown) expect(node).toHaveTextContent("—");
     expect(document.body.textContent).not.toContain("$0.00");
+  });
+
+  it("does not infer cached savings from vendor-priced usage with no rate", () => {
+    usageOverride.rows = unpricedRows.map(row => ({
+      ...row, cache_read_tokens: 100, cost_usd_ticks: 10_000_000_000,
+    }));
+    render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
+    expect(screen.getByText(/Cache savings ·/).nextElementSibling).toHaveTextContent("—");
+  });
+
+  it("includes usage without a surviving Agent when deciding savings are unknown", () => {
+    // 查询聚合保留已删除 Agent 的桶；当前 Agent 列表为空也不能丢掉这部分。
+    usageOverride.rows = [
+      { ...unpricedRows[0], cache_read_tokens: 100 },
+      { ...unpricedRows[0], model: "claude-sonnet-4-6", provider: "anthropic", cache_read_tokens: 100 },
+    ];
+    render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
+    expect(screen.getByText(/Cache savings ·/).nextElementSibling).toHaveTextContent("—");
+  });
+
+  it("shows zero savings for an unpriced window with no cache reads", () => {
+    usageOverride.rows = unpricedRows;
+    render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
+    expect(screen.getByText(/Cache savings ·/).nextElementSibling).toHaveTextContent("$0.00");
   });
 
   it("stays hidden when every model resolves and nothing is overridden", () => {
