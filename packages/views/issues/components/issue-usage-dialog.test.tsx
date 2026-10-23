@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import type { AgentTask, TaskUsage } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 
@@ -51,9 +52,13 @@ function open(tasks: AgentTask[]) {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  useCustomPricingStore.setState({ pricings: {} });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useCustomPricingStore.setState({ pricings: {} });
+});
 
 describe("IssueUsageDialog", () => {
   it("floors the cache hit rate instead of rounding it up to 100%", () => {
@@ -118,5 +123,45 @@ describe("IssueUsageDialog", () => {
     const scroller = table.parentElement;
     expect(scroller?.className).toContain("overflow-auto");
     expect(scroller?.className).toContain("min-w-0");
+  });
+});
+
+describe("IssueUsageDialog cache savings accuracy", () => {
+  const unknown = () => usage({
+    provider: "acme",
+    model: "unknown-cache-model",
+    cache_read_tokens: 1_000_000,
+    cost_usd_ticks: 10_000_000_000,
+  });
+  const cacheValue = () => screen.getByText("Cache savings").nextElementSibling;
+
+  it("does not infer cache savings from a vendor total", () => {
+    open([makeTask({ usage: [unknown()] })]);
+    expect(cacheValue()).toHaveTextContent("—");
+  });
+
+  it("does not present a priced subtotal as complete savings", () => {
+    open([makeTask({ usage: [usage(), unknown()] })]);
+    expect(cacheValue()).toHaveTextContent("—");
+  });
+
+  it("shows a real zero when no cache reads occurred even without prices", () => {
+    open([makeTask({ usage: [{ ...unknown(), cache_read_tokens: 0 }] })]);
+    expect(cacheValue()).toHaveTextContent("$0.00");
+  });
+
+  it("updates savings in the open dialog when prices are added or removed", () => {
+    open([makeTask({ usage: [unknown()] })]);
+    expect(cacheValue()).toHaveTextContent("—");
+    act(() => {
+      useCustomPricingStore.getState().setCustomPricing("acme/unknown-cache-model", {
+        input: 7, output: 10, cacheRead: 1, cacheWrite: 7,
+      });
+    });
+    expect(cacheValue()).toHaveTextContent("$6.00");
+    act(() => {
+      useCustomPricingStore.getState().removeCustomPricing("acme/unknown-cache-model");
+    });
+    expect(cacheValue()).toHaveTextContent("—");
   });
 });

@@ -42,6 +42,7 @@ import {
   formatUsd,
   estimateCost,
   hasKnownCost,
+  hasKnownCacheSavings,
   estimateCacheSavings,
   aggregateByDate,
   aggregateByWeek,
@@ -191,6 +192,7 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
   const costDelta = pctChange(totals.cost, prevTotals.cost);
   // 有 token 消耗、但没有任何一行能定价时，费用是"未知"而不是 0。
   const costKnown = tokensTotal === 0 || hasKnownCost(filtered);
+  const cacheSavingsKnown = tokensTotal === 0 || hasKnownCacheSavings(filtered);
   const locales = i18n.resolvedLanguage ?? i18n.language;
 
   return (
@@ -275,7 +277,7 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         <KpiCard
           label={t(($) => $.usage.kpi_cache_label, { days })}
           value={
-            costKnown ? (
+            cacheSavingsKnown ? (
               <CurrencyNumberFlow
                 value={totals.cacheSavings}
                 locales={locales}
@@ -286,7 +288,9 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
               <span aria-label={t(($) => $.usage.kpi_cost_unknown)}>—</span>
             )
           }
-          accent={totals.cacheSavings > 0 ? "success" : "default"}
+          accent={
+            cacheSavingsKnown && totals.cacheSavings > 0 ? "success" : "default"
+          }
           hint={
             <span>
               {t(($) => $.usage.kpi_cache_hint, {
