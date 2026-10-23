@@ -204,7 +204,14 @@ close intent writes the literal `done` key.
   is known, so the board shows the work while it runs; a blocker is recorded
   when it is hit; and the turn must not exit with a stale value — delivered
   the issue's own ask with necessary checks complete → `in_review` for human
-  review; set `done` only when the user explicitly confirms completion. Work continues beyond the turn
+  review. Set `done` directly, with no further user confirmation, only when
+  all three hold: the user authorized production release for this issue, the
+  accepted candidate was actually released to production, and real business
+  acceptance then passed on that released version. Test-environment
+  acceptance, a successful build, or a deployment that merely starts never
+  suffices, and a failed release or a failed acceptance leaves the issue out
+  of `done`. Issues without release authorization, and analysis, configuration,
+  or other non-release work, keep their own completion conditions. Work continues beyond the turn
   (dispatched sub-issues, partial delivery) → `in_progress`; stuck →
   `blocked`. A turn that produces none of the issue's own deliverable —
   answering a question, consulting on work owned elsewhere — writes nothing
