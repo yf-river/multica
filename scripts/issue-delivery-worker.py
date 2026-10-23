@@ -21,6 +21,10 @@ class Busy(RuntimeError): pass
 
 class SlotWaitTimeout(RuntimeError): pass
 
+class Fenced(RuntimeError):
+    """服务端围栏拦下的写入：该执行已不是当前触发评论的最新运行，或交付阶段已变化。
+    协议内的正常结果，不是交付故障；保留槽位与候选，交给最新执行或下一轮续接决定去向。"""
+
 def merge_source(path,arguments):
     """只有真实未合并文件归为成员冲突，其它Git失败保留原始诊断。"""
     result=subprocess.run(['git','merge',*arguments],cwd=path,capture_output=True,text=True)
@@ -52,14 +56,15 @@ class Worker:
         receipt=self.api('delivery-queue/advance',dict(id=d['id'],revision=d['revision'],worker_token=d.get('worker_token') or '',action=action,source_commit=d['source_commit'],publication_generation=d.get('publication_generation',0),**extra))
         d.update(receipt)
         return d
-    def verification_pending(self,d):
+    def verification_pending(self,d,notify=True):
         # 外部执行者依靠自己的归属心跳续租；发布器不替它续租，也不另派验收模型。
         if (d.get('verification_owner') or {}).get('external') is True:return True
         attempt=d.get('verification_run') or {}
         if attempt.get('settled') and attempt.get('status') in ('failed','cancelled','blocked','completed'):
             result=self.advance(d,'fail',verification_run_id=attempt['id'],error=attempt.get('error') or '验收执行已结束，但没有提交通过证据')
             return result.get('verification_deferred') is True
-        if not attempt:self.advance(d,'notify')
+        # 通知只在没有执行时补一次；验收轮询已经先发过，不能每轮都重发同一条通知。
+        if not attempt and notify:self.advance(d,'notify')
         return True
     def pin(self,d):
         # 只从固定仓库恢复提交；任务不能通过请求指定任意本机目录。
@@ -546,27 +551,44 @@ class Worker:
                     lease['candidate_id']=c['id'];slot(lease,'prepared')
                     save('verifying',lease=lease,candidate_id=c['id'])
                 if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
-                d=refresh()
-                if d['phase']=='testing':
-                    if d['candidate_id']!=c['id']:
-                        self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
-                    if not (d.get('verification_owner') or {}).get('external'):self.advance(d,'notify')
-                while True:
+                try:
                     d=refresh()
-                    if not d or d['phase']!='testing':break
-                    if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
-                    if not d['acceptance_submitted'] and not self.verification_pending(d):break
-                    if d['acceptance_submitted']:
-                        evidence=r.RUN/'delivery-evidence'/(delivery+'.json')
-                        r.write(evidence,dict(candidate=c['id'],summary='任务验收',checks=d['evidence']),True)
-                        if c['status']!='accepted':r.accept(c['id'],evidence,env=lease['name'])
-                        self.advance(d,'accepted');break
-                    time.sleep(5)
+                    if d['phase']=='testing':
+                        if d['candidate_id']!=c['id']:
+                            self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
+                        if not (d.get('verification_owner') or {}).get('external'):self.advance(d,'notify')
+                    while True:
+                        d=refresh()
+                        if not d or d['phase']!='testing':break
+                        if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
+                        try:
+                            # 通知已在进入循环前发过，轮询只判断进度，不重复发送同一条通知。
+                            pending=self.verification_pending(d,notify=False)
+                        except urllib.error.HTTPError as e:
+                            if e.code!=409:raise
+                            # 服务端围栏：该执行不是当前触发评论的最新运行，或阶段已经变化。
+                            # 这不是交付故障，不能隔离槽位或用兜底 fail 把被拦下的写入重做一遍。
+                            d=refresh()
+                            if not d or d['phase']!='testing':break
+                            time.sleep(5);continue
+                        if not d['acceptance_submitted'] and not pending:break
+                        if d['acceptance_submitted']:
+                            evidence=r.RUN/'delivery-evidence'/(delivery+'.json')
+                            r.write(evidence,dict(candidate=c['id'],summary='任务验收',checks=d['evidence']),True)
+                            if c['status']!='accepted':r.accept(c['id'],evidence,env=lease['name'])
+                            self.advance(d,'accepted');break
+                        time.sleep(5)
+                except urllib.error.HTTPError as e:
+                    if e.code!=409:raise
+                    raise Fenced('服务端围栏拦下的写入（409），交付状态已由其他执行推进')
                 stopped.set();heartbeat_thread.join(timeout=25)
                 release(lease,c)
             except SlotWaitTimeout:
                 # 3. 等槽位超时不是交付失败：保留构建产物与现场，交给下一轮重新排队。
                 stopped.set();return
+            except Fenced as e:
+                # 围栏拦下的写入保留现场：槽位和候选不隔离也不释放，由最新执行结束后的常规路径决定去向。
+                stopped.set();save('fenced',lease=lease,candidate_id=c['id'] if c else '',detail=str(e)[:500]);return
             except Exception as e:
                 stopped.set()
                 if lease:

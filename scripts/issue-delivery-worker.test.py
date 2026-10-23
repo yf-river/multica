@@ -25,6 +25,42 @@ class DeliveryTests(unittest.TestCase):
         with patch.object(worker,'advance',return_value=dict(verification_deferred=True)):
             self.assertTrue(worker.verification_pending(d),'归属在队列读取之后变更时不能释放候选')
 
+    def test_fenced_verification_write_keeps_slot_and_notifies_once(self):
+        import uuid,urllib.error
+        identity=str(uuid.uuid4());token='worker-token';commit='a'*40
+        lease=dict(delivery_id=identity,worker_token=token,source_commit=commit,candidate_id='candidate',name='verify-1',generation=2)
+        state={'runs':0,'phase':'testing'}
+        def row():
+            attempt={} if state['runs']==0 else dict(id='native',settled=True,status='failed')
+            return dict(id=identity,phase=state['phase'],revision=4,source_commit=commit,worker_token=token,candidate_id='candidate',acceptance_submitted=False,evidence={},verification_run=attempt)
+        calls=[]
+        def api(path,body=None,method=None):
+            if path.startswith('delivery-queue?current='):return [row()]
+            if path.startswith('delivery-queue/slots?'):return dict(lease)
+            if path=='delivery-queue/slots/advance':
+                calls.append(('slot',body['action']))
+                return dict(lease) if body['action']=='resume' else {}
+            if path=='delivery-queue/advance':
+                calls.append(('advance',body.get('action')))
+                # 服务端围栏：该执行不是当前触发评论的最新运行，拒绝这次失败回填。
+                if body.get('action')=='fail':raise urllib.error.HTTPError('fixture',409,'conflict',{},None)
+                return {}
+            raise AssertionError(path)
+        def sleep(seconds):
+            # 第一轮还没有执行，第二轮原生执行结束但被围栏拦下；之后交付自行离开 testing 阶段。
+            if ('advance','fail') in calls:state['phase']='needs_changes'
+            else:state['runs']=1
+        worker=object.__new__(w.Worker);worker.env='prod'
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'lock'),patch.object(r,'candidate',return_value=dict(id='candidate',delivery_id=identity,status='verifying',commit=commit)),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'candidate_lock'),patch.object(r,'save_candidate'),patch.object(r,'drain'),patch.object(r,'release_candidate') as release,patch.object(worker,'api',side_effect=api),patch.object(w.time,'sleep',side_effect=sleep):
+            job=worker.pool_job_path(identity);job.parent.mkdir(parents=True);job.write_text(json.dumps(dict(stage='verifying',delivery_id=identity,lease=lease)))
+            meta=r.meta_path('verify-1');meta.parent.mkdir(parents=True);meta.write_text(json.dumps(dict(environment_id='verify-1',frontend_url='http://fixture')))
+            worker.pool_delivery(identity)
+            self.assertEqual([call for call in calls if call[0]=='slot' and call[1]=='quarantine'],[],'围栏不是槽位故障')
+            self.assertEqual([call for call in calls if call[0]=='advance'],[('advance','notify'),('advance','fail')],'通知只发一次，失败回填只尝试一次')
+            self.assertEqual([call for call in calls if call[0]=='slot'],[('slot','resume'),('slot','drain'),('slot','release')],'保留租约并在交付离开验收阶段后正常释放')
+            self.assertEqual(json.loads(job.read_text())['stage'],'released')
+            release.assert_called_once_with('candidate',env='verify-1')
+
     def test_serial_verification_and_integration_use_owner_protocol(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         for phase in ('testing','preparing_release'):
