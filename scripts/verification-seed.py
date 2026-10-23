@@ -100,8 +100,12 @@ def schema_identity(container, database):
     return dict(fingerprint=hashlib.sha256((migrations + '|' + columns).encode()).hexdigest(), migrations=applied, tables=tables)
 
 
+CONTROL_ENVIRONMENT = 'prod'
+
+
 def control():
-    meta = r.read(r.meta_path('prod'))
+    # 修改 1. 维护和种子登记走控制端接口；演练可在隔离槽位上跑同一套接口，生产仍默认 prod。
+    meta = r.read(r.meta_path(CONTROL_ENVIRONMENT))
     profile = r.read(meta['daemon_profile_path'])
     return meta, profile
 
@@ -504,8 +508,11 @@ if __name__ == '__main__':
     build = sub.add_parser('build'); build.add_argument('--id', required=True); build.add_argument('--from', dest='origin', type=Path, required=True); build.add_argument('--release', type=Path, required=True); build.add_argument('--postgres-config', type=Path, required=True)
     verify = sub.add_parser('verify'); verify.add_argument('--environment', choices=r.VERIFICATION_ENVS, required=True); verify.add_argument('--seed', type=Path, required=True); verify.add_argument('--postgres-config', type=Path, required=True); verify.add_argument('--accept', action='store_true')
     ensure_command = sub.add_parser('ensure'); ensure_command.add_argument('--environment', choices=r.VERIFICATION_ENVS, required=True); ensure_command.add_argument('--postgres-config', type=Path, required=True)
-    sub.add_parser('status')
+    status_command = sub.add_parser('status')
+    for item in (verify, reset_command, ensure_command, status_command):
+        item.add_argument('--control', choices=('prod', 'int', *r.VERIFICATION_ENVS), default='prod', help='承载交付队列接口的控制端；演练时指向隔离环境')
     args = parser.parse_args()
+    CONTROL_ENVIRONMENT = args.control
     if args.action == 'export':
         export_seed(args.destination.resolve())
     elif args.action == 'reset':
