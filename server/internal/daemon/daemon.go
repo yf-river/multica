@@ -8314,14 +8314,14 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		}
 	}
 
-	interrupted := func(result agent.Result) agent.Result {
+	interrupted := func(result agent.Result, interruption error) agent.Result {
 		if idleWatchdogFired.Load() {
 			result.Status = "idle_watchdog"
 			result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
-		} else if errors.Is(drainCtx.Err(), context.Canceled) {
+		} else if errors.Is(interruption, context.Canceled) {
 			result.Status = "cancelled"
 			result.Error = "task cancelled by upstream context (server cancel or daemon shutdown)"
-		} else if drainCtx.Err() != nil {
+		} else if interruption != nil {
 			result.Status = "timeout"
 			result.Error = "agent did not produce result within drain timeout"
 		}
@@ -8329,9 +8329,10 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	}
 	select {
 	case result := <-session.Result:
+		// 以结果收到时的截止状态分类；尾部冲刷超时不能抹掉已经正常到达的结果。
+		interruption := drainCtx.Err()
 		waitForDrain()
-		// 结果与取消同时到达时也保持取消分类，不能将迟到结果当成成功。
-		return interrupted(result), toolCount.Load(), nil
+		return interrupted(result, interruption), toolCount.Load(), nil
 	case <-drainCtx.Done():
 		agentCancel()
 		result, collected := awaitInterruptedBackendResult(session.Result)
@@ -8340,7 +8341,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		}
 		stopMessages()
 		waitForDrain()
-		return interrupted(result), toolCount.Load(), nil
+		return interrupted(result, drainCtx.Err()), toolCount.Load(), nil
 	}
 }
 

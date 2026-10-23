@@ -218,3 +218,65 @@ func TestExecuteAndDrainCancellationClosedResultChannel(t *testing.T) {
 		t.Fatalf("无末结果provider取消未正确退出: %+v %v", result, err)
 	}
 }
+
+func TestExecuteAndDrainResultBeforeDeadlineSurvivesLateTranscriptFlush(t *testing.T) {
+	t.Parallel()
+	flushStarted := make(chan struct{})
+	releaseFlush := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFlush) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		close(flushStarted)
+		<-releaseFlush
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer release()
+	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	messages := make(chan agent.Message, 1)
+	messages <- agent.Message{Type: agent.MessageText, Content: "final transcript"}
+	close(messages)
+	results := make(chan agent.Result)
+	resultReceived := make(chan struct{})
+	go func() {
+		select {
+		case results <- agent.Result{Status: "completed", Output: "completed before deadline", SessionID: "early-session", ProviderTraceID: "early-trace", Usage: map[string]agent.TokenUsage{"early": {InputTokens: 5}}}:
+			close(resultReceived)
+		case <-ctx.Done():
+		}
+		close(results)
+	}()
+	type reply struct {
+		result agent.Result
+		err    error
+	}
+	returned := make(chan reply, 1)
+	go func() {
+		r, _, err := d.executeAndDrain(ctx, sessionBackend{&agent.Session{Messages: messages, Result: results}}, "p", agent.ExecOptions{}, slog.Default(), "early-result", "", new(atomic.Int32))
+		returned <- reply{r, err}
+	}()
+	select {
+	case <-resultReceived:
+	case <-ctx.Done():
+		t.Fatal("用例未保证结果早于截止到达")
+	}
+	select {
+	case <-flushStarted:
+	case <-time.After(time.Second):
+		t.Fatal("尾部HTTP冲刷未开始")
+	}
+	<-ctx.Done()
+	release()
+	select {
+	case got := <-returned:
+		if got.err != nil || got.result.Status != "completed" || got.result.SessionID != "early-session" || got.result.ProviderTraceID != "early-trace" || got.result.Usage["early"].InputTokens != 5 {
+			t.Fatalf("结果先到却因纯尾部冲刷过期被重分类: %+v %v", got.result, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("HTTP冲刷结束后未有界返回")
+	}
+}
