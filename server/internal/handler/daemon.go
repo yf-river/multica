@@ -4623,13 +4623,13 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
 
 	// 修改 2. 这次轮询本身就是"该任务仍在执行"的逐任务证据，顺手续租它名下的上游批次。
-	h.renewUpstreamLeaseForPolledTask(r.Context(), task)
+	h.renewUpstreamLeaseForPolledTask(r, task, workspaceID)
 
 	status := task.Status
 	if task.Status == "deferred" && task.FailureReason.String == "release_pause" {
@@ -4645,13 +4645,25 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 // 在线或同机其它任务的心跳都不能证明这个任务的子进程还活着，否则批次会在任务已经消失后
 // 被无限续租。身份和归属在 SQL 里一并核对（daemon_id == runtime.daemon_id、任务仍
 // running），失败只记日志，不影响状态查询本身。
-func (h *Handler) renewUpstreamLeaseForPolledTask(ctx context.Context, task db.AgentTaskQueue) {
+func (h *Handler) renewUpstreamLeaseForPolledTask(r *http.Request, task db.AgentTaskQueue, workspaceID string) {
 	if h.Upstream == nil || !task.ID.Valid || task.Status != "running" {
 		return
 	}
+	ctx := r.Context()
 	daemonID := middleware.DaemonIDFromContext(ctx)
 	if daemonID == "" {
-		return
+		// JWT/PAT 是现有 daemon 的合法登录方式。它们只提供成员身份，托管机器身份
+		// 从已授权任务绑定的 runtime 读取；客户端不能通过传 daemon ID 替别的任务续租。
+		userID := requestUserID(r)
+		if userID == "" || !task.RuntimeID.Valid {
+			return
+		}
+		runtime, err := h.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+		if err != nil || uuidToString(runtime.WorkspaceID) != workspaceID ||
+			(runtime.OwnerID.Valid && uuidToString(runtime.OwnerID) != userID && runtime.Visibility != "workspace") {
+			return
+		}
+		daemonID = runtime.DaemonID.String
 	}
 	renewCtx, cancelRenew := context.WithTimeout(ctx, statusPollUpstreamLeaseTimeout)
 	defer cancelRenew()
