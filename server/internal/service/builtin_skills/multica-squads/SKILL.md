@@ -9,7 +9,7 @@ allowed-tools: Bash(multica *)
 
 ## Release handoff
 
-For a squad-owned code delivery, the leader coordinates implementation and verification in the isolated int environment. The task may submit an immutable release request, but it must not synchronously wait for or claim the external publisher's result. Production promotion requires persisted evidence that the task completed naturally and that int passed deployment identity, browser/API/WebSocket, real task, workspace/artifact, isolation, and fatal-log checks. Missing evidence is a stop condition.
+For squad-owned code delivery, load `multica-coordinating-work` for coordination and `multica-working-on-issues` for the delivery contract. Follow the target project's current integration and authorization rules. Submit exact-candidate evidence and finish the execution; the external publisher advances the release and reports the result. Dispatch, review approval, and HTTP health alone are not production business acceptance.
 
 ## Quick start
 

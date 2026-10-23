@@ -347,3 +347,7 @@ Verification command:
 ```bash
 go test ./internal/handler -run 'Test.*Squad|Test.*squad|Test.*Autopilot.*Squad|Test.*ChildDone.*Squad'
 ```
+
+## 持续交付协调
+
+交付安排与故障判断统一见 `multica-coordinating-work`；发布操作与授权读取 `multica-working-on-issues`。`builtin_agents.go` 的 Mika 模板仅用于创建，现有 Agent 指令需通过正常更新接口单独维护。
