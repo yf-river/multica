@@ -529,7 +529,7 @@ class Worker:
                 candidate_id=record['id'],candidate_commit=commit))
             # 修改 7. 候选固定后成员撤权时服务端已让批次安全停下：丢弃这份候选，不通知成员进入发布。
             if state['batch']['status']!='validating':
-                r.release_candidate(record['id']);return True
+                r.release_candidate(record['id']);self.finish_publication(delivery);return True
         for member in members:
             row=self.batch_row(rows,member['delivery_id'])
             if not row:continue
