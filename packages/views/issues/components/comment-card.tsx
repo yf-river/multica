@@ -798,6 +798,7 @@ function CommentRow({
                 agents={edit.triggerPreview.agents}
                 blocked={edit.triggerPreview.blocked}
                 draftContent={edit.content}
+                reviewReply={edit.triggerPreview.reviewReply}
                 suppressedAgentIds={edit.suppressedAgentIds}
                 onToggle={edit.toggleSuppressedAgent}
               />
@@ -1139,6 +1140,7 @@ function CommentCardImpl({
                       agents={edit.triggerPreview.agents}
                       blocked={edit.triggerPreview.blocked}
                       draftContent={edit.content}
+                      reviewReply={edit.triggerPreview.reviewReply}
                       suppressedAgentIds={edit.suppressedAgentIds}
                       onToggle={edit.toggleSuppressedAgent}
                     />

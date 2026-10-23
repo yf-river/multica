@@ -42,11 +42,13 @@ import { sortTimelineEntriesAsc } from "@multica/core/issues/timeline-sort";
 import {
   unhandledCommentTriggerOutcomes,
   mentionLabelsByTarget,
+  parseReviewReply,
 } from "@multica/core/issues/comment-trigger-outcomes";
 import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 import { blockedShortReasonLabel } from "../blocked-trigger-copy";
+import { reviewReplyToast } from "../review-reply-copy";
 
 type TLCache = TimelineEntry[];
 
@@ -357,6 +359,20 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     [t],
   );
 
+  // 回复审查员时，回执必须说清这条回复实际交给了谁、运行有没有真的开始（GONG-63）：
+  // 「评论保存成功」不等于「Agent 已启动」，转交失败也不能静默。
+  const notifyReviewReply = useCallback(
+    (raw: unknown) => {
+      const reply = parseReviewReply(raw);
+      if (!reply) return;
+      const copy = reviewReplyToast(reply, t);
+      if (!copy) return;
+      if (copy.tone === "warning") toast.warning(copy.text);
+      else toast.info(copy.text);
+    },
+    [t],
+  );
+
   // 成功返回 true、失败返回 false。编辑器会一直保留用户的文字（编辑锁定 + 按钮转圈）
   // 直到这里落定，并且只在成功时才清空——所以一次慢发送不会再让输入框旁边留着一条
   // 已发送的评论，而一次失败的发送也会保留草稿。
@@ -366,6 +382,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
       try {
         const comment = await createComment({ content, attachmentIds, suppressAgentIds });
         warnUnhandledTriggers(comment?.trigger_outcomes, comment?.content);
+        notifyReviewReply(comment?.review_reply);
         return comment.id;
       } catch (err) {
         toast.error(
@@ -376,7 +393,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
         return false;
       }
     },
-    [userId, createComment, warnUnhandledTriggers, t],
+    [userId, createComment, warnUnhandledTriggers, notifyReviewReply, t],
   );
 
   const submitReply = useCallback(
@@ -391,6 +408,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
           suppressAgentIds,
         });
         warnUnhandledTriggers(comment?.trigger_outcomes, comment?.content);
+        notifyReviewReply(comment?.review_reply);
         return comment.id;
       } catch (err) {
         toast.error(
@@ -401,7 +419,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
         return false;
       }
     },
-    [userId, createComment, warnUnhandledTriggers, t],
+    [userId, createComment, warnUnhandledTriggers, notifyReviewReply, t],
   );
 
   const editComment = useCallback(
@@ -414,8 +432,9 @@ export function useIssueTimeline(issueId: string, userId?: string) {
         contentBase,
       });
       warnUnhandledTriggers(comment?.trigger_outcomes, comment?.content);
+      notifyReviewReply(comment?.review_reply);
     },
-    [updateComment, warnUnhandledTriggers],
+    [updateComment, warnUnhandledTriggers, notifyReviewReply],
   );
 
   const deleteComment = useCallback(

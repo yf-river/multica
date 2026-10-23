@@ -9,7 +9,7 @@
 
 import { useMemo, useState } from "react";
 import { TriangleAlert } from "lucide-react";
-import type { CommentTriggerPreviewAgent, CommentTriggerOutcome } from "@multica/core/types";
+import type { CommentReviewReply, CommentTriggerPreviewAgent, CommentTriggerOutcome } from "@multica/core/types";
 import { useAgentPresenceDetail } from "@multica/core/agents";
 import { mentionLabelsByTarget } from "@multica/core/issues/comment-trigger-outcomes";
 import { useCurrentWorkspace } from "@multica/core/paths";
@@ -25,6 +25,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { AgentStatusDot } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 import { blockedReasonLabel, blockedShortReasonLabel } from "../blocked-trigger-copy";
+import { reviewReplyRecipientLabel } from "../review-reply-copy";
 
 // 单个 agent 完整渲染（"Walt 即将开始工作"，头像 + 状态点，点击切换）。
 // 多个 agent 折叠成重叠头像堆 + 计数句，与 issues 头部那个
@@ -46,6 +47,9 @@ interface CommentTriggerChipsProps {
   // 服务端省略被拦目标的名字（枚举安全）；这是用户自己的文本，
   // 因此不会泄露任何新东西。
   draftContent?: string;
+  // 回复审查员时这条草稿的实际接收人（GONG-63）。说明「回复不会交给审查员」，
+  // 人类负责人与未设置负责人也要有明确提示，不能读作静默无操作。
+  reviewReply?: CommentReviewReply | null;
   suppressedAgentIds: Set<string>;
   onToggle: (agentId: string) => void;
 }
@@ -60,6 +64,9 @@ function sourceLabel(source: string, t: IssuesT): string {
       return t(($) => $.comment.trigger_source_mention_agent);
     case "mention_squad_leader":
       return t(($) => $.comment.trigger_source_mention_squad_leader);
+    case "review_followup_assignee":
+      // 回复审查员的转交目标：来源写「任务负责人」，不暗示审查员会回应。
+      return t(($) => $.comment.trigger_source_review_followup_assignee);
     default:
       return t(($) => $.comment.trigger_source_unknown);
   }
@@ -75,6 +82,8 @@ function sourceReason(agent: CommentTriggerPreviewAgent, t: IssuesT): string | n
       return null;
     case "mention_squad_leader":
       return t(($) => $.comment.trigger_reason_mention_squad_leader);
+    case "review_followup_assignee":
+      return t(($) => $.comment.trigger_reason_review_followup_assignee);
     default:
       return agent.reason || t(($) => $.comment.trigger_reason_unknown);
   }
@@ -137,6 +146,7 @@ export function CommentTriggerChips({
   agents,
   blocked = [],
   draftContent = "",
+  reviewReply = null,
   suppressedAgentIds,
   onToggle,
 }: CommentTriggerChipsProps) {
@@ -147,7 +157,11 @@ export function CommentTriggerChips({
 
   // 加载与错误都不渲染任何东西：预览只是增强，这里的任何临时 UI 都会
   // 读成输入框噪音。
-  if (agents.length === 0 && blocked.length === 0) return null;
+  if (agents.length === 0 && blocked.length === 0 && !reviewReply) return null;
+
+  const reviewNotice = reviewReply ? (
+    <ReviewReplyNotice reviewReply={reviewReply} t={t} />
+  ) : null;
 
   const allowed =
     agents.length === 1 ? (
@@ -166,19 +180,43 @@ export function CommentTriggerChips({
       />
     ) : null;
 
-  if (blocked.length === 0) return allowed;
+  if (blocked.length === 0 && !reviewNotice) return allowed;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {allowed}
-      {blocked.map((outcome) => (
-        <BlockedTriggerChip
-          key={`${outcome.target_type}:${outcome.target_id}`}
-          outcome={outcome}
-          label={blockedLabels.get(`${outcome.target_type}:${outcome.target_id}`)}
-          t={t}
-        />
-      ))}
+    <div className="flex flex-col gap-1">
+      {reviewNotice}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {allowed}
+        {blocked.map((outcome) => (
+          <BlockedTriggerChip
+            key={`${outcome.target_type}:${outcome.target_id}`}
+            outcome={outcome}
+            label={blockedLabels.get(`${outcome.target_type}:${outcome.target_id}`)}
+            t={t}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 回复审查员的接收人提示（GONG-63）：一句话说清这条回复会交给谁，避免用户以为
+// 审查员会回应。负责人是人类或未设置时也必须显示——那正是「没有 Agent 启动」的场合。
+function ReviewReplyNotice({ reviewReply, t }: { reviewReply: CommentReviewReply; t: IssuesT }) {
+  const blocked = reviewReply.status === "blocked";
+  const text = reviewReplyRecipientLabel(reviewReply, t);
+  if (!text) return null;
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-1 text-micro",
+        blocked ? "text-destructive" : "text-muted-foreground",
+      )}
+    >
+      {blocked && <TriangleAlert className="size-3 shrink-0" />}
+      <span className="truncate" title={text}>
+        {text}
+      </span>
     </div>
   );
 }
