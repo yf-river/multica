@@ -187,6 +187,11 @@ var concurrentIndexCleanups = map[string]string{
 	"615_issue_review_issue":            "issue_review_issue_unique",
 	"616_issue_review_workspace":        "issue_review_workspace_state",
 	"619_supervision_managed_agent_key": "agent_quality_supervision_unique",
+	"621_supervision_round_key":         "supervision_round_key",
+	"622_supervision_round_sequence":    "supervision_round_sequence",
+	"623_supervision_round_open":        "supervision_round_open",
+	"625_supervision_batch_round_key":   "supervision_batch_round_key",
+	"626_supervision_batch_round_round": "supervision_batch_round_round",
 	// 2. 种子槽位与发布批次的新索引同样并发建；建表与建索引分开成迁移，中断后按名清理 INVALID 残留再重试。
 	"629_verification_slot_maintenance_index":  "verification_slot_maintenance_name_created",
 	"630_delivery_batch_active_index":          "delivery_batch_active",

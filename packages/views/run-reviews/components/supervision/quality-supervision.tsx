@@ -19,7 +19,7 @@ import { SupervisionDetail } from "./supervision-detail";
 import { SupervisionSettings } from "./supervision-settings";
 import { errorText, moment, reviewState, type ReviewState } from "./supervision-shared";
 
-const FILTERS = ["all", "problems", "incomplete", "pending", "failed"] as const;
+const FILTERS = ["all", "waiting", "problems", "incomplete", "pending", "failed"] as const;
 
 /** Quality supervision tab: overview, filters, review list, and its two sheets. */
 export function QualitySupervision() {
@@ -71,22 +71,26 @@ export function QualitySupervision() {
   const paused = !config.enabled && !config.error && Boolean(config.agent_id);
   const filtersActive = Boolean(search || project || filter !== "all");
   const stateLabels: Record<ReviewState, string> = {
+    waiting: t(($) => $.supervision.status_waiting),
+    manual_running: t(($) => $.supervision.status_manual_running),
+    manual_checked: t(($) => $.supervision.status_manual_checked),
     no_runs: t(($) => $.supervision.status_no_runs),
     running: t(($) => $.supervision.status_running),
     stopped: t(($) => $.supervision.status_stopped),
     failed: t(($) => $.supervision.status_failed),
     retrying: t(($) => $.supervision.status_retrying),
-    changed: t(($) => $.supervision.status_changed),
     pending: t(($) => $.supervision.status_pending),
     covered: t(($) => $.supervision.status_covered),
   };
   const stateTones: Record<ReviewState, string> = {
+    waiting: "text-muted-foreground",
+    manual_running: "border-info/40 bg-info/10 text-info",
+    manual_checked: "text-muted-foreground",
     no_runs: "text-muted-foreground",
     running: "border-info/40 bg-info/10 text-info",
     stopped: "text-muted-foreground",
     failed: "border-destructive/40 bg-destructive/10 text-destructive",
     retrying: "border-warning/40 bg-warning/10 text-warning",
-    changed: "border-warning/40 bg-warning/10 text-warning",
     pending: "border-warning/40 bg-warning/10 text-warning",
     covered: "text-muted-foreground",
   };
@@ -106,7 +110,7 @@ export function QualitySupervision() {
           </div>
           {config.concurrency != null && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.concurrency_summary, { running: summary.running, capacity: config.concurrency, pending: summary.pending })}</p>}
           <p className="text-caption text-muted-foreground">
-            {t(($) => $.supervision.interval_summary, { minutes: Math.round(config.interval_seconds / 60) })}
+            {t(($) => $.supervision.auto_scope_line)}
             {" · "}
             {t(($) => $.supervision.last_success)} {moment(config.last_success_at)}
           </p>
@@ -125,6 +129,7 @@ export function QualitySupervision() {
               variant="outline"
               disabled={!config.enabled || check.isPending}
               aria-describedby={paused ? "supervision-paused-hint" : undefined}
+              title={t(($) => $.supervision.check_new_hint)}
               onClick={() => check.mutate({})}
             >
               {check.isPending && <Spinner className="size-4" />}
@@ -180,6 +185,7 @@ export function QualitySupervision() {
                 <span>{t(($) => $.supervision.covered, { count: summary.covered })}</span>
                 <span>{t(($) => $.supervision.pending, { count: summary.pending })}</span>
                 <span>{t(($) => $.supervision.running, { count: summary.running })}</span>
+                <span>{t(($) => $.supervision.waiting, { count: summary.waiting })}</span>
                 <span>{t(($) => $.supervision.no_runs, { count: summary.no_runs })}</span>
               </span>
             </div>
@@ -199,6 +205,7 @@ export function QualitySupervision() {
             <p className="text-caption text-muted-foreground">
               {config.inventory_complete ? t(($) => $.supervision.coverage_hint) : t(($) => $.supervision.registering)}
             </p>
+            <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.auto_scope_hint)}</p>
             {summary.oldest_pending_at && (
               <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.oldest_pending)} {moment(summary.oldest_pending_at)}</p>
             )}
@@ -231,6 +238,7 @@ export function QualitySupervision() {
               onChange={(e) => route({ filter: e.target.value, offset: null })}
             >
               <option value="all">{t(($) => $.supervision.all)}</option>
+              <option value="waiting">{t(($) => $.supervision.waiting_filter)}</option>
               <option value="problems">{t(($) => $.supervision.problems)}</option>
               <option value="incomplete">{t(($) => $.supervision.incomplete)}</option>
               <option value="pending">{t(($) => $.supervision.pending_filter)}</option>
@@ -265,13 +273,16 @@ export function QualitySupervision() {
               ) : (
                 list.data?.items.map((item) => {
                   const state = reviewState(item);
+                  const done = (item.status_category || "done") === "done";
                   const conclusion = item.open_findings > 0
                     ? t(($) => $.supervision.problem_count, { count: item.open_findings })
-                    : item.gaps.length > 0
-                      ? t(($) => $.supervision.incomplete)
-                      : item.last_checked_at
-                        ? t(($) => $.supervision.no_findings)
-                        : t(($) => $.supervision.no_conclusion);
+                    : !done
+                      ? t(($) => $.supervision.waiting_conclusion)
+                      : item.gaps.length > 0
+                        ? t(($) => $.supervision.incomplete)
+                        : item.last_checked_at
+                          ? t(($) => $.supervision.covered_no_findings)
+                          : t(($) => $.supervision.no_conclusion);
                   return (
                     <button
                       key={item.issue_id}
