@@ -146,7 +146,7 @@ def checksums(root):
                 result[rel] = h.hexdigest()
     return result
 
-def checked_source(source):
+def checked_source(source, *, verification=False):
     source = Path(source).resolve()
     if Path(output(['git', 'rev-parse', '--show-toplevel'], cwd=source)).resolve() != source:
         raise RuntimeError('必须指定 Git checkout 根目录')
@@ -162,7 +162,8 @@ def checked_source(source):
     published = RUN/'published.json'
     if not published.exists(): raise RuntimeError('缺少已发布源码记录，停止构建并检查运行配置')
     baseline = read(published)['commit']
-    if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
+    # 独立验收固定候选；最终 int 与生产发布才要求跟随已发布基线。
+    if not verification and subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
         raise RuntimeError('候选未包含最新已发布提交，请先整合代码')
     return source, sha
 
@@ -213,8 +214,8 @@ def reusable_build(previous, current_files, version):
     if previous.get('version') != version: return False
     return all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
 
-def build(source, target):
-    source, sha = checked_source(source)
+def build(source, target, *, verification=False):
+    source, sha = checked_source(source, verification=verification)
     version = build_version(source, sha)
     digest, files = source_digest(source)
     groups = {'go': hashlib.sha256(), 'web': hashlib.sha256()}
@@ -259,7 +260,7 @@ def build(source, target):
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
         destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
         destination.write_bytes((source/'scripts'/name).read_bytes())
-    if checked_source(source)[1] != sha or source_digest(source)[0] != digest:
+    if checked_source(source, verification=verification)[1] != sha or source_digest(source)[0] != digest:
         raise RuntimeError('构建期间源码变化，请重新联调')
     queries = []
     for file in sorted((source/'server/pkg/db/generated').glob('*.sql.go')):
@@ -892,7 +893,7 @@ def prepare_int(source, timeout=900, delivery=None, fence=None):
 def build_verification(source, delivery_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', delivery_id):
         raise RuntimeError('非法交付编号')
-    source, sha = checked_source(source)
+    source, sha = checked_source(source, verification=True)
     target = RUN/'verification-builds'/'commits'/sha
     with lock('verification-build', wait=True):
         if (target/'release.json').exists():
@@ -903,7 +904,7 @@ def build_verification(source, delivery_id):
         if target.exists():
             assert_unused(target)
             shutil.rmtree(target)
-        build(source, target)
+        build(source, target, verification=True)
     return target
 
 
@@ -915,7 +916,7 @@ def prepare_verification(source, artifact, lease):
         active = candidate(env=env) if candidate_path(env).exists() else None
         if active and active['status'] not in ('released','failed','succeeded'):
             raise RuntimeError('验收槽位仍被候选占用')
-        source, sha = checked_source(source)
+        source, sha = checked_source(source, verification=True)
         manifest = read(Path(artifact)/'release.json')
         if manifest['source_commit'] != sha or manifest['files'] != checksums(artifact):
             raise RuntimeError('构建产物与候选提交不匹配')
@@ -944,11 +945,12 @@ def prepare_verification(source, artifact, lease):
 def validate_candidate(record, allow_finalized=False):
     env = record.get('environment', 'int')
     candidate_path(env)
+    verification = env in VERIFICATION_ENVS
     current=read(meta_path(env))
     if any(current.get(k) != record.get(k) for k in ('release_id','source_digest','deployed_at')):
         raise RuntimeError('int 在验收后发生变化，必须重新验证')
     if Path(record['source']).exists():
-        source, sha=checked_source(record['source'])
+        source, sha=checked_source(record['source'], verification=verification)
         if sha != record['commit'] or source_digest(source)[0] != record['source_digest']:
             raise RuntimeError('候选源码已变化，必须重新联调')
     elif not allow_finalized:
@@ -957,7 +959,7 @@ def validate_candidate(record, allow_finalized=False):
     if output(['git','--git-dir',common,'rev-parse',record['branch']]) != record['commit']:
         raise RuntimeError('候选分支发生变化')
     published=RUN/'published.json'
-    if published.exists() and subprocess.run(['git','--git-dir',common,'merge-base','--is-ancestor',read(published)['commit'],record['commit']]).returncode:
+    if not verification and published.exists() and subprocess.run(['git','--git-dir',common,'merge-base','--is-ancestor',read(published)['commit'],record['commit']]).returncode:
         raise RuntimeError('候选未包含最新生产提交')
     return current
 
