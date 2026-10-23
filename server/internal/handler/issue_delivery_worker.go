@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
@@ -421,16 +422,17 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,$2,$3) ON CONFLICT(delivery_id,stage) DO NOTHING`, body.ID, next, dbid.NewV7())
 	}
 	var issueEvent *events.Event
+	// 1. 交付验收通过也把任务推进到审核中；把前后两版任务行留到事务外，提交后
+	// 与手动改状态共用同一个后处理入口，避免这条写入路径单独漏掉审查派发和清绿勾。
+	var previous, updated db.Issue
 	if err == nil && (next == "awaiting_review" || body.Action == "accepted") {
 		q := h.Queries.WithTx(tx)
-		previous, readErr := q.GetIssue(r.Context(), parseUUID(issue))
-		err = readErr
+		previous, err = q.GetIssue(r.Context(), parseUUID(issue))
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE issue SET status='in_review',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, issue)
 		}
 		if err == nil {
-			updated, readErr := q.GetIssue(r.Context(), parseUUID(issue))
-			err = readErr
+			updated, err = q.GetIssue(r.Context(), parseUUID(issue))
 			if err == nil {
 				status := "in_review"
 				event, recordErr := service.RecordDurableEventTx(r.Context(), q, buildIssueUpdatedEvent(r.Context(), h, updated, previous, UpdateIssueRequest{Status: &status}, nil, "member", requestUserID(r)))
@@ -448,6 +450,11 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if issueEvent != nil {
 		h.publishEvent(*issueEvent)
+	}
+	// 2. 与 PUT /issues、批量改状态同一条后处理：进入审核中即派发审查并清掉上一轮
+	// 绿勾。事务已提交，这里的失败不影响交付结果，由周期补扫兜底重派。
+	if updated.ID.Valid {
+		h.afterIssueStatusChangeForReview(r.Context(), previous, updated)
 	}
 	if notifyReview {
 		// 6. 通知失败不回滚已保存的待复核状态；待复核意图保留，下一次队列轮询会补发。
