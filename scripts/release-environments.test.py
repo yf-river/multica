@@ -12,6 +12,14 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_database_check_uses_same_pinned_controller_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pinned=Path(tmp)/'pinned/release.py'
+            with patch.object(r,'__file__',str(pinned)),patch.object(r,'ROOT',Path(tmp)/'stale-control'),patch.object(r,'run') as run:
+                r.check_database(Path('/release'),{'server':{'DATABASE_URL':'owned-test','MULTICA_MIGRATION_BASELINE':'true'}})
+                self.assertEqual(run.call_args.args[0],['node',pinned.with_name('check-release-database.mjs'),Path('/release/server/queries.json')])
+                self.assertEqual(run.call_args.kwargs['env']['MULTICA_MIGRATION_BASELINE'],'true')
+
     def test_unready_backend_does_not_start_web_or_daemon(self):
         metadata={'backend_url':'http://api','log_paths':{'server':'server.log'}}
         def check(url,**kwargs):
@@ -238,6 +246,7 @@ class ReleaseTests(unittest.TestCase):
                     first=r.request_release('v');second=r.request_release('v')
                     self.assertEqual(first['id'],second['id']);launch.assert_called_once()
                     self.assertEqual(launch.call_args.args[0][0],'systemd-run')
+                    self.assertEqual((r.RUN/'publisher/v/check-release-database.mjs').read_bytes(),Path(r.__file__).with_name('check-release-database.mjs').read_bytes())
                 failed=r.read(r.request_path('v'));failed['status']='failed';r.write(r.request_path('v'),failed)
                 with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'),patch.object(r,'check_delivery_approval'):
                     with self.assertRaisesRegex(RuntimeError,'重新联调'): r.request_release('v')

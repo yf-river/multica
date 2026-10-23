@@ -66,7 +66,7 @@
 
 `/health` 只证明当前进程存活；`/healthz` 还核对数据库与该运行版本要求的迁移。发布启动 Web、Daemon 前及浏览器验收前均检查 `/healthz`。迁移不齐时不能以页面能打开或存活探针通过代替验收。
 
-先从部署记录的 server PID 核对实际 cwd、迁移目录、进程环境与数据库连接，再将该目录的完整 migration version 集合与 `schema_migrations` 对照。使用 `000_initial_schema` 快照初始化的数据库，持久服务配置和服务进程使用 `MULTICA_MIGRATION_BASELINE=true`，与初始化模式一致；传统逐条迁移的库不能据名字套用此模式。参数变化通过正常发布切换生效，不修改运行进程的环境或伪造台账。
+先从部署记录的 server PID 核对实际 cwd、迁移目录、进程环境与数据库连接，再将该目录的完整 migration version 集合与 `schema_migrations` 对照。使用 `000_initial_schema` 快照初始化的数据库，持久服务配置和服务进程使用 `MULTICA_MIGRATION_BASELINE=true`，与初始化模式一致；传统逐条迁移的库不能据名字套用此模式。参数变化通过正常发布切换生效，不修改运行进程的环境或伪造台账。 发布前的只读查询检查同时核对 `000_initial_schema` 台账与实际 `MULTICA_MIGRATION_BASELINE` 配置是否一致；不一致时在停止旧服务前阻断。检查器随固定版本控制器安装及发布子进程打包，不依赖控制目录的旧源码。
 
 历史缺口可能不在新旧源码差异中：日常发布只执行新增文件，不能自动重放全部旧 SQL。对真实缺失项逐条审查运行时消费者、现存数据和旧新程序兼容性，保留备份并在独占实例实际还原、演练迁移和恢复。确需执行时使用准确版本的 `migrate up --versions <完整version>`，由迁移工具正常记录台账；不直接 INSERT/UPDATE `schema_migrations`，不为探针通过跳过缺失版本。
 

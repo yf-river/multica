@@ -252,7 +252,7 @@ def build(source, target):
             run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
         script=source/'scripts'/name
         if script.exists():(operations/name).parent.mkdir(parents=True,exist_ok=True);(operations/name).write_bytes(script.read_bytes())
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
@@ -599,7 +599,7 @@ def launch(env, release, cfg, m):
     return result
 
 def check_database(release, cfg):
-    run(['node', ROOT/'scripts/check-release-database.mjs', Path(release)/'server/queries.json'],
+    run(['node', Path(__file__).with_name('check-release-database.mjs'), Path(release)/'server/queries.json'],
         env={**os.environ, **cfg['server']})
 
 
@@ -1027,6 +1027,7 @@ def request_release(version,timeout=900):
         runner.parent.mkdir(parents=True,exist_ok=True)
         runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
         copy_browser_operations(runner.parent)
+        (runner.parent/'check-release-database.mjs').write_bytes(Path(__file__).with_name('check-release-database.mjs').read_bytes())
         (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
 
         write(target,record,True);save_candidate(record)

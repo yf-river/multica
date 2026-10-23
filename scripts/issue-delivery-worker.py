@@ -782,7 +782,7 @@ def install(env):
     r.require_control_directory()
     # 修改 3. 种子恢复由接力器调用，操作脚本必须与接力器同版本安装；沿用主工作区的旧脚本会让恢复和清理规则不同步。
     names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py','verification-environments.py',
-           'verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs') + r.BROWSER_OPERATIONS
+           'verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs') + r.BROWSER_OPERATIONS
     digest=r.hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in names)).hexdigest()[:16]
     directory=r.RUN/'publisher'/('delivery-'+env+'-'+digest)
     directory.mkdir(parents=True,exist_ok=True)

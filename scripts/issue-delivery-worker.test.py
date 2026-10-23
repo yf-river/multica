@@ -5,6 +5,18 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    def test_install_bundles_exact_database_checker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);units=root/'units';units.mkdir()
+            def paths(value):
+                return units if str(value)=='/etc/systemd/system' else Path(value)
+            with patch.object(w,'Path',side_effect=paths),patch.object(r,'RUN',root),patch.object(r,'require_control_directory'),patch.object(r,'run') as run:
+                w.install('prod')
+            bundles=list((root/'publisher').glob('delivery-prod-*'))
+            self.assertEqual(len(bundles),1)
+            self.assertEqual((bundles[0]/'check-release-database.mjs').read_bytes(),Path(w.__file__).with_name('check-release-database.mjs').read_bytes())
+            self.assertIn(str(bundles[0]/'issue-delivery-worker.py'),(units/'multica-delivery-prod.service').read_text())
+            self.assertTrue(run.called)
     def git(self,root,*args):return subprocess.check_output(['git','-C',str(root),*args],stderr=subprocess.DEVNULL,text=True).strip()
     def test_pinned_source_survives_original_worktree_removal_and_branch_changes(self):
         with tempfile.TemporaryDirectory() as folder:
