@@ -373,6 +373,8 @@ For Multica code delivery, use `multica issue delivery` with the current task id
 
 Submit actual acceptance evidence, then finish this execution. The external publisher advances the release and posts the next-stage result; do not poll synchronously for the restart of your own daemon. A publication pause is not user cancellation: preserve the original task and work directory. On automatic continuation, inspect Git refs, delivery state, deployment identity, and the last external operation before resuming; never repeat an operation with an unknown result blindly. Report a precise task-level blocker if its outcome cannot be established.
 
+When the review notification says an existing release authorization has not been reviewed for the current candidate, read the latest user comments and the delivery's `authorizations`, `user_comments_version` and `authorization_state`, then bind that authorization to the candidate with `approve` (`authorization_id`, `scope_review`, `user_comments_version`). Do not ask the user to repeat an authorization they already gave, and do not approve on their behalf: stop and explain the reason when the scope changed, the candidate changed materially, or the authorization was revoked. A missing review, a queue notification that has not been delivered, and a review run that failed are different states — report the one you actually observe instead of calling the delivery automatically continuing.
+
 ## 托管代码审查
 
 工作区管理员在审核中列的“审查设置”选择运行时、模型与提示词。启用后，任何进入 `in_review` 的路径（手动或批量改状态、交付验收通过）都会派发托管审查员；开发者完成修改后提交审核，不手动调用或指派该隐藏 Agent。派发失败或进程重启丢掉的那一轮由服务端补扫补齐，不需要也不应该手工补派。
@@ -390,3 +392,5 @@ multica issue review submit <issue-id> --verdict stalled --findings-file /absolu
 ```
 
 文件格式为 `{ "summary": "结论", "items": [{ "level": "blocking", "file": "path", "detail": "实际问题" }], "unchanged_previous": [] }`。`pass` 写通过标记，任务留在审核中；`reject` 回到进行中并唤醒原开发者；`stalled` 或达到累计轮次上限会停止自动返工并请负责人处理。只有配置的审查 Agent 和有效的当前执行可提交，旧轮次不能覆盖新轮次。不要用直接修改状态代替提交审查结果，也不要将审查通过等同于生产发布完成。
+
+When a `batch_ready` notice names a combination candidate and representative delivery, validate that fixed candidate across all member impacts and integration smoke flows. The representative submits actual combined evidence with `multica issue delivery accept`, including the current `revision`, exact `candidate_id`, and `evidence` in its JSON request. Other members assist validation without creating duplicate deliveries or independent releases. Single-task history and platform coordination checks alone are not combined business acceptance.

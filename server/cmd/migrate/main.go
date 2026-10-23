@@ -192,10 +192,14 @@ var concurrentIndexCleanups = map[string]string{
 	"623_supervision_round_open":        "supervision_round_open",
 	"625_supervision_batch_round_key":   "supervision_batch_round_key",
 	"626_supervision_batch_round_round": "supervision_batch_round_round",
-	"520_repository_id":                 "repository_id_idx",
-	"521_repository_identity":           "repository_identity_idx",
-	"522_repository_location_id":        "repository_location_id_idx",
-	"523_repository_location_daemon":    "repository_location_daemon_idx",
+	// 2. 种子槽位与发布批次的新索引同样并发建；建表与建索引分开成迁移，中断后按名清理 INVALID 残留再重试。
+	"629_verification_slot_maintenance_index":  "verification_slot_maintenance_name_created",
+	"630_delivery_batch_active_index":          "delivery_batch_active",
+	"631_delivery_batch_member_delivery_index": "delivery_batch_member_delivery",
+	"520_repository_id":                        "repository_id_idx",
+	"521_repository_identity":                  "repository_identity_idx",
+	"522_repository_location_id":               "repository_location_id_idx",
+	"523_repository_location_daemon":           "repository_location_daemon_idx",
 
 	"498_cooking_favorite_unique":                                              "cooking_favorite_user_recipe_idx",
 	"457_domain_event_outbox_pending_index":                                    "domain_event_outbox_pending_idx",

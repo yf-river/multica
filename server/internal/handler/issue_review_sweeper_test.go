@@ -24,16 +24,6 @@ func reviewTasksFor(t *testing.T, issueID, agentID string) int {
 	return count
 }
 
-// deliveryRevision 读当前交付记录的 revision，避免测试自己猜乐观锁值。
-func deliveryRevision(t *testing.T, deliveryID string) int64 {
-	t.Helper()
-	var revision int64
-	if err := testPool.QueryRow(context.Background(), `SELECT revision FROM issue_delivery WHERE id=$1`, deliveryID).Scan(&revision); err != nil {
-		t.Fatalf("load delivery revision: %v", err)
-	}
-	return revision
-}
-
 func cleanupIssueTasks(t *testing.T, issueIDs ...string) {
 	t.Helper()
 	t.Cleanup(func() {
