@@ -28,6 +28,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/upstream"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -1957,6 +1958,31 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			ID:          task.AgentID,
 			WorkspaceID: wsUUID,
 		})
+		if isNotFound(err) {
+			// 上游任务在模型调用 start 前尚无同步批次；用持久化自动化派发来源
+			// 识别预启动任务，取消权限仍限定在同工作区管理员。
+			managed, lookupErr := h.Queries.GetAgent(r.Context(), task.AgentID)
+			if lookupErr == nil && managed.WorkspaceID == wsUUID && managed.Kind == "system" && upstream.IsExecutorSystemKey(managed.SystemKey.String) {
+				var syncTask bool
+				if lookupErr = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM upstream_sync_run WHERE task_id=$1)
+ OR EXISTS(
+ SELECT 1 FROM agent_task_queue t
+ JOIN autopilot_run ar ON ar.id=t.autopilot_run_id AND ar.task_id=t.id
+ JOIN autopilot ap ON ap.id=ar.autopilot_id
+ JOIN upstream_sync_config c ON c.singleton=1 AND c.autopilot_id=ap.id
+ WHERE t.id=$1 AND c.agent_id=t.agent_id AND c.runtime_id=t.runtime_id
+ AND ap.workspace_id=$2 AND ap.execution_mode='run_only')`, task.ID, wsUUID).Scan(&syncTask); lookupErr != nil {
+					writeError(w, http.StatusInternalServerError, "failed to load upstream task")
+					return
+				}
+				if syncTask {
+					if _, _, ok := h.upstreamScope(w, r, true); !ok {
+						return
+					}
+					agent, err = managed, nil
+				}
+			}
+		}
 		if err != nil {
 			writeError(w, http.StatusNotFound, "task not found")
 			return

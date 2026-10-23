@@ -114,11 +114,22 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	}
 }
 
-func TestNextDailyRunUsesBeijingNineAM(t *testing.T) {
-	for _, tc := range []struct{ now, want string }{{"2026-10-22T00:59:59Z", "2026-10-22T01:00:00Z"}, {"2026-10-22T01:00:00Z", "2026-10-23T01:00:00Z"}, {"2026-10-22T08:00:00Z", "2026-10-23T01:00:00Z"}} {
+func TestNextDailyRunUsesBeijingScheduleHour(t *testing.T) {
+	cases := []struct {
+		now  string
+		hour int
+		want string
+	}{
+		{"2026-10-22T00:59:59Z", 9, "2026-10-22T01:00:00Z"},
+		{"2026-10-22T01:00:00Z", 9, "2026-10-23T01:00:00Z"},
+		{"2026-10-22T08:00:00Z", 9, "2026-10-23T01:00:00Z"},
+		{"2026-10-22T08:00:00Z", 0, "2026-10-22T16:00:00Z"},
+		{"2026-10-22T08:00:00Z", 23, "2026-10-22T15:00:00Z"},
+	}
+	for _, tc := range cases {
 		now, _ := time.Parse(time.RFC3339, tc.now)
-		if got := NextDailyRun(now).UTC().Format(time.RFC3339); got != tc.want {
-			t.Fatalf("%s got %s want %s", tc.now, got, tc.want)
+		if got := NextDailyRun(now, tc.hour).UTC().Format(time.RFC3339); got != tc.want {
+			t.Fatalf("%s hour %d got %s want %s", tc.now, tc.hour, got, tc.want)
 		}
 	}
 }

@@ -8,7 +8,7 @@ vi.mock("../api", () => ({ api: { listUpstreamItems: vi.fn(), listUpstreamRuns: 
 describe("上游建议清单分页", () => {
   it("可以读取第 31 次同步记录", async () => {
     const runs = Array.from({ length: 31 }, (_, i) => ({ id: String(i), status: "completed" }) as UpstreamRun);
-    const list = vi.spyOn(api, "listUpstreamRuns").mockImplementation(async (limit = 30, offset = 0) => ({ runs: runs.slice(offset, offset + limit) }));
+    const list = vi.spyOn(api, "listUpstreamRuns").mockImplementation(async (limit = 30, offset = 0) => ({ runs: runs.slice(offset, offset + limit), total: runs.length }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const observer = new InfiniteQueryObserver(client, upstreamRunsOptions("workspace"));
     try {
@@ -23,9 +23,24 @@ describe("上游建议清单分页", () => {
       list.mockRestore();
     }
   });
+  it("最后一页刚好 30 条时不再请求下一页", async () => {
+    const runs = Array.from({ length: 30 }, (_, i) => ({ id: String(i), status: "completed" }) as UpstreamRun);
+    const list = vi.spyOn(api, "listUpstreamRuns").mockImplementation(async (limit = 30, offset = 0) => ({ runs: runs.slice(offset, offset + limit), total: runs.length }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const observer = new InfiniteQueryObserver(client, upstreamRunsOptions("workspace"));
+    try {
+      await observer.refetch();
+      expect(observer.getCurrentResult().hasNextPage).toBe(false);
+      expect(list.mock.calls).toEqual([[30, 0]]);
+    } finally {
+      observer.destroy();
+      client.clear();
+      list.mockRestore();
+    }
+  });
   it("可以读取第 101 条，并保留筛选条件", async () => {
     const items = Array.from({ length: 101 }, (_, i) => ({ id: String(i) }) as UpstreamItem);
-    const list = vi.spyOn(api, "listUpstreamItems").mockImplementation(async ({ offset = 0, limit = 100 }) => ({ items: items.slice(offset, offset + limit) }));
+    const list = vi.spyOn(api, "listUpstreamItems").mockImplementation(async ({ offset = 0, limit = 100 }) => ({ items: items.slice(offset, offset + limit), total: items.length }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const observer = new InfiniteQueryObserver(client, upstreamItemsOptions("workspace", { status: "adopted", q: "terminal" }));
     try {

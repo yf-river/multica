@@ -1712,6 +1712,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/upstream", func(r chi.Router) {
 				r.Get("/", h.GetUpstream)
 				r.Put("/", h.UpdateUpstreamConfig)
+				r.Get("/instructions", h.GetUpstreamInstructions)
 				r.Get("/items", h.ListUpstreamItems)
 				r.With(handler.RequireHumanActor).Post("/items/{itemId}/absorption-task", h.CreateUpstreamAbsorptionTask)
 				r.With(handler.RequireHumanActor).Patch("/items/status", h.MarkUpstreamItems)
