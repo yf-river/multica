@@ -173,9 +173,11 @@ class BatchFlowTests(unittest.TestCase):
         self.worker.batch_call = batch_call
         with patch.object(w.Worker, 'batch_source', return_value=(Path('/tmp'), 'b' * 40, 'c' * 40, None)), \
                 patch.object(r, 'prepare_int', return_value=dict(id='c1', commit='c' * 40)), \
-                patch.object(r, 'release_candidate') as release:
+                patch.object(r, 'release_candidate') as release, \
+                patch.object(w.Worker, 'finish_publication') as finished:
             self.worker.batch_prepare(self.state['batch'], self.state['members'], [delivery('d1')])
         release.assert_called_once_with('c1')
+        finished.assert_called_once()
         self.assertNotIn('notify-result', self.actions())
 
     def test_window_opens_once_and_waits_before_freezing(self):
