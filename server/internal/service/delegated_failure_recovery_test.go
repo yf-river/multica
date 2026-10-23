@@ -56,7 +56,7 @@ func seedDelegatedFailureFixture(t *testing.T) (*delegatedFailureFixture, *TaskS
 			workspace_id, title, creator_type, creator_id, assignee_type, assignee_id,
 			priority, parent_issue_id, number
 		)
-		VALUES ($1, 'delegated worker issue', 'member', $2, 'agent', $3, 'medium', $4, 2)
+		VALUES ($1, 'delegated worker issue', 'member', $2, 'agent', $3, 'not_important_not_urgent', $4, 2)
 		RETURNING id`, workspaceID, userID, workerID, issueID).Scan(&workerIssueID); err != nil {
 		t.Fatalf("seed worker issue: %v", err)
 	}

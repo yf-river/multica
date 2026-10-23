@@ -20,7 +20,7 @@ SET delivered_comment_ids = (
 WHERE acknowledged.id = (
     SELECT attempt.id
     FROM agent_task_queue attempt
-    WHERE attempt.trigger_evidence_kind = 'delegated_failure'
+    WHERE attempt.trigger_evidence_kind IN ('delegated_failure', 'delegated_result')
       AND attempt.trigger_evidence_ref_id = $2
     ORDER BY attempt.created_at DESC, attempt.id DESC
     LIMIT 1
@@ -29,7 +29,7 @@ WHERE acknowledged.id = (
   AND (
       SELECT count(*)
       FROM agent_task_queue attempt_count
-      WHERE attempt_count.trigger_evidence_kind = 'delegated_failure'
+      WHERE attempt_count.trigger_evidence_kind IN ('delegated_failure', 'delegated_result')
         AND attempt_count.trigger_evidence_ref_id = $2
   ) >= $3::int
 RETURNING acknowledged.id, acknowledged.agent_id, acknowledged.issue_id, acknowledged.status, acknowledged.priority, acknowledged.dispatched_at, acknowledged.started_at, acknowledged.completed_at, acknowledged.result, acknowledged.error, acknowledged.created_at, acknowledged.context, acknowledged.runtime_id, acknowledged.session_id, acknowledged.work_dir, acknowledged.trigger_comment_id, acknowledged.chat_session_id, acknowledged.autopilot_run_id, acknowledged.attempt, acknowledged.max_attempts, acknowledged.parent_task_id, acknowledged.failure_reason, acknowledged.trigger_summary, acknowledged.force_fresh_session, acknowledged.is_leader_task, acknowledged.wait_reason, acknowledged.initiator_user_id, acknowledged.handoff_note, acknowledged.prepare_lease_expires_at, acknowledged.squad_id, acknowledged.runtime_mcp_overlay, acknowledged.escalation_for_task_id, acknowledged.fire_at, acknowledged.originator_user_id, acknowledged.runtime_connected_apps, acknowledged.coalesced_comment_ids, acknowledged.delivered_comment_ids, acknowledged.chat_input_task_id, acknowledged.chat_finalize_deferred_at, acknowledged.originator_source, acknowledged.delegated_from_task_id, acknowledged.retry_of_task_id, acknowledged.rerun_of_task_id, acknowledged.rule_version_id, acknowledged.trigger_evidence_kind, acknowledged.trigger_evidence_ref_id, acknowledged.accountable_user_id, acknowledged.session_rollout_missing, acknowledged.retired_session_id, acknowledged.quick_actions_disabled, acknowledged.regenerate_quick_actions_for, acknowledged.branch_name, acknowledged.durable_work_dir, acknowledged.channel_context_revision
@@ -410,10 +410,11 @@ SET status = 'cancelled',
                   AND recovery.author_type = 'system'
                   AND recovery.type = 'progress_update'
                   AND recovery.source_task_id IS NOT NULL
-                  AND failed.status = 'failed'
+                  AND failed.status IN ('failed', 'completed', 'cancelled')
+  AND failed.failure_reason IS DISTINCT FROM 'release_pause'
                   AND failed.delegated_from_task_id IS NOT NULL
                   AND failed.autopilot_run_id IS NULL
-                  AND failed.trigger_evidence_kind IS DISTINCT FROM 'delegated_failure'
+                  AND COALESCE(failed.trigger_evidence_kind, '') NOT IN ('delegated_failure', 'delegated_result')
                   AND source.autopilot_run_id IS NULL
                   AND source.issue_id = task.issue_id
                   AND source.agent_id = task.agent_id
@@ -2077,7 +2078,7 @@ func (q *Queries) CompleteAgentTask(ctx context.Context, arg CompleteAgentTaskPa
 const countDelegatedFailureRecoveryTasks = `-- name: CountDelegatedFailureRecoveryTasks :one
 SELECT count(*)
 FROM agent_task_queue
-WHERE trigger_evidence_kind = 'delegated_failure'
+WHERE trigger_evidence_kind IN ('delegated_failure', 'delegated_result')
   AND trigger_evidence_ref_id = $1
 `
 
@@ -5706,10 +5707,11 @@ WHERE recovery.author_type = 'system'
   AND recovery.recovery_settled_at IS NULL
   AND recovery.issue_id = source_issue.id
   AND recovery.workspace_id = source_issue.workspace_id
-  AND failed.status = 'failed'
+  AND failed.status IN ('failed', 'completed', 'cancelled')
+  AND failed.failure_reason IS DISTINCT FROM 'release_pause'
   AND failed.delegated_from_task_id IS NOT NULL
   AND failed.autopilot_run_id IS NULL
-  AND failed.trigger_evidence_kind IS DISTINCT FROM 'delegated_failure'
+  AND COALESCE(failed.trigger_evidence_kind, '') NOT IN ('delegated_failure', 'delegated_result')
   AND source.autopilot_run_id IS NULL
   AND source.issue_id IS NOT NULL
   AND source.agent_id <> failed.agent_id

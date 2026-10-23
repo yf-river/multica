@@ -714,6 +714,11 @@ func main() {
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotFailureMonitorDurable(autopilotCtx, queries, pool, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
+	if err := registerDurableDelegatedResultConsumers(eventDispatcher, h.TaskService); err != nil {
+		slog.Error("register delegated result consumer failed", "error", err)
+		os.Exit(1)
+	}
+
 	go eventDispatcher.Run(sweepCtx)
 	go runLifeExperimentSweeper(sweepCtx, queries)
 	go runLifeCognitionWorker(sweepCtx, queries, pool)
