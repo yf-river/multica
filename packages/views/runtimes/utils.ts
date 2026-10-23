@@ -652,6 +652,20 @@ function uncostedTokens(usage: Priceable): {
 // 两半是相加而不是取其一，因为单行可能聚合两种来源（一个桶里有两个厂商，或
 // 一次 CLI 升级前后的 Grok）。自定义定价覆盖依然生效——但只作用于「估算」的
 // 那一半，因为覆盖价是用户对费率的猜测，而权威数字不是猜测。
+// hasKnownCost 报告这批用量里是否有任何一行"能给出价格"：要么厂商自己报了成本，
+// 要么本地费率表认识这个模型。
+//
+// 它存在的唯一目的是把「$0」和「不知道多少钱」分开。estimateCost 对没有价格的
+// 模型返回 0，直接渲染就成了"这次运行免费"——一个我们并没有依据的结论。调用方
+// 在整批都为 false 时应该显示未知，而不是 $0.00。
+export function hasKnownCost(rows: Priceable[]): boolean {
+  for (const row of rows) {
+    if ((row.cost_usd_ticks ?? 0) > 0) return true;
+    if (resolvePricing(row.model, row.provider)) return true;
+  }
+  return false;
+}
+
 export function estimateCost(usage: Priceable): number {
   const authoritative = (usage.cost_usd_ticks ?? 0) / COST_USD_TICKS_PER_USD;
   const pricing = resolvePricing(usage.model, usage.provider);

@@ -311,6 +311,20 @@ type TaskUsageEntry struct {
 	CostUSDTicks int64 `json:"cost_usd_ticks,omitempty"`
 }
 
+// TaskTraceEntry 是本次执行在外部链路观测系统里的一条根请求记录。
+//
+// Provider 是 backend 名（codebuddy / claude …），SessionID 是子进程自己声明的会话，
+// ProviderTraceID 是子进程自己声明的根请求 id（等于观测系统的 trace id）。三者都
+// 取自子进程输出，绝不从父进程环境变量推断。Correlation 说明这条关联是"准确记录"
+// 还是"事后按会话+时间窗推断"，为空的按准确记录处理。
+type TaskTraceEntry struct {
+	Provider        string `json:"provider"`
+	SessionID       string `json:"session_id,omitempty"`
+	ProviderTraceID string `json:"provider_trace_id"`
+	Correlation     string `json:"correlation,omitempty"`
+	Source          string `json:"source,omitempty"`
+}
+
 // TaskResult 是一次任务执行的结果。
 type TaskResult struct {
 	CodeDiff   *codediff.Diff `json:"code_diff,omitempty"`
@@ -334,6 +348,10 @@ type TaskResult struct {
 	// 且成功”时，被放弃的 id 不转发就还会留在候选里。
 	RetiredSessionID string           `json:"-"`
 	Usage            []TaskUsageEntry `json:"usage,omitempty"` // 各模型的 token 用量
+	// ProviderTraceIDs 是本次执行中每个子进程自报的根请求 id（0..N 条）。它与用量
+	// 独立：模型请求可能一个都没发出去，反过来没有用量也能有链路。由 daemon 单独
+	// 上报，不塞进 complete/fail 的载荷里，避免终态重试把关联丢在半路。
+	ProviderTraceIDs []string `json:"-"`
 }
 
 // PluginHookTool 是一个 agent 触发型插件钩子，agent 视角下即一个工具。

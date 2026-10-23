@@ -517,6 +517,11 @@ type AgentTaskResponse struct {
 	// 运行，或死在任何模型调用之前的运行，确实没有数字；显示 0 反而断言它
 	// 免费。omitempty 让两者都不上线。
 	Usage []TaskUsageData `json:"usage,omitempty"`
+	// Traces 是本运行在外部链路观测系统里的根请求，0..N 条。与 Usage 相互独立：
+	// 一次运行可能有用量却没有链路（backend 不暴露标识），也可能有链路而没有用量
+	// （请求发出去了但上游没回用量）。correlation=inferred_window 表示这条只是按
+	// 会话+时间窗检索到的候选，不是精确归属。仅在 issue 面执行日志端点补全。
+	Traces []TaskTraceData `json:"traces,omitempty"`
 	// AuthToken 是本任务作用域的 `mat_` token，daemon 必须以 MULTICA_TOKEN
 	// 注入 agent 进程环境。服务端在 claim 时把它绑定到 (agent_id, task_id) 对，
 	// 凡用该 token 鉴权的请求一律视为 actor=agent，与请求头无关——这样 agent
@@ -699,6 +704,20 @@ type TaskUsageData struct {
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
 	CostUsdTicks     *int64 `json:"cost_usd_ticks,omitempty"`
+}
+
+// TaskTraceData 是一次运行在外部链路观测系统里的一条根请求记录。
+//
+// ProviderTraceID 是观测系统的 trace id；ObservationSpace 是它所在的空间（daemon
+// 自报时为空，由事后补齐或解析填充）。Correlation 说明这条关联是精确记录
+// （exact）还是事后按会话+时间窗检索的候选（inferred_window）。
+type TaskTraceData struct {
+	Provider         string `json:"provider,omitempty"`
+	ObservationSpace string `json:"observation_space,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
+	ProviderTraceID  string `json:"provider_trace_id"`
+	Correlation      string `json:"correlation"`
+	Source           string `json:"source,omitempty"`
 }
 
 // TaskAgentData 携带 claim 响应里的 agent 信息，daemon 据此搭好执行环境

@@ -189,6 +189,11 @@ type Result struct {
 	DurationMs int64                 // 本次运行耗时（毫秒）
 	SessionID  string                // 后端会话 id
 	Usage      map[string]TokenUsage // 按模型名索引的 token 用量
+	// ProviderTraceID 是本次子进程自己声明的根请求 id（CodeBuddy 为 stream-json
+	// 事件上的 `_requestId`），不是父进程环境变量里继承来的值。一次 CLI 进程
+	// 只对应一个根请求；续跑会话会换新的根请求，所以它是"每次执行"级别的标识，
+	// 不能挂在会话或 issue 上。为空表示该 backend 不暴露，或本次运行没有产生请求。
+	ProviderTraceID string
 	// ResumeRejected 是"本次运行请求的续跑被永久拒绝"的确凿证据——要么会话记录
 	// 已经没了，要么该会话属于另一个 provider 账号，要么会话还在但它的历史已经无法
 	// 再重放给 provider（例如 GH #5975：存储的图片现在超过了 provider 的最大尺寸，

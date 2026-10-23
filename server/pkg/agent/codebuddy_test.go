@@ -259,6 +259,100 @@ func TestCodebuddyExecute_Success(t *testing.T) {
 	}
 }
 
+// TestCodebuddyExecute_CapturesProviderRequestID 覆盖子进程级标识取证：trace id 必须
+// 来自子进程自己写在事件上的 `_requestId`，而不是父进程环境变量。这里刻意给父进程
+// 环境塞一个不同的 CODEBUDDY_ROOT_REQUEST_ID，结果必须仍是事件里的值。
+func TestCodebuddyExecute_CapturesProviderRequestID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+
+	// 不能 parallel：t.Setenv 与 t.Parallel 互斥。
+	t.Setenv("CODEBUDDY_ROOT_REQUEST_ID", "parent-request-must-not-win")
+
+	fakePath := filepath.Join(t.TempDir(), "codebuddy")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _\n" +
+		`printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-cb-req"}'` + "\n" +
+		`printf '%s\n' '{"type":"system","subtype":"status","session_id":"sess-cb-req","_requestId":"req-child-root-001"}'` + "\n" +
+		`printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-cb-req","_requestId":"req-child-root-001","result":"ok"}'` + "\n"
+	writeTestExecutable(t, fakePath, []byte(script))
+
+	b := &codebuddyBackend{cfg: Config{ExecutablePath: fakePath, Logger: slog.Default()}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	session, err := b.Execute(ctx, "say hello", ExecOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for range session.Messages {
+	}
+
+	select {
+	case result, ok := <-session.Result:
+		if !ok {
+			t.Fatal("result channel closed without a value")
+		}
+		if result.ProviderTraceID != "req-child-root-001" {
+			t.Fatalf("expected child-level request id, got %q", result.ProviderTraceID)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for result")
+	}
+}
+
+// TestCodebuddyResultUsage_NormalizesInclusiveInput 固定上游口径：这条通道的
+// usage.input_tokens 已经含 cache_read/cache_creation，回退路径必须先归一，
+// 否则输入会被算两遍（生产库里 input == cache_read+cache_write 的行就是证据）。
+func TestCodebuddyResultUsage_NormalizesInclusiveInput(t *testing.T) {
+	t.Parallel()
+
+	msg := codebuddySDKMessage{
+		Type:      "result",
+		Model:     "deepseek-v4.1-flash",
+		SessionID: "sess",
+		Usage: &codebuddyUsage{
+			InputTokens:              29972,
+			OutputTokens:             2,
+			CacheReadInputTokens:     2816,
+			CacheCreationInputTokens: 27156,
+		},
+	}
+	usage := codebuddyResultUsage(msg, "")
+	got, ok := usage["deepseek-v4.1-flash"]
+	if !ok {
+		t.Fatalf("expected usage entry, got %#v", usage)
+	}
+	if got.InputTokens != 0 {
+		t.Fatalf("expected inclusive input to normalize to 0 uncached, got %d", got.InputTokens)
+	}
+	if got.CacheReadTokens != 2816 || got.CacheWriteTokens != 27156 {
+		t.Fatalf("cache split must be preserved, got %+v", got)
+	}
+}
+
+func TestCodebuddyUncachedInput(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name                         string
+		input, cacheRead, cacheWrite int64
+		want                         int64
+	}{
+		{"inclusive all cached", 29972, 2816, 27156, 0},
+		{"inclusive partial", 337311, 3584, 0, 333727},
+		{"no cache", 1200, 0, 0, 1200},
+		{"exclusive signature stays", 500, 4000, 0, 500},
+		{"only write", 1000, 0, 600, 400},
+	}
+	for _, c := range cases {
+		if got := codebuddyUncachedInput(c.input, c.cacheRead, c.cacheWrite); got != c.want {
+			t.Fatalf("%s: got %d want %d", c.name, got, c.want)
+		}
+	}
+}
+
 func TestCodebuddyExecute_NotFound(t *testing.T) {
 	t.Parallel()
 

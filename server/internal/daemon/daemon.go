@@ -5032,6 +5032,15 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		}
 	}
 
+	// 链路关联与用量分开上报：即使一次模型请求都没发出去（usage 为空），或该
+	// backend 根本不上报用量，子进程自报的根请求 id 仍要落到任务上，否则"给定任务
+	// 号枚举全部执行与链路"永远做不到。失败只记日志——关联缺失不能阻断任务收尾。
+	if traceEntries := buildTaskTraceEntries(provider, result.SessionID, result.ProviderTraceIDs); len(traceEntries) > 0 {
+		if traceErr := d.client.ReportTaskTraces(ctx, task.ID, traceEntries); traceErr != nil {
+			taskLog.Warn("report task traces failed", "error", traceErr)
+		}
+	}
+
 	if pauseFlag.Load() {
 		if !releaseCheckpointReady(task, result) {
 			// 1. 保存不了检查点就不要静默返回：把原因回传，窗口能把该任务判为 skipped
@@ -7572,7 +7581,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var msgSeq atomic.Int32
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 	if err != nil {
-		return TaskResult{}, err
+		// 执行失败（含被服务器取消、进程被杀）时，backend 往往已经跑过若干回合、
+		// 累计了真实 token 和根请求 id。返回空 TaskResult 会让这些用量和链路在下面
+		// 的上报点变成"无"——生产里确有取消的执行在 AgentLens 留下数百万 input
+		// token，而 task_usage 一条都没有。这里把已观测到的部分随错误一起带出去，
+		// 状态不参与决策（调用方只看 err），只用于记账。
+		return TaskResult{
+			Status:           "failed",
+			SessionID:        result.SessionID,
+			Usage:            buildTaskUsageEntries(provider, result.Usage),
+			ProviderTraceIDs: appendTraceID(nil, result.ProviderTraceID),
+		}, err
 	}
 
 	// retiredSessionID 是本次运行被告知要 resume、随后被放弃的那个 session。在重试
@@ -7581,6 +7600,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 早的完成行、或 chat_session 指针够到它（GH #6066）。
 	var retiredSessionID string
 	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
+
+	// providerTraceIDs 收集本次执行里每个真正跑过的子进程自报的根请求 id。换新会话
+	// 重试会起第二个进程，于是同一次执行对应两条链路；只有一条时是常态，子进程没
+	// 起来（或 backend 不暴露）时是零条。它与会话无关、与用量无关，因此单独上报。
+	providerTraceIDs := appendTraceID(nil, result.ProviderTraceID)
+	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
 	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
@@ -7633,6 +7658,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// session 的重试以自己的 id 胜出；没有新 session 就失败的重试保留 firstResult，
 		// 让坏 session 保持被排除，而不是被一条看起来良性的二次错误重新贴回可恢复。
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
+		// retryErr 非空时重试进程仍可能已经发出过请求，trace id 照样要留；空值会被
+		// appendTraceID 忽略，重复值不会重复记。
+		providerTraceIDs = appendTraceID(providerTraceIDs, retryResult.ProviderTraceID)
 	}
 
 	elapsed := time.Since(agentStartedAt).Round(time.Second)
@@ -7652,21 +7680,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	)
 
 	// 把 agent 用量表转成任务用量条目。
-	var usageEntries []TaskUsageEntry
-	for model, u := range result.Usage {
-		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
-			continue
-		}
-		usageEntries = append(usageEntries, TaskUsageEntry{
-			Provider:         provider,
-			Model:            model,
-			InputTokens:      u.InputTokens,
-			OutputTokens:     u.OutputTokens,
-			CacheReadTokens:  u.CacheReadTokens,
-			CacheWriteTokens: u.CacheWriteTokens,
-			CostUSDTicks:     u.CostUSDTicks,
-		})
-	}
+	usageEntries := buildTaskUsageEntries(provider, result.Usage)
 
 	// MUL-5305：对"rollout 从没到达每 issue store"的 Codex session 一律扣下 resume
 	// 指针，任何终态都算——包括 `completed`，因为"完成的轮次却缺 rollout"正是
@@ -8428,6 +8442,67 @@ func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow ti
 			return
 		}
 	}
+}
+
+// buildTaskTraceEntries 把子进程自报的根请求 id 变成上报条目。会话 id 同源
+// （子进程输出），但只作辅助字段：重试可能换会话，链路归属以 trace id 为准。
+func buildTaskTraceEntries(provider, sessionID string, ids []string) []TaskTraceEntry {
+	if len(ids) == 0 {
+		return nil
+	}
+	entries := make([]TaskTraceEntry, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		entries = append(entries, TaskTraceEntry{
+			Provider:        provider,
+			SessionID:       sessionID,
+			ProviderTraceID: id,
+			Correlation:     "exact",
+			Source:          "stream_json",
+		})
+	}
+	return entries
+}
+
+// buildTaskUsageEntries 把 agent 的按模型用量转成上报条目。全零的分片不产生条目，
+// 因为"没用量"和"用量恰好为零"在账面上没有区别，但一条空行会让汇总多一个维度。
+func buildTaskUsageEntries(provider string, usage map[string]agent.TokenUsage) []TaskUsageEntry {
+	if len(usage) == 0 {
+		return nil
+	}
+	entries := make([]TaskUsageEntry, 0, len(usage))
+	for model, u := range usage {
+		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
+			continue
+		}
+		entries = append(entries, TaskUsageEntry{
+			Provider:         provider,
+			Model:            model,
+			InputTokens:      u.InputTokens,
+			OutputTokens:     u.OutputTokens,
+			CacheReadTokens:  u.CacheReadTokens,
+			CacheWriteTokens: u.CacheWriteTokens,
+			CostUSDTicks:     u.CostUSDTicks,
+		})
+	}
+	return entries
+}
+
+// appendTraceID 把非空、未出现过的 provider 根请求 id 追加到列表。同一次执行可能
+// 因为换新会话重试起两个进程，也可能一个都没有；这里只去重，不做任何"必须有一条"
+// 的假设。
+func appendTraceID(ids []string, id string) []string {
+	if id == "" {
+		return ids
+	}
+	for _, existing := range ids {
+		if existing == id {
+			return ids
+		}
+	}
+	return append(ids, id)
 }
 
 // mergeUsage 把两次尝试的 token 用量按模型合并（都为空时直接返回对方，避免分配）。

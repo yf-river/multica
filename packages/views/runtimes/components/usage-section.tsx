@@ -41,6 +41,7 @@ import {
   formatTokens,
   formatUsd,
   estimateCost,
+  hasKnownCost,
   estimateCacheSavings,
   aggregateByDate,
   aggregateByWeek,
@@ -188,6 +189,8 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
     cacheableTokens > 0 ? Math.round((totals.cacheRead / cacheableTokens) * 100) : 0;
 
   const costDelta = pctChange(totals.cost, prevTotals.cost);
+  // 有 token 消耗、但没有任何一行能定价时，费用是"未知"而不是 0。
+  const costKnown = tokensTotal === 0 || hasKnownCost(filtered);
   const locales = i18n.resolvedLanguage ?? i18n.language;
 
   return (
@@ -236,14 +239,22 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         <KpiCard
           label={t(($) => $.usage.kpi_cost_label, { days })}
           value={
-            <CurrencyNumberFlow
-              value={totals.cost}
-              locales={locales}
-              aria-label={formatUsd(totals.cost)}
-            />
+            costKnown ? (
+              <CurrencyNumberFlow
+                value={totals.cost}
+                locales={locales}
+                aria-label={formatUsd(totals.cost)}
+              />
+            ) : (
+              // 没有任何一行能定价时，$0.00 会被读成"这些运行免费"。实际是价格
+              // 未知（厂商没报价、费率表也不认这个模型），必须显示破折号。
+              <span aria-label={t(($) => $.usage.kpi_cost_unknown)}>—</span>
+            )
           }
           hint={
-            costDelta == null ? undefined : (
+            !costKnown ? (
+              <span>{t(($) => $.usage.kpi_cost_unknown)}</span>
+            ) : costDelta == null ? undefined : (
               <span
                 className={
                   costDelta > 0
@@ -264,11 +275,16 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         <KpiCard
           label={t(($) => $.usage.kpi_cache_label, { days })}
           value={
-            <CurrencyNumberFlow
-              value={totals.cacheSavings}
-              locales={locales}
-              aria-label={formatUsd(totals.cacheSavings)}
-            />
+            costKnown ? (
+              <CurrencyNumberFlow
+                value={totals.cacheSavings}
+                locales={locales}
+                aria-label={formatUsd(totals.cacheSavings)}
+              />
+            ) : (
+              // 同理：没有价格时"缓存省了多少钱"也是未知，不是 0。
+              <span aria-label={t(($) => $.usage.kpi_cost_unknown)}>—</span>
+            )
           }
           accent={totals.cacheSavings > 0 ? "success" : "default"}
           hint={

@@ -236,6 +236,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		sawResult := false
 		resultIsError := false
 		var sessionID string
+		var requestID string
 		usage := make(map[string]TokenUsage)
 		eventCount := 0
 		invalidEventCount := 0
@@ -264,6 +265,14 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 				continue
 			}
 			eventCount++
+
+			// `_requestId` 由子进程自己生成并写在 status/result 事件上，等于它在
+			// AgentLens 里的 trace id。取第一条非空值即可：同一个 CLI 进程只有一个
+			// 根请求，后续事件重复的是同一个值。绝不能拿父进程环境变量
+			// CODEBUDDY_ROOT_REQUEST_ID 顶替——那是 daemon 自己的请求标识。
+			if requestID == "" && msg.ProviderRequestID != "" {
+				requestID = msg.ProviderRequestID
+			}
 
 			switch msg.Type {
 			case "assistant":
@@ -369,13 +378,14 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		}
 
 		resCh <- Result{
-			Status:         finalStatus,
-			Output:         finalOutput,
-			Error:          finalError,
-			DurationMs:     duration.Milliseconds(),
-			SessionID:      reportedSessionID,
-			Usage:          usage,
-			ResumeRejected: resumeRejected,
+			Status:          finalStatus,
+			Output:          finalOutput,
+			Error:           finalError,
+			DurationMs:      duration.Milliseconds(),
+			SessionID:       reportedSessionID,
+			Usage:           usage,
+			ProviderTraceID: requestID,
+			ResumeRejected:  resumeRejected,
 		}
 	}()
 
@@ -402,7 +412,7 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 	// 按模型累计 token 用量。
 	if content.Usage != nil && content.Model != "" {
 		u := usage[content.Model]
-		u.InputTokens += content.Usage.InputTokens
+		u.InputTokens += codebuddyUncachedInput(content.Usage.InputTokens, content.Usage.CacheReadInputTokens, content.Usage.CacheCreationInputTokens)
 		u.OutputTokens += content.Usage.OutputTokens
 		u.CacheReadTokens += content.Usage.CacheReadInputTokens
 		u.CacheWriteTokens += content.Usage.CacheCreationInputTokens
@@ -562,6 +572,12 @@ type codebuddySDKMessage struct {
 	// control_request 事件的字段
 	RequestID string          `json:"request_id,omitempty"`
 	Request   json.RawMessage `json:"request,omitempty"`
+
+	// ProviderRequestID 是事件上的 `_requestId`：子进程为本次根请求生成的标识，
+	// 与服务端链路（AgentLens trace id）一致。它不是父进程环境里的
+	// CODEBUDDY_ROOT_REQUEST_ID（那是调用方的请求），也不是 control_request 的
+	// `request_id`（那是权限桥的应答序号）。init 事件没有该字段，status/result 才有。
+	ProviderRequestID string `json:"_requestId,omitempty"`
 }
 
 // codebuddyLogEntry 是 log 事件里的日志条目。
@@ -649,12 +665,31 @@ func codebuddyResultUsage(msg codebuddySDKMessage, fallbackModel string) map[str
 	}
 	return map[string]TokenUsage{
 		model: {
-			InputTokens:      msg.Usage.InputTokens,
+			InputTokens:      codebuddyUncachedInput(msg.Usage.InputTokens, msg.Usage.CacheReadInputTokens, msg.Usage.CacheCreationInputTokens),
 			OutputTokens:     msg.Usage.OutputTokens,
 			CacheReadTokens:  msg.Usage.CacheReadInputTokens,
 			CacheWriteTokens: msg.Usage.CacheCreationInputTokens,
 		},
 	}
+}
+
+// codebuddyUncachedInput 把 CodeBuddy 的 input_tokens 归一成"不含缓存的输入"，
+// 与 modelUsage.inputTokens 和服务端 task_usage.input_tokens 的口径一致。
+//
+// 这条通道（copilot.tencent.com）的 usage.input_tokens 是**整段提示词总量**，
+// cache_read 与 cache_creation 已经含在里面：实测单次调用 27156(cache_creation)
+// + 2816(cache_read) = 29972 = input_tokens，同一请求的 modelUsage 则报
+// inputTokens=0、两项缓存各自单列。若把两种口径都按"相加"记账，输入会被算两遍
+// （生产库里 5 行能对上 input == cache_read+cache_write 的记录就是这种双计）。
+//
+// 只在缓存值确实包含在输入里时才相减（input >= 缓存合计）。上游若改成 Anthropic
+// 原生的"input 不含缓存"口径，input 会小于缓存合计，此时原样返回。
+func codebuddyUncachedInput(input, cacheRead, cacheWrite int64) int64 {
+	cached := cacheRead + cacheWrite
+	if cached <= 0 || input < cached {
+		return input
+	}
+	return input - cached
 }
 
 // codebuddyUsageHasTokens 报告这四项 token 计数里是否至少有一个大于 0——避免把

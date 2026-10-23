@@ -515,6 +515,17 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	}, nil)
 }
 
+// ReportTaskTraces 上报本次执行在外部观测系统里的根请求标识（0..N 条）。
+// 与用量上报分开：没有 token 用量时链路依然存在，反过来没发出模型请求时链路为空。
+func (c *Client) ReportTaskTraces(ctx context.Context, taskID string, traces []TaskTraceEntry) error {
+	if len(traces) == 0 {
+		return nil
+	}
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/traces", taskID), map[string]any{
+		"traces": traces,
+	}, nil)
+}
+
 // FailTask 上报任务失败及原因。
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {
 	body := map[string]any{"error": errMsg}

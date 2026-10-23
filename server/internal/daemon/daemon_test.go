@@ -1510,6 +1510,46 @@ func TestWatchTaskCancellation_RunningTaskNotInterrupted(t *testing.T) {
 	}
 }
 
+// TestAppendTraceID 固定"一次执行 0..N 条链路"的收集规则：空值丢弃、重复值去重、
+// 顺序保留。执行侧不许假设"必有且只有一条"。
+func TestAppendTraceID(t *testing.T) {
+	t.Parallel()
+
+	var ids []string
+	ids = appendTraceID(ids, "")
+	if len(ids) != 0 {
+		t.Fatalf("empty id must be dropped, got %#v", ids)
+	}
+	ids = appendTraceID(ids, "trace-a")
+	ids = appendTraceID(ids, "trace-b")
+	ids = appendTraceID(ids, "trace-a")
+	if len(ids) != 2 || ids[0] != "trace-a" || ids[1] != "trace-b" {
+		t.Fatalf("unexpected ids: %#v", ids)
+	}
+}
+
+// TestBuildTaskTraceEntries 覆盖上报条目的形状：会话与 trace 同源于子进程，
+// correlation/来源默认标成精确记录，空 id 不产生条目。
+func TestBuildTaskTraceEntries(t *testing.T) {
+	t.Parallel()
+
+	if got := buildTaskTraceEntries("codebuddy", "sess", nil); got != nil {
+		t.Fatalf("no ids must mean no entries, got %#v", got)
+	}
+	entries := buildTaskTraceEntries("codebuddy", "sess-1", []string{"trace-a", "", "trace-b"})
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %#v", entries)
+	}
+	for _, e := range entries {
+		if e.Provider != "codebuddy" || e.SessionID != "sess-1" {
+			t.Fatalf("unexpected entry: %#v", e)
+		}
+		if e.Correlation != "exact" || e.Source != "stream_json" {
+			t.Fatalf("daemon-reported traces must be exact/stream_json, got %#v", e)
+		}
+	}
+}
+
 func TestMergeUsage(t *testing.T) {
 	t.Parallel()
 

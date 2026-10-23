@@ -4511,6 +4511,81 @@ func formatLegacyCommentEntry(comment CoalescedCommentData) string {
 	return b.String()
 }
 
+// TaskTracePayload 是 daemon 上报的一条外部链路标识。
+//
+// ProviderTraceID 必须来自被启动的子进程本身（例如 CodeBuddy stream-json 事件上的
+// `_requestId`）；服务端不做任何"从别的字段推算"的补写，缺就是缺。
+type TaskTracePayload struct {
+	Provider         string `json:"provider"`
+	ObservationSpace string `json:"observation_space"`
+	SessionID        string `json:"session_id"`
+	ProviderTraceID  string `json:"provider_trace_id"`
+	// Correlation 取 exact（子进程直接给出）或 inferred_window（事后按会话+时间窗
+	// 检索得到）。留空按 exact 处理，因为只有 daemon 自报的通道会走这个接口。
+	Correlation string `json:"correlation"`
+	Source      string `json:"source"`
+}
+
+// ReportTaskTraces 保存一次执行在外部观测系统里的根请求标识，0..N 条。
+//
+// 与 /usage 独立：用量可能为空（没发出模型请求、或 provider 不上报用量），链路也可能
+// 缺失（backend 不暴露标识）；两者都不是对方的写入前提。重复上报按
+// (task, provider, trace) 幂等，重启或重放不会产生重复关联。
+func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "taskId")
+
+	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Traces []TaskTracePayload `json:"traces"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	for _, t := range req.Traces {
+		traceID := strings.TrimSpace(t.ProviderTraceID)
+		if traceID == "" {
+			// 空 id 不写入也不报错：老 daemon 会整体不发，新 daemon 也不会造空值。
+			// 静默跳过比造一行不可信的关联更安全。
+			continue
+		}
+		correlation := strings.TrimSpace(t.Correlation)
+		switch correlation {
+		case "":
+			correlation = "exact"
+		case "exact", "inferred_window":
+		default:
+			writeError(w, http.StatusBadRequest, "invalid correlation: "+correlation)
+			return
+		}
+		source := strings.TrimSpace(t.Source)
+		if source == "" {
+			source = "stream_json"
+		}
+		if err := h.Queries.UpsertTaskProviderTrace(r.Context(), db.UpsertTaskProviderTraceParams{
+			WorkspaceID:      parseUUID(workspaceID),
+			TaskID:           parseUUID(taskID),
+			Provider:         normalizeProvider(t.Provider),
+			ObservationSpace: strings.TrimSpace(t.ObservationSpace),
+			SessionID:        strings.TrimSpace(t.SessionID),
+			ProviderTraceID:  traceID,
+			Correlation:      correlation,
+			Source:           source,
+		}); err != nil {
+			slog.Warn("upsert task provider trace failed",
+				"task_id", taskID, "trace_id", traceID, "error", err)
+			continue
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ReportTaskUsage stores per-task token usage. Called independently of
 // complete/fail so usage is captured even when tasks fail or are blocked.
 type TaskUsagePayload struct {
@@ -5113,6 +5188,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	// one batch) — otherwise the badge falls back to "someone" on issue detail.
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateTaskUsage(r.Context(), issue.ID, resp)
+	h.hydrateTaskTraces(r.Context(), issue.ID, resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -5156,6 +5232,38 @@ func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, res
 	for i := range resp {
 		if usage, ok := byTask[resp[i].ID]; ok {
 			resp[i].Usage = usage
+		}
+	}
+}
+
+// hydrateTaskTraces 把每个运行的外部链路标识挂到执行日志行上。查不到就留空——
+// 空数组与"没有链路"是同一个意思，UI 不能因此显示"0 条"当作已覆盖。
+func (h *Handler) hydrateTaskTraces(ctx context.Context, issueID pgtype.UUID, resp []AgentTaskResponse) {
+	if len(resp) == 0 {
+		return
+	}
+
+	rows, err := h.Queries.ListIssueTaskProviderTraces(ctx, issueID)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+
+	byTask := make(map[string][]TaskTraceData, len(resp))
+	for _, row := range rows {
+		taskID := uuidToString(row.TaskID)
+		byTask[taskID] = append(byTask[taskID], TaskTraceData{
+			Provider:         row.Provider,
+			ObservationSpace: row.ObservationSpace,
+			SessionID:        row.SessionID,
+			ProviderTraceID:  row.ProviderTraceID,
+			Correlation:      row.Correlation,
+			Source:           row.Source,
+		})
+	}
+
+	for i := range resp {
+		if traces, ok := byTask[resp[i].ID]; ok {
+			resp[i].Traces = traces
 		}
 	}
 }

@@ -18,7 +18,7 @@ import (
 // expects exactly one of six concurrent callers to advance it, while a
 // handler rollup tick concurrently advances the same watermark past the
 // window — so the scheduler sees winners=0, and the handler's
-// TestRollupTaskUsageHourlyCapsWindowAtOneDay reads the scheduler's
+// TestRollupTaskUsageHourlyCatchUpIsBoundedAndConverges reads the scheduler's
 // 90-min-old watermark (0.063 days) instead of "now".
 //
 // A dedicated session-level advisory lock — deliberately distinct from the

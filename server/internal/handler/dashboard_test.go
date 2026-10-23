@@ -1188,14 +1188,18 @@ func TestPruneTaskUsageHourlyDirty(t *testing.T) {
 	}
 }
 
-// TestRollupTaskUsageHourlyCapsWindowAtOneDay covers the catch-up cap
-// in rollup_task_usage_hourly(): when the watermark has
-// fallen far behind (worker paused for an incident or a migration freeze),
-// a single tick must advance it by at most one day, so a multi-week backlog
-// drains in bounded steps instead of one giant statement holding advisory
-// lock 4246. The existing watermark test only parks the watermark one hour
-// back, so the cap itself is never exercised there.
-func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
+// TestRollupTaskUsageHourlyCatchUpIsBoundedAndConverges covers the catch-up
+// contract of rollup_task_usage_hourly() after migration 620:
+//
+//   - a backlog inside the per-tick budget converges in ONE tick instead of
+//     one day of lag per tick (the old behaviour left date stats days stale);
+//   - the budget itself still caps how far one tick may advance, so a very
+//     old watermark drains over several ticks rather than recomputing months
+//     of history inside a single statement holding advisory lock 4246.
+//
+// The second assertion is what keeps the first honest: without a cap, "one
+// tick converges" would be untestably true for any backlog size.
+func TestRollupTaskUsageHourlyCatchUpIsBoundedAndConverges(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -1229,29 +1233,30 @@ func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
 		`).Scan(&sec)
 		return sec / 86400
 	}
-	tick := func(label string) {
+	tick := func() {
 		dbfx.Exec(t, `SELECT rollup_task_usage_hourly()`)
 	}
 
-	// Park 3 days back. One tick advances by exactly one day (v_from + 1d,
-	// well short of now()-5min), leaving the watermark ~2 days behind.
+	// Inside the per-tick budget: 3 days back converges in one call.
 	park("3 days")
-	tick("tick 1")
-	if age := ageDays(); age < 1.9 || age > 2.1 {
-		t.Fatalf("after one tick: expected watermark ~2 days behind, got %.3f days", age)
-	}
-
-	// A second tick advances another bounded day → ~1 day behind.
-	tick("tick 2")
-	if age := ageDays(); age < 0.9 || age > 1.1 {
-		t.Fatalf("after two ticks: expected watermark ~1 day behind, got %.3f days", age)
-	}
-
-	// Once within a day of now, the tick snaps the watermark to now()-5min
-	// (LEAST picks the now bound) rather than taking a further fixed day.
-	tick("tick 3")
+	tick()
 	if age := ageDays(); age > 0.02 {
-		t.Fatalf("after catch-up: expected watermark within minutes of now, got %.3f days", age)
+		t.Fatalf("one tick from 3 days back: expected convergence to now()-5min, got %.3f days behind", age)
+	}
+
+	// Beyond the budget (60 one-day windows per tick): 90 days back must
+	// advance by about 60 days, not all the way. This is the cap the old
+	// implementation had per tick, preserved here as bounded work.
+	park("90 days")
+	tick()
+	if age := ageDays(); age < 29 || age > 31 {
+		t.Fatalf("one tick from 90 days back: expected ~30 days still behind (60-day cap), got %.3f days behind", age)
+	}
+
+	// And the remainder finishes on a second tick — no permanent stall.
+	tick()
+	if age := ageDays(); age > 0.02 {
+		t.Fatalf("second tick: expected convergence, got %.3f days behind", age)
 	}
 }
 
