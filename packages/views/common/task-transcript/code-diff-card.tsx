@@ -40,7 +40,7 @@ function Line({ line }: { line: string }) {
 
 function PatchBody({ file }: { file: CodeDiffFile }) {
   if (file.redacted) {
-    return <p className="p-3 text-body text-muted-foreground">疑似敏感文件，已脱敏：只记录路径与改动行数（+{file.added} −{file.deleted}），内容未留存。</p>;
+    return <p className="p-3 text-body text-muted-foreground">疑似敏感文件，已脱敏：只记录路径与大小（{formatBytes(file.size)}），内容未留存。</p>;
   }
   if (file.binary) {
     return <p className="p-3 text-body text-muted-foreground">二进制文件，无法显示文本差异{file.size ? `（${formatBytes(file.size)}）` : ""}。</p>;
