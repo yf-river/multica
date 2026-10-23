@@ -49,7 +49,7 @@
       "ignore": "忽略",
       "restore": "恢复为待定",
       "create_task": "创建吸收任务",
-      "create_task_confirm": "在当前工作区创建一个吸收任务？创建后会直接打开这个任务。",
+      "create_task_confirm": "在当前工作区创建一个吸收任务？创建后会直接打开这个任务，执行体由你决定。",
       "open_task": "打开吸收任务"
     },
     "item": {
