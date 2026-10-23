@@ -236,7 +236,9 @@ Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`
 ## 托管代码审查
 
 - CLI：`server/cmd/multica/cmd_issue_review.go`。
-- 设置、派发、结论和任务状态：`server/internal/handler/issue_review.go`。
+- 设置、派发、结论和任务状态：`server/internal/handler/issue_review.go`（后处理入口 `afterIssueStatusChangeForReview`，`server/internal/handler/issue_review.go:393`；轮次判定 `startReviewRound`，`:406`）。
+- 进入审核中的统一后处理：手动改状态 `server/internal/handler/issue.go:3622`、批量 `:4343`，交付验收通过 `server/internal/handler/issue_delivery_worker.go:387`（事务提交后与另外两条入口共用同一钩子）。
+- 补扫与跳过边界：`server/internal/handler/issue_review_sweeper.go:71`（`SweepIssueReviews`）、`:51`（`reviewSweepCandidate.skipReason` 的活动运行、已通过、人工停止、打回无新提交判定）；周期启动 `server/cmd/server/issue_review_sweeper.go:18`，挂载 `server/cmd/server/main.go:710`。
 - 入队与运行时：`server/internal/service/task_review.go`。
 - 默认指令、结论与停止策略：`server/internal/review/`。
-- 当前任务令牌及最新执行核对位于 `SubmitIssueReviewVerdict`；业务验收见 `server/internal/handler/issue_review_test.go`。
+- 当前任务令牌及最新执行核对位于 `SubmitIssueReviewVerdict`；业务验收见 `server/internal/handler/issue_review_test.go` 与 `server/internal/handler/issue_review_sweeper_test.go`。
