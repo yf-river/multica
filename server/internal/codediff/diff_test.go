@@ -321,3 +321,49 @@ func TestExclusionsDoNotSwallowTheRoot(t *testing.T) {
 		t.Fatalf("an ancestor exclusion must not hide the root's files: %+v", snap.Files)
 	}
 }
+
+// 修改 1. A worktree that fell off the root cap used to vanish without a trace.
+//
+//	It now produces a note, so the card cannot imply the run was fully listed.
+func TestWorktreeCapIsReported(t *testing.T) {
+	repoDir := repo(t)
+	work := t.TempDir()
+	capture := StartCapture(context.Background(), CaptureSpec{
+		WorkDir: work,
+		Repos:   []string{repoDir},
+		Options: DefaultOptions(),
+	})
+	base := t.TempDir()
+	for index := 0; index < MaxRoots+1; index++ {
+		outside := filepath.Join(base, "wt", string(rune('a'+index)))
+		command(t, repoDir, "worktree", "add", "-b", "try/cap-"+string(rune('a'+index)), outside, "HEAD")
+		write(t, outside, "tracked.txt", "edit "+string(rune('a'+index))+"\n")
+	}
+	diff := capture.Finish(context.Background())
+	if len(diff.Roots) != MaxRoots {
+		t.Fatalf("root count = %d, want %d: %+v", len(diff.Roots), MaxRoots, diff.Roots)
+	}
+	if len(diff.Notes) == 0 {
+		t.Fatal("a capped run must say that worktrees were dropped")
+	}
+	if !strings.Contains(diff.Notes[0], "超出展示上限") {
+		t.Fatalf("unexpected note: %+v", diff.Notes)
+	}
+}
+
+func TestSkippedPathsAreCappedAndTrimmed(t *testing.T) {
+	paths := make([]string, 0, maxSkippedPaths+5)
+	for index := 0; index < maxSkippedPaths+5; index++ {
+		paths = append(paths, "dir/"+string(rune('a'+index)))
+	}
+	trimmed := trimSkipped(paths)
+	if len(trimmed) != maxSkippedPaths+1 {
+		t.Fatalf("trimmed length = %d, want %d", len(trimmed), maxSkippedPaths+1)
+	}
+	if !strings.Contains(trimmed[len(trimmed)-1], "5") {
+		t.Fatalf("the tail marker should count the hidden paths: %q", trimmed[len(trimmed)-1])
+	}
+	if got := trimSkipped([]string{"a"}); len(got) != 1 || got[0] != "a" {
+		t.Fatalf("short lists must pass through: %+v", got)
+	}
+}

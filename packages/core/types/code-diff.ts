@@ -48,6 +48,9 @@ export const CodeDiffRootSchema = z.object({
   truncated: z.boolean().optional(),
   unavailable: z.boolean().optional(),
   reason: z.string().optional(),
+  // Paths the capture could not read; the card lists them instead of implying
+  // the tree was fully compared.
+  skipped: z.array(z.string()).optional(),
 });
 export type CodeDiffRoot = z.infer<typeof CodeDiffRootSchema>;
 
@@ -73,6 +76,7 @@ export const CodeDiffSchema = z.object({
   reason: z.string().optional(),
   version: z.number().optional(),
   roots: z.array(CodeDiffRootSchema).optional(),
+  notes: z.array(z.string()).optional(),
 });
 export type CodeDiff = z.infer<typeof CodeDiffSchema>;
 

@@ -68,6 +68,10 @@ type Root struct {
 	Truncated   bool         `json:"truncated,omitempty"`
 	Unavailable bool         `json:"unavailable,omitempty"`
 	Reason      string       `json:"reason,omitempty"`
+	// 修改 1. Paths inside this root that could not be read. Without them a
+	//         permission error looked like "nothing changed here", which is the
+	//         same silent blank the report card is supposed to rule out.
+	Skipped []string `json:"skipped,omitempty"`
 }
 
 // Diff is the value stored on a task result as code_diff. Version 2 adds roots;
@@ -82,6 +86,9 @@ type Diff struct {
 	Unavailable bool   `json:"unavailable"`
 	Reason      string `json:"reason,omitempty"`
 	Roots       []Root `json:"roots,omitempty"`
+	// 修改 2. Run-level notes about what the card is not showing (a worktree
+	//         dropped by the root cap). Root-scoped gaps stay on their root.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // RootSpec is one tree to capture. Before is the snapshot taken when the run
@@ -120,6 +127,9 @@ func BuildRoot(ctx context.Context, spec RootSpec, opts Options) Root {
 		return root
 	}
 	defer after.Close()
+	// 修改 3. Carry unreadable paths up to the card: skipping them silently made
+	//         a partial capture indistinguishable from "this run changed nothing".
+	root.Skipped = trimSkipped(after.Skipped)
 
 	repoRoots := map[string]string{} // repo root (relative, "." for self) -> head
 	for rel, head := range after.Repos {
@@ -237,6 +247,18 @@ func BuildRoot(ctx context.Context, spec RootSpec, opts Options) Root {
 		root.Reason = ""
 	}
 	return root
+}
+
+// 修改 4. A pathological tree can skip thousands of paths; the list is context,
+//
+//	not data, so it is capped like every other field on the card.
+const maxSkippedPaths = 20
+
+func trimSkipped(paths []string) []string {
+	if len(paths) <= maxSkippedPaths {
+		return paths
+	}
+	return append(paths[:maxSkippedPaths:maxSkippedPaths], fmt.Sprintf("…等 %d 个路径", len(paths)))
 }
 
 func owningRepo(path string, repos map[string]string) (string, bool) {

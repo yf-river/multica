@@ -122,6 +122,11 @@ func (c *Capture) Finish(ctx context.Context) *Diff {
 	}
 	roots = append(roots, workRoot)
 
+	dropped := 0
+	// 修改 1. The work directory already occupies one slot, so the cap counts it;
+	//         dropped worktrees are counted and reported instead of disappearing
+	//         behind a boundary that rendered as "no change".
+	remaining := MaxRoots - 1
 	for _, repo := range c.external {
 		now := worktreePaths(ctx, repo.path)
 		var created []string
@@ -131,16 +136,22 @@ func (c *Capture) Finish(ctx context.Context) *Diff {
 			}
 		}
 		sort.Strings(created)
+		eligible := make([]string, 0, len(created))
 		for _, worktree := range created {
-			if len(roots) > MaxRoots {
-				break
-			}
 			if pathInside(worktree, c.spec.WorkDir) || pathInside(c.spec.WorkDir, worktree) {
 				continue
 			}
 			if excluded(worktree, c.spec.ExcludePaths) {
 				continue
 			}
+			eligible = append(eligible, worktree)
+		}
+		if len(eligible) > remaining {
+			dropped += len(eligible) - max(remaining, 0)
+			eligible = eligible[:max(remaining, 0)]
+		}
+		remaining -= len(eligible)
+		for _, worktree := range eligible {
 			base, _, branch := WorktreeStart(ctx, worktree)
 			source := "reflog"
 			if base == "" {
@@ -176,6 +187,11 @@ func (c *Capture) Finish(ctx context.Context) *Diff {
 		}
 	}
 	diff := Assembly(roots, c.before, nil)
+	// 修改 2. Say what the cap hid: the user asked for every change to be
+	//         visible, so a silently dropped group is worse than a bounded one.
+	if dropped > 0 {
+		diff.Notes = append(diff.Notes, fmt.Sprintf("任务目录外还有 %d 个工作树超出展示上限（最多 %d 个分组）", dropped, MaxRoots))
+	}
 	return diff
 }
 

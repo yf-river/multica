@@ -174,6 +174,7 @@ export function CodeDiffCard({ result, runLabel, className, variant = "default" 
         <DialogTitle>{attachment ? "文件修改" : "本次代码修改"}</DialogTitle>
         <DialogDescription className="break-words text-caption">运行前后的文件差异，包含已提交、未提交和被 .gitignore 忽略的文件。任务目录之外的改动单独分组。</DialogDescription>
         {truncated && <p role="status" className="text-caption text-muted-foreground">变更较大，部分文件或补丁未展示；行数统计仅覆盖列出的文件。</p>}
+        {!!diff?.notes?.length && <ul role="status" className="flex flex-col gap-1 text-caption text-muted-foreground">{diff.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
         {!!unassignedRoots.length && !showUnassigned && (
           <button type="button" onClick={() => setShowUnassigned(true)} className="self-start rounded-md border px-3 py-1.5 text-caption hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">
             查看未归属改动（{unassignedRoots.length} 个工作树，{unassignedRoots.reduce((sum, root) => sum + root.files.length, 0)} 个文件）
@@ -199,6 +200,7 @@ export function CodeDiffCard({ result, runLabel, className, variant = "default" 
             </nav>
           )}
           {currentRoot?.reason && <p role="status" className="text-caption text-muted-foreground">{currentRoot.reason}</p>}
+          {!!currentRoot?.skipped?.length && <p role="status" className="text-caption text-muted-foreground">以下路径未能读取，未参与比对：{currentRoot.skipped.slice(0, 6).join("、")}{currentRoot.skipped.length > 6 ? " 等" : ""}</p>}
           {currentRoot?.unavailable && <p role="status" className="text-caption text-destructive">这个目录的差异采集失败。</p>}
           {currentRoot && rootSubtitle(currentRoot) && <p className="break-all text-caption text-muted-foreground">{currentRoot.path && <span>{currentRoot.path} · </span>}{rootSubtitle(currentRoot)}</p>}
           {currentRoot?.attribution === "shared" && <p role="status" className="text-caption text-muted-foreground">这个目录是用户自己的目录，采集到的改动无法区分哪个是 agent 写的。</p>}

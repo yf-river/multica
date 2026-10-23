@@ -3572,6 +3572,15 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 修改 1. issue 标题和描述也存在库里：agent 在运行中改写需求时，文件 diff 看不见
+	//         这次改动，审核需要单独一条文本差异。
+	if issue.Title != prevIssue.Title || issue.Description.String != prevIssue.Description.String {
+		h.recordRunTextChange(r.Context(), h.Queries, r, workspaceID,
+			runTextTarget{Kind: "issue", ID: uuidToString(issue.ID), Name: issue.Title}, "title", prevIssue.Title, issue.Title)
+		h.recordRunTextChange(r.Context(), h.Queries, r, workspaceID,
+			runTextTarget{Kind: "issue", ID: uuidToString(issue.ID), Name: issue.Title}, "description", prevIssue.Description.String, issue.Description.String)
+	}
+
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
