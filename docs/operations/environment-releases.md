@@ -6,7 +6,7 @@ Multica 程序改动从确认计划、独立分支开发、固定 int 验证进�
 
 ## 固定验收槽位
 
-需要并行验收时使用专属 `verify-1`、`verify-2`、`verify-3` 三套环境；固定 `int` 仍是最终集成入口，`prod` 只接受经过 int 和用户发布授权的候选。验收槽位默认关闭，启用、排空和占用由现有交付记录及槽位接口驱动，候选历史按环境保留，verify 候选不能直接晋级生产。
+需要并行验收时使用专属 `verify-1`、`verify-2`、`verify-3` 三套环境；固定 `int` 仍是最终集成入口，`prod` 只接受经过 int 和用户发布授权的候选。验收槽位默认关闭，启用、排空和占用由现有交付记录及槽位接口驱动，候选历史按环境保留，verify 候选不能直接晋级生产。 独立 verify 候选从构建、部署到验收与中断续接固定源码和产物；其他任务推进主分支或生产版本，不使该候选失效。源码、分支、产物、实际运行身份及槽位租约与种子仍须一致。最终 int 整合与生产发布核对届时最新主分支和已发布基线，必要变化按影响补测。
 
 槽位安装、重启核对和种子维护入口位于发布制品的 `operations/`，源码入口为 `scripts/verification-environments.py`、`scripts/verification-seed.py` 和 `scripts/verification-seed-copy.mjs`。只允许重置专属验收数据库，禁止触碰 int、prod 和事故留证库。
 
@@ -99,7 +99,7 @@ pnpm --dir /data/ida/multica release delivery-worker --env int
 pnpm --dir /data/ida/multica release delivery-worker --env prod
 ```
 
-验收pool接力单元使用 `Type=exec`、`KillMode=process`：接力进程退出不结束跨任务运行的槽位服务。服务停启由canonical部署元数据中的PID、版本目录、环境身份和Daemon profile核对后执行；取消或中断后保留原租约/候选供接续，所有权不明确时隔离并等待恢复，不能用整组kill代替槽位清理。残留服务使接力单元仍加载但inactive时，先通过systemd核对原ExecStart完整参数、工作目录、环境根、Type和KillMode，再启动原单元续接；身份不符时停止，不以随机单元名绕开并发约束。 接力单元显式使用实际执行用户 passwd 目录作为 `HOME`，恢复时核对相同值，使 Git 身份与 Go/包管理器缓存沿用同一账号配置。Git 整合只有实际未合并文件才归为代码冲突；身份、钩子等其它失败保留原始诊断，清理错误不能掩盖根因。
+验收pool接力单元使用 `Type=exec`、`KillMode=process`：接力进程退出不结束跨任务运行的槽位服务。服务停启由canonical部署元数据中的PID、版本目录、环境身份和Daemon profile核对后执行；取消或中断后保留原租约/候选供接续，所有权不明确时隔离并等待恢复，不能用整组kill代替槽位清理。接力单元按交付和已安装控制器版本确定性命名，通过systemd核对ExecStart完整参数、工作目录、环境根、Type、KillMode和活动状态。任何版本的活动控制器都独占该交付；同版本inactive单元按原身份续启。旧版本inactive且MainPID已退出时，核对控制组剩余进程均属canonical槽位服务或其真实后代，再由新版本沿用原作业与租约接力，不停止槽位服务。身份异常明确记录该交付恢复受阻，其余交付继续调度；禁止随机单元名绕开并发约束。 接力单元显式使用实际执行用户 passwd 目录作为 `HOME`，恢复时核对相同值，使 Git 身份与 Go/包管理器缓存沿用同一账号配置。Git 整合只有实际未合并文件才归为代码冲突；身份、钩子等其它失败保留原始诊断，清理错误不能掩盖根因。
 
 新运行产物携带同版本的发布操作脚本。发布入口验证服务后安装对应环境接力器；定时器是持久 systemd 单元，服务、发布器及机器重启后按数据库和日志继续。int 接力器禁止更新生产。配置、账号及环境地址取当前部署记录和私有 profile，不写入源码或日志。
 

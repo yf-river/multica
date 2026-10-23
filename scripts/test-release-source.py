@@ -73,6 +73,95 @@ class ReleaseTest(unittest.TestCase):
         self.commit()
         r.write(self.run/'published.json',{'commit':self.git('rev-parse','HEAD')})
         with self.assertRaisesRegex(RuntimeError,'最新已发布'):r.checked_source(source)
+    def advance_production(self):
+        (self.root/'other-task.txt').write_text('another published task')
+        self.commit()
+        r.write(self.run/'published.json',{'commit':self.git('rev-parse','HEAD')})
+
+    def test_verification_accept_and_resume_survive_production_advance(self):
+        source=self.worktree();record=self.record(source)
+        record.update(environment='verify-1',status='verifying',generation=7,delivery_id='delivery-a')
+        current=self.base/'verify-runtime';current.mkdir()
+        (current/'program').write_text('pinned program')
+        manifest=dict(id=self.sha,source_commit=self.sha,files=r.checksums(current))
+        r.write(current/'release.json',manifest)
+        metadata={**{k:record[k] for k in ('release_id','source_digest','deployed_at')},
+                  'release_dir':str(current),'commit':self.sha,'seed_id':'seed-v5','seed_verified':True}
+        r.write(r.meta_path('verify-1'),metadata);r.save_candidate(record)
+        self.assertEqual(r.validate_candidate(record),metadata)
+        self.advance_production()
+        # 续接调用的校验与实际 accept/归档都验证同一固定候选，Git 与文件复制是真实执行。
+        self.assertEqual(r.validate_candidate(record),metadata)
+        evidence=self.base/'evidence.json'
+        r.write(evidence,dict(candidate=record['id'],summary='isolated fixture',
+                             checks=[dict(name='fixture',status='passed',evidence='controlled program file')]))
+        r.accept(record['id'],evidence,env='verify-1')
+        accepted=r.candidate(record['id'],env='verify-1')
+        archive=Path(accepted['accepted_artifact'])
+        self.assertEqual(accepted['status'],'accepted')
+        self.assertEqual(accepted['commit'],self.sha)
+        self.assertEqual(accepted['generation'],7)
+        self.assertEqual((archive/'program').read_text(),'pinned program')
+        self.assertEqual(r.read(archive/'release.json')['files'],r.checksums(archive))
+        self.assertEqual(r.read(r.meta_path('verify-1')),metadata)
+        # 最终 int 与已归档但源码目录已清理的发布恢复路径仍拒绝旧基线。
+        final=dict(record);final.pop('environment');r.write(r.meta_path('int'),metadata)
+        with self.assertRaisesRegex(RuntimeError,'最新已发布'):r.validate_candidate(final)
+        self.git('worktree','remove',str(source))
+        with self.assertRaisesRegex(RuntimeError,'最新生产'):r.validate_candidate(final,allow_finalized=True)
+
+    def test_verification_keeps_source_branch_digest_and_runtime_guards(self):
+        source=self.worktree();record=self.record(source);record['environment']='verify-2'
+        metadata={k:record[k] for k in ('release_id','source_digest','deployed_at')}
+        r.write(r.meta_path('verify-2'),metadata);self.advance_production()
+        (source/'apps/web/page.ts').write_text('uncommitted drift')
+        with self.assertRaisesRegex(RuntimeError,'干净'):r.validate_candidate(record)
+        self.git('checkout','--','apps/web/page.ts',cwd=source)
+        with self.assertRaisesRegex(RuntimeError,'发生变化'):
+            r.validate_candidate(dict(record,source_digest='wrong'))
+        # 部署身份与记录同时伪装相同 digest 也不能跳过源码摘要核对。
+        r.write(r.meta_path('verify-2'),dict(metadata,source_digest='wrong'))
+        with self.assertRaisesRegex(RuntimeError,'源码已变化'):
+            r.validate_candidate(dict(record,source_digest='wrong'))
+        r.write(r.meta_path('verify-2'),metadata)
+        with self.assertRaisesRegex(RuntimeError,'分支发生变化'):
+            r.validate_candidate(dict(record,branch=self.git('symbolic-ref','HEAD')))
+        r.write(r.meta_path('verify-2'),dict(metadata,deployed_at='changed'))
+        with self.assertRaisesRegex(RuntimeError,'发生变化'):r.validate_candidate(record)
+        r.write(r.meta_path('verify-2'),metadata)
+        (source/'apps/web/page.ts').write_text('committed source drift')
+        self.git('add','.',cwd=source)
+        self.git('-c','commit.gpgsign=false','commit','-qm','source changed',cwd=source)
+        with self.assertRaisesRegex(RuntimeError,'源码已变化'):r.validate_candidate(record)
+        for env in ('verify-4','prod','arbitrary'):
+            with self.subTest(env=env),self.assertRaises(RuntimeError):
+                r.validate_candidate(dict(record,environment=env))
+
+    def test_verification_build_and_prepare_use_fixed_source_checks(self):
+        # 模拟编译/服务切换；源码校验、真实 Git 推进、manifest 与 candidate 登记不替换。
+        for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs',
+                     'lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
+            p=self.root/'scripts'/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('// fixture')
+        self.commit();self.sha=self.git('rev-parse','HEAD');source=self.worktree()
+        current=self.base/'previous';current.mkdir()
+        r.write(r.meta_path('int'),{'release_dir':str(current)})
+        self.advance_production()
+        with patch.object(r,'run'),patch.object(r,'copy_tree'),patch.object(r,'checked_source',wraps=r.checked_source) as check:
+            artifact=r.build_verification(source,'delivery-a')
+        self.assertEqual(check.call_count,3)
+        self.assertTrue(all(c.kwargs=={'verification':True} for c in check.call_args_list))
+        # 默认构建仍是最终集成用途，不能构建未含最新生产基线的候选。
+        with self.assertRaisesRegex(RuntimeError,'最新已发布'):r.build(source,self.base/'blocked-build')
+        env='verify-3';r.write(r.meta_path(env),{'release_id':'old'});r.write(r.config_path(env),{'server':{}})
+        def deployed(env,target):
+            m=r.read(artifact/'release.json')
+            r.write(r.meta_path(env),{'release_id':m['id'],'source_digest':m['source_digest'],'deployed_at':'new'})
+        with patch.object(r,'idle_slot',return_value=self.base/'runtime'),patch.object(r,'copy_tree'),patch.object(r,'publish',side_effect=deployed):
+            record=r.prepare_verification(source,artifact,dict(name=env,generation=1,delivery_id='delivery-a'))
+        self.assertEqual(record['commit'],self.sha)
+        self.assertEqual(record['status'],'verifying')
+        r.validate_candidate(record)
+
     def test_missing_published_record_blocks_build(self):
         (self.run/'published.json').unlink()
         r.write(r.meta_path('prod'),{'commit':self.sha,'source_digest':'dirty-snapshot'})
