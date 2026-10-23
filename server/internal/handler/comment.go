@@ -83,6 +83,10 @@ type CommentResponse struct {
 	// 目标不可用、runtime 离线）在这里上报而不是被静默丢弃，客户端才能提示「评论已发，但有
 	// N 个目标未被触发」。
 	TriggerOutcomes []CommentTriggerOutcome `json:"trigger_outcomes,omitempty"`
+	// 1. ReviewReply is the outcome of a reply addressed to the managed reviewer: who
+	// actually received it and whether a run started (GONG-63). Additive field, only on
+	// create/edit responses for reviewer threads.
+	ReviewReply *CommentReviewReplyResponse `json:"review_reply,omitempty"`
 }
 
 // CommentTriggerOutcome 是一次显式 @agent / @squad 提及的按目标结果（MUL-4525 §2）。
@@ -1338,6 +1342,9 @@ type CommentTriggerPreviewResponse struct {
 	// Blocked 列出按原文发出后「不会触发」的显式 @agent / @squad 提及（MUL-4525 §2）。
 	// 增量字段：老客户端忽略。让编辑器在发送前就能警示，而不是等用户事后才发现静默无操作。
 	Blocked []CommentTriggerOutcome `json:"blocked,omitempty"`
+	// 2. ReviewReply describes where a reply addressed to the managed reviewer goes
+	// instead (GONG-63). Absent for ordinary comments and threads.
+	ReviewReply *CommentReviewReplyResponse `json:"review_reply,omitempty"`
 }
 
 // CommentTriggerAgentResponse 是预览列表里一个会被触发的 agent 及其触发原因。
@@ -1358,6 +1365,10 @@ const (
 	commentTriggerSourceMentionSquadLeader commentAgentTriggerSource = "mention_squad_leader"
 	commentTriggerSourceThreadParent       commentAgentTriggerSource = "thread_parent"
 	commentTriggerSourceConversation       commentAgentTriggerSource = "conversation_continuation"
+	// 3. A reply addressed to the managed reviewer is handed to the current issue
+	// owner: the reviewer only accepts server-dispatched review rounds, so routing
+	// the reply to it would drop it (GONG-63).
+	commentTriggerSourceReviewAssignee commentAgentTriggerSource = "review_followup_assignee"
 )
 
 // defaultCommentRoutingEscalationDelay 是评论路由的默认升级延迟（没配 settings 时），
@@ -1444,6 +1455,9 @@ func commentAgentTriggerReason(trigger commentAgentTrigger) string {
 		return "This reply will trigger the parent comment's author."
 	case commentTriggerSourceConversation:
 		return "This follow-up will continue the recent agent conversation."
+	case commentTriggerSourceReviewAssignee:
+		// 4. Say who receives it: the composer must not imply the reviewer will answer.
+		return "Replies to the reviewer go to the current issue owner."
 	default:
 		return "This comment will trigger this agent."
 	}
@@ -1538,10 +1552,13 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	opts.OriginatorUserID = h.invokeOriginatorFromRequest(r, actorType, actorID)
 	opts.AutopilotDelegationAuthorityUserID = h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
-	triggers, targets := h.computeCommentAgentTriggers(r.Context(), issue, content, parentComment, actorType, actorID, opts)
+	triggers, targets, reviewReply := h.computeCommentAgentTriggers(r.Context(), issue, content, parentComment, actorType, actorID, opts)
 	resp := CommentTriggerPreviewResponse{
 		Agents:  make([]CommentTriggerAgentResponse, 0, len(triggers)),
 		Blocked: commentBlockedTargetOutcomes(targets),
+		// 5. Preview and save share this resolution, so the composer's recipient
+		// sentence cannot differ from what the save path actually does.
+		ReviewReply: reviewReplyToResponse(reviewReply),
 	}
 	for _, trigger := range triggers {
 		resp.Agents = append(resp.Agents, h.commentAgentTriggerToResponse(trigger))
@@ -1820,7 +1837,9 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, authorType, authorID)
 	// 评论已保存；被拦截的提及不能让整个请求失败。把按目标结果发出来，客户端能提示「部分
 	// 成功」而不是静默无操作（MUL-4525 §2）。
-	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, parentComment, authorType, authorID, originatorUserID, delegationAuthority, suppressAgentIDs)
+	dispatch := h.triggerTasksForComment(r.Context(), issue, comment, parentComment, authorType, authorID, originatorUserID, delegationAuthority, suppressAgentIDs)
+	resp.TriggerOutcomes = dispatch.Outcomes
+	resp.ReviewReply = dispatch.ReviewReply
 
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -1853,14 +1872,21 @@ func isNoteComment(content string) bool {
 	return strings.EqualFold(firstToken, noteCommentPrefix)
 }
 
+// commentTriggerDispatch 是一次评论触发的派发结果：显式 @agent / @squad 提及的按目标结果，
+// 外加（仅审查员回复时）转交给负责人的实际结果。
+type commentTriggerDispatch struct {
+	Outcomes    []CommentTriggerOutcome
+	ReviewReply *CommentReviewReplyResponse
+}
+
 // triggerTasksForComment 解析并入队评论的 agent 触发，返回显式 @agent / @squad 提及的按目标
 // 结果（MUL-4525 §2）：解析阶段被拦截的提及 + 入队阶段的 queued / coalesced / deferred /
 // blocked。UI 抑制的触发（用户取消勾选）在入队前移除、不产生任何结果。
-func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID, delegationAuthorityUserID string, suppressAgentIDs []pgtype.UUID) []CommentTriggerOutcome {
+func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID, delegationAuthorityUserID string, suppressAgentIDs []pgtype.UUID) commentTriggerDispatch {
 	if isNoteComment(comment.Content) {
-		return nil
+		return commentTriggerDispatch{}
 	}
-	triggers, targets := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
+	triggers, targets, reviewReply := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
 		ExcludeTriggerCommentID:            comment.ID,
 		OriginatorUserID:                   originatorUserID,
 		AutopilotDelegationAuthorityUserID: delegationAuthorityUserID,
@@ -1868,7 +1894,12 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
 	h.noteBlockedRuntimeTargets(ctx, issue, targets)
 	enqueued := h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
-	return commentTriggerOutcomes(targets, enqueued)
+	return commentTriggerDispatch{
+		Outcomes: commentTriggerOutcomes(targets, enqueued),
+		// 6. The receipt must name the real recipient and real result, so a saved
+		// reply is never mistaken for a started run (GONG-63).
+		ReviewReply: reviewReplyDispatchResponse(reviewReply, enqueued),
+	}
 }
 
 // noteBlockedRuntimeTargets 对每个因 runtime 不可用被拒的 agent 留一条系统评论，无论谁写的
@@ -2399,10 +2430,14 @@ func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issu
 				"agent_id", uuidToString(trigger.Agent.ID))
 			return err
 		}
-	case commentTriggerSourceThreadParent, commentTriggerSourceConversation:
+	case commentTriggerSourceThreadParent, commentTriggerSourceConversation, commentTriggerSourceReviewAssignee:
 		var task db.AgentTaskQueue
 		var err error
-		if trigger.Source == commentTriggerSourceConversation && trigger.Squad != nil {
+		// 7. A reviewer-handover is thread-linked like a parent-author reply: the run
+		// answers in the same thread, so the reply keeps its parent_id. A squad owner
+		// still runs as its leader with the squad context.
+		if trigger.Squad != nil &&
+			(trigger.Source == commentTriggerSourceConversation || trigger.Source == commentTriggerSourceReviewAssignee) {
 			task, err = h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, trigger.Agent.ID, trigger.Squad.ID, triggerCommentID)
 		} else {
 			task, err = h.TaskService.EnqueueTaskForThreadParent(ctx, issue, trigger.Agent.ID, triggerCommentID)
@@ -2435,9 +2470,10 @@ func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issu
 // computeCommentAgentTriggers 解析一条评论会触发哪些 agent（按执行 agent 去重），外加每个
 // 显式 @agent / @squad 提及的按目标列表（MUL-4525 §2）。target 只来自显式提及路径——隐式
 // 路由回退（受理人、线程父级、会话）从没被用户点名，那边没有路由不算静默无操作。
-func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, []commentMentionTarget) {
+// 第三个返回值只在评论是对托管审查员的回复时非空：它说明这次回复被转交给谁（GONG-63）。
+func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, []commentMentionTarget, *commentReviewReplyRoute) {
 	if isNoteComment(content) {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Autopilot 委派授权（MUL-4857）由闸门经 opts.effectiveInvoker() 应用：运行没有人类发起人
@@ -2454,10 +2490,10 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		return h.resolveMentionedAgentCommentTriggers(ctx, issue, mentions, actorType, actorID, opts)
 	}
 	if util.HasMentionAll(mentions) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if hasMemberMention(mentions) {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	if actorType != "member" {
@@ -2468,16 +2504,27 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		// 提及已在上面处理，这里不会把提及目标与受理 leader 重复入队。
 		if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" {
 			if trigger, ok := h.routeAssignedSquadLeaderFallback(ctx, issue, actorType, actorID, opts); ok {
-				return []commentAgentTrigger{trigger}, nil
+				return []commentAgentTrigger{trigger}, nil, nil
 			}
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	if parentComment != nil && parentComment.AuthorType == "agent" {
+		// 8. A reply under the reviewer's thread is addressed to the reviewer, even
+		// when the newest message came from the developer: the composer keeps
+		// parent_id on the thread root. Hand it to the current owner instead of the
+		// (deliberately uncallable) reviewer, and report who actually received it.
+		if h.isReviewerComment(ctx, issue, parentComment) {
+			route := h.resolveReviewReplyRoute(ctx, issue, actorType, actorID, opts)
+			if route.HasTrigger {
+				return []commentAgentTrigger{route.Trigger}, nil, &route
+			}
+			return nil, nil, &route
+		}
 		trigger, ok := h.routeReplyToParentAuthor(ctx, issue, parentComment, actorType, actorID, opts)
 		if !ok {
-			return nil, nil
+			return nil, nil, nil
 		}
 		if fallback, ok := h.routeAssigneeFallback(ctx, issue, actorType, actorID, opts); ok &&
 			uuidToString(fallback.Agent.ID) != uuidToString(trigger.Agent.ID) {
@@ -2486,14 +2533,14 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 				Squad: fallback.Squad,
 			}
 		}
-		return []commentAgentTrigger{trigger}, nil
+		return []commentAgentTrigger{trigger}, nil, nil
 	}
 
 	if parentComment != nil {
 		triggers, handled := h.routeThreadRootOwners(ctx, issue, parentComment, actorID, opts)
 		if handled {
 			if len(triggers) == 0 {
-				return nil, nil
+				return nil, nil, nil
 			}
 			if len(triggers) == 1 {
 				if fallback, ok := h.routeAssigneeFallback(ctx, issue, actorType, actorID, opts); ok &&
@@ -2504,19 +2551,19 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 					}
 				}
 			}
-			return triggers, nil
+			return triggers, nil, nil
 		}
 		// 纯成员对成员的回复不能因为线程没有 agent 主人就启动 issue 受理人。显式提及与既有
 		// 会话主人已在上面解析过。
 		if parentComment.AuthorType == "member" {
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
 
 	if trigger, ok := h.routeAssigneeFallback(ctx, issue, actorType, actorID, opts); ok {
-		return []commentAgentTrigger{trigger}, nil
+		return []commentAgentTrigger{trigger}, nil, nil
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 // hasAgentOrSquadMention 判断提及里是否含 agent 或 squad 类型。
@@ -2800,7 +2847,7 @@ type blockedRuntimeNotice struct {
 	verdict service.AgentVerdict
 }
 
-func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issue db.Issue, mentions []util.Mention, authorType, authorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, []commentMentionTarget) {
+func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issue db.Issue, mentions []util.Mention, authorType, authorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, []commentMentionTarget, *commentReviewReplyRoute) {
 	wsID := uuidToString(issue.WorkspaceID)
 	triggers := make([]commentAgentTrigger, 0, len(mentions))
 	// seen 按「解析后的 agent id」对 EXECUTION 去重：两条提及解析到同一 agent 只入队一条任务。
@@ -2849,6 +2896,19 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 			TargetType: targetType, TargetID: targetID,
 			Status: DispatchBlocked, ReasonCode: verdict.Reason, unusable: notice,
 		})
+	}
+	// 9. A mention of the managed reviewer cannot start a run (canInvokeAgent keeps it
+	// closed to ordinary calls), so it is handed to the current issue owner instead —
+	// resolved once for all reviewer mentions in this comment, and deduplicated by the
+	// trigger's agent id like any other target so @reviewer plus @owner runs the owner
+	// only once (GONG-63).
+	var reviewReply *commentReviewReplyRoute
+	reviewRoute := func() *commentReviewReplyRoute {
+		if reviewReply == nil {
+			route := h.resolveReviewReplyRoute(ctx, issue, authorType, authorID, opts)
+			reviewReply = &route
+		}
+		return reviewReply
 	}
 	for _, m := range mentions {
 		if m.Type == "squad" {
@@ -2940,6 +3000,18 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 			blockTarget("agent", m.ID, ReasonInvocationNotAllowed)
 			continue
 		}
+		// 10. A member's mention of the managed reviewer goes to the current owner rather
+		// than reading as a rejected mention: the reviewer is not callable by design, and
+		// the user's message should still reach whoever owns the task. No per-target
+		// outcome is recorded — the handover is reported through review_reply. Agent
+		// authors keep the blocked outcome, so an agent cannot wake the owner by
+		// mentioning the reviewer.
+		if authorType == "member" && isManagedReviewerAgent(agent) {
+			if route := reviewRoute(); route.HasTrigger {
+				add(route.Trigger)
+			}
+			continue
+		}
 		// 私密 agent 闸门优先，先于任何 archived/runtime 状态读取。
 		if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), wsID) {
 			blockTarget("agent", m.ID, ReasonInvocationNotAllowed)
@@ -2965,7 +3037,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionAgent, AlreadyPending: hasPending})
 		addTarget(commentMentionTarget{TargetType: "agent", TargetID: m.ID, ExecAgentID: uuidToString(agentUUID)})
 	}
-	return triggers, targets
+	return triggers, targets, reviewReply
 }
 
 // UpdateComment 处理 PATCH/PUT /api/issues/comments/:commentId：更新评论内容/附件集。
@@ -3219,9 +3291,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
-	retriggerEditedComment := func() []CommentTriggerOutcome {
+	retriggerEditedComment := func() commentTriggerDispatch {
 		if oldContent == comment.Content {
-			return nil
+			return commentTriggerDispatch{}
 		}
 		issue := *triggerIssue
 		var parentComment *db.Comment
@@ -3254,7 +3326,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	// 上面的广播有意不带 trigger_outcomes——那是编辑者的私有反馈，不是共享时间线状态
 	//（MUL-4525 §2）。
-	resp.TriggerOutcomes = retriggerEditedComment()
+	dispatch := retriggerEditedComment()
+	resp.TriggerOutcomes = dispatch.Outcomes
+	resp.ReviewReply = dispatch.ReviewReply
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -3458,7 +3532,7 @@ func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.
 			// comment.source_task_id 解析。
 			delegationAuthority = h.autopilotDelegationAuthorityFromComment(ctx, issue, comment)
 		}
-		triggers, _ := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
+		triggers, _, _ := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
 			ExcludeTriggerCommentID:            comment.ID,
 			OriginatorUserID:                   originatorUserID,
 			AutopilotDelegationAuthorityUserID: delegationAuthority,

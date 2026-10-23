@@ -936,7 +936,9 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 	h.publishEvent(createdEvent)
 
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
-	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, originatorUserID, delegationAuthority, nil)
+	dispatch := h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, originatorUserID, delegationAuthority, nil)
+	resp.TriggerOutcomes = dispatch.Outcomes
+	resp.ReviewReply = dispatch.ReviewReply
 
 	// 用量上报是尽力而为、刻意放在运行成功路径之外：一次计数失败绝不能反过来
 	// 让用户的运行泡汤。

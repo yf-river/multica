@@ -183,7 +183,7 @@ func TestAutopilotDelegationAuthority_LineageBinding(t *testing.T) {
 	// mentionTriggersTarget wires that resolved authority into the trigger compute
 	// exactly as the live paths do, and reports whether the private target fires.
 	mentionTriggersTarget := func(fx autopilotDelegationFixture) bool {
-		triggers, _ := testHandler.computeCommentAgentTriggers(
+		triggers, _, _ := testHandler.computeCommentAgentTriggers(
 			ctx, fx.Issue, fx.Comment.Content, nil, "agent", fx.LeaderAgentID,
 			commentTriggerComputeOptions{
 				ExcludeTriggerCommentID:            fx.Comment.ID,
