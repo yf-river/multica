@@ -171,7 +171,8 @@ function RunRow({
             {run.base_sha ? run.base_sha.slice(0, 8) : ""}
             {run.cursor_sha ? ` → ${run.cursor_sha.slice(0, 8)}` : ""}
           </span>
-          {run.has_more ? <span className="text-caption text-warning">{hasMoreLabel}</span> : null}
+          {/* 1. 失败或中断的批次没有推进游标，"还有剩余"只对跑完的批次成立。 */}
+          {run.has_more && run.status === "completed" ? <span className="text-caption text-warning">{hasMoreLabel}</span> : null}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 text-caption text-muted-foreground">
           <span>{scannedLabel}</span>

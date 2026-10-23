@@ -19,6 +19,8 @@ import { findModelCapabilityEntry } from "../../agents/components/inspector/mode
 import { useT } from "../../i18n";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+// 同步执行体只跑在 Codex / CodeBuddy 上，服务端绑定其它 provider 会直接拒绝。
+const SYNC_PROVIDERS = new Set(["codex", "codebuddy"]);
 const fieldClass = "h-9 w-full rounded-md border border-input bg-background px-2 text-body";
 
 export function UpstreamSettingsSheet({
@@ -70,10 +72,12 @@ export function UpstreamSettingsSheet({
     setSynced(true);
   }, [open, synced, config]);
 
-  const available = runtimes.data ?? [];
+  // 1. 选择器先按可执行 provider 过滤，避免选中一个只能被服务端 403 拒掉的运行时。
+  const available = (runtimes.data ?? []).filter((item) => SYNC_PROVIDERS.has(item.provider));
   const selected = available.find((item) => item.id === runtimeId);
   const online = selected?.status === "online" && isRuntimeUsableForUser(selected, currentUser?.id ?? null);
-  const catalog = useQuery({ ...runtimeModelsOptions(online ? runtimeId : null), enabled: open && Boolean(runtimeId) });
+  // 2. 运行时离线时模型目录本来就取不到，别再用空 id 请求一次目录接口拿 400。
+  const catalog = useQuery({ ...runtimeModelsOptions(online ? runtimeId : null), enabled: open && Boolean(runtimeId) && online });
   const models = catalog.data?.models ?? [];
   const capability = model && selected ? findModelCapabilityEntry(models, model, selected.provider) : undefined;
   const levels = capability?.thinking?.supported_levels ?? [];

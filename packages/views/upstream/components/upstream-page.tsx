@@ -62,6 +62,17 @@ export function UpstreamPage() {
     return t(($) => $.page.status.state_current);
   })();
 
+  // 2. 执行体失去运行时、或绑定的运行时离线，之前只在设置面板里提示；页面自己也要说，
+  //    否则列表照常显示"已追平"，用户不知道其实下一批不会被执行。
+  const executorWarning =
+    !config?.agent_id || data?.executor_state === "none"
+      ? ""
+      : data?.executor_state === "unbound"
+        ? t(($) => $.page.status.executor_unbound)
+        : data?.runtime_online === false
+          ? t(($) => $.page.status.runtime_offline)
+          : "";
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {error ? <p role="alert" className="px-4 py-2 text-body text-danger">{error.message}</p> : null}
@@ -73,7 +84,8 @@ export function UpstreamPage() {
           </div>
           <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.page.tagline)}</p>
         </div>
-        <div className="flex shrink-0 items-start gap-3">
+        {/* 1. 窄屏下右侧状态块不再撑开外溢被裁掉：整行换行、靠左排，宽屏维持右对齐。 */}
+        <div className="flex w-full flex-wrap items-start justify-between gap-3 sm:w-auto sm:justify-end">
           <Button size="sm" variant="ghost" aria-expanded={showSettings} onClick={() => setShowSettings(true)}>
             <Settings aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
             {t(($) => $.page.setup.title)}
@@ -81,7 +93,7 @@ export function UpstreamPage() {
           {isLoading ? (
             <Skeleton className="h-12 w-56" />
           ) : (
-            <div className="max-w-sm space-y-1 text-right text-caption text-muted-foreground">
+            <div className="min-w-0 max-w-full space-y-1 text-left text-caption text-muted-foreground sm:max-w-sm sm:text-right">
               <div className="break-all font-mono text-caption">
                 {config?.upstream_url ?? ""}
                 {config?.upstream_branch ? ` @ ${config.upstream_branch}` : ""}
@@ -92,6 +104,7 @@ export function UpstreamPage() {
                 {cursor ? `${shortSha(cursor)} → ${head ? shortSha(head) : "?"}` : t(($) => $.page.status.never)}
               </div>
               <div className={paused ? "text-warning" : running ? "text-brand" : ""}>{stateLabel}</div>
+              {executorWarning ? <div className="text-warning">{executorWarning}</div> : null}
               {lastRun ? (
                 <div>
                   {t(($) => $.page.status.last_run, {

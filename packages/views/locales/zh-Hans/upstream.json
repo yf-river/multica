@@ -18,7 +18,9 @@
       "state_unconfigured": "未配置：选择运行时后才会自动同步",
       "state_paused": "已暂停",
       "state_catching_up": "追历史中",
-      "state_current": "已追平"
+      "state_current": "已追平",
+      "executor_unbound": "执行体已失去运行时，重新绑定后才会继续同步",
+      "runtime_offline": "运行时离线，恢复后按计划继续"
     },
     "filters": {
       "status_open": "待定",
@@ -35,7 +37,7 @@
       "empty_unconfigured": "还没有配置同步",
       "empty_unconfigured_hint": "选择运行时后，同步才会开始在后台产出待吸收清单。",
       "empty_not_run": "还没跑过同步",
-      "empty_not_run_hint": "到设置里点保存后，下一批会自动执行；也可以先手动跑一批。",
+      "empty_not_run_hint": "保存设置后，下一批会按计划自动执行；也可以到「同步记录」点「立即跑一批」。",
       "load_more": "加载更多"
     },
     "bulk": {
