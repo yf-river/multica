@@ -4822,7 +4822,36 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			}
 			provider = runtimeProvider
 		}
-		if err := h.Queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
+		req.Usage[i].Provider = provider
+	}
+
+	// 一次 run 的完整报告共用一把锁；首报、重试与多模型更正原子提交，失败不发布监控计数。
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to begin usage report")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "task-usage:"+uuidToString(task.ID)); err != nil {
+		writeError(w, 500, "failed to lock usage report")
+		return
+	}
+	queries := h.Queries.WithTx(tx)
+	previous, err := queries.GetTaskUsage(r.Context(), parseUUID(taskID))
+	if err != nil {
+		writeError(w, 500, "failed to load previous usage")
+		return
+	}
+	type usageKey struct{ provider, model string }
+	known := make(map[usageKey]bool, len(previous))
+	for _, row := range previous {
+		known[usageKey{row.Provider, row.Model}] = true
+	}
+	var firstRealtime []TaskUsagePayload
+
+	for i, u := range req.Usage {
+		provider := u.Provider
+		if err := queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
 			TaskID:           parseUUID(taskID),
 			Provider:         provider,
 			Model:            u.Model,
@@ -4837,7 +4866,12 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to store usage for model "+u.Model)
 			return
 		}
-		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.CostUSDTicks)
+		key := usageKey{provider, u.Model}
+		if !known[key] && !executedAt[i].Valid {
+			u.Provider = provider
+			firstRealtime = append(firstRealtime, u)
+		}
+		known[key] = true
 
 		// Surface prompt-cache effectiveness per run so cache hit rates are
 		// observable in logs, not just queryable from runtime_usage. The ratio
@@ -4862,22 +4896,18 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	// 数值与本次请求一致。被更早的权威值覆盖（例如已有行只更正数值）时数值应相等；
 	// 入账时间只在首次插入时采用，已有行保留原 created_at，因此不比较它。
 	if len(req.Usage) > 0 {
-		stored, err := h.Queries.GetTaskUsage(r.Context(), parseUUID(taskID))
+		stored, err := queries.GetTaskUsage(r.Context(), parseUUID(taskID))
 		if err != nil {
 			slog.Error("read back task usage failed", "task_id", taskID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to verify stored usage")
 			return
 		}
-		type usageKey struct{ provider, model string }
 		byKey := make(map[usageKey]db.TaskUsage, len(stored))
 		for _, row := range stored {
 			byKey[usageKey{row.Provider, row.Model}] = row
 		}
 		for _, u := range req.Usage {
-			provider := normalizeProvider(u.Provider)
-			if provider == "" {
-				provider = runtimeProvider
-			}
+			provider := u.Provider
 			row, ok := byKey[usageKey{provider, u.Model}]
 			if !ok {
 				writeError(w, http.StatusInternalServerError, "usage not persisted for model "+u.Model)
@@ -4891,6 +4921,14 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to commit usage report")
+		return
+	}
+	// Counter 表达实时首次观测；更正与历史账本由数据库读取，不向当前 counter 重放。
+	for _, u := range firstRealtime {
+		h.TaskService.CaptureTaskUsage(r.Context(), task, u.Provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.CostUSDTicks)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

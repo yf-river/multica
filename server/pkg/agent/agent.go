@@ -190,7 +190,8 @@ type Result struct {
 	SessionID  string                // 后端会话 id
 	Usage      map[string]TokenUsage // 按模型名索引的 token 用量
 	// ProviderTraceID 是本次子进程自己声明的根请求 id（CodeBuddy 为 stream-json
-	// 事件上的 `_requestId`），不是父进程环境变量里继承来的值。一次 CLI 进程
+	// 事件上的 `_requestId`），不是父进程环境变量里继承来的值。与外部观测系统的
+	// trace/span 对应需另行验证。一次 CLI 进程
 	// 只对应一个根请求；续跑会话会换新的根请求，所以它是"每次执行"级别的标识，
 	// 不能挂在会话或 issue 上。为空表示该 backend 不暴露，或本次运行没有产生请求。
 	ProviderTraceID string

@@ -158,3 +158,24 @@ token，费率表也不认识这些模型）时显示 `—`，不再把"没有�
 exact 能把 inferred_window 升级，升级时 session 使用精确来源自报值，未自报则留空，历史猜测不能变成精确事实。同强度下 session 不一致不静默覆盖，两个值记进
 `metadata.session_conflict`。整批请求先校验再写，任何一条非法都整批 400，不留下半成品；
 写入后逐条回读，缺行或强度被降级返回 500；非空 exact session 与已有精确关联冲突时返回 409，并保留原值与冲突记录。
+
+
+### CodeBuddy 两份用量来源与实时监控
+
+CodeBuddy 的 assistant 流携带单次模型调用的用量快照；实际 `_requestId` 与 `_messageId`
+共同标识调用。同调用的重复工具消息只计一次，更新快照替换该调用原贡献；缺少稳定标识的
+旧协议仍按已有流式方式累计，不能视为已证明调用去重。缓存输入先归一为不含缓存的输入。
+
+结束 `result.modelUsage` 是 SDK 当前进程统计服务的摘要。模型键一致且完整数值覆盖已观测
+流时采用摘要；较小、交叉冲突或模型键不一致时选择完整的流式来源，不拼接字段最大值、
+不猜模型别名、不把两图相加。冲突两图和 `chosen_source` 记录在带任务上下文的 daemon
+日志中，不是 API 可查询的 task_trace metadata。流式来源只证明已观测调用，不能证明未落盘
+或未出现在流中的调用不存在。CodeBuddy 实际请求标识与外部 AgentLens trace/span 的对应仍
+须通过外部观测系统验证；平台精确关联落库不代表外部全链已验收。
+
+`POST /api/daemon/tasks/{id}/usage` 按 run 加锁并整批事务写入、回读核对。正常 daemon
+在 runner 返回后上报一次完整 run/model 聚合，不传 `executed_at`；实时 token/cost counter
+只记录首次成功写入的新实时模型行。重放、更正和显式 `executed_at` 历史补齐不向当前
+counter 累计。Counter 是实时首次观测，能更正、可重新汇总的账本是数据库；已有 counter
+不作负值修正。历史缺失行以已证明的 run.started_at 归入历史桶，属于 run/model 聚合，
+不是逐调用小时账单；已有行更正保留原 created_at 与本次明确传回的权威费用。

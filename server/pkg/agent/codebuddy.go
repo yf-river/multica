@@ -238,6 +238,8 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		var sessionID string
 		var requestID string
 		usage := make(map[string]TokenUsage)
+		usageCalls := make(map[codebuddyUsageCall]TokenUsage)
+		var resultUsage map[string]TokenUsage
 		eventCount := 0
 		invalidEventCount := 0
 		assistantEventCount := 0
@@ -266,8 +268,8 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			}
 			eventCount++
 
-			// `_requestId` 由子进程自己生成并写在 status/result 事件上，等于它在
-			// AgentLens 里的 trace id。取第一条非空值即可：同一个 CLI 进程只有一个
+			// `_requestId` 由子进程自己生成并写在 status/result 事件上，作为 provider 请求标识保存；
+			// AgentLens 的 trace/span 对应另行验收。取第一条非空值即可：同一个 CLI 进程只有一个
 			// 根请求，后续事件重复的是同一个值。绝不能拿父进程环境变量
 			// CODEBUDDY_ROOT_REQUEST_ID 顶替——那是 daemon 自己的请求标识。
 			if requestID == "" && msg.ProviderRequestID != "" {
@@ -277,7 +279,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			switch msg.Type {
 			case "assistant":
 				assistantEventCount++
-				turn := b.handleAssistant(msg, msgCh, usage)
+				turn := b.handleAssistant(msg, msgCh, usage, usageCalls)
 				toolUseCount += turn.toolUses
 				if !turn.understood {
 					unreadableAssistantCount++
@@ -295,9 +297,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 				finalResultText = msg.ResultText
 				resultIsError = msg.IsError
 				sessionID = msg.SessionID
-				if resultUsage := codebuddyResultUsage(msg, opts.Model); len(resultUsage) > 0 {
-					usage = resultUsage
-				}
+				resultUsage = codebuddyResultUsage(msg, opts.Model)
 				closeStdin()
 			case "log":
 				if msg.Log != nil {
@@ -377,6 +377,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			)
 		}
 
+		usage = codebuddySelectUsage(usage, resultUsage, b.cfg.Logger)
 		resCh <- Result{
 			Status:          finalStatus,
 			Output:          finalOutput,
@@ -398,7 +399,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 //
 // 理解不了正文时（JSON 解析失败或出现未知块类型），返回的 turn.understood 为 false，
 // 调用方就不会让旧回合的文本来顶替本回合。
-func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage) assistantTurn {
+func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage, calls map[codebuddyUsageCall]TokenUsage) assistantTurn {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
 		// 正文读不懂：understood 保持 false，调用方会丢弃任何 fallback，而不是让更早的
@@ -409,14 +410,28 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 	var assistantText strings.Builder
 	toolUseCount := 0
 
-	// 按模型累计 token 用量。
+	// SDK 的 _messageId 标识模型调用；一个调用可拆成多个工具消息，也可更新同一用量快照。
 	if content.Usage != nil && content.Model != "" {
-		u := usage[content.Model]
-		u.InputTokens += codebuddyUncachedInput(content.Usage.InputTokens, content.Usage.CacheReadInputTokens, content.Usage.CacheCreationInputTokens)
-		u.OutputTokens += content.Usage.OutputTokens
-		u.CacheReadTokens += content.Usage.CacheReadInputTokens
-		u.CacheWriteTokens += content.Usage.CacheCreationInputTokens
-		usage[content.Model] = u
+		snapshot := TokenUsage{
+			InputTokens:      codebuddyUncachedInput(content.Usage.InputTokens, content.Usage.CacheReadInputTokens, content.Usage.CacheCreationInputTokens),
+			OutputTokens:     content.Usage.OutputTokens,
+			CacheReadTokens:  content.Usage.CacheReadInputTokens,
+			CacheWriteTokens: content.Usage.CacheCreationInputTokens,
+		}
+		if codebuddyUsageHasTokens(snapshot.InputTokens, snapshot.OutputTokens, snapshot.CacheReadTokens, snapshot.CacheWriteTokens) {
+			var previous TokenUsage
+			if msg.ProviderRequestID != "" && msg.ProviderMessageID != "" {
+				key := codebuddyUsageCall{msg.ProviderRequestID, msg.ProviderMessageID, content.Model}
+				previous = calls[key]
+				calls[key] = snapshot
+			}
+			u := usage[content.Model]
+			u.InputTokens += snapshot.InputTokens - previous.InputTokens
+			u.OutputTokens += snapshot.OutputTokens - previous.OutputTokens
+			u.CacheReadTokens += snapshot.CacheReadTokens - previous.CacheReadTokens
+			u.CacheWriteTokens += snapshot.CacheWriteTokens - previous.CacheWriteTokens
+			usage[content.Model] = u
+		}
 	}
 
 	for _, block := range content.Content {
@@ -574,10 +589,11 @@ type codebuddySDKMessage struct {
 	Request   json.RawMessage `json:"request,omitempty"`
 
 	// ProviderRequestID 是事件上的 `_requestId`：子进程为本次根请求生成的标识，
-	// 与服务端链路（AgentLens trace id）一致。它不是父进程环境里的
+	// 外部观测系统的具体解析对应须另行验证。它不是父进程环境里的
 	// CODEBUDDY_ROOT_REQUEST_ID（那是调用方的请求），也不是 control_request 的
-	// `request_id`（那是权限桥的应答序号）。init 事件没有该字段，status/result 才有。
+	// `request_id`（那是权限桥的应答序号）；assistant/status/result 从子进程事件取证。
 	ProviderRequestID string `json:"_requestId,omitempty"`
+	ProviderMessageID string `json:"_messageId,omitempty"`
 }
 
 // codebuddyLogEntry 是 log 事件里的日志条目。
@@ -671,6 +687,41 @@ func codebuddyResultUsage(msg codebuddySDKMessage, fallbackModel string) map[str
 			CacheWriteTokens: msg.Usage.CacheCreationInputTokens,
 		},
 	}
+}
+
+type codebuddyUsageCall struct {
+	request, message, model string
+}
+
+// 两份来源按完整模型用量择一；字段拼接或模型别名猜测都会制造不存在的调用汇总。
+func codebuddySelectUsage(stream, summary map[string]TokenUsage, logger *slog.Logger) map[string]TokenUsage {
+	if len(stream) == 0 {
+		return summary
+	}
+	if len(summary) == 0 {
+		return stream
+	}
+	reason := "summary_below_observed_stream"
+	complete := len(stream) == len(summary)
+	for model, observed := range stream {
+		reported, ok := summary[model]
+		if !ok {
+			reason = "model_identity_conflict"
+			complete = false
+			break
+		}
+		if reported.InputTokens < observed.InputTokens || reported.OutputTokens < observed.OutputTokens || reported.CacheReadTokens < observed.CacheReadTokens || reported.CacheWriteTokens < observed.CacheWriteTokens {
+			complete = false
+		}
+	}
+	if len(stream) != len(summary) {
+		reason = "model_identity_conflict"
+	}
+	if complete {
+		return summary
+	}
+	logger.Warn("codebuddy usage source conflict", "reason", reason, "stream_usage", stream, "result_usage", summary, "chosen_source", "assistant_stream_observed", "scope", "observed SDK calls; calls absent from stream remain unknown")
+	return stream
 }
 
 // codebuddyUncachedInput 把 CodeBuddy 的 input_tokens 归一成"不含缓存的输入"，
