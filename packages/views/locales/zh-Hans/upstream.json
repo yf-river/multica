@@ -7,20 +7,21 @@
       "runs": "同步记录"
     },
     "status": {
-      "head": "上游 {{sha}}",
-      "baseline": "比较基线 {{ref}}",
+      "baseline": "基线 {{ref}}",
       "last_run": "上次同步 {{time}}（{{status}}）",
-      "last_run_result": "扫描 {{scanned}} 个提交，产出 {{items}} 条建议",
-      "next_run": "下次自动同步 {{time}}",
-      "never": "还没有游标，首次运行会从基线开始追历史",
+      "last_run_short": "上次同步 {{time}}",
+      "next_run": "下次 {{time}}",
       "running": "正在同步",
       "error": "上次同步失败，展开查看原因",
-      "state_unconfigured": "未配置：选择运行时后才会自动同步",
+      "state_unconfigured": "未配置",
       "state_paused": "已暂停",
+      "state_running": "同步中",
       "state_catching_up": "追历史中",
       "state_current": "已追平",
       "executor_unbound": "执行体已失去运行时，重新绑定后才会继续同步",
-      "runtime_offline": "运行时离线，恢复后按计划继续"
+      "executor_unbound_badge": "执行体失联",
+      "runtime_offline": "运行时离线，恢复后按计划继续",
+      "runtime_offline_badge": "运行时离线"
     },
     "filters": {
       "status_open": "待定",
@@ -47,7 +48,6 @@
       "ignore": "忽略",
       "restore": "恢复为待定",
       "create_task": "创建吸收任务",
-      "task_created": "已创建吸收任务",
       "open_task": "打开吸收任务"
     },
     "item": {
@@ -77,9 +77,9 @@
       "status_completed": "已完成",
       "status_failed": "失败",
       "status_interrupted": "已中断",
-      "scanned": "扫描 {{count}}",
-      "absorbed": "已吸收 {{count}}",
-      "items": "条目 {{count}}",
+      "scanned": "扫描 {{count}} 个提交",
+      "absorbed": "吸收 {{count}} 个",
+      "items": "产出 {{count}} 条建议",
       "has_more": "还有剩余",
       "error_detail": "失败原因",
       "dispatch_failed": "触发失败：{{reason}}",

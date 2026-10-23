@@ -287,7 +287,7 @@ export function UpstreamSettingsSheet({
             <p className="text-caption text-muted-foreground">{t(($) => $.page.setup.schedule)}</p>
           </section>
 
-          {save.isError ? <p role="alert" className="text-caption text-danger">{save.error.message}</p> : null}
+          {save.isError ? <p role="alert" className="text-caption text-destructive">{save.error.message}</p> : null}
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>{t(($) => $.page.setup.cancel)}</Button>
