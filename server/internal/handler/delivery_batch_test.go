@@ -137,9 +137,20 @@ func TestDeliveryBatchDropsMemberWithoutAuthorizationBeforePublish(t *testing.T)
 	revoked, _ := batchFixture(t)
 	batch, _ := openBatch(t, 60)
 	batch, _ = freezeBatch(t, batch.ID)
-	// 候选固定后用户撤回授权：该成员必须退出本批，其余成员继续发布。
+	// 候选固定前用户撤回授权：该成员在构建前退出本批，候选只按剩余成员构建。
 	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,plan_snapshot='{"authorization_review":{"comments_version":"stale","source_commit":"x","candidate_id":"y","authorization_id":"button"}}'::jsonb WHERE id=$1`, revoked)
-	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+	prepared := batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+	var preparing map[string]any
+	prepared.JSON(&preparing)
+	pending := 0
+	for _, item := range preparing["members"].([]any) {
+		if str(item.(map[string]any)["result"]) == "pending" {
+			pending++
+		}
+	}
+	if pending != 1 {
+		t.Fatalf("准备阶段没有把撤权成员移出构建名单: %d", pending)
+	}
 	response := batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "candidate-1", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
 	var state map[string]any
 	response.JSON(&state)
@@ -159,6 +170,78 @@ func TestDeliveryBatchDropsMemberWithoutAuthorizationBeforePublish(t *testing.T)
 	if deliveryPhase(t, revoked) == "publishing" {
 		t.Fatal("撤回授权的成员进入了发布阶段")
 	}
+}
+
+// 候选固定后撤权：已构建的组合仍包含撤权成员代码，整批必须停下由下一批重建，剩余成员不能继续发布。
+func TestDeliveryBatchStopsWhenMemberRevokedAfterCandidateFixed(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	kept, _ := batchFixture(t)
+	revoked, _ := batchFixture(t)
+	batch, _ := openBatch(t, 60)
+	batch, _ = freezeBatch(t, batch.ID)
+	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+	batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "candidate-3", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,plan_snapshot='{"authorization_review":{"comments_version":"stale","source_commit":"x","candidate_id":"y","authorization_id":"button"}}'::jsonb WHERE id=$1`, revoked)
+	response := batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
+	var state map[string]any
+	response.JSON(&state)
+	final := state["batch"].(map[string]any)
+	if final["status"] != "cancelled" {
+		t.Fatalf("撤权后批次没有安全停止: %v", final)
+	}
+	if detail, _ := final["error"].(string); !strings.Contains(detail, "撤权") {
+		t.Fatalf("批次停止原因没有说明撤权代码: %s", detail)
+	}
+	if deliveryPhase(t, kept) != "approved" {
+		t.Fatalf("剩余成员被带入了旧组合发布: %s", deliveryPhase(t, kept))
+	}
+	if deliveryPhase(t, revoked) == "publishing" {
+		t.Fatal("撤权成员进入了发布阶段")
+	}
+	batchCleanup(t)
+}
+
+// 构建阶段重复请求是幂等续接：进程在 preparing 退出后，重启的发布器可以沿着同一批继续。
+func TestDeliveryBatchPreparingRetryKeepsBatchUsable(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	batchFixture(t)
+	batch, _ := openBatch(t, 60)
+	batch, _ = freezeBatch(t, batch.ID)
+	body := map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}
+	batchAction(t, body).Want(200)
+	again := batchAction(t, body).Want(200)
+	var state map[string]any
+	again.JSON(&state)
+	if state["batch"].(map[string]any)["status"] != "preparing" {
+		t.Fatalf("重复准备请求破坏了批次状态: %v", state["batch"])
+	}
+	batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "candidate-4", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+	batchCleanup(t)
+}
+
+// 构建前全部成员撤权：没有可构建的合法组合，批次直接取消，不能留下空候选继续推进。
+func TestDeliveryBatchCancelsWhenAllMembersRevokedBeforeBuild(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	only, _ := batchFixture(t)
+	batch, _ := openBatch(t, 60)
+	batch, _ = freezeBatch(t, batch.ID)
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,plan_snapshot='{"authorization_review":{"comments_version":"stale","source_commit":"x","candidate_id":"y","authorization_id":"button"}}'::jsonb WHERE id=$1`, only)
+	response := batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+	var state map[string]any
+	response.JSON(&state)
+	if state["batch"].(map[string]any)["status"] != "cancelled" {
+		t.Fatalf("全部成员撤权后批次没有取消: %v", state["batch"])
+	}
+	batchCleanup(t)
 }
 
 func TestDeliveryBatchConflictStaysOnItsMemberAndPublishesOthers(t *testing.T) {

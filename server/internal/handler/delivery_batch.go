@@ -146,18 +146,22 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 	case "freeze":
 		current, demoted, err = h.freezeDeliveryBatch(r, tx, ws, current)
 	case "preparing":
-		_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET base_commit=$2::text,status='preparing',updated_at=now() WHERE id=$1 AND status='frozen'`, current.ID, body.BaseCommit)
+		err = h.prepareDeliveryBatch(r, tx, ws, &current, body.BaseCommit)
 	case "validating":
-		_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET candidate_id=$2::text,candidate_commit=$3::text,status='validating',updated_at=now() WHERE id=$1 AND status='preparing'`, current.ID, body.CandidateID, body.CandidateCommit)
-		if err == nil {
-			err = h.withdrawInvalidMembers(r, tx, ws, current.ID)
-		}
+		err = h.validateDeliveryBatch(r, tx, ws, &current, body.CandidateID, body.CandidateCommit)
 	case "publishing":
 		if current.Status != batchValidating {
 			err = fmt.Errorf("批次不在待发布阶段")
 			break
 		}
-		if err = h.withdrawInvalidMembers(r, tx, ws, current.ID); err == nil {
+		// 修改 5. 候选固定后成员撤权，已构建的组合仍包含该成员代码；整批停下按剩余成员重建，不做局部替换。
+		var withdrawn []string
+		if _, withdrawn, err = h.withdrawInvalidMembers(r, tx, ws, current.ID); err == nil {
+			if len(withdrawn) > 0 {
+				err = h.stopStaleBatch(r, tx, current.ID, staleBatchReason)
+			}
+		}
+		if err == nil && len(withdrawn) == 0 {
 			var pending int
 			if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM delivery_batch_member WHERE batch_id=$1 AND result='pending'`, current.ID).Scan(&pending); err == nil {
 				if pending == 0 {
@@ -184,6 +188,10 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = h.withdrawMember(r, tx, ws, current.ID, body.Delivery, "授权已失效")
+		// 修改 6. 候选已固定时单独撤权同样会让旧组合失真，批次整体停下，剩余成员由下一批重建。
+		if err == nil && current.Status != batchCollecting && current.Status != batchFrozen {
+			err = h.stopStaleBatch(r, tx, current.ID, staleBatchReason)
+		}
 	default:
 		writeError(w, 400, "未知批次操作")
 		return
@@ -324,11 +332,59 @@ func (h *Handler) freezeDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, cur
 	return current, demoted, nil
 }
 
-// withdrawInvalidMembers 在候选固定后、发布前逐一复核：撤回授权的成员退出本批，其余继续。
-func (h *Handler) withdrawInvalidMembers(r *http.Request, tx pgx.Tx, ws, batch string) error {
-	rows, err := tx.Query(r.Context(), `SELECT m.delivery_id::text,m.issue_id::text FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.result='pending'`, batch)
+// 修改 3. 构建开始前再核对一次授权：构建用冻结后的成员列表，失效成员必须先退出本批，
+// 否则候选会带上已撤权代码；重复请求按幂等处理，构建中断后可直接续接。
+func (h *Handler) prepareDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, current *deliveryBatch, baseCommit string) error {
+	if current.Status == batchPreparing {
+		return nil
+	}
+	if current.Status != batchFrozen {
+		return fmt.Errorf("批次不在准备阶段")
+	}
+	remaining, _, err := h.withdrawInvalidMembers(r, tx, ws, current.ID)
 	if err != nil {
 		return err
+	}
+	if remaining == 0 {
+		_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET status='cancelled',error='批次成员授权全部失效',updated_at=now() WHERE id=$1 AND status='frozen'`, current.ID)
+		return err
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET base_commit=$2::text,status='preparing',updated_at=now() WHERE id=$1 AND status='frozen'`, current.ID, baseCommit)
+	return err
+}
+
+// 修改 4. 候选已经按冻结成员构建完成；此后成员授权失效时旧组合不再代表已授权范围，
+// 整批停止并由下一批按剩余成员重新构建和验收，禁止剩余成员继续发布旧组合。
+const staleBatchReason = "成员发布授权已失效，已固定候选包含撤权成员代码，整批停止并按剩余成员重新组批"
+
+func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, current *deliveryBatch, candidate, commit string) error {
+	if current.Status == batchValidating {
+		return nil
+	}
+	if current.Status != batchPreparing {
+		return fmt.Errorf("批次不在验收阶段")
+	}
+	_, withdrawn, err := h.withdrawInvalidMembers(r, tx, ws, current.ID)
+	if err != nil {
+		return err
+	}
+	if len(withdrawn) > 0 {
+		return h.stopStaleBatch(r, tx, current.ID, staleBatchReason)
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET candidate_id=$2::text,candidate_commit=$3::text,status='validating',updated_at=now() WHERE id=$1 AND status='preparing'`, current.ID, candidate, commit)
+	return err
+}
+
+func (h *Handler) stopStaleBatch(r *http.Request, tx pgx.Tx, batch, reason string) error {
+	_, err := tx.Exec(r.Context(), `UPDATE delivery_batch SET status='cancelled',error=$2::text,updated_at=now() WHERE id=$1 AND status IN ('preparing','validating','publishing')`, batch, reason)
+	return err
+}
+
+// withdrawInvalidMembers 在候选固定后、发布前逐一复核：撤回授权的成员退出本批，返回剩余可发布成员数。
+func (h *Handler) withdrawInvalidMembers(r *http.Request, tx pgx.Tx, ws, batch string) (int, []string, error) {
+	rows, err := tx.Query(r.Context(), `SELECT m.delivery_id::text,m.issue_id::text FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.result='pending'`, batch)
+	if err != nil {
+		return 0, nil, err
 	}
 	type member struct{ delivery, issue string }
 	var members []member
@@ -336,11 +392,12 @@ func (h *Handler) withdrawInvalidMembers(r *http.Request, tx pgx.Tx, ws, batch s
 		var item member
 		if err = rows.Scan(&item.delivery, &item.issue); err != nil {
 			rows.Close()
-			return err
+			return 0, nil, err
 		}
 		members = append(members, item)
 	}
 	rows.Close()
+	withdrawn := []string{}
 	for _, item := range members {
 		ready, checkErr := deliveryAuthorizationReady(r.Context(), tx, ws, item.issue, item.delivery)
 		var planValid bool
@@ -348,16 +405,17 @@ func (h *Handler) withdrawInvalidMembers(r *http.Request, tx pgx.Tx, ws, batch s
 			checkErr = tx.QueryRow(r.Context(), deliveryPlanValidSQL, item.delivery).Scan(&planValid)
 		}
 		if checkErr != nil {
-			return checkErr
+			return 0, nil, checkErr
 		}
 		if ready && planValid {
 			continue
 		}
 		if err = h.withdrawMember(r, tx, ws, batch, item.delivery, "发布授权已失效，退出本批"); err != nil {
-			return err
+			return 0, nil, err
 		}
+		withdrawn = append(withdrawn, item.delivery)
 	}
-	return nil
+	return len(members) - len(withdrawn), withdrawn, nil
 }
 
 func (h *Handler) withdrawMember(r *http.Request, tx pgx.Tx, ws, batch, delivery, reason string) error {

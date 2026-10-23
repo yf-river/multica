@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """外部交付接力：数据库保存审核真源，复用固定发布器执行联调和生产更新。"""
-import contextlib, argparse, importlib.util, json, os, pwd, subprocess, sys, threading, time, urllib.request, urllib.error
+import contextlib, argparse, datetime, importlib.util, json, os, pwd, re, subprocess, sys, threading, time, urllib.request, urllib.error
 from pathlib import Path
 
 spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name('release-environments.py'))
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+
+# 修改 1. 接口用 Go 的 time.Time 序列化时间（RFC3339Nano，带 Z 或时区和最多 9 位小数），
+# 旧批次配置里可能还是秒级数字；两种都按同一时刻处理，避免直接与 time.time() 比较时报 TypeError。
+def timestamp(value):
+    if isinstance(value,(int,float)):return float(value)
+    text=str(value or '').strip()
+    if not text:raise ValueError('批次时间字段为空')
+    match=re.match(r'^(.*\.\d{6})\d+([+-]\d{2}:\d{2}|Z|z)$',text)
+    if match:text=match.group(1)+match.group(2)
+    if text[-1] in 'Zz':text=text[:-1]+'+00:00'
+    return datetime.datetime.fromisoformat(text).timestamp()
 
 class Busy(RuntimeError): pass
 
@@ -445,9 +456,12 @@ class Worker:
                 return path,base,None,member
         return path,base,r.output(['git','rev-parse','HEAD'],cwd=path),None
 
+    def pending_members(self,state):
+        return [m for m in (state.get('members') or []) if m.get('result','pending')=='pending']
+
     def tick_batches(self,rows):
         if not self.batch_config():return False
-        state=self.batch_call();batch=state.get('batch');members=state.get('members') or []
+        state=self.batch_call();batch=state.get('batch');members=self.pending_members(state)
         if not batch:
             if not any(d['phase']=='approved' for d in rows):return False
             if self.publication_owner():return True
@@ -455,11 +469,13 @@ class Worker:
             return True
         token=batch.get('worker_token') or ''
         if batch['status']=='collecting':
-            if time.time()<batch['collect_until']:return True
+            if time.time()<timestamp(batch['collect_until']):return True
             state=self.batch_call(dict(action='freeze',batch_id=batch['id']))
-            batch=state['batch'];members=state.get('members') or []
+            batch=state['batch'];members=self.pending_members(state)
             if batch['status'] in ('cancelled','needs_changes'):return True
         if batch['status']=='frozen':return self.batch_prepare(batch,members,rows)
+        # 修改 4. 进程在准备阶段退出会留下 preparing；这里接续原批次，不新建批次也不让状态永久卡住。
+        if batch['status']=='preparing':return self.batch_resume(batch,members,rows)
         if batch['status']=='validating':return self.batch_validate(batch,members,rows)
         if batch['status']=='publishing':return self.batch_check_release(batch,rows)
         return True
@@ -479,13 +495,41 @@ class Worker:
                 self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=detail,conflict_delivery_id=conflict['delivery_id']))
                 self.finish_publication(delivery)
                 return True
-            self.batch_call(dict(action='preparing',batch_id=batch['id'],worker_token=batch['worker_token'],base_commit=base))
+            # 修改 5. 构建名单以准备阶段返回的 pending 成员为准：此时撤权的成员不进入候选，
+            # 名单变化就按剩余成员重新合并，避免候选夹带已撤权代码。
+            state=self.batch_call(dict(action='preparing',batch_id=batch['id'],worker_token=batch['worker_token'],base_commit=base))
+            if state['batch']['status']!='preparing':
+                self.finish_publication(delivery);return True
+            active=self.pending_members(state)
+            if [m['delivery_id'] for m in active]!=[m['delivery_id'] for m in members]:
+                members=active
+                if not members:
+                    self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='批次成员授权全部失效'))
+                    self.finish_publication(delivery);return True
+                try:
+                    path,base,commit,conflict=self.batch_source(batch,members)
+                except Exception as error:
+                    self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=str(error)[:1200]))
+                    self.finish_publication(delivery);return True
+                if conflict:
+                    detail='提交 %s 无法合并到最新主分支，请在原任务分支解决后重新交付'%conflict['source_commit']
+                    self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=detail,conflict_delivery_id=conflict['delivery_id']))
+                    self.finish_publication(delivery);return True
             fence()
-            record=r.prepare_int(path,delivery=dict(delivery_id=delivery['id'],delivery_env=self.env,
-                approved_source=delivery['source_commit'],publication_lease=lease,batch_id=batch['id'],
-                batch_members=[dict(delivery_id=m['delivery_id'],source_commit=m['source_commit']) for m in members]),fence=fence)
-        self.batch_call(dict(action='validating',batch_id=batch['id'],worker_token=batch['worker_token'],
-            candidate_id=record['id'],candidate_commit=commit))
+            try:
+                record=r.prepare_int(path,delivery=dict(delivery_id=delivery['id'],delivery_env=self.env,
+                    approved_source=delivery['source_commit'],publication_lease=lease,batch_id=batch['id'],
+                    batch_members=[dict(delivery_id=m['delivery_id'],source_commit=m['source_commit']) for m in members]),fence=fence)
+            except Exception as error:
+                # 修改 6. 构建异常必须结束整批：成员保留授权等下一批，不能把批次留在 preparing。
+                try:self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='组合构建失败：'+str(error)[:1000]))
+                finally:self.finish_publication(delivery)
+                raise
+            state=self.batch_call(dict(action='validating',batch_id=batch['id'],worker_token=batch['worker_token'],
+                candidate_id=record['id'],candidate_commit=commit))
+            # 修改 7. 候选固定后成员撤权时服务端已让批次安全停下：丢弃这份候选，不通知成员进入发布。
+            if state['batch']['status']!='validating':
+                r.release_candidate(record['id']);return True
         for member in members:
             row=self.batch_row(rows,member['delivery_id'])
             if not row:continue
@@ -493,6 +537,36 @@ class Worker:
             except urllib.error.HTTPError as error:
                 if error.code!=409:raise
         return True
+
+    def batch_resume(self,batch,members,rows):
+        # 修改 8. 准备阶段重启：候选已部署就接续验收，构建中断且 int 未切换就重来，明确失败则结束整批。
+        candidate=r.candidate() if r.candidate_path().exists() else None
+        if candidate and candidate.get('batch_id')!=batch['id']:candidate=None
+        if candidate and candidate['status'] in ('verifying','accepted'):
+            state=self.batch_call(dict(action='validating',batch_id=batch['id'],worker_token=batch['worker_token'],
+                candidate_id=candidate['id'],candidate_commit=candidate['commit']))
+            if state['batch']['status']!='validating':
+                r.release_candidate(candidate['id']);return True
+            for member in members:
+                row=self.batch_row(rows,member['delivery_id'])
+                if not row:continue
+                try:self.advance(row,'notify-result',stage='batch_ready')
+                except urllib.error.HTTPError as error:
+                    if error.code!=409:raise
+            return True
+        if candidate:
+            if candidate['status'] in ('failed','recovery_required'):
+                self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],
+                    error=('组合构建未完成：'+(candidate.get('error') or candidate['status']))[:1200]))
+                return True
+            if candidate['status']=='building':
+                # 半成品只有在 int 仍是构建前版本时才能丢弃重来，否则需要核对现场。
+                live=r.read(r.meta_path('int'))
+                if live['release_id']!=candidate.get('previous_int_release'):
+                    raise r.RecoveryRequired('组合构建中断后 int 已切换，需要核对现场后再续接')
+                r.save_candidate(dict(candidate,status='failed',error='组合构建中断，按原成员重新构建'))
+        if not members:return True
+        return self.batch_prepare(batch,members,rows)
 
     def batch_validate(self,batch,members,rows):
         representative=self.batch_row(rows,members[0]['delivery_id']) if members else None
