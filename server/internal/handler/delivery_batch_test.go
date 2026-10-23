@@ -2,10 +2,14 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -743,4 +747,360 @@ func TestDeliveryBatchArchivedNoticeDoesNotQueueOrDispatch(t *testing.T) {
 		}
 	}
 	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": 0, "worker_token": token, "action": "notify-result", "stage": stage})).Want(409)
+}
+
+// 批次异常不能覆盖完整终态行；其余成员仍执行原来的失败或重排语义。
+func TestDeliveryBatchFailurePreservesCompleteTerminalRows(t *testing.T) {
+	for _, conflict := range []bool{false, true} {
+		for _, phase := range []string{"cancelled", "published"} {
+			t.Run(fmt.Sprintf("conflict=%t/%s", conflict, phase), func(t *testing.T) {
+				batchCleanup(t)
+				terminal, _ := batchFixture(t)
+				active, _ := batchFixture(t)
+				dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='original-approved' WHERE id IN($1,$2)`, terminal, active)
+				batch, _ := openBatch(t, 60)
+				batch, _ = freezeBatch(t, batch.ID)
+				batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+				dbfx.Exec(t, `UPDATE issue_delivery SET phase=$2 WHERE id=$1`, terminal, phase)
+				var before, after string
+				dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, terminal).Scan(&before)
+				body := map[string]any{"action": "fail", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "error": "受控真实失败"}
+				if conflict {
+					body["conflict_delivery_id"] = terminal
+				}
+				batchAction(t, body).Want(200)
+				dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, terminal).Scan(&after)
+				if before != after {
+					t.Fatalf("终态被失败回填改写: %s -> %s", before, after)
+				}
+				want := "needs_changes"
+				if conflict {
+					want = "approved"
+				}
+				if got := deliveryPhase(t, active); got != want {
+					t.Fatalf("非终态语义变化: got %s want %s", got, want)
+				}
+				var notices int
+				dbfx.QueryRow(t, `SELECT count(*) FROM delivery_notice WHERE delivery_id=$1 AND stage='needs_changes'`, terminal).Scan(&notices)
+				if notices != 0 {
+					t.Fatal("终态成员收到虚假的失败通知")
+				}
+			})
+		}
+	}
+}
+
+func TestDeliveryBatchStageExcludesTerminalMembers(t *testing.T) {
+	for _, stage := range []string{"preparing", "validating", "publishing"} {
+		for _, phase := range []string{"cancelled", "published"} {
+			t.Run(stage+"/"+phase, func(t *testing.T) {
+				batchCleanup(t)
+				terminal, _ := batchFixture(t)
+				active, _ := batchFixture(t)
+				dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='original-approved' WHERE id IN($1,$2)`, terminal, active)
+				batch, _ := openBatch(t, 60)
+				batch, _ = freezeBatch(t, batch.ID)
+				if stage != "preparing" {
+					batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+				}
+				if stage == "publishing" {
+					batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "combined", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+					acceptBatchFixture(t, batch.ID)
+				}
+				dbfx.Exec(t, `UPDATE issue_delivery SET phase=$2 WHERE id=$1`, terminal, phase)
+				var before, after string
+				dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, terminal).Scan(&before)
+				batchAction(t, map[string]any{"action": stage, "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40), "candidate_id": "combined", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+				dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, terminal).Scan(&after)
+				if before != after {
+					t.Fatalf("%s改写终态行", stage)
+				}
+				var result string
+				dbfx.QueryRow(t, `SELECT result FROM delivery_batch_member WHERE batch_id=$1 AND delivery_id=$2`, batch.ID, terminal).Scan(&result)
+				if result != "withdrawn" {
+					t.Fatalf("终态仍参与候选: %s", result)
+				}
+				if got := deliveryPhase(t, active); got != "approved" {
+					t.Fatalf("有效成员未正常保留/重排: %s", got)
+				}
+				var status string
+				dbfx.QueryRow(t, `SELECT status FROM delivery_batch WHERE id=$1`, batch.ID).Scan(&status)
+				want := "cancelled"
+				if stage == "preparing" {
+					want = "preparing"
+				}
+				if status != want {
+					t.Fatalf("错误的批次阶段: %s want %s", status, want)
+				}
+			})
+		}
+	}
+}
+
+type batchCommitBarrier struct {
+	inner   txStarter
+	reached chan struct{}
+	release chan struct{}
+}
+
+func (b batchCommitBarrier) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := b.inner.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &batchBarrierTx{Tx: tx, reached: b.reached, release: b.release}, nil
+}
+
+type batchBarrierTx struct {
+	pgx.Tx
+	reached chan struct{}
+	release chan struct{}
+}
+
+func (b *batchBarrierTx) Commit(ctx context.Context) error {
+	close(b.reached)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return b.Tx.Commit(ctx)
+}
+
+func terminalCancelRequest(t *testing.T, delivery string) *http.Request {
+	t.Helper()
+	var issue string
+	var rev int64
+	dbfx.QueryRow(t, `SELECT issue_id::text,revision FROM issue_delivery WHERE id=$1`, delivery).Scan(&issue, &rev)
+	var owner coordinationOwner
+	_ = testPool.QueryRow(context.Background(), `SELECT token::text,generation FROM delivery_owner WHERE issue_id=$1 AND execution_id=$2`, issue, "batch-test-"+delivery).Scan(&owner.Token, &owner.Generation)
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "batch-test-"+delivery, owner, "")).Want(200).JSON(&owner)
+	req := deliveryRequest(issue, map[string]any{"action": "cancel", "revision": rev}, owner)
+	chi.RouteContext(req.Context()).URLParams.Add("deliveryId", delivery)
+	return req
+}
+
+func TestDeliveryBatchCancelAndPromotionSerialize(t *testing.T) {
+	for _, stage := range []string{"freeze", "preparing", "publishing"} {
+		t.Run("cancel-first/"+stage, func(t *testing.T) {
+			batchCleanup(t)
+			terminal, _ := batchFixture(t)
+			active, _ := batchFixture(t)
+			batch, _ := openBatch(t, 60)
+			if stage != "freeze" {
+				batch, _ = freezeBatch(t, batch.ID)
+			}
+			if stage == "publishing" {
+				batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+				batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "combined", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+				acceptBatchFixture(t, batch.ID)
+			}
+			reached, release := make(chan struct{}), make(chan struct{})
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			h := *testHandler
+			h.TxStarter = batchCommitBarrier{inner: testHandler.TxStarter, reached: reached, release: release}
+			req := terminalCancelRequest(t, terminal)
+			cancelled := make(chan *httptest.ResponseRecorder, 1)
+			go func() { rr := httptest.NewRecorder(); h.ActIssueDelivery(rr, req); cancelled <- rr }()
+			select {
+			case <-reached:
+			case <-time.After(3 * time.Second):
+				t.Fatal("正常取消未到提交屏障")
+			}
+			promoted := make(chan *httptest.ResponseRecorder, 1)
+			req2 := newRequest("POST", "/api/delivery-queue/batches", map[string]any{"action": stage, "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)})
+			go func() { rr := httptest.NewRecorder(); testHandler.DeliveryBatch(rr, req2); promoted <- rr }()
+			var early *httptest.ResponseRecorder
+			select {
+			case early = <-promoted:
+			case <-time.After(100 * time.Millisecond):
+			}
+			close(release)
+			if rr := <-cancelled; rr.Code != 200 {
+				t.Fatalf("取消返回%d %s", rr.Code, rr.Body.String())
+			}
+			var rr *httptest.ResponseRecorder
+			if early != nil {
+				rr = early
+			} else {
+				select {
+				case rr = <-promoted:
+				case <-time.After(3 * time.Second):
+					t.Fatal("取消提交后批次未继续")
+				}
+			}
+			if early != nil {
+				t.Errorf("%s未等取消事务完成就使用旧成员", stage)
+			}
+			if rr.Code != 200 {
+				t.Fatalf("批次返回%d %s", rr.Code, rr.Body.String())
+			}
+			if got := deliveryPhase(t, terminal); got != "cancelled" {
+				t.Fatalf("取消后被晋级为%s", got)
+			}
+			var n int
+			dbfx.QueryRow(t, `SELECT count(*) FROM delivery_batch_member WHERE batch_id=$1 AND delivery_id=$2 AND result='pending'`, batch.ID, terminal).Scan(&n)
+			if n != 0 {
+				t.Fatal("已取消成员仍在候选")
+			}
+			if deliveryPhase(t, active) != "approved" {
+				t.Fatal("有效成员状态被误伤")
+			}
+		})
+	}
+}
+
+func TestDeliveryBatchPublishingWinsConcurrentCancel(t *testing.T) {
+	batchCleanup(t)
+	target, _ := batchFixture(t)
+	batch, _ := openBatch(t, 60)
+	batch, _ = freezeBatch(t, batch.ID)
+	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+	batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "combined", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+	acceptBatchFixture(t, batch.ID)
+	cancelReq := terminalCancelRequest(t, target)
+	reached, release := make(chan struct{}), make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	h := *testHandler
+	h.TxStarter = batchCommitBarrier{inner: testHandler.TxStarter, reached: reached, release: release}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	req := newRequest("POST", "/api/delivery-queue/batches", map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken})
+	go func() { rr := httptest.NewRecorder(); h.DeliveryBatch(rr, req); done <- rr }()
+	select {
+	case <-reached:
+	case <-time.After(3 * time.Second):
+		t.Fatal("发布晋级未到提交屏障")
+	}
+	cancelled := make(chan *httptest.ResponseRecorder, 1)
+	go func() { rr := httptest.NewRecorder(); testHandler.ActIssueDelivery(rr, cancelReq); cancelled <- rr }()
+	var early *httptest.ResponseRecorder
+	select {
+	case early = <-cancelled:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if rr := <-done; rr.Code != 200 {
+		t.Fatalf("晋级失败%d %s", rr.Code, rr.Body.String())
+	}
+	var rr *httptest.ResponseRecorder
+	if early != nil {
+		rr = early
+	} else {
+		select {
+		case rr = <-cancelled:
+		case <-time.After(3 * time.Second):
+			t.Fatal("取消未继续")
+		}
+	}
+	if early != nil {
+		t.Fatal("取消没有等待发布事务")
+	}
+	if rr.Code != 409 {
+		t.Fatalf("晋级后取消应该拒绝，实际%d", rr.Code)
+	}
+	testutil.Call(t, testHandler.ActIssueDelivery, terminalCancelRequest(t, target)).Want(409)
+	if deliveryPhase(t, target) != "publishing" {
+		t.Fatal("取消改变了已晋级的成员")
+	}
+}
+
+type batchAfterCommit struct {
+	inner txStarter
+	hook  func()
+}
+
+func (b batchAfterCommit) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := b.inner.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &batchAfterCommitTx{Tx: tx, hook: b.hook}, nil
+}
+
+type batchAfterCommitTx struct {
+	pgx.Tx
+	hook func()
+}
+
+func (b *batchAfterCommitTx) Commit(ctx context.Context) error {
+	if err := b.Tx.Commit(ctx); err != nil {
+		return err
+	}
+	b.hook()
+	return nil
+}
+
+func TestDeliveryBatchPostCommitDemotionPreservesCancelledRow(t *testing.T) {
+	batchCleanup(t)
+	target, _ := batchFixture(t)
+	_, _ = batchFixture(t)
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL WHERE id=$1`, target)
+	batch, _ := openBatch(t, 60)
+	var cancelledRow string
+	h := *testHandler
+	h.TxStarter = batchAfterCommit{inner: testHandler.TxStarter, hook: func() {
+		// 模拟冻结事务已经提交、补写通知标记之前，用户通过正常接口取消。
+		testutil.Call(t, testHandler.ActIssueDelivery, terminalCancelRequest(t, target)).Want(200)
+		dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, target).Scan(&cancelledRow)
+	}}
+	testutil.Call(t, h.DeliveryBatch, newRequest("POST", "/api/delivery-queue/batches", map[string]any{"action": "freeze", "batch_id": batch.ID})).Want(200)
+	var after string
+	dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, target).Scan(&after)
+	if after != cancelledRow {
+		t.Fatal("提交后的授权标记覆盖了用户取消后的完整终态行")
+	}
+}
+
+func TestDeliveryBatchPublishedCallbackDoesNotInventMemberSuccess(t *testing.T) {
+	for _, phase := range []string{"cancelled", "published", "needs_changes", "awaiting_review"} {
+		t.Run(phase, func(t *testing.T) {
+			batchCleanup(t)
+			target, _ := batchFixture(t)
+			active, _ := batchFixture(t)
+			batch, _ := openBatch(t, 60)
+			batch, _ = freezeBatch(t, batch.ID)
+			batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+			batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "combined", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+			acceptBatchFixture(t, batch.ID)
+			batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
+			// 正常取消已被 publishing 闸门拒绝；这里注入异常前态验证回填不伪造事实。
+			dbfx.Exec(t, `UPDATE issue_delivery SET phase=$2 WHERE id=$1`, target, phase)
+			var before, after string
+			dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, target).Scan(&before)
+			batchAction(t, map[string]any{"action": "published", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+			dbfx.QueryRow(t, `SELECT to_jsonb(d)::text FROM issue_delivery d WHERE id=$1`, target).Scan(&after)
+			if before != after {
+				t.Fatal("发布回填覆盖了不合法前态")
+			}
+			var result, message, status, batchMessage string
+			dbfx.QueryRow(t, `SELECT result,error FROM delivery_batch_member WHERE batch_id=$1 AND delivery_id=$2`, batch.ID, target).Scan(&result, &message)
+			if result != "failed" || !strings.Contains(message, "已部署") || !strings.Contains(message, "回填") {
+				t.Fatalf("没有准确记录已部署但回填失败: %s %s", result, message)
+			}
+			var notices int
+			dbfx.QueryRow(t, `SELECT count(*) FROM delivery_notice WHERE delivery_id=$1 AND stage='published'`, target).Scan(&notices)
+			if notices != 0 {
+				t.Fatal("未成功回填的成员收到虚假 published 通知")
+			}
+			if deliveryPhase(t, active) != "published" {
+				t.Fatal("正常成员没有发布")
+			}
+			dbfx.QueryRow(t, `SELECT status,error FROM delivery_batch WHERE id=$1`, batch.ID).Scan(&status, &batchMessage)
+			if status != "published" || !strings.Contains(batchMessage, "已部署") || !strings.Contains(batchMessage, "失败") {
+				t.Fatalf("批次没有保留真实部署与回填边界: %s %s", status, batchMessage)
+			}
+		})
+	}
 }
