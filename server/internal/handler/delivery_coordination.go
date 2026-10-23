@@ -59,6 +59,23 @@ func (h *Handler) ManageDeliveryOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "缺少执行会话身份")
 		return
 	}
+	actor, agentID := h.resolveActor(r, requestUserID(r), ws)
+	if actor == "agent" || r.Header.Get("X-Agent-ID") != "" || r.Header.Get("X-Actor-Source") == "task_token" {
+		taskID := r.Header.Get("X-Task-ID")
+		if actor != "agent" || taskID == "" {
+			writeError(w, 403, "Agent 交付归属需要已验证的任务执行身份")
+			return
+		}
+		if b.Execution != taskID {
+			writeError(w, 400, "Agent execution_id 必须等于当前任务执行 ID")
+			return
+		}
+		var valid bool
+		if err := h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM agent_task_queue q JOIN agent a ON a.id=q.agent_id WHERE q.id::text=$1 AND q.agent_id::text=$2 AND a.workspace_id=$3)`, taskID, agentID, ws).Scan(&valid); err != nil || !valid {
+			writeError(w, 403, "Agent 任务执行不属于当前工作区或调用者")
+			return
+		}
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "领取交付归属失败")

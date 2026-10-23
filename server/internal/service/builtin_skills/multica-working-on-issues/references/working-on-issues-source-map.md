@@ -227,7 +227,8 @@ Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`
 ## Delivery and publication continuation
 
 - `server/cmd/multica/cmd_issue_delivery.go`: task/session ownership, private token storage, explicit recovery, and immutable delivery commands.
-- `server/internal/handler/delivery_coordination.go`: delivery owner and global publication generation fencing.
+- `server/internal/handler/delivery_coordination.go`: verified Agent execution identity, delivery owner and global publication generation fencing.
+- `server/internal/handler/delivery_verification_owner.go`, `issue_delivery_worker.go`, and `delivery_notice.go`: transactional external acceptance lease checks, exact native stage/run fencing, and deferred prepared/batch-ready notification.
 - `server/internal/handler/release_window.go`: persisted pause requests, daemon acknowledgements, and unique continuation lineage.
 - `server/internal/daemon/release_pause.go`: preserved execution checkpoint and source/agent ownership validation.
 - `scripts/issue-delivery-worker.py`: asynchronous final integration, acceptance and publication notifications.

@@ -157,7 +157,11 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		// 修改 5. 候选固定后成员撤权，已构建的组合仍包含该成员代码；整批停下按剩余成员重建，不做局部替换。
 		var withdrawn []string
-		if _, withdrawn, err = h.withdrawInvalidMembers(r, tx, ws, current.ID); err == nil {
+		memberPhase := "approved"
+		if current.Status == batchPublishing {
+			memberPhase = "publishing"
+		}
+		if _, withdrawn, err = h.withdrawInvalidMembers(r, tx, ws, current.ID, memberPhase); err == nil {
 			if len(withdrawn) > 0 {
 				err = h.stopStaleBatch(r, tx, current.ID, staleBatchReason)
 			}
@@ -185,7 +189,7 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 					_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET status='cancelled',error='没有有效授权的成员',updated_at=now() WHERE id=$1`, current.ID)
 				} else if err == nil {
 					// 组合候选已在 int 通过验收：成员进入发布阶段，同一份产物随后切换到生产。
-					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='publishing',candidate_id=$2::text,release_validated=true,error='',revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, current.ID, current.CandidateID)
+					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='publishing',candidate_id=$2::text,release_validated=true,error='',revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase='approved'`, current.ID, current.CandidateID)
 					if err == nil {
 						_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET status='publishing',updated_at=now() WHERE id=$1`, current.ID)
 					}
@@ -232,7 +236,7 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, item := range demoted {
-		_, _ = h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_pending}','true'::jsonb),approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1 WHERE id=$1`, item)
+		_, _ = h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_pending}','true'::jsonb),approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1 WHERE id=$1 AND phase='awaiting_review'`, item)
 	}
 	batch, err := scanDeliveryBatch(h.DB.QueryRow(r.Context(), deliveryBatchSelect+` WHERE id=$1`, body.BatchID))
 	if err != nil {
@@ -295,7 +299,7 @@ func (h *Handler) freezeDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, cur
 	if current.Status != batchCollecting {
 		return current, nil, nil
 	}
-	rows, err := tx.Query(r.Context(), `SELECT d.id::text,d.issue_id::text,d.source_commit FROM issue_delivery d WHERE d.workspace_id=$1 AND d.phase='approved' AND d.approved_by IS NOT NULL AND NOT EXISTS(SELECT 1 FROM delivery_batch_member m JOIN delivery_batch b ON b.id=m.batch_id WHERE m.delivery_id=d.id AND b.status IN `+activeBatchStatuses+`) ORDER BY d.created_at LIMIT 8`, ws)
+	rows, err := tx.Query(r.Context(), `SELECT d.id::text,d.issue_id::text,d.source_commit FROM issue_delivery d WHERE d.workspace_id=$1 AND d.phase='approved' AND d.approved_by IS NOT NULL AND NOT EXISTS(SELECT 1 FROM delivery_batch_member m JOIN delivery_batch b ON b.id=m.batch_id WHERE m.delivery_id=d.id AND b.status IN `+activeBatchStatuses+`) ORDER BY d.created_at,d.id LIMIT 8 FOR UPDATE OF d`, ws)
 	if err != nil {
 		return current, nil, err
 	}
@@ -323,7 +327,7 @@ func (h *Handler) freezeDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, cur
 		}
 		if !ready || !planValid {
 			// 修改 2. 授权或方案失效的交付不进入本批，退回待核对，不带着旧授权发布。
-			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='awaiting_review',approved_by=NULL,approved_at=NULL,release_validated=false,error='发布授权或方案已变化，等待负责人核对',revision=revision+1,updated_at=now() WHERE id=$1`, item.delivery)
+			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='awaiting_review',approved_by=NULL,approved_at=NULL,release_validated=false,error='发布授权或方案已变化，等待负责人核对',revision=revision+1,updated_at=now() WHERE id=$1 AND phase='approved'`, item.delivery)
 			if err != nil {
 				return current, nil, err
 			}
@@ -364,7 +368,7 @@ func (h *Handler) prepareDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, cu
 	if current.Status != batchFrozen {
 		return fmt.Errorf("批次不在准备阶段")
 	}
-	remaining, _, err := h.withdrawInvalidMembers(r, tx, ws, current.ID)
+	remaining, _, err := h.withdrawInvalidMembers(r, tx, ws, current.ID, "approved")
 	if err != nil {
 		return err
 	}
@@ -378,7 +382,7 @@ func (h *Handler) prepareDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, cu
 
 // 修改 4. 候选已经按冻结成员构建完成；此后成员授权失效时旧组合不再代表已授权范围，
 // 整批停止并由下一批按剩余成员重新构建和验收，禁止剩余成员继续发布旧组合。
-const staleBatchReason = "成员发布授权已失效，已固定候选包含撤权成员代码，整批停止并按剩余成员重新组批"
+const staleBatchReason = "成员交付阶段或发布授权已变化，已固定候选包含撤权成员代码或其它失效成员代码，整批停止并按剩余成员重新组批"
 
 func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, current *deliveryBatch, candidate, commit, url string) error {
 	if current.Status == batchValidating {
@@ -393,7 +397,7 @@ func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, c
 	if strings.TrimSpace(candidate) == "" || !deliveryCommit.MatchString(commit) {
 		return fmt.Errorf("需要准确组合候选及完整提交")
 	}
-	_, withdrawn, err := h.withdrawInvalidMembers(r, tx, ws, current.ID)
+	_, withdrawn, err := h.withdrawInvalidMembers(r, tx, ws, current.ID, "approved")
 	if err != nil {
 		return err
 	}
@@ -402,7 +406,7 @@ func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, c
 	}
 	// 修改 7. 固定组合就是成员这一轮要验收的候选：把候选归属和授权复核里的候选同步到同一份组合，
 	// 成员才能通过正式验收接口提交证据，后续撤权复核也不会把同一组合误判成授权失效。
-	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET candidate_id=$2::text,candidate_url=$3::text,acceptance_submitted=false,plan_snapshot=jsonb_set(jsonb_set(jsonb_set(jsonb_set(COALESCE(d.plan_snapshot,'{}'::jsonb),'{batch_previous_candidate}',to_jsonb(d.candidate_id)),'{batch_previous_review}',COALESCE(d.plan_snapshot->'authorization_review','{}'::jsonb)),'{candidate_commit}',to_jsonb($4::text)),'{authorization_review}',CASE WHEN d.plan_snapshot ? 'authorization_review' THEN jsonb_set(d.plan_snapshot->'authorization_review','{candidate_id}',to_jsonb($2::text)) ELSE '{}'::jsonb END),revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, current.ID, candidate, url, commit)
+	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET candidate_id=$2::text,candidate_url=$3::text,acceptance_submitted=false,plan_snapshot=jsonb_set(jsonb_set(jsonb_set(jsonb_set(COALESCE(d.plan_snapshot,'{}'::jsonb),'{batch_previous_candidate}',to_jsonb(d.candidate_id)),'{batch_previous_review}',COALESCE(d.plan_snapshot->'authorization_review','{}'::jsonb)),'{candidate_commit}',to_jsonb($4::text)),'{authorization_review}',CASE WHEN d.plan_snapshot ? 'authorization_review' THEN jsonb_set(d.plan_snapshot->'authorization_review','{candidate_id}',to_jsonb($2::text)) ELSE '{}'::jsonb END),revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase='approved'`, current.ID, candidate, url, commit)
 	if err != nil {
 		return err
 	}
@@ -444,21 +448,21 @@ func (h *Handler) stopStaleBatch(r *http.Request, tx pgx.Tx, batch, reason strin
 
 // 候选作废后恢复成员原批准候选；新批次重新领取，不复用旧组合验收。
 func (h *Handler) resetPendingBatchMembers(r *http.Request, tx pgx.Tx, batch, reason string) error {
-	_, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='approved',release_validated=false,acceptance_submitted=false,candidate_url='',candidate_id=COALESCE(NULLIF(d.plan_snapshot->>'batch_previous_candidate',''),d.candidate_id),plan_snapshot=CASE WHEN d.plan_snapshot ? 'batch_previous_review' THEN jsonb_set(d.plan_snapshot,'{authorization_review}',d.plan_snapshot->'batch_previous_review') ELSE d.plan_snapshot END,error=$2::text,revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase NOT IN ('cancelled','published')`, batch, reason)
+	_, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='approved',release_validated=false,acceptance_submitted=false,candidate_url='',candidate_id=COALESCE(NULLIF(d.plan_snapshot->>'batch_previous_candidate',''),d.candidate_id),plan_snapshot=CASE WHEN d.plan_snapshot ? 'batch_previous_review' THEN jsonb_set(d.plan_snapshot,'{authorization_review}',d.plan_snapshot->'batch_previous_review') ELSE d.plan_snapshot END,error=$2::text,revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase IN ('approved','preparing_release','publishing')`, batch, reason)
 	return err
 }
 
 // withdrawInvalidMembers 在候选固定后、发布前逐一复核：撤回授权的成员退出本批，返回剩余可发布成员数。
-func (h *Handler) withdrawInvalidMembers(r *http.Request, tx pgx.Tx, ws, batch string) (int, []string, error) {
-	rows, err := tx.Query(r.Context(), `SELECT m.delivery_id::text,m.issue_id::text FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.result='pending'`, batch)
+func (h *Handler) withdrawInvalidMembers(r *http.Request, tx pgx.Tx, ws, batch, expectedPhase string) (int, []string, error) {
+	rows, err := tx.Query(r.Context(), `SELECT m.delivery_id::text,m.issue_id::text,d.phase FROM delivery_batch_member m JOIN issue_delivery d ON d.id=m.delivery_id WHERE m.batch_id=$1 AND m.result='pending' AND d.workspace_id=$2 ORDER BY m.created_at,m.delivery_id FOR UPDATE OF d`, batch, ws)
 	if err != nil {
 		return 0, nil, err
 	}
-	type member struct{ delivery, issue string }
+	type member struct{ delivery, issue, phase string }
 	var members []member
 	for rows.Next() {
 		var item member
-		if err = rows.Scan(&item.delivery, &item.issue); err != nil {
+		if err = rows.Scan(&item.delivery, &item.issue, &item.phase); err != nil {
 			rows.Close()
 			return 0, nil, err
 		}
@@ -467,18 +471,23 @@ func (h *Handler) withdrawInvalidMembers(r *http.Request, tx pgx.Tx, ws, batch s
 	rows.Close()
 	withdrawn := []string{}
 	for _, item := range members {
-		ready, checkErr := deliveryAuthorizationReady(r.Context(), tx, ws, item.issue, item.delivery)
-		var planValid bool
-		if checkErr == nil {
-			checkErr = tx.QueryRow(r.Context(), deliveryPlanValidSQL, item.delivery).Scan(&planValid)
-		}
-		if checkErr != nil {
-			return 0, nil, checkErr
+		// 真实成员行锁覆盖授权检查到晋级，取消事务先提交时必须退出本批。
+		eligible := item.phase == expectedPhase
+		ready, planValid := false, false
+		if eligible {
+			var checkErr error
+			ready, checkErr = deliveryAuthorizationReady(r.Context(), tx, ws, item.issue, item.delivery)
+			if checkErr == nil {
+				checkErr = tx.QueryRow(r.Context(), deliveryPlanValidSQL, item.delivery).Scan(&planValid)
+			}
+			if checkErr != nil {
+				return 0, nil, checkErr
+			}
 		}
 		if ready && planValid {
 			continue
 		}
-		if err = h.withdrawMember(r, tx, ws, batch, item.delivery, "发布授权已失效，退出本批"); err != nil {
+		if err = h.withdrawMember(r, tx, ws, batch, item.delivery, "交付阶段或发布授权已变化，退出本批"); err != nil {
 			return 0, nil, err
 		}
 		withdrawn = append(withdrawn, item.delivery)
@@ -491,7 +500,7 @@ func (h *Handler) withdrawMember(r *http.Request, tx pgx.Tx, ws, batch, delivery
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='awaiting_review',approved_by=NULL,approved_at=NULL,release_validated=false,error=$3::text,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND phase NOT IN ('cancelled','published')`, ws, delivery, reason)
+	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='awaiting_review',approved_by=NULL,approved_at=NULL,release_validated=false,error=$3::text,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND phase IN ('approved','preparing_release','publishing')`, ws, delivery, reason)
 	return err
 }
 
@@ -518,10 +527,20 @@ func (h *Handler) publishDeliveryBatch(r *http.Request, tx pgx.Tx, current deliv
 		members = append(members, item)
 	}
 	rows.Close()
+	backfillFailed := false
 	for _, item := range members {
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='published',candidate_id=$2::text,plan_snapshot=jsonb_set(plan_snapshot,'{candidate_commit}',to_jsonb($3::text)),error='',revision=revision+1,updated_at=now() WHERE id=$1 AND phase='publishing'`, item.delivery, current.CandidateID, candidateCommit)
+		tag, err := tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='published',candidate_id=$2::text,plan_snapshot=jsonb_set(plan_snapshot,'{candidate_commit}',to_jsonb($3::text)),error='',revision=revision+1,updated_at=now() WHERE id=$1 AND phase='publishing'`, item.delivery, current.CandidateID, candidateCommit)
 		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() == 0 {
+			// 产物已部署；回填失败不能伪造交付成功，也不代表代码已从生产摘除。
+			_, err = tx.Exec(r.Context(), `UPDATE delivery_batch_member SET result='failed',error='生产产物已部署，但成员交付阶段不允许回填，需要核对' WHERE batch_id=$1 AND delivery_id=$2`, current.ID, item.delivery)
+			if err != nil {
+				return err
+			}
+			backfillFailed = true
+			continue
 		}
 		_, err = tx.Exec(r.Context(), `UPDATE delivery_batch_member SET result='published' WHERE batch_id=$1 AND delivery_id=$2`, current.ID, item.delivery)
 		if err != nil {
@@ -532,7 +551,11 @@ func (h *Handler) publishDeliveryBatch(r *http.Request, tx pgx.Tx, current deliv
 			return err
 		}
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET status='published',candidate_commit=$2::text,updated_at=now() WHERE id=$1`, current.ID, candidateCommit)
+	message := ""
+	if backfillFailed {
+		message = "生产产物已部署，部分成员交付状态回填失败，需要核对成员记录"
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET status='published',candidate_commit=$2::text,error=$3::text,updated_at=now() WHERE id=$1`, current.ID, candidateCommit, message)
 	return err
 }
 
@@ -549,13 +572,15 @@ func (h *Handler) failDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, curre
 		if tag.RowsAffected() == 0 {
 			return fmt.Errorf("冲突交付不属于当前批次")
 		}
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='needs_changes',error=$3::text,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, conflict, message)
+		tag, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='needs_changes',error=$3::text,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND phase NOT IN ('cancelled','published')`, ws, conflict, message)
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,'needs_changes',$2) ON CONFLICT(delivery_id,stage) DO NOTHING`, conflict, dbid.NewV7())
-		if err != nil {
-			return err
+		if tag.RowsAffected() > 0 {
+			_, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,'needs_changes',$2) ON CONFLICT(delivery_id,stage) DO NOTHING`, conflict, dbid.NewV7())
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		// 失败成员保留具体原因及有效授权，不能由下一轮调度自动重开同一组合。
@@ -567,7 +592,7 @@ func (h *Handler) failDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, curre
 		return err
 	}
 	if conflict == "" {
-		if _, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='needs_changes',revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, current.ID); err != nil {
+		if _, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='needs_changes',revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase NOT IN ('cancelled','published')`, current.ID); err != nil {
 			return err
 		}
 	}
