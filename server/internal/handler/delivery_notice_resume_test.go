@@ -72,7 +72,7 @@ func (f publishedResumeFixture) assertNotice(t *testing.T, delivered bool, count
 	var got bool
 	var tasks int
 	dbfx.QueryRow(t, `SELECT delivered_at IS NOT NULL FROM delivery_notice WHERE delivery_id=$1 AND stage='published'`, f.delivery).Scan(&got)
-	dbfx.QueryRow(t, `SELECT count(*) FROM agent_task_queue q JOIN delivery_notice n ON n.comment_id=q.trigger_comment_id WHERE n.delivery_id=$1 AND n.stage='published'`, f.delivery).Scan(&tasks)
+	dbfx.QueryRow(t, `SELECT count(*) FROM agent_task_queue q JOIN delivery_notice n ON (n.comment_id=q.trigger_comment_id OR n.comment_id=ANY(q.coalesced_comment_ids)) WHERE n.delivery_id=$1 AND n.stage='published'`, f.delivery).Scan(&tasks)
 	if got != delivered || tasks != count {
 		t.Fatalf("delivered=%v tasks=%d; want %v/%d", got, tasks, delivered, count)
 	}
@@ -156,4 +156,39 @@ func TestPublishedResumeOnlyBindsActualDeliveryTrigger(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPublishedResumeAuditSurvivesCompletionReconciliation(t *testing.T) {
+	f := newPublishedResumeFixture(t)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status='completed',completed_at=now(),delivered_comment_ids=ARRAY[trigger_comment_id] WHERE id=$1`, f.resumed)
+	dbfx.Exec(t, `UPDATE issue SET status='done',updated_at=now() WHERE id=$1`, f.issue)
+	var runtime string
+	dbfx.QueryRow(t, `SELECT runtime_id::text FROM agent_task_queue WHERE id=$1`, f.resumed).Scan(&runtime)
+	another := dbfx.Task(t, f.agent, testutil.Cols{"runtime_id": runtime, "issue_id": f.issue, "status": "completed", "completed_at": testutil.Raw("now()")})
+	if f.notify(t) {
+		t.Fatal("完成后应记录审计")
+	}
+	f.assertNotice(t, true, 0)
+	for _, id := range []string{f.resumed, another} {
+		task, err := testHandler.Queries.GetAgentTask(context.Background(), parseUUID(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for n := 0; n < 2; n++ {
+			reloaded := *testHandler
+			reloaded.reconcileCommentsOnCompletion(context.Background(), &task)
+			f.assertNotice(t, true, 0)
+		}
+	}
+	var count int
+	dbfx.QueryRow(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND id NOT IN($2,$3,$4)`, f.issue, f.original, f.resumed, another).Scan(&count)
+	if count != 0 {
+		t.Fatalf("审计经完成补派产生%d条额外执行", count)
+	}
+	var audit string
+	dbfx.QueryRow(t, `SELECT c.content FROM comment c JOIN delivery_notice n ON n.comment_id=c.id WHERE n.delivery_id=$1 AND n.stage='published'`, f.delivery).Scan(&audit)
+	if !isNoteComment(audit) || strings.Contains(audit, "mention://") || strings.Contains(audit, "请核对") {
+		t.Fatalf("审计应为持久便签且无动作指令: %s", audit)
+	}
+
 }
