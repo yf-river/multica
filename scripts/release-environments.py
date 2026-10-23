@@ -968,12 +968,12 @@ def batch_approval_records(record, records, meta, profile):
     """1. 组合发布逐个成员核对：每个成员都要有自己的有效授权、固定提交和同一候选。"""
     members=record.get('batch_members') or []
     backend=meta['backend_url'].rstrip('/')
-    for index,member in enumerate(members):
+    for member in members:
         delivery=next((d for d in records if d['id']==member['delivery_id']),None)
         url=backend+'/api/delivery-queue/'+member['delivery_id']+'/authorization'
         request=urllib.request.Request(url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request,timeout=15) as response:authorization=json.load(response)
-        if index==0 and authorization.get('publication_generation')!=record.get('publication_lease',{}).get('generation'):
+        if authorization.get('publication_generation')!=record.get('publication_lease',{}).get('generation'):
             raise RuntimeError('最终发布占用代次不匹配')
         if not authorization.get('ready'):
             raise RuntimeError('成员 %s 的发布授权或用户要求已变化，需要负责人重新核对'%member['delivery_id'])

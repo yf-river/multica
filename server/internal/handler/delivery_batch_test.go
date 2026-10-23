@@ -525,3 +525,86 @@ func TestDeliveryBatchRepresentativeClaimsPublicationBeforePrepare(t *testing.T)
 	call("release", representative, token, lease.Generation, "").Want(200)
 	batchCleanup(t)
 }
+
+func TestDeliveryBatchMembersSharePublicationAuthorization(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	dbfx.Cleanup(t, `DELETE FROM delivery_publication WHERE resource='int-prod'`)
+	a, at := batchFixture(t)
+	b, bt := batchFixture(t)
+	batch, _ := openBatch(t, 60)
+	batch, members := freezeBatch(t, batch.ID)
+	if members[0].DeliveryID != a {
+		a, b, at, bt = b, a, bt, at
+	}
+	publication := func(action string, generation int64) coordinationOwner {
+		var lease coordinationOwner
+		testutil.Call(t, testHandler.PublicationLease, newRequest("POST", "/api/delivery-queue/publication", map[string]any{"action": action, "delivery_id": a, "worker_token": at, "generation": generation, "recovery_evidence": "受控独占数据库确认原执行停止"})).Want(200).JSON(&lease)
+		return lease
+	}
+	authorization := func(id string, want bool, generation int64) {
+		t.Helper()
+		var got struct {
+			Ready      bool  `json:"ready"`
+			Generation int64 `json:"publication_generation"`
+		}
+		req := withURLParam(newRequest("GET", "/api/delivery-queue/"+id+"/authorization", nil), "deliveryId", id)
+		testutil.Call(t, testHandler.CheckDeliveryAuthorization, req).Want(200).JSON(&got)
+		if got.Ready != want || (want && got.Generation != generation) {
+			t.Fatalf("authorization %s: %+v, want ready=%v generation=%d", id, got, want, generation)
+		}
+	}
+	lease := publication("claim", 0)
+	outside, _ := batchFixture(t)
+	authorization(outside, false, 0)
+	authorization(a, true, lease.Generation)
+	authorization(b, true, lease.Generation)
+	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("b", 40)}).Want(200)
+	batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "shared-lease-candidate", "candidate_commit": strings.Repeat("c", 40), "candidate_url": "http://int.example"}).Want(200)
+	authorization(a, true, lease.Generation)
+	authorization(b, true, lease.Generation)
+	for _, id := range []string{a, b} {
+		dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='wrong' WHERE id=$1`, id)
+		authorization(id, false, 0)
+		dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='shared-lease-candidate' WHERE id=$1`, id)
+		dbfx.Exec(t, `UPDATE issue_delivery SET source_commit=$2 WHERE id=$1`, id, strings.Repeat("f", 40))
+		authorization(id, false, 0)
+		dbfx.Exec(t, `UPDATE issue_delivery SET source_commit=$2 WHERE id=$1`, id, strings.Repeat("a", 40))
+		dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL WHERE id=$1`, id)
+		authorization(id, false, 0)
+		authorization(b, false, 0)
+		dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=$2 WHERE id=$1`, id, testUserID)
+	}
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{candidate_commit}','"wrong"') WHERE id=$1`, b)
+	authorization(b, false, 0)
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{candidate_commit}',to_jsonb($2::text)) WHERE id=$1`, b, strings.Repeat("c", 40))
+	dbfx.Exec(t, `UPDATE delivery_publication SET delivery_id=$1,worker_token=$2 WHERE resource='int-prod'`, b, bt)
+	authorization(a, false, 0)
+	authorization(b, false, 0)
+	dbfx.Exec(t, `UPDATE delivery_publication SET delivery_id=$1,worker_token=$2 WHERE resource='int-prod'`, a, at)
+	dbfx.Exec(t, `UPDATE delivery_publication SET worker_token=$1 WHERE resource='int-prod'`, dbid.NewV7().String())
+	authorization(a, false, 0)
+	authorization(b, false, 0)
+	dbfx.Exec(t, `UPDATE delivery_publication SET worker_token=$1 WHERE resource='int-prod'`, at)
+	dbfx.Exec(t, `UPDATE delivery_batch_member SET result='withdrawn' WHERE batch_id=$1 AND delivery_id=$2`, batch.ID, b)
+	authorization(b, false, 0)
+	dbfx.Exec(t, `UPDATE delivery_batch_member SET result='pending' WHERE batch_id=$1 AND delivery_id=$2`, batch.ID, b)
+	dbfx.Exec(t, `UPDATE delivery_publication SET expires_at=now()-interval '1 second' WHERE resource='int-prod'`)
+	authorization(a, false, 0)
+	authorization(b, false, 0)
+	lease = publication("resume", lease.Generation)
+	authorization(a, true, lease.Generation)
+	authorization(b, true, lease.Generation)
+	acceptBatchFixture(t, batch.ID)
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
+	authorization(a, true, lease.Generation)
+	authorization(b, true, lease.Generation)
+	publication("heartbeat", lease.Generation)
+	publication("check", lease.Generation)
+	for range 2 {
+		batchAction(t, map[string]any{"action": "published", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_commit": strings.Repeat("c", 40)}).Want(200)
+	}
+	publication("release", lease.Generation)
+}
