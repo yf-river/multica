@@ -1079,6 +1079,16 @@ export const CommentTriggerOutcomeSchema = z.object({
   reason_code: z.string().default(""),
 }).loose();
 
+// 回复托管审查员时的转交结果（GONG-63）：谁实际接收这条回复、以及发生/将发生什么。
+// 增量字段：旧服务器不返回它，校验时整体可缺省。
+export const CommentReviewReplySchema = z.object({
+  recipient_type: z.string().default(""),
+  recipient_id: z.string().default(""),
+  recipient_name: z.string().default(""),
+  status: z.string().default(""),
+  reason_code: z.string().default(""),
+}).loose();
+
 /** 校验评论触发预览响应：可触达的 agents + 被拦截的提及结果。 */
 export const CommentTriggerPreviewSchema = z.object({
   agents: z.array(CommentTriggerPreviewAgentSchema).default([]),
@@ -1094,6 +1104,9 @@ export const CommentTriggerPreviewSchema = z.object({
         return parsed.success ? [parsed.data] : [];
       }),
     ),
+  // 回复审查员时这条草稿会通知谁（GONG-63）。缺省/畸形都退化成 null：预览提示是
+  // 增强信息，不能因为它把整组有效触发清掉。
+  review_reply: CommentReviewReplySchema.nullish().catch(null).default(null),
 }).loose();
 
 // 单条触发预览项：目标 issue、候选 agent、来源、是否支持交接。

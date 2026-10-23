@@ -4,6 +4,7 @@ import {
   unhandledCommentTriggerOutcomes,
   mentionLabelsByTarget,
   blockedTriggerLabel,
+  parseReviewReply,
 } from "./comment-trigger-outcomes";
 
 // MUL-4525 §2: the create/edit comment response's trigger_outcomes drive the
@@ -75,5 +76,39 @@ describe("mentionLabelsByTarget", () => {
   it("returns an empty map for content with no mentions", () => {
     expect(mentionLabelsByTarget("just text").size).toBe(0);
     expect(mentionLabelsByTarget("").size).toBe(0);
+  });
+});
+
+// GONG-63: `review_reply` says who actually received a reply addressed to the
+// managed reviewer. It is additive, so older servers omit it, and a malformed payload
+// must degrade to "no information" rather than push junk into the toast branches.
+describe("parseReviewReply", () => {
+  it("keeps the recipient and outcome of a routed reply", () => {
+    const parsed = parseReviewReply({
+      recipient_type: "agent",
+      recipient_id: "a1",
+      recipient_name: "multica-developer",
+      status: "queued",
+      reason_code: "queued",
+    });
+    expect(parsed).toEqual({
+      recipient_type: "agent",
+      recipient_id: "a1",
+      recipient_name: "multica-developer",
+      status: "queued",
+      reason_code: "queued",
+    });
+  });
+
+  it("returns null for a missing payload or a payload without status", () => {
+    expect(parseReviewReply(undefined)).toBeNull();
+    expect(parseReviewReply(null)).toBeNull();
+    expect(parseReviewReply("queued")).toBeNull();
+    expect(parseReviewReply({ recipient_name: "someone" })).toBeNull();
+  });
+
+  it("drops non-string fields instead of trusting them", () => {
+    const parsed = parseReviewReply({ status: "blocked", recipient_name: 42, reason_code: null });
+    expect(parsed).toEqual({ status: "blocked" });
   });
 });

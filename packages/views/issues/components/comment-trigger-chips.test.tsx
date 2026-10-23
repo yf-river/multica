@@ -188,4 +188,59 @@ describe("CommentTriggerChips", () => {
     expect(screen.getByText("Ops")).toBeInTheDocument();
     expect(screen.getByText("Runtime offline")).toBeInTheDocument();
   });
+
+  // GONG-63: a reply under the reviewer's thread goes to the issue owner, so the
+  // composer names that recipient instead of leaving the user to guess who answers.
+  it("names the owner a reviewer reply will notify", () => {
+    renderWithI18n(
+      <CommentTriggerChips
+        agents={[{ ...walt, source: "review_followup_assignee" }]}
+        reviewReply={{
+          status: "will_notify",
+          recipient_type: "agent",
+          recipient_id: "agent-1",
+          recipient_name: "Walt",
+        }}
+        suppressedAgentIds={new Set()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("This reply will notify the issue owner Walt")).toBeInTheDocument();
+  });
+
+  it("explains a human owner starts no agent", () => {
+    renderWithI18n(
+      <CommentTriggerChips
+        agents={[]}
+        reviewReply={{
+          status: "human_assignee",
+          recipient_type: "member",
+          recipient_id: "user-1",
+          recipient_name: "River",
+        }}
+        suppressedAgentIds={new Set()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("This reply will notify River (a member). No agent will start"),
+    ).toBeInTheDocument();
+  });
+
+  it("still says something when the issue has no owner", () => {
+    renderWithI18n(
+      <CommentTriggerChips
+        agents={[]}
+        reviewReply={{ status: "no_assignee" }}
+        suppressedAgentIds={new Set()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("This issue has no owner, so the reply stays in the timeline"),
+    ).toBeInTheDocument();
+  });
 });
