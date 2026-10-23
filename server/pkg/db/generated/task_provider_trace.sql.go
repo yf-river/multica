@@ -121,6 +121,8 @@ DO UPDATE SET
         WHEN task_provider_trace.observation_space = '' THEN EXCLUDED.observation_space
         ELSE task_provider_trace.observation_space END,
     session_id = CASE
+        WHEN task_provider_trace.correlation = 'inferred_window' AND EXCLUDED.correlation = 'exact'
+            THEN EXCLUDED.session_id
         WHEN task_provider_trace.correlation = 'exact' AND EXCLUDED.correlation <> 'exact'
             THEN task_provider_trace.session_id
         WHEN EXCLUDED.session_id = '' THEN task_provider_trace.session_id
