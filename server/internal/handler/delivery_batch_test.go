@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -224,4 +225,44 @@ func TestDeliveryBatchRejectsWrongWorkerToken(t *testing.T) {
 	batch, _ := openBatch(t, 60)
 	batch, _ = freezeBatch(t, batch.ID)
 	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": dbid.NewV7().String(), "base_commit": strings.Repeat("c", 40)}).Want(409)
+}
+
+// 批次成员不建外键：删除交付时由应用在同一事务里清成员行和没有成员的批次。
+func TestDeleteDeliveryDataCleansBatchMembers(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	issue, plan := coordinationFixture(t)
+	delivery := dbfx.Insert(t, "issue_delivery", testutil.Cols{
+		"id": dbid.NewV7(), "workspace_id": testWorkspaceID, "issue_id": issue, "operation_id": dbid.NewV7(),
+		"plan_id": plan, "source_commit": strings.Repeat("a", 40), "source_branch": "feature/batch",
+		"base_commit": strings.Repeat("b", 40), "phase": "approved", "approved_by": testUserID,
+		"approved_at": testutil.Raw("now()"), "verification_comment_id": dbid.NewV7(),
+		"release_comment_id": dbid.NewV7(), "worker_token": dbid.NewV7(), "plan_snapshot": testutil.Raw("'{}'::jsonb"),
+	})
+	batch := dbid.NewV7().String()
+	dbfx.Insert(t, "delivery_batch", testutil.Cols{"id": batch, "workspace_id": testWorkspaceID, "status": "frozen", "window_seconds": 60, "collect_until": testutil.Raw("now()")})
+	dbfx.InsertNoID(t, "delivery_batch_member", testutil.Cols{"batch_id": batch, "delivery_id": delivery, "issue_id": issue, "source_commit": strings.Repeat("a", 40)}, "batch_id=$1", batch)
+	dbfx.Cleanup(t, `DELETE FROM delivery_batch WHERE id=$1`, batch)
+	dbfx.Cleanup(t, `DELETE FROM delivery_notice WHERE delivery_id=$1`, delivery)
+
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("开启事务失败: %v", err)
+	}
+	if err := deleteDeliveryData(ctx, tx, testWorkspaceID, issue); err != nil {
+		tx.Rollback(ctx)
+		t.Fatalf("删除交付数据失败: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("提交失败: %v", err)
+	}
+	var members, batches int
+	dbfx.QueryRow(t, `SELECT count(*) FROM delivery_batch_member WHERE batch_id=$1`, batch).Scan(&members)
+	dbfx.QueryRow(t, `SELECT count(*) FROM delivery_batch WHERE id=$1`, batch).Scan(&batches)
+	if members != 0 || batches != 0 {
+		t.Fatalf("删除交付后仍残留成员或空批次: members=%d batches=%d", members, batches)
+	}
 }

@@ -552,18 +552,9 @@ def reviewed_supervision_settings_change(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
-def reviewed_new_table_index(migration, statements):
-    """1. 同一份迁移里新建的表可以建普通索引：只加新对象，不锁已有数据，也不需要并发建。
-    对已存在表建索引仍然只接受 CONCURRENTLY，避免旧站写入被锁。"""
-    created = set()
-    for statement in statements:
-        match = re.match(r'^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z0-9_."]+)', statement, re.I)
-        if match: created.add(match.group(1).strip('"').split('.')[-1])
-    if not created: return False
-    for statement in statements:
-        match = re.match(r'^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+ON\s+([A-Za-z0-9_."]+)', statement, re.I)
-        if match and match.group(1).strip('"').split('.')[-1] not in created: return False
-    return True
+def additive_statement(statement):
+    # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
+    return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
 
 
 def prepare_database(release, cfg, previous):
@@ -573,11 +564,8 @@ def prepare_database(release, cfg, previous):
         sql=re.sub(r'/\*.*?\*/','',migration.read_text(),flags=re.S)
         sql=re.sub(r'--[^\n]*','',sql)
         statements=[part.strip() for part in sql.split(';') if part.strip()]
-        new_table_index=reviewed_new_table_index(migration,statements)
         for statement in statements:
-            additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if additive: continue
-            if new_table_index and re.match(r'^CREATE\s+(?:UNIQUE\s+)?INDEX\b',statement,re.I): continue
+            if additive_statement(statement): continue
             if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration):
                 continue
             raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')

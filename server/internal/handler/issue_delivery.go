@@ -449,6 +449,13 @@ func deleteDeliveryData(ctx context.Context, tx pgx.Tx, ws, issue string) error 
 	if _, err := tx.Exec(ctx, `DELETE FROM delivery_notice WHERE delivery_id IN (SELECT id FROM issue_delivery WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid))`, ws, issue); err != nil {
 		return err
 	}
+	// 1. 批次的成员关系改由这里清理：先按待删交付清成员，再清掉没有成员的批次，和交付删除同事务提交。
+	if _, err := tx.Exec(ctx, `DELETE FROM delivery_batch_member WHERE delivery_id IN (SELECT id FROM issue_delivery WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid))`, ws, issue); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM delivery_batch b WHERE b.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM delivery_batch_member m WHERE m.batch_id=b.id)`, ws); err != nil {
+		return err
+	}
 
 	for _, table := range []string{"delivery_evidence", "delivery_owner", "issue_delivery_authorization", "issue_delivery", "issue_delivery_plan"} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`, ws, issue); err != nil {

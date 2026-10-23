@@ -112,18 +112,14 @@ class SeedGateTests(unittest.TestCase):
 
 
 class MigrationGateTests(unittest.TestCase):
-    """新表索引只加新对象；对已有表建普通索引仍然拒绝。"""
+    """通用迁移路径只接受新建表和并发索引；普通 CREATE INDEX 不做新表豁免。"""
 
-    def test_index_on_table_created_in_same_migration(self):
-        statements=['CREATE TABLE IF NOT EXISTS seed_a (name text primary key)','CREATE UNIQUE INDEX IF NOT EXISTS seed_a_key ON seed_a(name)']
-        self.assertTrue(r.reviewed_new_table_index(Path('/m/623_seed.up.sql'),statements))
+    def test_table_and_concurrent_index_are_additive(self):
+        self.assertTrue(r.additive_statement('CREATE TABLE IF NOT EXISTS seed_a (name text primary key)'))
+        self.assertTrue(r.additive_statement('CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS seed_a_key ON seed_a(name)'))
 
-    def test_index_on_existing_table_is_rejected(self):
-        statements=['CREATE INDEX IF NOT EXISTS issue_idx ON issue(workspace_id)']
-        self.assertFalse(r.reviewed_new_table_index(Path('/m/624_issue.up.sql'),statements))
-
-    def test_index_on_another_table_is_rejected(self):
-        statements=['CREATE TABLE seed_b (id uuid)','CREATE INDEX IF NOT EXISTS issue_idx ON issue(workspace_id)']
-        self.assertFalse(r.reviewed_new_table_index(Path('/m/625_mix.up.sql'),statements))
+    def test_plain_index_is_rejected_even_for_a_new_table(self):
+        self.assertFalse(r.additive_statement('CREATE INDEX IF NOT EXISTS seed_a_key ON seed_a(name)'))
+        self.assertFalse(r.additive_statement('CREATE UNIQUE INDEX IF NOT EXISTS seed_a_key ON seed_a(name)'))
 
 if __name__=='__main__':unittest.main()
