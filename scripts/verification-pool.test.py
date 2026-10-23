@@ -172,13 +172,31 @@ class PoolServiceLifetimeTests(unittest.TestCase):
         identity='00000000-0000-0000-0000-000000000002'
         delivery=dict(id=identity,phase='waiting_int',created_at='2026-10-23T00:00:00Z')
         inactive=type('R',(),{'returncode':1})()
-        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(w.subprocess,'run',return_value=inactive),patch.object(r,'run') as launch:
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(w.subprocess,'run',return_value=inactive),patch.object(r,'output',return_value='LoadState=not-found\nActiveState=inactive'),patch.object(r,'run') as launch:
             self.assertEqual(worker.pool_dispatch([delivery],None),{identity})
             command=launch.call_args.args[0]
             self.assertIn('--property=Type=exec',command)
             self.assertIn('--property=KillMode=process',command)
             self.assertNotIn('--property=KillMode=control-group',command)
             self.assertEqual(command[-2:],['--pool-delivery',identity])
+
+
+    def test_loaded_inactive_unit_restarts_only_with_exact_execution_identity(self):
+        import json
+        worker=object.__new__(w.Worker);worker.env='prod'
+        identity='00000000-0000-0000-0000-000000000003'
+        command=[w.sys.executable,str(Path(w.__file__).resolve()),'--env','prod','--pool-delivery',identity]
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'ROOT',Path(tmp)):
+            properties='LoadState=loaded\nActiveState=inactive\nWorkingDirectory='+tmp+'\nType=exec\nKillMode=process'
+            def outputs(command_override=None,environment_override=None):
+                return [properties,json.dumps({'data':['/test/unit']}),json.dumps({'data':[[w.sys.executable,command_override or command,False]]}),json.dumps({'data':environment_override or ['MULTICA_RELEASE_ROOT='+tmp]})]
+            with patch.object(r,'output',side_effect=outputs()),patch.object(r,'run') as launch:
+                worker.start_pool_unit(identity)
+                launch.assert_called_once_with(['systemctl','start','multica-verify-'+identity])
+            for responses in [outputs(command_override=command[:-1]+['wrong-delivery']),outputs(environment_override=['MULTICA_RELEASE_ROOT=/wrong'])]:
+                with patch.object(r,'output',side_effect=responses),patch.object(r,'run') as launch:
+                    with self.assertRaises(r.RecoveryRequired):worker.start_pool_unit(identity)
+                    launch.assert_not_called()
 
 class MigrationGateTests(unittest.TestCase):
     """通用迁移路径只接受新建表和并发索引；普通 CREATE INDEX 不做新表豁免。"""

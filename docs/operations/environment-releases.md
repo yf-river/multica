@@ -99,7 +99,7 @@ pnpm --dir /data/ida/multica release delivery-worker --env int
 pnpm --dir /data/ida/multica release delivery-worker --env prod
 ```
 
-验收pool接力单元使用 `Type=exec`、`KillMode=process`：接力进程退出不结束跨任务运行的槽位服务。服务停启由canonical部署元数据中的PID、版本目录、环境身份和Daemon profile核对后执行；取消或中断后保留原租约/候选供接续，所有权不明确时隔离并等待恢复，不能用整组kill代替槽位清理。
+验收pool接力单元使用 `Type=exec`、`KillMode=process`：接力进程退出不结束跨任务运行的槽位服务。服务停启由canonical部署元数据中的PID、版本目录、环境身份和Daemon profile核对后执行；取消或中断后保留原租约/候选供接续，所有权不明确时隔离并等待恢复，不能用整组kill代替槽位清理。残留服务使接力单元仍加载但inactive时，先通过systemd核对原ExecStart完整参数、工作目录、环境根、Type和KillMode，再启动原单元续接；身份不符时停止，不以随机单元名绕开并发约束。
 
 新运行产物携带同版本的发布操作脚本。发布入口验证服务后安装对应环境接力器；定时器是持久 systemd 单元，服务、发布器及机器重启后按数据库和日志继续。int 接力器禁止更新生产。配置、账号及环境地址取当前部署记录和私有 profile，不写入源码或日志。
 

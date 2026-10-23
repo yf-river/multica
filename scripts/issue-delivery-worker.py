@@ -288,6 +288,33 @@ class Worker:
         import uuid
         return r.RUN/'verification-jobs'/(str(uuid.UUID(delivery))+'.json')
 
+    def start_pool_unit(self,delivery):
+        unit='multica-verify-'+delivery
+        command=[sys.executable,str(Path(__file__).resolve()),'--env',self.env,'--pool-delivery',delivery]
+        properties=dict(line.split('=',1) for line in r.output(['systemctl','show',unit,
+            '--property=LoadState,ActiveState,WorkingDirectory,Type,KillMode','--no-pager']).splitlines() if '=' in line)
+        if properties.get('LoadState')!='not-found':
+            if properties.get('ActiveState') in ('active','activating','deactivating'):return
+            # systemd保留仍有持久服务的inactive单元；只续启参数完全匹配的原单元。
+            object_path=json.loads(r.output(['busctl','--json=short','call','org.freedesktop.systemd1',
+                '/org/freedesktop/systemd1','org.freedesktop.systemd1.Manager','GetUnit','s',unit]))['data'][0]
+            starts=json.loads(r.output(['busctl','--json=short','get-property','org.freedesktop.systemd1',
+                object_path,'org.freedesktop.systemd1.Service','ExecStart']))['data']
+            environment=json.loads(r.output(['busctl','--json=short','get-property','org.freedesktop.systemd1',
+                object_path,'org.freedesktop.systemd1.Service','Environment']))['data']
+            if (properties.get('LoadState')!='loaded' or properties.get('ActiveState') not in ('inactive','failed')
+                    or properties.get('WorkingDirectory')!=str(r.ROOT) or properties.get('Type')!='exec'
+                    or properties.get('KillMode')!='process' or len(starts)!=1
+                    or starts[0][0]!=sys.executable or starts[0][1]!=command or starts[0][2] is not False
+                    or 'MULTICA_RELEASE_ROOT='+str(r.ROOT) not in environment):
+                raise r.RecoveryRequired('已有验收接力单元身份不匹配，拒绝替换：'+unit)
+            r.run(['systemctl','start',unit])
+            return
+        # 槽位服务跨交付存活，由canonical PID/profile管理停启；短命接力单元退出不能杀服务。
+        r.run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec',
+               '--property=KillMode=process','--working-directory',r.ROOT,
+               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),*command])
+
     def pool_dispatch(self,rows,current_id,allow_new=True):
         if not allow_new and not (r.RUN/'verification-jobs').exists():return set()
         managed=[]; active=0
@@ -316,11 +343,7 @@ class Worker:
             unit='multica-verify-'+d['id']
             if subprocess.run(['systemctl','is-active','--quiet',unit]).returncode==0:continue
             if active>=4:break
-            # 槽位服务跨交付存活，由canonical PID/profile管理停启；短命接力单元退出不能杀服务。
-            r.run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec',
-                   '--property=KillMode=process','--working-directory',r.ROOT,
-                   '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),sys.executable,Path(__file__).resolve(),
-                   '--env',self.env,'--pool-delivery',d['id']])
+            self.start_pool_unit(d['id'])
             active+=1
         return {d['id'] for d in managed}
 
