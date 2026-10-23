@@ -9,6 +9,11 @@
 --   exact            —— 子进程直接给出的标识，可与观测系统一对一核对
 --   inferred_window  —— 仅凭"会话 + 时间窗"事后检索得到，属于候选关联，不代表精确归属
 -- source 记录取值通道（stream_json / agentlens_query / manual …）。
+--
+-- 唯一约束内联在建表语句里：新表没有并发读写，建表时即可完成索引构建；该唯一约束
+-- (task_id, provider, provider_trace_id) 同时覆盖"按任务查链路"的前缀查询，因此不再
+-- 单独建二级索引。发布器的自动迁移闸门只接受新增表与并发索引，这样本迁移保持单条
+-- 建表语句即可通过。
 CREATE TABLE IF NOT EXISTS task_provider_trace (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id       uuid NOT NULL,
@@ -25,15 +30,7 @@ CREATE TABLE IF NOT EXISTS task_provider_trace (
     created_at         timestamptz NOT NULL DEFAULT now(),
     updated_at         timestamptz,
     CONSTRAINT task_provider_trace_trace_id_not_empty CHECK (provider_trace_id <> ''),
-    CONSTRAINT task_provider_trace_correlation_valid CHECK (correlation IN ('exact', 'inferred_window'))
+    CONSTRAINT task_provider_trace_correlation_valid CHECK (correlation IN ('exact', 'inferred_window')),
+    -- 重复上报（daemon 重试、重启后重放）必须落到同一行，不能产生重复关联。
+    CONSTRAINT task_provider_trace_task_trace_unique UNIQUE (task_id, provider, provider_trace_id)
 );
-
--- 重复上报（daemon 重试、重启后重放）必须落到同一行，不能产生重复关联。
-CREATE UNIQUE INDEX IF NOT EXISTS task_provider_trace_task_trace_unique
-    ON task_provider_trace (task_id, provider, provider_trace_id);
-
-CREATE INDEX IF NOT EXISTS task_provider_trace_task_index
-    ON task_provider_trace (task_id, created_at);
-
-CREATE INDEX IF NOT EXISTS task_provider_trace_workspace_trace_index
-    ON task_provider_trace (workspace_id, provider_trace_id);

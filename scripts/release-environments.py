@@ -543,6 +543,15 @@ def reviewed_supervision_settings_change(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def reviewed_usage_rollup_selfheal(migration):
+    # 精确兼容迁移：只替换 rollup_task_usage_hourly() 的函数体，函数名、参数、返回类型
+    # 和调用方式都不变，旧程序的定时任务继续按原 SQL 调用；行为修复为"状态行缺失时
+    # 就地补建、纪元水位视为从未汇总、单 tick 内按一天窗口连续追赶"。旧程序在迁移后
+    # 立刻得到正确汇总，回退只需恢复原函数体（小时桶由幂等窗口重算，不改业务数据）。
+    reviewed = {'620_task_usage_hourly_rollup_selfheal.up.sql': '66b2f05cab3a2602005e9284fc6572725bc238d7de8976fc5bb13efe06ca7f93'}
+    return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
+
+
 def prepare_database(release, cfg, previous):
     old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
     for migration in sorted((Path(release)/'server/migrations').glob('*.up.sql')):
@@ -552,7 +561,7 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements) and not reviewed_supervision_settings_change(migration):
+            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements) and not reviewed_supervision_settings_change(migration) and not reviewed_usage_rollup_selfheal(migration):
                 raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)

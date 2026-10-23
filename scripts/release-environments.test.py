@@ -285,4 +285,27 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
+    def test_reviewed_usage_rollup_selfheal_migration_is_exact_and_rejects_changed_sql(self):
+        # 620 是函数体替换，不属于"新增表/并发索引"的自动迁移范围，只有这份准确 SQL
+        # 可以放行；任何改动（哪怕多一个分号）都必须重新评审。
+        from tempfile import TemporaryDirectory
+        source=Path(__file__).parent.parent/'server/migrations'
+        name='620_task_usage_hourly_rollup_selfheal.up.sql'
+        with TemporaryDirectory() as folder:
+            target=Path(folder)/name;target.write_bytes((source/name).read_bytes())
+            self.assertTrue(r.reviewed_usage_rollup_selfheal(target))
+            target.write_text(target.read_text()+"\nUPDATE task_usage SET input_tokens = 0;\n")
+            self.assertFalse(r.reviewed_usage_rollup_selfheal(target))
+
+    def test_task_provider_trace_migration_is_additive_only(self):
+        # 621 必须只由新增表构成：发布器按语句匹配 CREATE TABLE / 并发索引，
+        # 内联唯一约束让建表语句本身就是唯一允许的形状。
+        import re
+        from pathlib import Path as P
+        sql=(P(__file__).parent.parent/'server/migrations/621_task_provider_trace.up.sql').read_text()
+        sql=re.sub(r'--[^\n]*','',sql)
+        statements=[part.strip() for part in sql.split(';') if part.strip()]
+        self.assertEqual(len(statements),1)
+        self.assertTrue(re.match(r'^CREATE\s+TABLE\b',statements[0],re.I))
+
 if __name__=='__main__':unittest.main()
