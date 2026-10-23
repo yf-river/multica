@@ -1,7 +1,23 @@
 {
- "version": 4,
+ "version": 5,
  "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
  "rules": [
+  {
+   "table": "workspace_mcp_check",
+   "sql": "DELETE FROM public.\"workspace_mcp_check\""
+  },
+  {
+   "table": "plugin_remote_mcp_oauth_state",
+   "sql": "DELETE FROM public.\"plugin_remote_mcp_oauth_state\""
+  },
+  {
+   "table": "agent_mcp_server",
+   "sql": "DELETE FROM public.\"agent_mcp_server\""
+  },
+  {
+   "table": "workspace_mcp_server",
+   "sql": "DELETE FROM public.\"workspace_mcp_server\""
+  },
   {
    "table": "webhook_delivery",
    "sql": "DELETE FROM public.\"webhook_delivery\""
@@ -287,7 +303,8 @@
    "upstream_sync%",
    "delivery%",
    "release_%",
-   "%_delivery"
+   "%_delivery",
+   "%mcp%"
   ],
   "exempt": {
    "autopilot_collaborator": "自动化协作者配置；执行入口 autopilot/trigger 已暂停",

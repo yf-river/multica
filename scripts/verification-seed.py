@@ -181,6 +181,44 @@ def row_counts(container, database):
     return counts
 
 
+def release_schema_identity(release):
+    """按制品清单核对迁移内容，恢复前不依赖目标数据库的可变状态。"""
+    release = Path(release)
+    manifest = r.read(release / 'release.json')
+    files = manifest.get('files') or {}
+    migrations = {name: value for name, value in files.items()
+                  if name.startswith('server/migrations/')}
+    if not migrations or 'server/bin/migrate' not in files:
+        raise RuntimeError('候选制品缺少迁移身份，拒绝恢复')
+    actual = {str(path.relative_to(release)): digest(path)
+              for path in (release / 'server/migrations').rglob('*') if path.is_file()}
+    if actual != migrations or digest(release / 'server/bin/migrate') != files['server/bin/migrate']:
+        raise RuntimeError('候选迁移程序或迁移文件校验失败')
+    return hashlib.sha256(json.dumps(migrations, sort_keys=True).encode()).hexdigest()
+
+
+def validate_seed_release(manifest, release):
+    expected = (manifest.get('schema') or {}).get('migration_files_sha256')
+    if not expected:
+        # 旧版已构建种子可从其不可变制品恢复身份；原始导出需先按候选构建。
+        built = (manifest.get('build') or {}).get('release')
+        if not built or not Path(built).exists():
+            raise RuntimeError('种子缺少候选迁移身份，请先按目标候选重建种子')
+        expected = release_schema_identity(built)
+    if release_schema_identity(release) != expected:
+        raise RuntimeError('候选结构与种子不兼容，请先按目标候选重建并验收种子')
+    if not (manifest.get('schema') or {}).get('fingerprint'):
+        raise RuntimeError('种子缺少数据库结构指纹，拒绝恢复')
+
+
+def check_restored_data(container, database, manifest):
+    checks = data_checks(container, database, manifest) + scrub_checks(container, database)
+    failed = [check['name'] for check in checks if check['status'] != 'passed']
+    if failed:
+        raise RuntimeError('种子恢复检查失败: ' + ', '.join(failed))
+    return checks
+
+
 def data_checks(container, database, manifest):
     """恢复后的结构与样本检查：必需数据与结构指纹。外键在导入脚本中单独核对。"""
     checks = []
@@ -210,6 +248,10 @@ def scrub_checks(container, database):
     """清理结果检查：任何残留都说明规则没有覆盖新功能。"""
     checks = []
     rules = [
+        ('MCP 检查已清空', 'workspace_mcp_check', 'SELECT count(*) FROM public.workspace_mcp_check', 0),
+        ('MCP OAuth 状态已清空', 'plugin_remote_mcp_oauth_state', 'SELECT count(*) FROM public.plugin_remote_mcp_oauth_state', 0),
+        ('MCP 绑定已清空', 'agent_mcp_server', 'SELECT count(*) FROM public.agent_mcp_server', 0),
+        ('MCP 凭据配置已清空', 'workspace_mcp_server', 'SELECT count(*) FROM public.workspace_mcp_server', 0),
         ('个人访问令牌已清空', 'personal_access_token', 'SELECT count(*) FROM public.personal_access_token', 0),
         ('任务与 Daemon 令牌已清空', 'task_token', 'SELECT (SELECT count(*) FROM public.task_token)+(SELECT count(*) FROM public.daemon_token)', 0),
         ('执行队列无待执行任务', 'agent_task_queue', "SELECT count(*) FROM public.agent_task_queue WHERE status NOT IN ('completed','failed','cancelled')", 0),
@@ -297,6 +339,7 @@ def restore(env, seed, pgconfig):
         record_path = r.RUN/'verification-install'/(env + '.json')
         record = r.read(record_path)
         release = Path(meta['release_dir'])
+        validate_seed_release(manifest, release)
         if record.get('stage') == 'resetting':
             if any(r.exists(pid) for pid in meta['pids'].values()):
                 raise RuntimeError('重置中断后仍有运行进程，需要核对现场')
@@ -327,6 +370,7 @@ def restore(env, seed, pgconfig):
             r.run(['node', str(Path(__file__).with_name('verification-seed-copy.mjs')), env, staging, str(pgconfig)], cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT':str(r.ROOT)})
         finally:
             sql(container, 'postgres', f'DROP DATABASE {staging};')
+        check_restored_data(container, dbname, manifest)
         # 种子可能来自另一槽位；登录凭据属于槽位安装记录，重置后重新绑定到本槽位密码。
         hashed = password_hash(record['password']).replace("'", "''")
         sql(container, dbname, "UPDATE \"user\" SET password_hash='%s' WHERE account='%s';" % (hashed, record['account'].replace("'", "''")))
@@ -356,7 +400,6 @@ def restore(env, seed, pgconfig):
 def reset(env, seed, pgconfig):
     """单槽位维护：停接单、恢复种子、恢复接单；失败保持停用，不影响其他槽位。"""
     path, manifest, artifact = read_seed(seed)
-    verified = bool((manifest.get('restore_verification') or {}).get('passed', True))
     maintain(env, '按种子恢复测试数据')
     try:
         result = restore(env, seed, pgconfig)
@@ -366,7 +409,7 @@ def reset(env, seed, pgconfig):
         except Exception:
             pass
         raise RuntimeError('种子恢复失败，槽位保持维护：' + str(error)) from error
-    record_slot_seed(env, result['seed_id'], artifact['sha256'], verified)
+    record_slot_seed(env, result['seed_id'], artifact['sha256'], True)
     resume(env, '种子恢复完成')
     return result
 
@@ -378,7 +421,7 @@ def ensure(env, pgconfig):
     current = r.read(current_path())
     path, manifest, artifact = read_seed(SEEDS / current['seed_id'])
     slot = slot_seed(env)
-    if slot and slot.get('seed_id') == current['seed_id'] and slot.get('seed_sha256') == current['dump_sha256'] and slot.get('seed_verified'):
+    if slot and slot.get('seed_id') == current['seed_id'] and slot.get('seed_sha256') == current['dump_sha256'] and slot.get('verified') is True:
         return dict(status='current', environment=env, seed=current['seed_id'])
     reset(env, path, pgconfig)
     return dict(status='restored', environment=env, seed=current['seed_id'])
@@ -396,6 +439,7 @@ def build_seed(seed_id, origin, release, pgconfig):
     release = Path(release).resolve()
     if not (release/'server/bin/migrate').exists():
         raise RuntimeError('构建种子需要目标候选的迁移程序')
+    migration_identity = release_schema_identity(release)
     target = BUILD_PREFIX + re.sub(r'[^a-z0-9_]', '_', seed_id.lower())
     staging = 'verification_seed_import_' + secrets.token_hex(8)
     dsn = 'postgres://postgres:%s@127.0.0.1:%s/%s' % (urllib.parse.quote(password, safe=''), port, target)
@@ -411,6 +455,7 @@ def build_seed(seed_id, origin, release, pgconfig):
             raise RuntimeError('种子导入失败: ' + (copied.stderr or copied.stdout).strip()[:1000])
         copy_report = json.loads(copied.stdout.strip().splitlines()[-1])
         schema = schema_identity(container, target)
+        schema['migration_files_sha256'] = migration_identity
         counts = row_counts(container, target)
         # 1. 重建种子的结构目标是本次候选，不是来源种子的旧结构；比对基准改为刚迁移出的目标结构。
         checks = data_checks(container, target, dict(manifest, fixture=dict(manifest.get('fixture', {}), row_counts=counts), schema=dict(fingerprint=schema['fingerprint'])))

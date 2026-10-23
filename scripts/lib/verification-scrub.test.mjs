@@ -12,6 +12,7 @@ test('清理清单覆盖当前执行型表', () => {
   const rules = loadRules(file);
   const tables = [
     'workspace', 'issue', 'comment',
+    'workspace_mcp_server', 'agent_mcp_server', 'workspace_mcp_check', 'plugin_remote_mcp_oauth_state',
     'review_config', 'issue_review',
     'supervision_config', 'supervision_batch', 'supervision_action',
     'supervision_round', 'supervision_batch_round',
@@ -40,6 +41,7 @@ test('新增执行型表没有规则时被拦截', () => {
   const rules = loadRules(file);
   assert.deepEqual(uncoveredTables(['workspace', 'review_scheduler_state'], rules), ['review_scheduler_state']);
   assert.deepEqual(uncoveredTables(['workspace', 'fresh_automation_run'], rules), ['fresh_automation_run']);
+  assert.deepEqual(uncoveredTables(['future_mcp_connection_state'], rules), ['future_mcp_connection_state']);
 });
 
 test('豁免表不重复要求规则，但改名后提示清理', () => {

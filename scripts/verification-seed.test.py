@@ -1,6 +1,9 @@
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
+from contextlib import nullcontext
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,19 +74,19 @@ class EnsureTests(unittest.TestCase):
 
     def test_matching_verified_slot_is_reused(self):
         self.seed()
-        with patch.object(s, 'slot_seed', return_value=dict(seed_id='seed-current', seed_sha256=hashlib.sha256(b'dump').hexdigest(), seed_verified=True)), patch.object(s, 'reset') as reset:
+        with patch.object(s, 'slot_seed', return_value=dict(seed_id='seed-current', seed_sha256=hashlib.sha256(b'dump').hexdigest(), verified=True)), patch.object(s, 'reset') as reset:
             self.assertEqual(s.ensure('verify-1', Path('/pg'))['status'], 'current')
             reset.assert_not_called()
 
     def test_stale_or_unverified_slot_is_restored_before_claim(self):
         self.seed()
-        with patch.object(s, 'slot_seed', return_value=dict(seed_id='old', seed_sha256=SHA, seed_verified=True)), patch.object(s, 'reset') as reset:
+        with patch.object(s, 'slot_seed', return_value=dict(seed_id='old', seed_sha256=SHA, verified=True)), patch.object(s, 'reset') as reset:
             self.assertEqual(s.ensure('verify-1', Path('/pg'))['status'], 'restored')
             reset.assert_called_once()
 
     def test_unverified_same_seed_is_restored_again(self):
         self.seed()
-        with patch.object(s, 'slot_seed', return_value=dict(seed_id='seed-current', seed_sha256=hashlib.sha256(b'dump').hexdigest(), seed_verified=False)), patch.object(s, 'reset') as reset:
+        with patch.object(s, 'slot_seed', return_value=dict(seed_id='seed-current', seed_sha256=hashlib.sha256(b'dump').hexdigest(), verified=False)), patch.object(s, 'reset') as reset:
             s.ensure('verify-1', Path('/pg'))
             reset.assert_called_once()
 
@@ -118,6 +121,140 @@ class ResetTests(unittest.TestCase):
                 s.reset('verify-1', self.seed, Path('/pg'))
             self.assertFalse(record.call_args[0][3])
             resume.assert_not_called()
+
+
+
+def write_release(directory, migration=b'CREATE TABLE sample(id int);'):
+    (directory / 'server/migrations').mkdir(parents=True)
+    (directory / 'server/bin').mkdir(parents=True)
+    (directory / 'server/migrations/001_sample.up.sql').write_bytes(migration)
+    (directory / 'server/bin/migrate').write_bytes(b'test-migrate')
+    (directory / 'release.json').write_text(json.dumps({'files': s.r.checksums(directory)}))
+
+
+class CompatibilityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.release = self.root / 'release'
+        write_release(self.release)
+        self.manifest = {'schema': {'fingerprint': SHA,
+                         'migration_files_sha256': s.release_schema_identity(self.release)}}
+
+    def test_same_migrations_allow_different_application_release(self):
+        other = self.root / 'other'
+        write_release(other)
+        s.validate_seed_release(self.manifest, other)
+
+    def test_legacy_built_seed_uses_immutable_release_identity(self):
+        s.validate_seed_release({'schema': {'fingerprint': SHA},
+                                 'build': {'release': str(self.release)}}, self.release)
+
+    def test_unbuilt_seed_and_mismatched_migrations_fail_closed(self):
+        with self.assertRaisesRegex(RuntimeError, '缺少候选迁移身份'):
+            s.validate_seed_release({}, self.release)
+        other = self.root / 'other'
+        write_release(other, b'CREATE TABLE other(id int);')
+        with self.assertRaisesRegex(RuntimeError, '不兼容'):
+            s.validate_seed_release(self.manifest, other)
+
+    def test_tampered_migration_program_is_rejected(self):
+        (self.release / 'server/bin/migrate').write_bytes(b'tampered')
+        with self.assertRaisesRegex(RuntimeError, '校验失败'):
+            s.validate_seed_release(self.manifest, self.release)
+
+    def test_incompatible_restore_stops_before_drain_or_database_write(self):
+        other = self.root / 'other'
+        write_release(other, b'CREATE TABLE other(id int);')
+        seed = self.root / 'seed'
+        write_seed(seed, self.manifest)
+        cfg = {'server': {'DATABASE_URL': 'postgres://verify_1@127.0.0.1:54321/multica_verify_1'}}
+        original_read = s.r.read
+        def read_fixture(path):
+            if 'deployments' in Path(path).parts:
+                return {'release_dir': str(other)}
+            if Path(path).name.endswith('-services.json'):
+                return cfg
+            if 'verification-install' in Path(path).parts:
+                return {}
+            return original_read(path)
+        with patch.dict(os.environ, {}, clear=True), patch.object(s, 'postgres', return_value=('own-container', '54321', 'fake')), \
+             patch.object(s.r, 'RUN', self.root), patch.object(s.r, 'lock', return_value=nullcontext()), \
+             patch.object(s.r, 'read', side_effect=read_fixture), \
+             patch.object(s.r, 'validate_verification_config'), patch.object(s.r, 'drain') as drain, patch.object(s, 'sql') as sql:
+            with self.assertRaisesRegex(RuntimeError, '不兼容'):
+                s.restore('verify-1', seed, self.root / 'pg.json')
+            drain.assert_not_called()
+            sql.assert_not_called()
+
+    def test_restored_schema_or_scrub_failure_keeps_slot_in_maintenance(self):
+        seed = self.root / 'seed'
+        write_seed(seed, self.manifest)
+        for failure in ['数据库结构与种子一致', 'MCP 凭据配置已清空']:
+            with self.subTest(failure=failure), \
+                 patch.object(s, 'maintain'), patch.object(s, 'resume') as resume, \
+                 patch.object(s, 'record_slot_seed') as record, \
+                 patch.object(s, 'data_checks', return_value=[{'name': failure, 'status': 'failed'}]), \
+                 patch.object(s, 'scrub_checks', return_value=[]), \
+                 patch.object(s, 'restore', side_effect=lambda *args: s.check_restored_data('own', 'own', self.manifest)):
+                with self.assertRaisesRegex(RuntimeError, '保持维护'):
+                    s.reset('verify-1', seed, self.root / 'pg.json')
+                self.assertFalse(record.call_args.args[-1])
+                resume.assert_not_called()
+
+
+@unittest.skipUnless(os.environ.get('MULTICA_SEED_TEST_CONTAINER'), '需要显式指定本次独占隔离容器')
+class MCPScrubDatabaseTests(unittest.TestCase):
+    def test_fake_mcp_secrets_bindings_and_pending_checks_are_removed(self):
+        container = os.environ['MULTICA_SEED_TEST_CONTAINER']
+        inspected = json.loads(subprocess.check_output(['docker', 'inspect', container]))[0]
+        self.assertEqual(inspected['Config']['Labels'].get('multica.purpose'), 'seed-hardening-test')
+        s.sql(container, 'postgres', """
+          CREATE TABLE workspace_mcp_server(id int,config jsonb);
+          CREATE TABLE agent_mcp_server(agent_id int,server_id int,enabled bool);
+          CREATE TABLE workspace_mcp_check(id int,status text);
+          CREATE TABLE plugin_remote_mcp_oauth_state(secret_ciphertext bytea);
+          INSERT INTO workspace_mcp_server VALUES(1,'{"url":"https://fake.invalid/mcp","headers":{"Authorization":"fake-seed-secret"}}');
+          INSERT INTO agent_mcp_server VALUES(2,1,true);
+          INSERT INTO workspace_mcp_check VALUES(3,'pending');
+          INSERT INTO plugin_remote_mcp_oauth_state VALUES(decode('abcd','hex'));
+        """)
+        rules = json.loads(s.SCRUB.read_text())['rules']
+        statements = [rule['sql'] for rule in rules if s.table_exists(container, 'postgres', rule['table'])]
+        s.sql(container, 'postgres', 'BEGIN;'+ ';'.join(statements) + ';COMMIT;')
+        for table in ('workspace_mcp_server', 'agent_mcp_server', 'workspace_mcp_check', 'plugin_remote_mcp_oauth_state'):
+            self.assertEqual(s.counter(container, 'postgres', 'SELECT count(*) FROM '+table), 0)
+        self.assertTrue(all(item['status'] == 'passed' for item in s.scrub_checks(container, 'postgres')))
+        s.sql(container, 'postgres', "INSERT INTO workspace_mcp_server VALUES(4,'{\"url\":\"https://fake.invalid\"}');")
+        checks = s.scrub_checks(container, 'postgres')
+        self.assertEqual(next(item for item in checks if item['name'] == 'MCP 凭据配置已清空')['status'], 'failed')
+
+
+    def test_real_schema_drift_is_rejected_before_slot_resume(self):
+        container = os.environ['MULTICA_SEED_TEST_CONTAINER']
+        inspected = json.loads(subprocess.check_output(['docker', 'inspect', container]))[0]
+        self.assertEqual(inspected['Config']['Labels'].get('multica.purpose'), 'seed-hardening-test')
+        s.sql(container, 'postgres', """
+          CREATE TABLE schema_migrations(version text);
+          INSERT INTO schema_migrations VALUES('001_fixture');
+          CREATE TABLE workspace(id int);
+          CREATE TABLE "user"(id int);
+          CREATE TABLE issue(id int);
+          CREATE TABLE comment(id int);
+          CREATE SEQUENCE fixture_sequence;
+          INSERT INTO workspace VALUES(1);
+          INSERT INTO "user" VALUES(1);
+          INSERT INTO issue VALUES(1);
+          INSERT INTO comment VALUES(1);
+          DELETE FROM workspace_mcp_server;
+        """)
+        manifest = {'schema': s.schema_identity(container, 'postgres')}
+        self.assertTrue(all(c['status'] == 'passed' for c in s.check_restored_data(container, 'postgres', manifest)))
+        s.sql(container, 'postgres', 'ALTER TABLE workspace ADD COLUMN drift text;')
+        with self.assertRaisesRegex(RuntimeError, '数据库结构与种子一致'):
+            s.check_restored_data(container, 'postgres', manifest)
+
 
 
 if __name__ == '__main__':
