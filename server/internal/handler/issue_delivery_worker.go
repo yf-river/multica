@@ -39,7 +39,7 @@ func (h *Handler) ListDeliveryQueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND q.trigger_comment_id=CASE WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END ORDER BY q.created_at DESC LIMIT 1) AS verification_run,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND q.trigger_comment_id=CASE WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END ORDER BY q.created_at DESC LIMIT 1) AS verification_run,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR (d.phase='awaiting_review' AND COALESCE(d.plan_snapshot->>'authorization_stalled','')<>'true' AND d.plan_snapshot->'authorization_notice' IS NOT NULL AND COALESCE((d.plan_snapshot->'authorization_notice'->>'notified_at')::timestamptz,'-infinity'::timestamptz)<=now()-interval '10 minutes' AND NOT EXISTS(SELECT 1 FROM agent_task_queue aq WHERE aq.issue_id=d.issue_id AND aq.status IN('queued','dispatched','running','waiting_local_directory'))) OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付队列失败")
 		return
@@ -134,18 +134,38 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ready {
-			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_pending}','true'::jsonb),phase='awaiting_review',error='存在新用户评论或授权依据变化，等待负责人核对',approved_by=NULL,approved_at=NULL,release_validated=false,release_comment_id=$2,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, dbid.NewV7())
-			if err == nil {
-				err = tx.Commit(r.Context())
+			// 1. 复核失效时按授权状态分开处理：有授权但缺当前候选复核才落库待复核并唤醒负责人，
+			// 没有授权或已撤销只记录等待原因，不能自动批准。
+			state, authorization, stateErr := deliveryReleaseState(r.Context(), tx, ws, issue, body.ID)
+			if stateErr != nil {
+				writeError(w, 500, "核对发布授权失败")
+				return
+			}
+			reason := "等待用户发布授权：当前候选没有有效发布授权"
+			notify := false
+			if state == deliveryReleaseUnbound {
+				var notice json.RawMessage
+				notice, err = deliveryAuthorizationNoticeFor(r.Context(), tx, ws, issue, body.ID, authorization)
+				if err == nil {
+					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,phase='awaiting_review',error=$3,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, notice, "已有发布授权，等待负责人复核当前候选")
+				}
+				reason = "已有发布授权，等待负责人复核当前候选"
+				notify = true
+			} else {
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase='awaiting_review',error=$2,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, reason)
 			}
 			if err == nil {
-				err = h.notifyDeliveryAuthorization(r, ws, issue, body.ID)
+				err = tx.Commit(r.Context())
 			}
 			if err != nil {
 				writeError(w, 500, "保存授权待核对状态失败")
 				return
 			}
-			writeError(w, 409, "存在新用户评论或授权依据变化，已通知负责人核对")
+			// 2. 通知失败不丢工作：待复核意图留在记录里，下一次队列轮询会重试。
+			if notify {
+				_ = h.deliverDeliveryAuthorizationReview(r, ws, issue, body.ID)
+			}
+			writeError(w, 409, reason)
 			return
 		}
 	}
@@ -154,11 +174,24 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "当前无需授权核对")
 			return
 		}
-		if err = tx.Commit(r.Context()); err == nil {
-			err = h.notifyDeliveryAuthorization(r, ws, issue, body.ID)
+		var pending bool
+		if err = tx.QueryRow(r.Context(), `SELECT COALESCE(plan_snapshot->>'authorization_pending','')='true' FROM issue_delivery WHERE id=$1`, body.ID).Scan(&pending); err != nil {
+			writeError(w, 500, "读取待复核状态失败")
+			return
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			writeError(w, 500, "读取待复核状态失败")
+			return
+		}
+		// 3. 自动轮询只补发尚未送达的通知，同一交付和候选不重复唤醒；待复核意图已送达时
+		// 再调用被视为显式接续，按次数上限补发。
+		if pending {
+			err = h.deliverDeliveryAuthorizationReview(r, ws, issue, body.ID)
+		} else {
+			err = h.renotifyDeliveryAuthorizationReview(r, ws, issue, body.ID)
 		}
 		if err != nil {
-			writeError(w, 500, "通知负责人失败")
+			writeError(w, 409, err.Error())
 			return
 		}
 		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token, "issue_id": issue})
@@ -189,6 +222,8 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	next := phase
+	// 5. 待复核意图先随事务落库，提交后再定向通知；通知失败由队列重试，不影响状态真源。
+	notifyReview := false
 	switch body.Action {
 	case "claim":
 
@@ -270,18 +305,36 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			next = "awaiting_review"
-			ready, readyErr := deliveryAuthorizationReady(r.Context(), tx, ws, issue, body.ID)
-			if readyErr != nil {
+			// 4. int 验收完成后按授权状态分流：已复核当前候选直接推进；有授权但缺候选复核
+			// 落库待复核并定向唤醒负责人；没有有效授权只记录等待原因。
+			state, authorization, stateErr := deliveryReleaseState(r.Context(), tx, ws, issue, body.ID)
+			if stateErr != nil {
 				writeError(w, 500, "读取授权复核失败")
 				return
 			}
-			if ready {
+			switch state {
+			case deliveryReleaseReady:
 				var author string
 				err = tx.QueryRow(r.Context(), `SELECT COALESCE(a.comment_snapshot->>'author_id',d.approved_by::text) FROM issue_delivery d LEFT JOIN issue_delivery_authorization a ON a.id::text=d.plan_snapshot->'authorization_review'->>'authorization_id' AND a.kind='release' WHERE d.id=$1`, body.ID).Scan(&author)
 				if err == nil {
-					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=$2,approved_at=now() WHERE id=$1`, body.ID, author)
+					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=$2,approved_at=now(),plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice' WHERE id=$1`, body.ID, author)
 					next = "approved"
 				}
+			case deliveryReleaseUnbound:
+				var notice json.RawMessage
+				notice, err = deliveryAuthorizationNoticeFor(r.Context(), tx, ws, issue, body.ID, authorization)
+				if err == nil {
+					body.Error = "已有发布授权，等待负责人复核当前候选"
+					notifyReview = true
+					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,approved_by=NULL,approved_at=NULL WHERE id=$1`, body.ID, notice)
+				}
+			default:
+				body.Error = "等待用户发布授权：当前候选没有有效发布授权"
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',approved_by=NULL,approved_at=NULL WHERE id=$1`, body.ID)
+			}
+			if err != nil {
+				writeError(w, 500, "保存授权复核状态失败")
+				return
 			}
 		case "validated":
 			var submitted bool
@@ -395,6 +448,10 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if issueEvent != nil {
 		h.publishEvent(*issueEvent)
+	}
+	if notifyReview {
+		// 6. 通知失败不回滚已保存的待复核状态；待复核意图保留，下一次队列轮询会补发。
+		_ = h.deliverDeliveryAuthorizationReview(r, ws, issue, body.ID)
 	}
 
 	if body.Action == "notify" {
