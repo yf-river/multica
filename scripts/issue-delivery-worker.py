@@ -834,7 +834,9 @@ class Worker:
                 try:
                     phase=d['phase']
                     if phase in ('published','needs_changes'):
-                        self.advance(d,'notify-result');return
+                        result=self.advance(d,'notify-result')
+                        if result.get('notification_deferred'):continue
+                        return
                     if phase=='awaiting_review':
                         if self.publication_path(d).exists():self.publication(d,'heartbeat')
                         self.advance(d,'notify-authorization');return
