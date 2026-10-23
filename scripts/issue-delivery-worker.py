@@ -52,6 +52,15 @@ class Worker:
         receipt=self.api('delivery-queue/advance',dict(id=d['id'],revision=d['revision'],worker_token=d.get('worker_token') or '',action=action,source_commit=d['source_commit'],publication_generation=d.get('publication_generation',0),**extra))
         d.update(receipt)
         return d
+    def verification_pending(self,d):
+        # 外部执行者依靠自己的归属心跳续租；发布器不替它续租，也不另派验收模型。
+        if (d.get('verification_owner') or {}).get('external') is True:return True
+        attempt=d.get('verification_run') or {}
+        if attempt.get('settled') and attempt.get('status') in ('failed','cancelled','blocked','completed'):
+            result=self.advance(d,'fail',verification_run_id=attempt['id'],error=attempt.get('error') or '验收执行已结束，但没有提交通过证据')
+            return result.get('verification_deferred') is True
+        if not attempt:self.advance(d,'notify')
+        return True
     def pin(self,d):
         # 只从固定仓库恢复提交；任务不能通过请求指定任意本机目录。
         if subprocess.run(['git','-C',r.ROOT,'cat-file','-e',d['source_commit']+'^{commit}'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
@@ -228,7 +237,7 @@ class Worker:
                 evidence=acceptance.execute(c['id'],'int')
                 if evidence:
                     self.advance(d,'tested',evidence=evidence['checks'])
-            if not d.get('acceptance_submitted'):self.advance(d,'notify')
+            if not d.get('acceptance_submitted'):self.verification_pending(d)
     def accept(self,d,release=False):
         c=self.own_candidate(d)
         if not c or c['id']!=d['candidate_id']:raise RuntimeError('联调版本已被替换，需要重新排队验证')
@@ -541,15 +550,12 @@ class Worker:
                 if d['phase']=='testing':
                     if d['candidate_id']!=c['id']:
                         self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
-                    self.advance(d,'notify')
+                    if not (d.get('verification_owner') or {}).get('external'):self.advance(d,'notify')
                 while True:
                     d=refresh()
                     if not d or d['phase']!='testing':break
                     if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
-                    attempt=d.get('verification_run') or {}
-                    if attempt.get('settled') and attempt.get('status') in ('failed','cancelled','blocked','completed') and not d['acceptance_submitted']:
-                        self.advance(d,'fail',error=attempt.get('error') or '验收执行已结束，但没有提交通过证据')
-                        break
+                    if not d['acceptance_submitted'] and not self.verification_pending(d):break
                     if d['acceptance_submitted']:
                         evidence=r.RUN/'delivery-evidence'/(delivery+'.json')
                         r.write(evidence,dict(candidate=c['id'],summary='任务验收',checks=d['evidence']),True)
@@ -860,7 +866,7 @@ class Worker:
                         if self.publication_path(d).exists():self.publication(d,'heartbeat')
                         if d['acceptance_submitted']:self.accept(d)
                         elif not d['candidate_id']:self.prepare(d)
-                        else:self.advance(d,'notify')
+                        else:self.verification_pending(d)
                         return
                     if phase in ('preparing_release','publishing'):
                         self.publication(d,'heartbeat')
@@ -868,7 +874,7 @@ class Worker:
                         if not d['candidate_id'] or not self.own_candidate(d):self.prepare(d)
                         elif d.get('release_validated'):self.publish(d)
                         elif d['acceptance_submitted']:self.accept(d,release=True)
-                        else:self.advance(d,'notify')
+                        else:self.verification_pending(d)
                         return
                     if phase=='publishing':
                         target=r.request_path(d['candidate_id'])

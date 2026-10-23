@@ -41,7 +41,7 @@ func (h *Handler) ListDeliveryQueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND q.trigger_comment_id=CASE WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END ORDER BY q.created_at DESC LIMIT 1) AS verification_run,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR (d.phase='awaiting_review' AND COALESCE(d.plan_snapshot->>'authorization_stalled','')<>'true' AND NOT EXISTS(SELECT 1 FROM agent_task_queue aq WHERE aq.issue_id=d.issue_id AND aq.status IN('queued','dispatched','running','waiting_local_directory')) AND ((d.plan_snapshot->'authorization_notice' IS NOT NULL AND COALESCE((d.plan_snapshot->'authorization_notice'->>'notified_at')::timestamptz,'-infinity'::timestamptz)<=now()-interval '10 minutes') OR (d.plan_snapshot->'authorization_notice' IS NULL AND d.plan_snapshot->>'authorization_pending' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member'))))) OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage IN ('published','needs_changes','batch_ready') AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND (q.trigger_comment_id=CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END OR CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END=ANY(q.coalesced_comment_ids)) ORDER BY q.created_at DESC LIMIT 1) AS verification_run,(SELECT jsonb_build_object('execution_id',o.execution_id,'generation',o.generation,'expires_at',o.expires_at,'external',NOT EXISTS(SELECT 1 FROM agent_task_queue native WHERE native.id::text=o.execution_id)) FROM delivery_owner o WHERE o.workspace_id=d.workspace_id AND o.issue_id=d.issue_id AND o.expires_at>now()) AS verification_owner,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR (d.phase='awaiting_review' AND COALESCE(d.plan_snapshot->>'authorization_stalled','')<>'true' AND NOT EXISTS(SELECT 1 FROM agent_task_queue aq WHERE aq.issue_id=d.issue_id AND aq.status IN('queued','dispatched','running','waiting_local_directory')) AND ((d.plan_snapshot->'authorization_notice' IS NOT NULL AND COALESCE((d.plan_snapshot->'authorization_notice'->>'notified_at')::timestamptz,'-infinity'::timestamptz)<=now()-interval '10 minutes') OR (d.plan_snapshot->'authorization_notice' IS NULL AND d.plan_snapshot->>'authorization_pending' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member'))))) OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage IN ('published','needs_changes','batch_ready') AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付队列失败")
 		return
@@ -62,6 +62,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		Candidate       string          `json:"candidate_id"`
 		URL             string          `json:"candidate_url"`
 		Error           string          `json:"error"`
+		VerificationRun string          `json:"verification_run_id"`
 		Source          string          `json:"source_commit"`
 		Identity        json.RawMessage `json:"candidate_identity"`
 		Generation      int64           `json:"publication_generation"`
@@ -437,6 +438,35 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "交付源码版本已变化")
 		return
 	}
+	if body.Action == "notify" || (body.Action == "fail" && body.VerificationRun != "") {
+		external, checkErr := externalDeliveryVerificationOwner(r.Context(), tx, ws, issue)
+		if checkErr != nil {
+			writeError(w, 500, "核对验收归属失败")
+			return
+		}
+		if body.Action == "fail" {
+			if _, valid := parseUUIDOrBadRequest(w, body.VerificationRun, "verification_run_id"); !valid {
+				return
+			}
+			ended, checkErr := deliveryVerificationRunEnded(r.Context(), tx, ws, issue, body.ID, body.VerificationRun)
+			if checkErr != nil {
+				writeError(w, 500, "核对原生验收执行失败")
+				return
+			}
+			if !ended || (phase != "testing" && phase != "preparing_release") {
+				writeError(w, 409, "原生验收执行或交付阶段已变化")
+				return
+			}
+		}
+		if external {
+			if err = tx.Commit(r.Context()); err != nil {
+				writeError(w, 500, "保存验收归属检查失败")
+				return
+			}
+			writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token, "verification_deferred": true})
+			return
+		}
+	}
 	if body.Action != "notify" {
 		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=CASE WHEN $8='prepared' THEN EXISTS(SELECT 1 FROM delivery_evidence e WHERE e.delivery_id=issue_delivery.id AND e.identity=$9::jsonb AND e.identity<>'{}'::jsonb) ELSE acceptance_submitted END,release_comment_id=CASE WHEN $8='claim' AND phase='approved' THEN gen_random_uuid() ELSE release_comment_id END,release_validated=CASE WHEN $8='validated' THEN true WHEN $8 IN ('claim','retry') THEN false ELSE release_validated END,phase=$3,worker_token=$4,candidate_id=CASE WHEN $5='' THEN candidate_id ELSE $5 END,candidate_url=CASE WHEN $6='' THEN candidate_url ELSE $6 END,error=$7,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, body.ID, next, token, body.Candidate, body.URL, body.Error, body.Action, identityOrEmpty(body.Identity))
 	}
@@ -505,26 +535,6 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	if err == nil && body.Action != "notify" {
 		err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, body.Action, phase, body.Generation)
 	}
-	if err == nil {
-		err = tx.Commit(r.Context())
-	}
-	if err != nil {
-		writeError(w, 500, "更新交付失败")
-		return
-	}
-	if issueEvent != nil {
-		h.publishEvent(*issueEvent)
-	}
-	// 2. 与 PUT /issues、批量改状态同一条后处理：进入审核中即派发审查并清掉上一轮
-	// 绿勾。事务已提交，这里的失败不影响交付结果，由周期补扫兜底重派。
-	if updated.ID.Valid {
-		h.afterIssueStatusChangeForReview(r.Context(), previous, updated)
-	}
-	if notifyReview {
-		// 6. 通知失败不回滚已保存的待复核状态；待复核意图保留，下一次队列轮询会补发。
-		_ = h.deliverDeliveryAuthorizationReview(r, ws, issue, body.ID)
-	}
-
 	if body.Action == "notify" {
 		var operation, assignee, kind, url string
 		err = h.DB.QueryRow(r.Context(), `SELECT CASE WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END::text,COALESCE(i.assignee_id::text,''),COALESCE(i.assignee_type,''),d.candidate_url FROM issue_delivery d JOIN issue i ON i.id=d.issue_id WHERE d.id=$1`, body.ID).Scan(&operation, &assignee, &kind, &url)
@@ -563,6 +573,26 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		writeError(w, 500, "更新交付失败")
+		return
+	}
+	if issueEvent != nil {
+		h.publishEvent(*issueEvent)
+	}
+	// 2. 与 PUT /issues、批量改状态同一条后处理：进入审核中即派发审查并清掉上一轮
+	// 绿勾。事务已提交，这里的失败不影响交付结果，由周期补扫兜底重派。
+	if updated.ID.Valid {
+		h.afterIssueStatusChangeForReview(r.Context(), previous, updated)
+	}
+	if notifyReview {
+		// 6. 通知失败不回滚已保存的待复核状态；待复核意图保留，下一次队列轮询会补发。
+		_ = h.deliverDeliveryAuthorizationReview(r, ws, issue, body.ID)
 	}
 
 	receipt := map[string]any{"id": body.ID, "phase": next, "revision": func() int64 {

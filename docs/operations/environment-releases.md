@@ -197,7 +197,9 @@ Git 仓库只用来说明哪些文件本来就在：`multica repo checkout` 与 
 
 ## 交付归属与自动验收
 
-CLI 写入交付时使用 `MULTICA_TASK_ID`、`CODEX_THREAD_ID` 或显式 `--execution` 标识当前执行，凭据保存在私有配置目录。`owner` 查询，`claim-owner` 领取，`recover-owner --recovery-evidence` 显式交接，`release-owner` 释放；旧代次不能覆盖新负责人。相同凭据的原执行可以续期，另一执行即使看到超时也必须提供恢复核对依据。
+CLI 写入交付时，Agent 的执行身份须等于服务端验证的当前 `MULTICA_TASK_ID`；缺少可信任务身份，或显式 `--execution` 与当前任务不一致时明确拒绝，不能伪装外部执行。工作区成员的外部验收使用稳定 `CODEX_THREAD_ID` 或显式 `--execution`，凭据保存在私有配置目录。`owner` 查询，`claim-owner` 领取，`recover-owner --recovery-evidence` 显式交接，`release-owner` 释放；旧代次不能覆盖新负责人。相同凭据的原执行可以续期，另一执行即使看到超时也必须提供恢复核对依据。
+
+有效的外部验收归属租约由该执行者主动续期；平台保留候选及槽位，不重复派发 prepared 或 batch_ready 验收模型，也不因旁路原生验收执行结束而中断候选。外部身份由合法成员归属及不存在原生任务行的执行 ID 确认，不按名称前缀或旧阶段的 run 猜测。租约释放或过期后，持久通知恢复幂等投递；同阶段真实原生验收 run 结束且没有完整证据时按原协议失败。通知和终态失败写入在事务中复核归属、候选与准确 run，构建、迁移或部署故障仍正常失败。业务必验清单不因外部接管减项；未通过项保留缺口，结束外部验收时正常取消交付并释放归属。
 
 候选可通过 `scripts/delivery-acceptance.json` 声明检查组、路径覆盖和参数数组命令，由 `run-delivery-acceptance.py` 在候选源码上执行。验收命令只访问 int/verify 环境，实际日志和不可变验收记录独立保存。声明只覆盖它真实验证的行为，真实 Agent 续接与生产浏览器结果仍需要对应证据。Agent 提交验收后结束本轮，外部发布器通知下一阶段，禁止同步等待自身执行进程被更新。
 
