@@ -46,6 +46,29 @@ func (s *Service) leaseTTL() time.Duration {
 const runAlive = `lease_expires_at>now() AND task_id IS NOT NULL
  AND EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.id=upstream_sync_run.task_id AND t.status='running')`
 
+// rowQuerier 让同一段判定既能跑在连接池上，也能跑在已开启的事务里。
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// unwritableRunError 说明一个批次为什么不能再写。
+//
+// 修改 5. 回写被拒有两种完全不同的处置：任务仍在执行、只是租约过期，Agent 要停下等下一次
+// 运行重新领取（410）；任务已经结束或被取消，批次就此作废（409）。原来两种都返回
+// ErrRunGone，Agent 会把租约过期读成"没有新工作"，然后正常结束，整批白跑。
+func unwritableRunError(ctx context.Context, q rowQuerier, runID string) error {
+	var expired, taskRunning bool
+	if err := q.QueryRow(ctx, `SELECT COALESCE(r.lease_expires_at<now(),true),
+ COALESCE((SELECT t.status='running' FROM agent_task_queue t WHERE t.id=r.task_id),false)
+ FROM upstream_sync_run r WHERE r.id=$1`, runID).Scan(&expired, &taskRunning); err != nil {
+		return ErrRunGone
+	}
+	if taskRunning && expired {
+		return ErrRunExpired
+	}
+	return ErrRunGone
+}
+
 type StartResult struct {
 	RunID       string            `json:"run_id"`
 	Config      Config            `json:"config"`
@@ -213,8 +236,8 @@ func (s *Service) Prepare(ctx context.Context, runID string, m BatchManifest) er
 	return tx.Commit(ctx)
 }
 
-// Heartbeat 由 Agent 主动续租，保留为可选的自检手段：租约的可靠性由平台心跳保证
-// （见 RenewLeasesForRuntime），这里不再是长批次唯一的续租来源。
+// Heartbeat 由 Agent 主动续租，保留为可选的自检手段：租约的可靠性由任务自己的生命周期
+// 轮询保证（见 RenewLeaseForPolledTask），这里不再是长批次唯一的续租来源。
 func (s *Service) Heartbeat(ctx context.Context, runID string) error {
 	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at=now()+make_interval(secs => $2::double precision) WHERE id=$1 AND status IN ('preparing','running') AND `+runAlive, runID, s.leaseTTL().Seconds())
 	if err == nil && tag.RowsAffected() == 0 {
@@ -223,23 +246,28 @@ func (s *Service) Heartbeat(ctx context.Context, runID string) error {
 	return err
 }
 
-// RenewLeasesForRuntime 用 runtime 心跳续租本机正在执行的批次。
+// RenewLeaseForPolledTask 在任务自己的生命周期轮询到来时续租它名下的批次。
 //
-// 修改 3. 续租的真实生产者从"模型记得调用 CLI heartbeat"换成平台自己的 runtime 心跳：
-// daemon 每 ~15 秒发一次 HTTP 或 WS 心跳（两条路径共用 handler.processHeartbeat），
-// 所以确实还在执行的长批次不会因为模型忙着分析、忘了续租而丢掉租约。只续租还没过期的
-// 批次，不让已经失效的租约被心跳复活；任务一旦结束，这里的连接条件也不再命中。
-func (s *Service) RenewLeasesForRuntime(ctx context.Context, runtimeID string) (int, error) {
+// 修改 3. 续租依据换成逐任务的存活证据：daemon 在 agent 运行期间每 5 秒用 daemon 令牌
+// 轮询 GET /api/daemon/tasks/{id}/status，runner 一退出就停止。runtime 在线、同机其它
+// 任务还在心跳都不能代替本任务活着——只看 runtime 会把子进程已消失、DB 任务行还没结算
+// 的旧批次无限续下去。三个条件同时满足才续租：调用方是托管该任务运行时的 daemon、
+// 任务行仍是 running、批次租约尚未过期。过期租约不复活，旧批次只能由新任务重新领取。
+func (s *Service) RenewLeaseForPolledTask(ctx context.Context, taskID, daemonID string) (bool, error) {
+	if daemonID == "" {
+		return false, nil
+	}
 	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_run r
  SET lease_expires_at=now()+make_interval(secs => $2::double precision),updated_at=now()
- WHERE r.status IN ('preparing','running') AND r.lease_expires_at>now()
+ WHERE r.task_id=$1::uuid AND r.status IN ('preparing','running') AND r.lease_expires_at>now()
    AND EXISTS(SELECT 1 FROM agent_task_queue t
-              WHERE t.id=r.task_id AND t.status='running' AND t.runtime_id=$1::uuid)`,
-		runtimeID, s.leaseTTL().Seconds())
+              JOIN agent_runtime rt ON rt.id=t.runtime_id
+              WHERE t.id=r.task_id AND t.status='running' AND rt.daemon_id=$3)`,
+		taskID, s.leaseTTL().Seconds(), daemonID)
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	return int(tag.RowsAffected()), nil
+	return tag.RowsAffected() > 0, nil
 }
 
 // AppendReport 落一批回传。commit 台账是幂等的支点：同一 sha 重复提交只更新，
@@ -258,7 +286,7 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 	var raw []byte
 	if err = tx.QueryRow(ctx, `SELECT status,result FROM upstream_sync_run WHERE id=$1 AND `+runAlive+` FOR UPDATE`, runID).Scan(&status, &raw); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrRunGone
+			return 0, unwritableRunError(ctx, tx, runID)
 		}
 		return 0, err
 	}
@@ -366,7 +394,10 @@ func (s *Service) Finish(ctx context.Context, runID, cursorSHA string, hasMore b
 	var raw []byte
 	var mode string
 	if err = tx.QueryRow(ctx, `SELECT result,mode FROM upstream_sync_run WHERE id=$1 AND status='running' AND `+runAlive+` FOR UPDATE`, runID).Scan(&raw, &mode); err != nil {
-		return ErrRunGone
+		if errors.Is(err, pgx.ErrNoRows) {
+			return unwritableRunError(ctx, tx, runID)
+		}
+		return err
 	}
 	var m BatchManifest
 	if err = json.Unmarshal(raw, &m); err != nil {

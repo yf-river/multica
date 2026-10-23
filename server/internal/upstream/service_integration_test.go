@@ -2,12 +2,14 @@ package upstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func isolatedService(t *testing.T) *Service {
@@ -29,7 +31,7 @@ func isolatedService(t *testing.T) *Service {
 	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"agent_runtime", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_settings", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit", "upstream_sync_absorption_task"} {
+	for _, table := range []string{"agent_runtime", "agent_task_queue", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_settings", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit", "upstream_sync_absorption_task"} {
 		if _, err = admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (LIKE public.%s INCLUDING ALL)", schema, table, table)); err != nil {
 			t.Fatal(err)
 		}
@@ -54,6 +56,30 @@ func isolatedService(t *testing.T) *Service {
 	return New(pool)
 }
 
+// runningTask 插入一条正在执行的任务行。批次的可写条件要求领取它的任务仍在执行，
+// 所以几乎所有用例都要先有一条真的任务行，而不是随手编一个 UUID。
+func runningTask(t *testing.T, s *Service, runtimeID, status string) string {
+	t.Helper()
+	if runtimeID == "" {
+		runtimeID = daemonRuntime(t, s, "daemon-"+newID())
+	}
+	id := newID()
+	if _, err := s.Pool.Exec(context.Background(), `INSERT INTO agent_task_queue(id,agent_id,status,runtime_id) VALUES($1,$2,$3,$4)`, id, newID(), status, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// daemonRuntime 插入一条绑定到指定 daemon 的运行时行，用来核对续租只认托管该任务的那台机器。
+func daemonRuntime(t *testing.T, s *Service, daemonID string) string {
+	t.Helper()
+	id := newID()
+	if _, err := s.Pool.Exec(context.Background(), `INSERT INTO agent_runtime(id,workspace_id,daemon_id,name,runtime_mode,provider) VALUES($1,$2,$3,'r','local','codex')`, id, newID(), daemonID); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestBatchCoverageRetryAndAdoptedState(t *testing.T) {
 	s := isolatedService(t)
 	ctx := context.Background()
@@ -62,12 +88,12 @@ func TestBatchCoverageRetryAndAdoptedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := newID()
+	task := runningTask(t, s, "", "running")
 	run, err := s.Start(ctx, task, agent, "schedule")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Start(ctx, newID(), agent, "manual"); err != ErrBusy {
+	if _, err = s.Start(ctx, runningTask(t, s, "", "running"), agent, "manual"); err != ErrBusy {
 		t.Fatalf("second batch: %v", err)
 	}
 	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
@@ -120,7 +146,7 @@ func TestBatchCoverageRetryAndAdoptedState(t *testing.T) {
 	if err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM upstream_sync_commit WHERE item_id IS NOT NULL`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("commit links: %d %v", count, err)
 	}
-	next, err := s.Start(ctx, newID(), agent, "schedule")
+	next, err := s.Start(ctx, runningTask(t, s, "", "running"), agent, "schedule")
 	if err != nil || len(next.Processed) != 2 {
 		t.Fatalf("completed coverage: %+v %v", next, err)
 	}
@@ -318,7 +344,7 @@ func TestExpiredLeaseCannotAdvanceAndPartialBatchIsRetried(t *testing.T) {
 	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config(singleton,agent_id,sync_state) VALUES(1,$1,'bootstrap')`, agent); err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.Start(ctx, newID(), agent, "schedule")
+	run, err := s.Start(ctx, runningTask(t, s, "", "running"), agent, "schedule")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +365,7 @@ func TestExpiredLeaseCannotAdvanceAndPartialBatchIsRetried(t *testing.T) {
 	if _, err = s.AppendReport(ctx, run.RunID, rep); err == nil {
 		t.Fatal("expired lease accepted report")
 	}
-	retry, err := s.Start(ctx, newID(), agent, "schedule")
+	retry, err := s.Start(ctx, runningTask(t, s, "", "running"), agent, "schedule")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +392,8 @@ func TestConcurrentStartsHaveOneOwner(t *testing.T) {
 	}
 	results := make(chan error, 5)
 	for i := 0; i < 5; i++ {
-		go func() { _, err := s.Start(ctx, newID(), agent, "schedule"); results <- err }()
+		task := runningTask(t, s, "", "running")
+		go func() { _, err := s.Start(ctx, task, agent, "schedule"); results <- err }()
 	}
 	accepted := 0
 	for i := 0; i < 5; i++ {
@@ -474,5 +501,215 @@ func TestPauseReachesAutopilotWithoutExecutor(t *testing.T) {
 	}
 	if err := s.Pool.QueryRow(ctx, `SELECT enabled FROM autopilot_trigger WHERE autopilot_id=$1`, pilot).Scan(&enabled); err != nil || enabled {
 		t.Fatalf("orphan trigger still enabled: %v %v", enabled, err)
+	}
+}
+
+// startedRun 领一批并冻结清单，供租约与收敛用例直接回写。
+func startedRun(t *testing.T, s *Service, task, agent string) *StartResult {
+	t.Helper()
+	ctx := context.Background()
+	run, err := s.Start(ctx, task, agent, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := baseReport()
+	if err = s.Prepare(ctx, run.RunID, BatchManifest{BaseSHA: strings.Repeat("c", 40), HeadSHA: rep.Commits[0].SHA, Commits: rep.Commits}); err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+func leaseDeadline(t *testing.T, s *Service, runID string) time.Time {
+	t.Helper()
+	var deadline time.Time
+	if err := s.Pool.QueryRow(context.Background(), `SELECT lease_expires_at FROM upstream_sync_run WHERE id=$1`, runID).Scan(&deadline); err != nil {
+		t.Fatal(err)
+	}
+	return deadline
+}
+
+// TestTaskStatusPollKeepsLongExecutionWithinLease 覆盖"有效长任务不会丢租约"：租约只有
+// 2 秒，执行远超这个时长，本任务自己的状态轮询持续到达，批次始终可写并最终正常收尾。
+func TestTaskStatusPollKeepsLongExecutionWithinLease(t *testing.T) {
+	s := isolatedService(t)
+	s.LeaseTTL = 2 * time.Second
+	ctx := context.Background()
+	agent := newID()
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config(singleton,agent_id,sync_state) VALUES(1,$1,'bootstrap')`, agent); err != nil {
+		t.Fatal(err)
+	}
+	daemon := "daemon-" + newID()
+	task := runningTask(t, s, daemonRuntime(t, s, daemon), "running")
+	run := startedRun(t, s, task, agent)
+
+	start := time.Now()
+	renewals := 0
+	for time.Since(start) < 3*time.Second {
+		renewed, err := s.RenewLeaseForPolledTask(ctx, task, daemon)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !renewed {
+			t.Fatalf("执行仍在继续，第 %d 次轮询没有续租", renewals+1)
+		}
+		renewals++
+		time.Sleep(400 * time.Millisecond)
+	}
+	if renewals < 5 {
+		t.Fatalf("轮询次数不足，无法证明覆盖长执行: %d", renewals)
+	}
+	if deadline := leaseDeadline(t, s, run.RunID); !deadline.After(time.Now()) {
+		t.Fatalf("持续轮询后租约仍然过期: %s", deadline)
+	}
+	if _, err := s.AppendReport(ctx, run.RunID, baseReport()); err != nil {
+		t.Fatalf("有效执行的回写被拒: %v", err)
+	}
+	if err := s.Finish(ctx, run.RunID, "", false); err != nil {
+		t.Fatalf("有效执行无法收尾: %v", err)
+	}
+}
+
+// TestOtherTaskPollDoesNotRenewStoppedBatch 覆盖关键反例：同 runtime 的另一个任务继续被
+// 轮询，目标任务已经停止，旧批次不得被续租，过期后既不能回写也不能被复活。
+func TestOtherTaskPollDoesNotRenewStoppedBatch(t *testing.T) {
+	s := isolatedService(t)
+	s.LeaseTTL = 2 * time.Second
+	ctx := context.Background()
+	agent := newID()
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config(singleton,agent_id,sync_state) VALUES(1,$1,'bootstrap')`, agent); err != nil {
+		t.Fatal(err)
+	}
+	daemon := "daemon-" + newID()
+	runtime := daemonRuntime(t, s, daemon)
+	target := runningTask(t, s, runtime, "running")
+	other := runningTask(t, s, runtime, "running")
+	run := startedRun(t, s, target, agent)
+
+	for i := 0; i < 6; i++ {
+		renewed, err := s.RenewLeaseForPolledTask(ctx, other, daemon)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if renewed {
+			t.Fatal("同机别的任务续租了不属于它的批次")
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+	if deadline := leaseDeadline(t, s, run.RunID); deadline.After(time.Now()) {
+		t.Fatalf("目标任务已停止，租约仍被同机轮询续上: %s", deadline)
+	}
+	if _, err := s.AppendReport(ctx, run.RunID, baseReport()); !errors.Is(err, ErrRunExpired) {
+		t.Fatalf("过期批次回写应报 410 语义，实际: %v", err)
+	}
+	if err := s.Finish(ctx, run.RunID, "", false); !errors.Is(err, ErrRunExpired) {
+		t.Fatalf("过期批次收尾应报 410 语义，实际: %v", err)
+	}
+	if renewed, err := s.RenewLeaseForPolledTask(ctx, target, daemon); err != nil || renewed {
+		t.Fatalf("过期租约被复活: %v %v", renewed, err)
+	}
+	next, err := s.Start(ctx, runningTask(t, s, "", "running"), agent, "manual")
+	if err != nil {
+		t.Fatalf("旧批次没有释放活动槽位: %v", err)
+	}
+	var status, message string
+	if err := s.Pool.QueryRow(ctx, `SELECT status,error FROM upstream_sync_run WHERE id=$1`, run.RunID).Scan(&status, &message); err != nil || status != "interrupted" || message != "租约过期" {
+		t.Fatalf("旧批次未被回收: %q %q %v", status, message, err)
+	}
+	if next.RunID == run.RunID {
+		t.Fatal("新任务复用了过期批次")
+	}
+}
+
+// TestLeaseRenewRequiresOwningDaemonAndRunningTask 覆盖续租的身份、归属与状态三个条件：
+// 换一台 daemon、调用方不带身份、任务行已经终态都不能续租。
+func TestLeaseRenewRequiresOwningDaemonAndRunningTask(t *testing.T) {
+	s := isolatedService(t)
+	s.LeaseTTL = 10 * time.Minute
+	ctx := context.Background()
+	agent := newID()
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config(singleton,agent_id,sync_state) VALUES(1,$1,'bootstrap')`, agent); err != nil {
+		t.Fatal(err)
+	}
+	daemon := "daemon-" + newID()
+	task := runningTask(t, s, daemonRuntime(t, s, daemon), "running")
+	run := startedRun(t, s, task, agent)
+	before := leaseDeadline(t, s, run.RunID)
+
+	for name, daemonID := range map[string]string{"别的 daemon": "daemon-" + newID(), "无身份": ""} {
+		renewed, err := s.RenewLeaseForPolledTask(ctx, task, daemonID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if renewed {
+			t.Fatalf("%s 续租了不属于它的批次", name)
+		}
+	}
+	if after := leaseDeadline(t, s, run.RunID); !after.Equal(before) {
+		t.Fatalf("非归属调用改动了租约: %s -> %s", before, after)
+	}
+	if _, err := s.Pool.Exec(ctx, `UPDATE agent_task_queue SET status='cancelled' WHERE id=$1`, task); err != nil {
+		t.Fatal(err)
+	}
+	if renewed, err := s.RenewLeaseForPolledTask(ctx, task, daemon); err != nil || renewed {
+		t.Fatalf("终态任务的批次仍被续租: %v %v", renewed, err)
+	}
+}
+
+// TestTerminalTaskClosesBatchAndRejectsStaleWrites 覆盖取消、失败和"完成但没回报"三种
+// 终态：批次立刻收尾释放活动槽位，旧 run 的回写一律被拒。
+func TestTerminalTaskClosesBatchAndRejectsStaleWrites(t *testing.T) {
+	cases := []struct {
+		name       string
+		taskStatus string
+		closeAs    string
+		wantErr    error
+	}{
+		{"取消", "cancelled", "interrupted", ErrRunGone},
+		{"失败", "failed", "failed", ErrRunGone},
+		{"完成未回报", "completed", "interrupted", ErrRunGone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := isolatedService(t)
+			ctx := context.Background()
+			agent := newID()
+			if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config(singleton,agent_id,sync_state) VALUES(1,$1,'bootstrap')`, agent); err != nil {
+				t.Fatal(err)
+			}
+			daemon := "daemon-" + newID()
+			task := runningTask(t, s, daemonRuntime(t, s, daemon), "running")
+			run := startedRun(t, s, task, agent)
+			if _, err := s.Pool.Exec(ctx, `UPDATE agent_task_queue SET status=$2 WHERE id=$1`, task, tc.taskStatus); err != nil {
+				t.Fatal(err)
+			}
+			closed, err := s.CloseTaskRuns(ctx, task, tc.closeAs, "任务已结束，批次已关闭")
+			if err != nil || closed != 1 {
+				t.Fatalf("批次没有随任务终态收敛: %d %v", closed, err)
+			}
+			var status string
+			var lease *time.Time
+			if err := s.Pool.QueryRow(ctx, `SELECT status,lease_expires_at FROM upstream_sync_run WHERE id=$1`, run.RunID).Scan(&status, &lease); err != nil {
+				t.Fatal(err)
+			}
+			if status != tc.closeAs || lease != nil {
+				t.Fatalf("批次终态不正确: %q %v", status, lease)
+			}
+			if _, err := s.AppendReport(ctx, run.RunID, baseReport()); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("旧 run 回写没有被拒: %v", err)
+			}
+			if err := s.Finish(ctx, run.RunID, "", false); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("旧 run 收尾没有被拒: %v", err)
+			}
+			if _, err := s.RenewLeaseForPolledTask(ctx, task, daemon); err != nil {
+				t.Fatal(err)
+			}
+			next, err := s.Start(ctx, runningTask(t, s, "", "running"), agent, "manual")
+			if err != nil {
+				t.Fatalf("终态任务仍占着活动槽位: %v", err)
+			}
+			if next.RunID == run.RunID {
+				t.Fatal("新任务复用了已关闭批次")
+			}
+		})
 	}
 }
