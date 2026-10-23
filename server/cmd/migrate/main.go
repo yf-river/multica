@@ -188,9 +188,9 @@ var concurrentIndexCleanups = map[string]string{
 	"616_issue_review_workspace":        "issue_review_workspace_state",
 	"619_supervision_managed_agent_key": "agent_quality_supervision_unique",
 	// 2. 种子槽位与发布批次的新索引同样并发建；建表与建索引分开成迁移，中断后按名清理 INVALID 残留再重试。
-	"624_verification_slot_maintenance_index":  "verification_slot_maintenance_name_created",
-	"625_delivery_batch_active_index":          "delivery_batch_active",
-	"626_delivery_batch_member_delivery_index": "delivery_batch_member_delivery",
+	"629_verification_slot_maintenance_index":  "verification_slot_maintenance_name_created",
+	"630_delivery_batch_active_index":          "delivery_batch_active",
+	"631_delivery_batch_member_delivery_index": "delivery_batch_member_delivery",
 	"520_repository_id":                        "repository_id_idx",
 	"521_repository_identity":                  "repository_identity_idx",
 	"522_repository_location_id":               "repository_location_id_idx",
