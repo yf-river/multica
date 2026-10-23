@@ -20,6 +20,46 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(run.call_args.args[0],['node',pinned.with_name('check-release-database.mjs'),Path('/release/server/queries.json')])
                 self.assertEqual(run.call_args.kwargs['env']['MULTICA_MIGRATION_BASELINE'],'true')
 
+    def test_readiness_snapshot_and_restore_use_real_http_status(self):
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler,HTTPServer
+        state={'status':'not_ready','checks':{'db':'ok','migrations':'out_of_date'}}
+        class Endpoint(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(503);self.end_headers();self.wfile.write(json.dumps(state).encode())
+            def log_message(self,*args): pass
+        server=HTTPServer(('127.0.0.1',0),Endpoint)
+        thread=threading.Thread(target=lambda:server.serve_forever(poll_interval=.05),daemon=True);thread.start()
+        try:
+            metadata={'backend_url':'http://127.0.0.1:'+str(server.server_port)}
+            previous=r.readiness_snapshot(metadata['backend_url']+'/healthz')
+            self.assertEqual(previous['http_status'],503)
+            r.check_readiness(metadata,prior_readiness=previous)
+            self.assertTrue(metadata['readiness']['restored_not_ready'])
+            state['checks']={'db':'error','migrations':'unknown'}
+            with self.assertRaisesRegex(RuntimeError,'新增故障'):r.check_readiness(metadata,prior_readiness=previous)
+        finally:server.shutdown();server.server_close();thread.join()
+
+    def test_only_exact_recorded_unready_state_can_be_restored(self):
+        previous={'http_status':503,'body':{'status':'not_ready','checks':{'db':'ok','migrations':'out_of_date'}}}
+        metadata={'backend_url':'http://old-api'}
+        with patch.object(r,'readiness_snapshot',return_value=previous),patch.object(r,'ready') as ready:
+            r.check_readiness(metadata,prior_readiness=previous)
+            self.assertTrue(metadata['readiness']['restored_not_ready'])
+            self.assertEqual(metadata['readiness']['http_status'],503)
+            ready.assert_not_called()
+        changed={'http_status':503,'body':{'status':'not_ready','checks':{'db':'error','migrations':'unknown'}}}
+        with patch.object(r,'readiness_snapshot',return_value=changed):
+            with self.assertRaisesRegex(RuntimeError,'新增故障'): r.check_readiness(metadata,prior_readiness=previous)
+        for prior in (None,{'http_status':200,'body':{'status':'ok'}}):
+            with patch.object(r,'ready',side_effect=RuntimeError('not ready')):
+                with self.assertRaisesRegex(RuntimeError,'not ready'): r.check_readiness(metadata,prior_readiness=prior)
+        improved={'http_status':200,'body':{'status':'ok','checks':{'db':'ok','migrations':'ok'}}}
+        with patch.object(r,'readiness_snapshot',return_value=improved):
+            r.check_readiness(metadata,prior_readiness=previous)
+            self.assertEqual(metadata['readiness'],improved)
+
     def test_unready_backend_does_not_start_web_or_daemon(self):
         metadata={'backend_url':'http://api','log_paths':{'server':'server.log'}}
         def check(url,**kwargs):
@@ -281,17 +321,18 @@ class ReleaseTests(unittest.TestCase):
             r.RUN=Path(d);artifact=r.RUN/'artifacts/new';artifact.mkdir(parents=True)
             r.write(artifact/'release.json',{'id':'new','files':{},'source_commit':'sha','source_digest':'digest'})
             old=r.RUN/'releases/prod/old';old.mkdir(parents=True)
-            m={'release_id':'old','release_dir':str(old),'daemon_profile':'p','pids':{'server':11,'web':12,'daemon':13},'log_paths':{}}
+            m={'backend_url':'http://old-api','release_id':'old','release_dir':str(old),'daemon_profile':'p','pids':{'server':11,'web':12,'daemon':13},'log_paths':{}}
             r.write(r.meta_path('prod'),m);r.write(r.config_path('prod'),{'config':'unchanged'})
-            def launching(env,release,cfg,metadata):
+            def launching(env,release,cfg,metadata,prior_readiness=None):
                 if release!=old:
                     metadata['pids']={'server':21};raise RuntimeError('startup failed')
                 return {'server':31,'web':32,'daemon':33}
             try:
-                with patch.object(r,'prepare_database'),patch.object(r,'start_maintenance'),patch.object(r,'check_live_environment'),patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
+                with patch.object(r,'readiness_snapshot',return_value={'http_status':200,'body':{'status':'ok'}}),patch.object(r,'prepare_database'),patch.object(r,'start_maintenance'),patch.object(r,'check_live_environment'),patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
                     with self.assertRaisesRegex(RuntimeError,'startup failed'):r.deploy('prod',artifact)
                 restored=r.read(r.meta_path('prod'))
                 self.assertEqual(restored['release_id'],'old');self.assertEqual(restored['pids']['daemon'],33)
+                self.assertEqual(restored['readiness_before'],{'http_status':200,'body':{'status':'ok'}})
                 self.assertEqual(r.read(r.config_path('prod')),{'config':'unchanged'})
             finally:r.RUN=original
 

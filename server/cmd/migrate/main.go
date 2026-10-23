@@ -512,6 +512,8 @@ func refuseChannelChatRouteHistoryRollbackWith(ctx context.Context, query rowQue
 }
 
 var upMigrationConditions = map[string]migrationCondition{
+	"501_health_data":         whenHealthSchemaMissing,
+	"508_chat_health_reports": whenChatHealthReportsMissing,
 	// 全新数据库若已成功建出 CJK 友好的 bigram 索引，就不必再建 trigram 兜底、
 	// 回头又要在 371 把它删掉。
 	"140_comment_content_trgm_index": whenIndexNotUsable(commentContentBigramIndex),
@@ -1008,6 +1010,9 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		applySQL := true
 		conditionReason := ""
 		if condition, ok := opts.Conditions[version]; ok && condition != nil {
+			if err := checkExistingHealthSQL(version, sql); err != nil {
+				return err
+			}
 			applySQL, conditionReason, err = condition(ctx, conn)
 			if err != nil {
 				return fmt.Errorf("evaluate migration condition for %q (%s): %w", version, opts.Direction, err)

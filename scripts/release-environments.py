@@ -574,12 +574,39 @@ def prepare_database(release, cfg, previous):
     check_database(previous,cfg)
     check_database(release,cfg)
 
-def launch(env, release, cfg, m):
+def readiness_snapshot(url):
+    try:
+        return dict(http_status=200, body=http(url))
+    except urllib.error.HTTPError as error:
+        if error.code != 503: raise
+        body=json.loads(error.read())
+        if body.get('status')!='not_ready' or not isinstance(body.get('checks'),dict):
+            raise RuntimeError('无法确认切换前的真实就绪状态')
+        return dict(http_status=503, body=body)
+
+def check_readiness(metadata,timeout=30,prior_readiness=None):
+    url=metadata['backend_url']+'/healthz'
+    previous=(prior_readiness or {}).get('body',{})
+    if (prior_readiness and prior_readiness.get('http_status')==503
+            and previous.get('status')=='not_ready'
+            and previous.get('checks')=={'db':'ok','migrations':'out_of_date'}):
+        current=readiness_snapshot(url)
+        if current['http_status']!=200:
+            if current!=prior_readiness:
+                raise RuntimeError('恢复后的就绪状态不同于切换前，拒绝接受新增故障')
+            metadata['readiness']={**current,'restored_not_ready':True}
+            print('恢复版本仍有已记录的迁移就绪缺口',file=sys.stderr)
+            return
+        metadata['readiness']=current
+        return
+    metadata['readiness']=dict(http_status=200,body=ready(url,timeout=timeout))
+
+def launch(env, release, cfg, m,prior_readiness=None):
     result={}
     m['pids']=result
     result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
     ready(m['backend_url']+'/health',pid=result['server'])
-    ready(m['backend_url']+'/healthz',timeout=30)
+    check_readiness(m,prior_readiness=prior_readiness)
     stop_maintenance(env)
     webcmd=['node',release/'apps/web/server.js'] if (release/'apps/web/server.js').exists() else ['node',release/'apps/web/node_modules/next/dist/bin/next','start','-p',str(m['frontend_port']),'-H','0.0.0.0']
     result['web']=start(webcmd,release/'apps/web',{**cfg['web'], 'MULTICA_RELEASE_MANIFEST': str(release/'release.json')},m['log_paths']['web'])
@@ -643,6 +670,7 @@ def deploy(env, release, timeout=900):
             print(env,'版本已运行，无需重启',release_id)
             return
         prior=json.loads(json.dumps(m))
+        prior['readiness_before']=readiness_snapshot(m['backend_url']+'/healthz')
         if env=='prod':
             prior['published_before']=read(RUN/'published.json') if (RUN/'published.json').exists() else None
         oldcfg={r:process_env(pid) for r,pid in m['pids'].items()}
@@ -673,7 +701,7 @@ def deploy(env, release, timeout=900):
                 for role in ('web','server'):
                     if exists(prior['pids'][role]): owned_stop(prior['pids'][role],role,old_cwds[role])
                 start_maintenance(env,prior)
-                prior['pids']=launch(env,oldrelease,oldcfg,prior)
+                prior['pids']=launch(env,oldrelease,oldcfg,prior,prior_readiness=prior['readiness_before'])
             write(meta_path(env),prior)
             isolation_check()
             print('发布失败，已恢复切换前版本；配置与数据未重置。',file=sys.stderr)
@@ -715,8 +743,8 @@ def copy_browser_operations(destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((source/name).read_bytes())
 
-def verify_browser(env='prod'):
-    ready(read(meta_path(env))['backend_url']+'/healthz',timeout=10)
+def verify_browser(env='prod',prior_readiness=None):
+    check_readiness(read(meta_path(env)),timeout=10,prior_readiness=prior_readiness)
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
     run(['node',Path(__file__).with_name('verify-release-browser.mjs')],cwd=ROOT,env=child_env)
 
@@ -741,12 +769,12 @@ def restore(env, timeout=900):
         cwd=Path(current['release_dir'])/ 'apps/web' if role=='web' else Path(current['release_dir'])
         owned_stop(current['pids'][role], role, cwd)
     baseline=prior.pop('published_before',None)
-    prior['pids']=launch(env, old, read(config_path(env)), prior)
+    prior['pids']=launch(env, old, read(config_path(env)), prior,prior_readiness=prior.get('readiness_before'))
     write(meta_path(env), prior)
     if env=='prod':
         if baseline is not None: write(RUN/'published.json',baseline,True)
         elif (RUN/'published.json').exists(): (RUN/'published.json').unlink()
-    verify_browser(env)
+    verify_browser(env,prior_readiness=prior.get('readiness_before'))
 
 def discard_previous(env):
     file=RUN/'deployments'/f'{env}-previous.json'
