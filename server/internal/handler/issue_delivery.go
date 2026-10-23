@@ -48,7 +48,7 @@ func (h *Handler) deliveryHuman(r *http.Request, ws string) bool {
 }
 func (h *Handler) deliveryJSON(w http.ResponseWriter, r *http.Request, ws, issue string) {
 	var data json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('owner',(SELECT jsonb_build_object('execution_id',execution_id,'generation',generation,'expires_at',expires_at) FROM delivery_owner WHERE workspace_id=$1 AND issue_id=$2),'publication',(SELECT jsonb_build_object('delivery_id',delivery_id,'state',state,'generation',generation,'expires_at',expires_at) FROM delivery_publication WHERE resource='int-prod'),'acceptances',(SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY created_at),'[]') FROM delivery_evidence e WHERE workspace_id=$1 AND issue_id=$2),'plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'user_comments_version',(SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member'),'authorizations',(SELECT COALESCE(jsonb_agg(a ORDER BY a.created_at DESC),'[]') FROM issue_delivery_authorization a JOIN issue_delivery_plan p ON p.id=a.plan_id WHERE a.workspace_id=$1 AND a.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT (SELECT jsonb_build_object('stage',e.stage,'environment',e.environment,'generation',e.generation,'candidate_id',e.candidate_id,'at',e.created_at,'detail',e.detail) FROM verification_event e WHERE e.delivery_id=d.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1) AS execution,d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved','testing','preparing_release','publishing') AND q.created_at<d.created_at) AS queue_ahead,(CASE WHEN d.phase<>'awaiting_review' THEN '' WHEN d.plan_snapshot->>'authorization_pending'='true' THEN 'owner_review' WHEN d.plan_snapshot->'authorization_notice' IS NOT NULL AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'review_incomplete' WHEN EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'owner_review' ELSE 'user_authorization' END) AS authorization_state FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('owner',(SELECT jsonb_build_object('execution_id',execution_id,'generation',generation,'expires_at',expires_at) FROM delivery_owner WHERE workspace_id=$1 AND issue_id=$2),'publication',(SELECT jsonb_build_object('delivery_id',delivery_id,'state',state,'generation',generation,'expires_at',expires_at) FROM delivery_publication WHERE resource='int-prod'),'acceptances',(SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY created_at),'[]') FROM delivery_evidence e WHERE workspace_id=$1 AND issue_id=$2),'plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'user_comments_version',(SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text))),'authorizations',(SELECT COALESCE(jsonb_agg(a ORDER BY a.created_at DESC),'[]') FROM issue_delivery_authorization a JOIN issue_delivery_plan p ON p.id=a.plan_id WHERE a.workspace_id=$1 AND a.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT (SELECT jsonb_build_object('stage',e.stage,'environment',e.environment,'generation',e.generation,'candidate_id',e.candidate_id,'at',e.created_at,'detail',e.detail) FROM verification_event e WHERE e.delivery_id=d.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1) AS execution,d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved','testing','preparing_release','publishing') AND q.created_at<d.created_at) AS queue_ahead,(CASE WHEN d.phase<>'awaiting_review' THEN '' WHEN d.plan_snapshot->>'authorization_pending'='true' THEN 'owner_review' WHEN d.plan_snapshot->'authorization_notice' IS NOT NULL AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'review_incomplete' WHEN EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'owner_review' ELSE 'user_authorization' END) AS authorization_state FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付记录失败")
 		return
@@ -309,9 +309,10 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Action   string          `json:"action"`
-		Revision int64           `json:"revision"`
-		Checks   []deliveryCheck `json:"evidence"`
+		Action      string          `json:"action"`
+		Revision    int64           `json:"revision"`
+		Checks      []deliveryCheck `json:"evidence"`
+		CandidateID string          `json:"candidate_id"`
 		deliveryAuthorizationInput
 		AuthorizationID string `json:"authorization_id"`
 		ScopeReview     string `json:"scope_review"`
@@ -339,6 +340,19 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "交付记录不存在")
 		return
 	}
+	if body.Action == "accept" && body.CandidateID != "" && body.CandidateID == candidate && validDeliveryChecks(body.Checks) {
+		checks, _ := json.Marshal(body.Checks)
+		var recorded bool
+		if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM delivery_evidence WHERE delivery_id=$1 AND candidate_id=$2 AND evidence=$3::jsonb)`, id, candidate, checks).Scan(&recorded); err != nil {
+			writeError(w, 500, "读取验收证据失败")
+			return
+		}
+		if recorded {
+			tx.Rollback(r.Context())
+			h.deliveryJSON(w, r, ws, issue)
+			return
+		}
+	}
 	if revision != body.Revision {
 		writeError(w, 409, "交付版本已变化，请刷新后重试")
 		return
@@ -353,7 +367,19 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	switch body.Action {
 	case "accept":
-		if (phase != "testing" && phase != "preparing_release") || candidate == "" || !validDeliveryChecks(body.Checks) {
+		batchCandidate := ""
+		if phase == "approved" {
+			batchCandidate, err = batchAcceptanceCandidate(r, tx, ws, id)
+			if err != nil {
+				writeError(w, 500, "读取组合验收状态失败")
+				return
+			}
+		}
+		if batchCandidate != "" && (candidate != batchCandidate || body.CandidateID != batchCandidate) {
+			writeError(w, 409, "需要准确组合候选编号")
+			return
+		}
+		if (phase != "testing" && phase != "preparing_release" && batchCandidate == "") || candidate == "" || (body.CandidateID != "" && body.CandidateID != candidate) || !validDeliveryChecks(body.Checks) {
 			writeError(w, 409, "请先完成该版本联调并提交实际证据")
 			return
 		}
@@ -448,6 +474,13 @@ func deleteDeliveryData(ctx context.Context, tx pgx.Tx, ws, issue string) error 
 		return fmt.Errorf("活动发布尚未安全释放")
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM delivery_notice WHERE delivery_id IN (SELECT id FROM issue_delivery WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid))`, ws, issue); err != nil {
+		return err
+	}
+	// 1. 批次的成员关系改由这里清理：先按待删交付清成员，再清掉没有成员的批次，和交付删除同事务提交。
+	if _, err := tx.Exec(ctx, `DELETE FROM delivery_batch_member WHERE delivery_id IN (SELECT id FROM issue_delivery WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid))`, ws, issue); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM delivery_batch b WHERE b.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM delivery_batch_member m WHERE m.batch_id=b.id)`, ws); err != nil {
 		return err
 	}
 

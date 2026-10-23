@@ -183,6 +183,19 @@ func (h *Handler) PublicationLease(w http.ResponseWriter, r *http.Request) {
 	}
 	var valid bool
 	err = tx.QueryRow(r.Context(), `SELECT worker_token::text=$3 AND ($4='release' OR ($4 IN('check','heartbeat','resume') AND phase IN('awaiting_review','approved','published','needs_changes','cancelled')) OR phase IN ('testing','preparing_release','publishing')) FROM issue_delivery WHERE workspace_id=$1 AND id=$2`, ws, b.Delivery, b.Token, b.Action).Scan(&valid)
+	if err == nil && !valid && b.Action == "claim" {
+		// 冻结组合由首个有效成员领取最终占用，仍使用该交付的原凭据和逐任务授权。
+		var issue string
+		err = tx.QueryRow(r.Context(), `SELECT d.issue_id::text FROM issue_delivery d JOIN delivery_batch_member m ON m.delivery_id=d.id JOIN delivery_batch batch ON batch.id=m.batch_id WHERE d.workspace_id=$1 AND d.id=$2 AND d.worker_token::text=$3 AND d.phase='approved' AND d.approved_by IS NOT NULL AND batch.workspace_id=d.workspace_id AND batch.status IN ('frozen','preparing') AND m.result='pending' AND m.source_commit=d.source_commit AND m.delivery_id=(SELECT delivery_id FROM delivery_batch_member WHERE batch_id=batch.id AND result='pending' ORDER BY created_at,delivery_id LIMIT 1) FOR UPDATE OF d,m,batch`, ws, b.Delivery, b.Token).Scan(&issue)
+		if err == nil {
+			var planValid bool
+			valid, err = deliveryAuthorizationReady(r.Context(), tx, ws, issue, b.Delivery)
+			if err == nil && valid {
+				err = tx.QueryRow(r.Context(), deliveryPlanValidSQL, b.Delivery).Scan(&planValid)
+				valid = planValid
+			}
+		}
+	}
 	if err != nil || !valid {
 		writeError(w, 409, "交付领取凭据已失效")
 		return

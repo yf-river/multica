@@ -15,7 +15,7 @@ import (
 )
 
 // 用户评论摘要用于核对 Agent 审查之后是否又有新决定，不解释评论语义。
-const deliveryCommentsVersionSQL = `SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member'`
+const deliveryCommentsVersionSQL = `SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text))`
 
 type deliveryAuthorizationInput struct {
 	CommentID              string `json:"comment_id"`
@@ -135,7 +135,7 @@ func deliveryAuthorizationReady(ctx context.Context, tx pgx.Tx, ws, issue, id st
 	}
 	if len(saved) == 0 {
 		var changed bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM comment c JOIN issue_delivery d ON d.issue_id=c.issue_id AND d.workspace_id=c.workspace_id WHERE d.id=$1 AND c.author_type='member' AND GREATEST(c.created_at,c.updated_at)>d.approved_at)`, id).Scan(&changed)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM comment c JOIN issue_delivery d ON d.issue_id=c.issue_id AND d.workspace_id=c.workspace_id WHERE d.id=$1 AND c.author_type='member' AND GREATEST(c.created_at,c.updated_at)>d.approved_at AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text)))`, id).Scan(&changed)
 		return approved && !changed, err
 	}
 	version, err := deliveryCommentsVersion(ctx, tx, ws, issue)
@@ -211,6 +211,32 @@ const deliveryPlanValidSQL = `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN 
  NOT EXISTS(SELECT 1 FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute') OR
  EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment ac ON ac.id=a.comment_id AND ac.revision=a.comment_revision AND ac.author_type='member' JOIN member m ON m.workspace_id=a.workspace_id AND m.user_id=ac.author_id WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked AND m.role IN ('owner','admin','member'))))`
 
+// 组合成员共享真正代表的发布占用，逐成员仍绑定同批源码、候选和当前批准状态。
+func deliveryPublicationAuthorization(ctx context.Context, tx pgx.Tx, ws, id string) (int64, bool, error) {
+	var generation int64
+	var leased bool
+	var batch string
+	err := tx.QueryRow(ctx, `SELECT b.id::text FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE b.workspace_id=$1 AND m.delivery_id=$2 AND m.result='pending' AND b.status IN ('collecting','frozen','preparing','validating','publishing')`, ws, id).Scan(&batch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `SELECT generation,state='active' AND expires_at>now() FROM delivery_publication WHERE resource='int-prod' AND workspace_id=$1 AND delivery_id=$2`, ws, id).Scan(&generation, &leased)
+	} else if err == nil {
+		err = tx.QueryRow(ctx, `SELECT p.generation,p.state='active' AND p.expires_at>now()
+   FROM delivery_publication p
+   JOIN delivery_batch b ON b.id=$3 AND b.workspace_id=p.workspace_id
+   JOIN delivery_batch_member m ON m.batch_id=b.id AND m.delivery_id=$2 AND m.result='pending'
+   JOIN issue_delivery d ON d.id=m.delivery_id AND d.workspace_id=b.workspace_id AND d.source_commit=m.source_commit AND d.approved_by IS NOT NULL
+   JOIN delivery_batch_member first ON first.batch_id=b.id AND first.result='pending' AND first.delivery_id=(SELECT delivery_id FROM delivery_batch_member WHERE batch_id=b.id AND result='pending' ORDER BY created_at,delivery_id LIMIT 1)
+   JOIN issue_delivery representative ON representative.id=first.delivery_id AND representative.workspace_id=b.workspace_id AND representative.source_commit=first.source_commit AND representative.approved_by IS NOT NULL
+   WHERE p.resource='int-prod' AND p.workspace_id=$1 AND p.delivery_id=representative.id AND p.worker_token=representative.worker_token
+   AND ((b.status IN ('frozen','preparing','validating') AND d.phase='approved' AND representative.phase='approved') OR (b.status='publishing' AND d.phase='publishing' AND representative.phase='publishing' AND d.release_validated AND representative.release_validated))
+   AND (b.status IN ('frozen','preparing') OR (b.candidate_id<>'' AND b.candidate_commit<>'' AND d.candidate_id=b.candidate_id AND representative.candidate_id=b.candidate_id AND d.plan_snapshot->>'candidate_commit'=b.candidate_commit AND representative.plan_snapshot->>'candidate_commit'=b.candidate_commit))`, ws, id, batch).Scan(&generation, &leased)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	return generation, leased, err
+}
+
 // CheckDeliveryAuthorization 供外部发布器在实际发布前核对授权，不触发 Agent。
 func (h *Handler) CheckDeliveryAuthorization(w http.ResponseWriter, r *http.Request) {
 	ws, ok := h.deliveryOperator(w, r)
@@ -241,10 +267,8 @@ func (h *Handler) CheckDeliveryAuthorization(w http.ResponseWriter, r *http.Requ
 		writeError(w, 500, "核对失败")
 		return
 	}
-	var generation int64
-	var leased bool
-	leaseErr := tx.QueryRow(r.Context(), `SELECT generation,state='active' AND expires_at>now() FROM delivery_publication WHERE resource='int-prod' AND workspace_id=$1 AND delivery_id=$2`, ws, id).Scan(&generation, &leased)
-	if leaseErr != nil && !errors.Is(leaseErr, pgx.ErrNoRows) {
+	generation, leased, leaseErr := deliveryPublicationAuthorization(r.Context(), tx, ws, id)
+	if leaseErr != nil {
 		writeError(w, 500, "核对发布占用失败")
 		return
 	}

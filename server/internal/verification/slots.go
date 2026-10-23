@@ -63,7 +63,7 @@ func (s Store) Claim(ctx context.Context, workspace, delivery, token, source str
 	if err == nil && first != delivery {
 		return Lease{}, ErrBusy
 	}
-	err = tx.QueryRow(ctx, `UPDATE verification_slot SET state='preparing',generation=generation+1,workspace_id=$1,delivery_id=$2,worker_token=$3,source_commit=$4,candidate_id='',error='',lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE name=(SELECT name FROM verification_slot WHERE enabled AND state='idle' ORDER BY name FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING name,generation,state`, workspace, delivery, token, source).Scan(&l.Name, &l.Generation, &l.State)
+	err = tx.QueryRow(ctx, `UPDATE verification_slot SET state='preparing',generation=generation+1,workspace_id=$1,delivery_id=$2,worker_token=$3,source_commit=$4,candidate_id='',error='',lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE name=(SELECT name FROM verification_slot WHERE enabled AND state='idle' AND NOT EXISTS(SELECT 1 FROM verification_slot_seed seed WHERE seed.name=verification_slot.name AND NOT seed.verified) ORDER BY name FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING name,generation,state`, workspace, delivery, token, source).Scan(&l.Name, &l.Generation, &l.State)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, ErrBusy
 	}
@@ -123,6 +123,10 @@ func (s Store) Advance(ctx context.Context, l Lease, action, detail string) erro
 	case "release":
 		if state != "draining" || candidate != l.Candidate {
 			return ErrStale
+		}
+		// 独立任务结束后数据可能已被修改；同一租约的续接不经过释放。
+		if _, err = tx.Exec(ctx, `UPDATE verification_slot_seed SET verified=false,updated_at=now() WHERE name=$1`, l.Name); err != nil {
+			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE verification_slot SET state='idle',workspace_id=NULL,delivery_id=NULL,worker_token=NULL,source_commit='',candidate_id='',lease_expires_at=NULL,error='',updated_at=now() WHERE name=$1`, l.Name)
 	default:
@@ -193,6 +197,9 @@ func (s Store) Reset(ctx context.Context, name, actor, reason string) (Lease, er
 	}
 	if state != "quarantined" && !expired {
 		return Lease{}, ErrBusy
+	}
+	if _, err = tx.Exec(ctx, `UPDATE verification_slot_seed SET verified=false,updated_at=now() WHERE name=$1`, name); err != nil {
+		return Lease{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE verification_slot SET state='idle',generation=generation+1,workspace_id=NULL,delivery_id=NULL,worker_token=NULL,source_commit='',candidate_id='',lease_expires_at=NULL,error='',updated_at=now() WHERE name=$1`, name); err != nil {
 		return Lease{}, err

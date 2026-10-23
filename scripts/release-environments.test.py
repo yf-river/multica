@@ -12,6 +12,26 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_batch_checks_every_members_publication_generation(self):
+        import io
+        import json
+        record={'id':'candidate','commit':'c'*40,'git_common':'/controlled/git','publication_lease':{'generation':7},'batch_members':[{'delivery_id':i,'source_commit':i*40} for i in ('a','b')]}
+        records=[dict(m,id=m['delivery_id'],phase='publishing',approved_by='human',release_validated=True,candidate_id='candidate') for m in record['batch_members']]
+        profile={'token':'controlled-token','workspace_id':'controlled-workspace'}
+        for second_generation in (7,8):
+            with self.subTest(second_generation=second_generation):
+                responses=[io.BytesIO(json.dumps({'ready':True,'publication_generation':g}).encode()) for g in (7,second_generation)]
+                with patch.object(r.urllib.request,'build_opener') as opener, patch.object(r.subprocess,'run') as git:
+                    opener.return_value.open.side_effect=responses
+                    git.return_value.returncode=0
+                    if second_generation==7:
+                        r.batch_approval_records(record,records,{'backend_url':'http://controlled'},profile)
+                        self.assertEqual(git.call_count,2)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,'代次不匹配'):
+                            r.batch_approval_records(record,records,{'backend_url':'http://controlled'},profile)
+                        self.assertEqual(git.call_count,1)
+
     def test_external_publish_bundle_contains_matching_browser_dependencies(self):
         with tempfile.TemporaryDirectory() as tmp:
             r.copy_browser_operations(Path(tmp))

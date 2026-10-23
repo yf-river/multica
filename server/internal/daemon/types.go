@@ -67,6 +67,22 @@ type ActiveSiblingRunData struct {
 	StartedAt       string `json:"started_at,omitempty"`
 }
 
+// DeliveryContextData 镜像 claim 载荷里的交付上下文：阶段、候选、分配到的验收环境、
+// 当前种子和所在批次。镜像字段：internal/handler/agent.go 的同名结构。
+type DeliveryContextData struct {
+	ID               string `json:"id"`
+	Phase            string `json:"phase"`
+	CandidateID      string `json:"candidate_id,omitempty"`
+	CandidateCommit  string `json:"candidate_commit,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	EnvironmentState string `json:"environment_state,omitempty"`
+	SeedID           string `json:"seed_id,omitempty"`
+	SeedSHA256       string `json:"seed_sha256,omitempty"`
+	BatchID          string `json:"batch_id,omitempty"`
+	BatchStatus      string `json:"batch_status,omitempty"`
+	BatchMembers     int    `json:"batch_members,omitempty"`
+}
+
 // IssueStatusData 镜像 claim 载荷里的一个活动中的自定义 workspace 状态
 // （MUL-6460）。镜像字段：internal/handler/agent.go 里的
 // TaskIssueStatusData，JSON 字段名一致。
@@ -109,6 +125,7 @@ type Task struct {
 	IssueStatuses        []IssueStatusData      `json:"issue_statuses,omitempty"`
 	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
 	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
+	DeliveryContext      *DeliveryContextData   `json:"delivery_context,omitempty"`
 	ThreadName           string                 `json:"thread_name,omitempty"` // 给 provider 原生会话/线程历史用的语义化标题
 	Agent                *AgentData             `json:"agent,omitempty"`
 	ConnectedApps        []ConnectedAppData     `json:"connected_apps,omitempty"` // 本次运行通过 runtime MCP overlays 挂载的每运行应用能力

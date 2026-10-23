@@ -83,6 +83,9 @@ func init() {
 			}
 			return cli.PrintJSON(os.Stdout, result)
 		}}
+		if action == "accept" {
+			cmd.Long = "提交实际验收证据。组合验收由代表交付提交；JSON 包含 revision、candidate_id 和 evidence，候选编号必须与当前组合一致。相同候选和证据可幂等重试。"
+		}
 		cmd.Flags().String("file", "", "JSON request file (preserve operation_id on retries)")
 		cmd.Flags().String("delivery", "", "Delivery UUID")
 		cmd.Flags().String("output", "json", "Output format")
