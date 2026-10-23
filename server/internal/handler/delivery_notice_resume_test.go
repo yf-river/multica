@@ -109,7 +109,7 @@ func TestPublishedResumeDefersThenAuditsWithoutDuplicateExecution(t *testing.T) 
 	}
 }
 func TestPublishedResumeFallbackAndCandidateIsolation(t *testing.T) {
-	for _, mode := range []string{"failed", "cancelled", "completed_without_done", "done_before_publication", "missing_pause", "wrong_candidate", "wrong_delivery", "wrong_window", "wrong_release", "other_agent", "review_task"} {
+	for _, mode := range []string{"failed", "cancelled", "completed_without_done", "missing_pause", "wrong_candidate", "wrong_delivery", "wrong_window", "wrong_release", "other_agent", "review_task"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newPublishedResumeFixture(t)
 			if mode != "completed_without_done" {
@@ -119,8 +119,6 @@ func TestPublishedResumeFallbackAndCandidateIsolation(t *testing.T) {
 			switch mode {
 			case "failed", "cancelled":
 				dbfx.Exec(t, `UPDATE agent_task_queue SET status=$2 WHERE id=$1`, f.resumed, mode)
-			case "done_before_publication":
-				dbfx.Exec(t, `UPDATE issue SET updated_at=(SELECT updated_at-interval '1 second' FROM issue_delivery WHERE id=$2) WHERE id=$1`, f.issue, f.delivery)
 			case "missing_pause":
 				dbfx.Exec(t, `UPDATE release_paused_task SET resume_task_id=NULL WHERE window_id=$1`, f.window)
 			case "other_agent":
@@ -191,4 +189,42 @@ func TestPublishedResumeAuditSurvivesCompletionReconciliation(t *testing.T) {
 		t.Fatalf("审计应为持久便签且无动作指令: %s", audit)
 	}
 
+}
+
+func TestPublishedResumeDoneBoundary(t *testing.T) {
+	t.Run("already_done_then_ordinary_edit", func(t *testing.T) {
+		f := newPublishedResumeFixture(t)
+		// 精确覆盖绑定时的状态检查：已done的任务不能借标题编辑冒充本次验收。
+		tx, err := testHandler.TxStarter.Begin(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(context.Background())
+		if _, err = tx.Exec(context.Background(), `UPDATE issue SET status='done',updated_at=now()-interval '1 minute' WHERE id=$1`, f.issue); err != nil {
+			t.Fatal(err)
+		}
+		if err = bindPublishedResume(context.Background(), tx, f.window, f.original, f.resumed); err != nil {
+			t.Fatal(err)
+		}
+		if err = tx.Commit(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		dbfx.Exec(t, `UPDATE agent_task_queue SET status='completed',completed_at=now() WHERE id=$1`, f.resumed)
+		dbfx.Exec(t, `UPDATE issue SET title='仅编辑标题',updated_at=now() WHERE id=$1`, f.issue)
+		if f.notify(t) {
+			t.Fatal("已done时不应绑定或延迟")
+		}
+		f.assertNotice(t, true, 1)
+	})
+	t.Run("resumed_acceptance_finishes_before_published_record", func(t *testing.T) {
+		f := newPublishedResumeFixture(t)
+		dbfx.Exec(t, `UPDATE agent_task_queue SET status='completed',completed_at=now() WHERE id=$1`, f.resumed)
+		dbfx.Exec(t, `UPDATE issue SET status='done',updated_at=now() WHERE id=$1`, f.issue)
+		// 批次发布完成记录可以晚于恢复执行的真实收尾，不据此启动第二次验收。
+		dbfx.Exec(t, `UPDATE issue_delivery SET updated_at=now()+interval '1 second' WHERE id=$1`, f.delivery)
+		if f.notify(t) {
+			t.Fatal("已完成恢复应审计")
+		}
+		f.assertNotice(t, true, 0)
+	})
 }
