@@ -209,6 +209,35 @@ class BatchFlowTests(unittest.TestCase):
         self.worker.tick_batches([delivery('d1', 'testing')])
         self.assertEqual(self.actions(), [])
 
+    def test_validating_aborts_released_candidate(self):
+        batch = dict(id='b1', status='validating', worker_token='w1')
+        candidate = dict(id='c1', batch_id='b1', delivery_id='d1', status='released')
+        (self.root / 'candidate.json').write_text('{}')
+        with patch.object(r, 'candidate', return_value=candidate), patch.object(self.worker, 'finish_publication'), patch.object(self.worker, 'publication'), patch.object(self.worker, 'notify_batch_ready'):
+            self.worker.batch_validate(batch, [dict(delivery_id='d1')], [delivery('d1')])
+        self.assertEqual(self.actions(), ['abort'])
+
+    def test_validating_aborts_terminal_member(self):
+        for phase in ('cancelled', 'published'):
+            with self.subTest(phase=phase):
+                self.calls = []
+                batch = dict(id='b1', status='validating', worker_token='w1')
+                candidate = dict(id='c1', batch_id='b1', delivery_id='d1', status='verifying')
+                (self.root / 'candidate.json').write_text('{}')
+                with patch.object(r, 'candidate', return_value=candidate), patch.object(r, 'release_candidate') as release, patch.object(self.worker, 'finish_publication'), patch.object(self.worker, 'publication'), patch.object(self.worker, 'notify_batch_ready'):
+                    self.worker.batch_validate(batch, [dict(delivery_id='d1')], [delivery('d1', phase)])
+                self.assertEqual(self.actions(), ['abort'])
+                release.assert_called_once_with('c1')
+
+    def test_validating_reads_terminal_member_omitted_by_queue(self):
+        batch = dict(id='b1', status='validating', worker_token='w1')
+        candidate = dict(id='c1', batch_id='b1', delivery_id='d1', status='verifying')
+        (self.root / 'candidate.json').write_text('{}')
+        self.worker.api = lambda path: [delivery('d1', 'cancelled')] if path == 'delivery-queue?current=d1' else (_ for _ in ()).throw(AssertionError(path))
+        with patch.object(r, 'candidate', return_value=candidate), patch.object(r, 'release_candidate'), patch.object(self.worker, 'finish_publication'):
+            self.worker.batch_validate(batch, [dict(delivery_id='d1')], [])
+        self.assertEqual(self.actions(), ['abort'])
+
     def test_conflict_fails_batch_without_building(self):
         self.state = dict(batch=dict(id='b1', status='frozen', collect_until=time.time(), worker_token='w1'),
                           members=[dict(delivery_id='d1', source_commit='a' * 40)])
