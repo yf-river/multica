@@ -28,11 +28,12 @@ class PoolFlowTests(unittest.TestCase):
             events.append('delivery:'+action)
             d.update(extra)
             if action=='notify':
-                if failed:d['verification_run']=dict(status='failed',settled=True,error='model capacity')
+                if failed:d['verification_run']=dict(id='00000000-0000-0000-0000-000000000002',status='failed',settled=True,error='model capacity')
                 else:d['acceptance_submitted']=True
             if action=='accepted':d['phase']='awaiting_review'
             if action=='fail':d['phase']='needs_changes'
             current.update(d)
+            return current
         with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)):
             artifact=Path(tmp)/'artifact';artifact.mkdir()
             source=Path(tmp)/'source';source.mkdir()

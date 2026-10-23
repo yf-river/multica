@@ -404,6 +404,10 @@ func TestDeliveryBatchAcceptanceBindsExactCandidateAndReplaysOnce(t *testing.T) 
 	if count != 1 {
 		t.Fatalf("验收重放重复记录: %d", count)
 	}
+	// 外部 fixture 已完成验收，释放其有效租约后才交回原生通知。
+	var owner coordinationOwner
+	dbfx.QueryRow(t, `SELECT token::text,generation FROM delivery_owner WHERE issue_id=$1 AND execution_id=$2`, issue, "batch-test-"+representative).Scan(&owner.Token, &owner.Generation)
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "release", "batch-test-"+representative, owner, "")).Want(200)
 	dbfx.QueryRow(t, `SELECT revision FROM issue_delivery WHERE id=$1`, representative).Scan(&revision)
 	for n := 0; n < 2; n++ {
 		testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": representative, "revision": revision, "worker_token": token, "action": "notify-result", "stage": "batch_ready", "source_commit": strings.Repeat("a", 40)})).Want(200)

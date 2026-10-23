@@ -5,6 +5,34 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    def test_external_verification_owner_defers_native_terminal_and_notification(self):
+        worker=object.__new__(w.Worker)
+        for attempt in ({},dict(id='native',settled=True,status='completed')):
+            d=dict(verification_owner=dict(external=True),verification_run=attempt)
+            with patch.object(worker,'advance') as advance:
+                self.assertTrue(worker.verification_pending(d))
+                advance.assert_not_called()
+
+    def test_verification_lease_expiry_and_release_restore_native_work(self):
+        worker=object.__new__(w.Worker)
+        with patch.object(worker,'advance',return_value={}) as advance:
+            self.assertTrue(worker.verification_pending({}))
+            advance.assert_called_once_with({},'notify')
+        d=dict(verification_run=dict(id='native',settled=True,status='completed'))
+        with patch.object(worker,'advance',return_value={}) as advance:
+            self.assertFalse(worker.verification_pending(d))
+            self.assertEqual(advance.call_args.kwargs['verification_run_id'],'native')
+        with patch.object(worker,'advance',return_value=dict(verification_deferred=True)):
+            self.assertTrue(worker.verification_pending(d),'归属在队列读取之后变更时不能释放候选')
+
+    def test_serial_verification_and_integration_use_owner_protocol(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        for phase in ('testing','preparing_release'):
+            d=dict(id='external',phase=phase,candidate_id='candidate',acceptance_submitted=False,source_commit='a'*40,verification_owner=dict(external=True))
+            with tempfile.TemporaryDirectory() as folder,patch.object(r,'recover_release_windows'),patch.object(r,'lock'),patch.object(r,'candidate_path',return_value=Path(folder)/'missing'),patch.object(worker,'api',return_value=[d]),patch.object(worker,'recover_finished_publications'),patch.object(worker,'pool_enabled',return_value=False),patch.object(worker,'pool_dispatch',return_value=set()),patch.object(worker,'batch_config',return_value=False),patch.object(worker,'pin'),patch.object(worker,'publication_path',return_value=Path(folder)/'missing'),patch.object(worker,'publication'),patch.object(worker,'own_candidate',return_value={'id':'candidate'}),patch.object(worker,'advance') as advance:
+                worker.tick()
+                advance.assert_not_called()
+
     def test_deferred_published_notice_does_not_starve_other_work(self):
         worker=w.Worker.__new__(w.Worker);worker.env='prod'
         rows=[dict(id='deferred',phase='published'),dict(id='next',phase='needs_changes')]

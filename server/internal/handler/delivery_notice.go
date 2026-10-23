@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 )
 
@@ -39,6 +40,21 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 	err := h.DB.QueryRow(r.Context(), `SELECT n.comment_id::text,n.delivered_at IS NOT NULL,COALESCE(i.assignee_type,''),COALESCE(i.assignee_id::text,''),COALESCE(NULLIF((SELECT b.candidate_id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE m.delivery_id=n.delivery_id AND b.status IN ('validating','publishing') AND b.candidate_id<>'' ORDER BY b.created_at DESC LIMIT 1),''),d.candidate_id),d.error FROM delivery_notice n JOIN issue_delivery d ON d.id=n.delivery_id JOIN issue i ON i.id=d.issue_id WHERE n.delivery_id=$1 AND n.stage=$2 AND d.workspace_id=$3`, delivery, stage, ws).Scan(&id, &done, &kind, &assignee, &candidate, &detail)
 	if err != nil || done {
 		return false, err
+	}
+	var ownerTx pgx.Tx
+	if stage == "batch_ready" {
+		ownerTx, err = h.TxStarter.Begin(r.Context())
+		if err != nil {
+			return false, err
+		}
+		defer ownerTx.Rollback(r.Context())
+		external, checkErr := externalDeliveryVerificationOwner(r.Context(), ownerTx, ws, issue)
+		if checkErr != nil {
+			return false, checkErr
+		}
+		if external {
+			return true, nil
+		}
 	}
 	var completedAudit bool
 	if stage == "published" {
@@ -89,5 +105,8 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 		}
 	}
 	_, err = h.DB.Exec(r.Context(), `UPDATE delivery_notice SET delivered_at=now() WHERE delivery_id=$1 AND stage=$2`, delivery, stage)
+	if err == nil && ownerTx != nil {
+		err = ownerTx.Commit(r.Context())
+	}
 	return false, err
 }
