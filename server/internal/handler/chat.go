@@ -28,6 +28,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/upstream"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -1957,6 +1958,24 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			ID:          task.AgentID,
 			WorkspaceID: wsUUID,
 		})
+		if isNotFound(err) {
+			// 上游执行体保留 system 身份。仅管理员可取消同工作区、确实拥有同步批次
+			// 的上游任务；其它 system Agent 仍不通过普通 Agent 的取消入口。
+			managed, lookupErr := h.Queries.GetAgent(r.Context(), task.AgentID)
+			if lookupErr == nil && managed.WorkspaceID == wsUUID && managed.Kind == "system" && upstream.IsExecutorSystemKey(managed.SystemKey.String) {
+				var syncTask bool
+				if lookupErr = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM upstream_sync_run WHERE task_id=$1)`, task.ID).Scan(&syncTask); lookupErr != nil {
+					writeError(w, http.StatusInternalServerError, "failed to load upstream task")
+					return
+				}
+				if syncTask {
+					if _, _, ok := h.upstreamScope(w, r, true); !ok {
+						return
+					}
+					agent, err = managed, nil
+				}
+			}
+		}
 		if err != nil {
 			writeError(w, http.StatusNotFound, "task not found")
 			return
