@@ -34,7 +34,7 @@ multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidenc
 - plan：`comment_id`、`revision`。
 - confirmation：`plan_id`、`revision`、`comment_id`、`comment_revision`、`scope`。`scope` 是 Agent 对真实用户授权范围的解释。用户同时授权联调后发布时增加 `release_after_acceptance: true`；不要求评论晚于方案登记或处于特定线程。重复登记同一评论版本与类型必须使用相同解释。
 - revoke-release：同样引用当前方案和用户撤销评论及 revision、`scope`；保留原授权及撤销依据，不删除历史。
-- status：返回 `authorizations`（用户原话、类型、范围、登记者和撤销状态）、`user_comments_version`（当前用户评论版本摘要）及原交付记录。
+- status：返回 `authorizations`（用户原话、类型、范围、登记者和撤销状态）、`user_comments_version`（当前用户评论版本摘要）及原交付记录。每条交付带 `authorization_state`：`user_authorization` 表示等待用户授权，`owner_review` 表示已落库待通知/待负责人核对，`review_incomplete` 表示通知已发出但复核尚未接续；其他阶段为空。
 - delivery：固定 `operation_id`、完整 `source_commit`、`source_branch`、`base_commit` 和本地 `evidence`。证据是非空数组，每项含 `name`、`status: passed`、实际 `evidence`。重试保持操作号与内容一致。
 - accept：当前交付 `revision` 和真实 int 业务验证的 `evidence`。存在发布授权时，同时提交 `authorization_id`、`scope_review`、`user_comments_version`，说明准确候选仍在授权范围内；缺少范围复核时只完成联调，不能自动发布。由按钮批准的候选复验使用 `authorization_id: "button"`，仅既有真实按钮批准允许复用。
 - approve：验收后可引用新用户评论，提供 `comment_id`、`comment_revision`、`scope`、`scope_review`、`user_comments_version`；也可直接引用已有 `authorization_id` 并提供范围复核。任务身份不能无依据自批。
@@ -69,6 +69,8 @@ pnpm --dir /data/ida/multica release delivery-worker --env prod
 用户可以在方案阶段授权“测试通过后直接发布”。授权先保存，Agent 验收准确候选并提交范围复核后，外部发布器完成验收并自动接续生产准备，不要求用户再次发送口令。只有执行授权时，联调后进入待审核，等待新的发布决定；方案、验收和发布决定均通过任务评论沟通，页面不另设交付确认卡片。
 
 平台不会解释否定、疑问或 `/note` 的业务含义，由 Agent 提示词负责理解，不能将含糊表达登记为批准。平台拒绝不存在、被修改、其他任务、Agent 自己的评论及无权限用户的授权。发布前核对授权来源、当前方案、候选版本与已审查用户评论摘要；有新评论或来源变化时暂停发布并通过原任务通知负责人核对，通知可恢复且不会重复派发。
+
+int 功能验收完成后按授权状态分流。授权已复核当前候选时直接推进发布；已有有效授权但未复核当前候选时，平台把待复核意图写入交付记录并定向通知当前负责人，负责人读取最新用户评论、候选提交和验收证据后，用 `approve` 提交 `authorization_id`、`scope_review` 和当前 `user_comments_version` 完成复核，范围未变时不再要求用户确认；没有有效授权、授权已撤销或范围不符时只记录等待原因，无人能自动批准。待复核意图按“交付 + 候选 + 源码提交 + 评论版本 + 授权记录”去重，通知号预先固定，重复轮询、重复回调和控制器重启都不会重复唤醒；负责人已有活动运行时保留意图等其结束后补发，通知失败同样保留意图由队列重试。复核已发出而长时间未接续时，交付记录保留具体原因，显式再唤醒受次数上限约束，超限不再自动重试，按原任务排查后手工接续。上一轮验收运行仍持有交付归属时，先核对再 `recover-owner` 接续，不强行抢占。
 
 批准后接力器领取全局最终发布占用，整合最新 `origin/personal-studio-upstream` 并固定基线。验收历史按验证输入保存；输入一致时复用，变化按声明的覆盖映射补测，未知影响、迁移或依赖变化执行完整相关验收。未改变需求范围时复用授权并复核新候选；范围或重要取舍变化返回用户确认。验证完成后快进合入、推送并核对远端主分支，再调用现有外部 publisher。最终占用覆盖整合、验收、推送和生产切换，所有发布入口共用占用。队列外主分支变化时保留候选并返回核对，禁止反复自动换基线或强推。
 

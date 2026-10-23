@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -107,7 +106,8 @@ func (h *Handler) bindDeliveryAuthorization(r *http.Request, tx pgx.Tx, ws, issu
 	}
 	actorType, actor := h.resolveActor(r, requestUserID(r), ws)
 	review, _ := json.Marshal(map[string]any{"authorization_id": authorization, "scope": scope, "comments_version": current, "source_commit": source, "candidate_id": candidate, "reviewed_by_type": actorType, "reviewed_by": actor})
-	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_review}',$2::jsonb) WHERE id=$1`, id, review)
+	// 复核绑定成功后待复核意图即失效，避免队列继续补发同一次复核通知。
+	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_review}',$2::jsonb)-'authorization_pending'-'authorization_notice' WHERE id=$1`, id, review)
 	return author, err
 }
 
@@ -195,7 +195,7 @@ func (h *Handler) RevokeIssueReleaseAuthorization(w http.ResponseWriter, r *http
 	}
 	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery_authorization SET revoked=true WHERE workspace_id=$1 AND issue_id=$2 AND plan_id=$3 AND kind='release'`, ws, issue, body.PlanID)
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,release_validated=false,error='用户已撤销发布授权',phase=CASE WHEN phase IN ('approved','preparing_release') THEN 'awaiting_review' ELSE phase END,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing')`, ws, issue)
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,release_validated=false,error='用户已撤销发布授权',`+clearAuthorizationPendingSQL+`,phase=CASE WHEN phase IN ('approved','preparing_release') THEN 'awaiting_review' ELSE phase END,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing')`, ws, issue)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -210,41 +210,6 @@ func (h *Handler) RevokeIssueReleaseAuthorization(w http.ResponseWriter, r *http
 const deliveryPlanValidSQL = `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN issue_delivery_plan p ON p.id=d.plan_id AND p.workspace_id=d.workspace_id JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE d.id=$1 AND p.confirmed_by IS NOT NULL AND (
  NOT EXISTS(SELECT 1 FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute') OR
  EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment ac ON ac.id=a.comment_id AND ac.revision=a.comment_revision AND ac.author_type='member' JOIN member m ON m.workspace_id=a.workspace_id AND m.user_id=ac.author_id WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked AND m.role IN ('owner','admin','member'))))`
-
-// 发布被新用户评论阻断时，只发送一次带交付编号的核对通知。
-func (h *Handler) notifyDeliveryAuthorization(r *http.Request, ws, issue, id string) error {
-	var operation, assignee, kind string
-	err := h.DB.QueryRow(r.Context(), `SELECT d.release_comment_id::text,COALESCE(i.assignee_id::text,''),COALESCE(i.assignee_type,'') FROM issue_delivery d JOIN issue i ON i.id=d.issue_id WHERE d.workspace_id=$1 AND d.id=$2`, ws, id).Scan(&operation, &assignee, &kind)
-	if err != nil {
-		return err
-	}
-	var exists bool
-	if err = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment WHERE id=$1)`, operation).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		_, err = h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending' WHERE id=$1`, id)
-		return err
-	}
-	mention := ""
-	if assignee != "" && (kind == "agent" || kind == "squad") {
-		mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
-	}
-	payload, _ := json.Marshal(map[string]any{"id": operation, "content": mention + "交付 " + id + " 的发布已暂停：用户评论或授权依据发生变化，等待授权范围复核。"})
-	rr := r.Clone(r.Context())
-	rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(operation)))
-	route := chi.NewRouteContext()
-	route.URLParams.Add("id", issue)
-	rr = rr.WithContext(context.WithValue(rr.Context(), chi.RouteCtxKey, route))
-	rr.Body = readCloser{bytes.NewReader(payload)}
-	response := &supervisionFeedbackResponse{header: make(http.Header)}
-	h.CreateComment(response, rr)
-	if response.status >= 400 {
-		return fmt.Errorf("通知负责人失败：%d", response.status)
-	}
-	_, err = h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending' WHERE id=$1`, id)
-	return err
-}
 
 // CheckDeliveryAuthorization 供外部发布器在实际发布前核对授权，不触发 Agent。
 func (h *Handler) CheckDeliveryAuthorization(w http.ResponseWriter, r *http.Request) {
