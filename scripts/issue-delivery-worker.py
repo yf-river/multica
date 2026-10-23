@@ -52,14 +52,15 @@ class Worker:
         receipt=self.api('delivery-queue/advance',dict(id=d['id'],revision=d['revision'],worker_token=d.get('worker_token') or '',action=action,source_commit=d['source_commit'],publication_generation=d.get('publication_generation',0),**extra))
         d.update(receipt)
         return d
-    def verification_pending(self,d):
+    def verification_pending(self,d,notify=True):
         # 外部执行者依靠自己的归属心跳续租；发布器不替它续租，也不另派验收模型。
         if (d.get('verification_owner') or {}).get('external') is True:return True
         attempt=d.get('verification_run') or {}
         if attempt.get('settled') and attempt.get('status') in ('failed','cancelled','blocked','completed'):
             result=self.advance(d,'fail',verification_run_id=attempt['id'],error=attempt.get('error') or '验收执行已结束，但没有提交通过证据')
             return result.get('verification_deferred') is True
-        if not attempt:self.advance(d,'notify')
+        # 通知只在没有执行时补一次；验收轮询已经先发过，不能每轮都重发同一条通知。
+        if not attempt and notify:self.advance(d,'notify')
         return True
     def pin(self,d):
         # 只从固定仓库恢复提交；任务不能通过请求指定任意本机目录。
@@ -471,7 +472,7 @@ class Worker:
             r.release_candidate(c['id'],env=lease['name'])
             slot(lease,'release')
             save('released',candidate_id=c['id'])
-        lease=None; stopped=threading.Event(); heartbeat_errors=[]
+        lease=None; c=None; stopped=threading.Event(); heartbeat_errors=[]
         with r.lock('verification-job-'+delivery):
             try:
                 d=refresh()
@@ -539,23 +540,38 @@ class Worker:
                     while not stopped.wait(20):
                         try:slot(lease,'heartbeat')
                         except Exception as e:
-                            heartbeat_errors.append(str(e));return
+                            heartbeat_errors.append(e);return
                 heartbeat_thread=threading.Thread(target=heartbeat,daemon=True);heartbeat_thread.start()
                 if c is None:
                     c=r.prepare_verification(source,artifact,lease)
                     lease['candidate_id']=c['id'];slot(lease,'prepared')
                     save('verifying',lease=lease,candidate_id=c['id'])
-                if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
+                if heartbeat_errors:raise heartbeat_errors[0]
                 d=refresh()
                 if d['phase']=='testing':
                     if d['candidate_id']!=c['id']:
                         self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
-                    if not (d.get('verification_owner') or {}).get('external'):self.advance(d,'notify')
+                notified=False
                 while True:
                     d=refresh()
                     if not d or d['phase']!='testing':break
-                    if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
-                    if not d['acceptance_submitted'] and not self.verification_pending(d):break
+                    if heartbeat_errors:raise heartbeat_errors[0]
+                    try:
+                        if not d['acceptance_submitted']:
+                            # 外部归属结束后补派一次；被归属围栏延后的通知不算送达。
+                            # 服务端固定评论标识与实际执行记录负责跨进程幂等。
+                            if not notified and not d.get('verification_run') and not (d.get('verification_owner') or {}).get('external'):
+                                result=self.advance(d,'notify')
+                                notified=result.get('verification_deferred') is not True
+                            pending=self.verification_pending(d,notify=False)
+                    except urllib.error.HTTPError as e:
+                        if e.code!=409:raise
+                        # 服务端围栏：该执行不是当前触发评论的最新运行，或阶段已经变化。
+                        # 这不是交付故障，不能隔离槽位或用兜底 fail 把被拦下的写入重做一遍。
+                        d=refresh()
+                        if not d or d['phase']!='testing':break
+                        time.sleep(5);continue
+                    if not d['acceptance_submitted'] and not pending:break
                     if d['acceptance_submitted']:
                         evidence=r.RUN/'delivery-evidence'/(delivery+'.json')
                         r.write(evidence,dict(candidate=c['id'],summary='任务验收',checks=d['evidence']),True)
@@ -569,6 +585,9 @@ class Worker:
                 stopped.set();return
             except Exception as e:
                 stopped.set()
+                if isinstance(e,urllib.error.HTTPError) and e.code==409:
+                    # 槽位代次或心跳已被围栏拒绝，旧接力不能再隔离或失败回填新归属。
+                    save('fenced',lease=lease,candidate_id=c['id'] if c else '',detail=str(e)[:500]);return
                 if lease:
                     try:slot(lease,'quarantine',str(e)[:1500])
                     except Exception:pass
