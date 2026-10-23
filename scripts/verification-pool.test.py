@@ -8,7 +8,7 @@ spec=importlib.util.spec_from_file_location('worker',Path(__file__).with_name('i
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class PoolFlowTests(unittest.TestCase):
-    def run_flow(self, *, failed=False, resume=False):
+    def run_flow(self, *, failed=False, resume=False,busy=False):
         identity='00000000-0000-0000-0000-000000000001'
         d=dict(id=identity,phase='testing',source_commit='a'*40,worker_token='token',candidate_id='candidate' if resume else '',acceptance_submitted=False,evidence=[dict(name='flow',status='passed',evidence='fixture')])
         lease=dict(name='verify-1',generation=1,delivery_id=identity,worker_token='token',source_commit=d['source_commit'],candidate_id='candidate' if resume else '',state='verifying' if resume else 'preparing')
@@ -34,10 +34,21 @@ class PoolFlowTests(unittest.TestCase):
             if action=='fail':d['phase']='needs_changes'
             current.update(d)
         with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)):
+            artifact=Path(tmp)/'artifact';artifact.mkdir()
+            source=Path(tmp)/'source';source.mkdir()
             if resume:r.write(worker.pool_job_path(identity),dict(stage='verifying',delivery_id=identity,lease=lease,candidate_id='candidate'))
-            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=Path('/fixture')),patch.object(r,'build_verification',side_effect=lambda *a:events.append('build') or Path('/artifact')) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'):
+            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source),patch.object(r,'build_verification',side_effect=lambda *a:events.append('build') or artifact) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'):
                 r.write(r.meta_path('verify-1'),dict(frontend_url='http://fixture'))
+                if busy:
+                    with patch.object(worker,'ensure_seed',side_effect=w.Busy('三个槽位均在验收')):
+                        worker.pool_delivery(identity)
+                    self.assertEqual(d['phase'],'testing')
+                    self.assertEqual(r.read(worker.pool_job_path(identity))['stage'],'waiting_slot')
+                    self.assertNotIn('delivery:fail',events)
                 worker.pool_delivery(identity)
+                if busy:
+                    self.assertEqual(build.call_count,1,'D续接重复构建')
+                    self.assertEqual(prepare.call_args.args[0],source,'D续接丢失固定源码')
                 self.assertEqual(r.read(worker.pool_job_path(identity))['stage'],'released')
                 if resume:build.assert_not_called();prepare.assert_not_called()
         self.assertLess(events.index('stop'),events.index('release'))
@@ -55,6 +66,11 @@ class PoolFlowTests(unittest.TestCase):
         self.assertEqual(d['phase'],'needs_changes')
         self.assertNotIn('accept',events)
         self.assertEqual(d['error'],'model capacity')
+
+    def test_fourth_delivery_waits_then_uses_original_build(self):
+        d,events=self.run_flow(busy=True)
+        self.assertEqual(d['phase'],'awaiting_review')
+        self.assertNotIn('delivery:fail',events)
 
     def test_restart_resumes_candidate_without_rebuild(self):
         d,events=self.run_flow(resume=True)
@@ -78,11 +94,21 @@ class SeedGateTests(unittest.TestCase):
     def test_verified_current_seed_slot_is_reused(self):
         worker=self.worker()
         slot=dict(name='verify-1',enabled=True,state='idle',seed_id='seed-a',seed_sha256='a'*64,seed_verified=True)
-        def api(path,*a,**k):return dict(slot) if path.startswith('delivery-queue/slots/seed?') else [slot]
+        # 单槽位查询的实际响应是 verified，列表接口才是 seed_verified；两种字段名不能混用。
+        record=dict(name='verify-1',seed_id='seed-a',seed_sha256='a'*64,verified=True,restored_at='',updated_at='')
+        def api(path,*a,**k):return dict(record) if path.startswith('delivery-queue/slots/seed?') else [slot]
         with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',side_effect=api),patch.object(w.subprocess,'run') as run:
             worker.ensure_seed()
             run.assert_not_called()
             self.assertTrue(worker.seed_matches('verify-1'))
+
+    def test_unverified_or_other_seed_slot_is_rejected(self):
+        worker=self.worker()
+        for record,expected in ((dict(name='verify-1',seed_id='seed-a',seed_sha256='a'*64,verified=False),False),
+                                (dict(name='verify-1',seed_id='seed-old',seed_sha256='b'*64,verified=True),False),
+                                (dict(name='verify-1',seed_id='seed-a',seed_sha256='a'*64,verified=True),True)):
+            with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',return_value=dict(record)):
+                self.assertIs(worker.seed_matches('verify-1'),expected,record)
 
     def test_stale_slot_is_restored_before_claim(self):
         worker=self.worker()

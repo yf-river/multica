@@ -25,18 +25,28 @@ func deliveryNoticeText(stage, delivery, candidate, detail string) string {
 		return fmt.Sprintf(pausedNotice, delivery, detail)
 	}
 	if stage == "batch_ready" {
-		return fmt.Sprintf(batchReadyNotice, delivery, candidate)
+		return fmt.Sprintf(batchReadyNotice, delivery, candidate) + detail
 	}
 	return fmt.Sprintf(publishedNotice, delivery, candidate)
 }
 
 // notifyDeliveryResult 用持久化通知号续接任务，服务重启或响应丢失不重复派发。
+// 修改 5. 组合候选通知要指向批次固定的候选：成员单任务阶段保存的 candidate_id 不是组合产物，
+// 混用会让 Agent 去验收另一份候选。
 func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, stage string) error {
 	var id, kind, assignee, candidate, detail string
 	var done bool
-	err := h.DB.QueryRow(r.Context(), `SELECT n.comment_id::text,n.delivered_at IS NOT NULL,COALESCE(i.assignee_type,''),COALESCE(i.assignee_id::text,''),d.candidate_id,d.error FROM delivery_notice n JOIN issue_delivery d ON d.id=n.delivery_id JOIN issue i ON i.id=d.issue_id WHERE n.delivery_id=$1 AND n.stage=$2 AND d.workspace_id=$3`, delivery, stage, ws).Scan(&id, &done, &kind, &assignee, &candidate, &detail)
+	err := h.DB.QueryRow(r.Context(), `SELECT n.comment_id::text,n.delivered_at IS NOT NULL,COALESCE(i.assignee_type,''),COALESCE(i.assignee_id::text,''),COALESCE(NULLIF((SELECT b.candidate_id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE m.delivery_id=n.delivery_id AND b.status IN ('validating','publishing') AND b.candidate_id<>'' ORDER BY b.created_at DESC LIMIT 1),''),d.candidate_id),d.error FROM delivery_notice n JOIN issue_delivery d ON d.id=n.delivery_id JOIN issue i ON i.id=d.issue_id WHERE n.delivery_id=$1 AND n.stage=$2 AND d.workspace_id=$3`, delivery, stage, ws).Scan(&id, &done, &kind, &assignee, &candidate, &detail)
 	if err != nil || done {
 		return err
+	}
+	if stage == "batch_ready" {
+		var representative string
+		err = h.DB.QueryRow(r.Context(), `SELECT m.delivery_id::text FROM delivery_batch_member m JOIN delivery_batch b ON b.id=m.batch_id WHERE b.id=(SELECT b.id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE m.delivery_id=$1 AND b.status='validating' ORDER BY b.created_at DESC LIMIT 1) AND m.result='pending' ORDER BY m.created_at,m.delivery_id LIMIT 1`, delivery).Scan(&representative)
+		if err != nil {
+			return err
+		}
+		detail = fmt.Sprintf("本批代表交付为 %s；由代表汇总全部成员及集成冒烟证据，使用 multica issue delivery accept --delivery <代表交付> --file <JSON> 提交。JSON 必须包含当前 revision、candidate_id=%s 和实际 evidence。其他成员协助验收，不重复登记候选或单独发布。", representative, candidate)
 	}
 	var exists bool
 	if err = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment WHERE id=$1 AND issue_id=$2)`, id, issue).Scan(&exists); err != nil {

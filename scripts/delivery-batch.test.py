@@ -38,6 +38,7 @@ class BatchFlowTests(unittest.TestCase):
         self.state = dict(batch=None, members=[])
         self.worker.batch_call = self.batch_call
         self.worker.publication_owner = lambda: None
+        self.worker.api = lambda path, *args: [delivery('d1'),delivery('d2')] if path == 'delivery-queue' else (_ for _ in ()).throw(AssertionError(path))
 
     def batch_call(self, body=None):
         self.calls.append(body)
@@ -125,36 +126,45 @@ class BatchFlowTests(unittest.TestCase):
         finished.assert_called_once()
         self.assertNotIn('validating', self.actions())
 
-    def test_prepare_rebuilds_without_member_revoked_before_build(self):
+    def test_prepare_exits_batch_when_first_member_revoked(self):
+        self.check_prepare_exits_batch_when_member_revoked(0)
+
+    def test_prepare_exits_batch_when_nonfirst_member_revoked(self):
+        self.check_prepare_exits_batch_when_member_revoked(1)
+
+    def check_prepare_exits_batch_when_member_revoked(self, revoked):
+        # 代表 A 在准备复核时被撤权、只剩 B：A 的 delivery/租约不再代表本批，整批退出并释放，
+        # 下一批由 B 重新领取租约重建，不能用 A 的租约构建只含 B 的候选。
         self.state = dict(batch=dict(id='b1', status='frozen', collect_until=time.time(), worker_token='w1'),
                           members=[dict(delivery_id='d1', source_commit='a' * 40, result='pending'),
                                    dict(delivery_id='d2', source_commit='b' * 40, result='pending')])
-        built = []
         self.worker.publication_guard = lambda d: contextlib.nullcontext((dict(generation=1), lambda: None))
         self.worker.advance = lambda d, action, **extra: self.calls.append(dict(action=action)) or d
-
-        def batch_source(batch, members):
-            built.append([m['delivery_id'] for m in members])
-            return Path('/tmp'), 'b' * 40, 'c' * 40, None
-
         original = self.worker.batch_call
 
         def batch_call(body=None):
             state = original(body)
             if body and body['action'] == 'preparing':
                 self.state = dict(batch=dict(id='b1', status='preparing', worker_token='w1'),
-                                  members=[dict(delivery_id='d1', source_commit='a' * 40, result='pending'),
-                                           dict(delivery_id='d2', source_commit='b' * 40, result='withdrawn')])
+                                  members=[dict(delivery_id='d1', source_commit='a' * 40, result='withdrawn' if revoked==0 else 'pending'),
+                                           dict(delivery_id='d2', source_commit='b' * 40, result='withdrawn' if revoked==1 else 'pending')])
                 return self.state
             return state
 
         self.worker.batch_call = batch_call
-        with patch.object(w.Worker, 'batch_source', side_effect=batch_source), \
-                patch.object(r, 'prepare_int', return_value=dict(id='c1', commit='c' * 40)) as prepare:
+        with patch.object(w.Worker, 'batch_source', return_value=(Path('/tmp'), 'b' * 40, 'c' * 40, None)) as source, \
+                patch.object(r, 'prepare_int') as prepare, \
+                patch.object(w.Worker, 'finish_publication') as finished:
             self.worker.batch_prepare(self.state['batch'], [dict(delivery_id='d1', source_commit='a' * 40, result='pending'),
-                                                            dict(delivery_id='d2', source_commit='b' * 40, result='pending')], [delivery('d1'), delivery('d2')])
-        self.assertEqual(built, [['d1', 'd2'], ['d1']], '撤权后没有按剩余成员重新合并')
-        self.assertEqual([m['delivery_id'] for m in prepare.call_args.kwargs['delivery']['batch_members']], ['d1'])
+                                                            dict(delivery_id='d2', source_commit='b' * 40, result='pending')],
+                                      [delivery('d1'), delivery('d2')])
+        prepare.assert_not_called()
+        self.assertEqual(source.call_count, 1, '撤权后仍按旧名单重新合并')
+        failure = [call for call in self.calls if call and call['action'] == 'fail']
+        self.assertEqual(len(failure), 1)
+        self.assertIn('重新组批', failure[0]['error'])
+        finished.assert_called_once()
+        self.assertNotIn('validating', self.actions())
 
     def test_cancelled_validation_discards_fixed_candidate(self):
         self.state = dict(batch=dict(id='b1', status='frozen', collect_until=time.time(), worker_token='w1'),
@@ -299,7 +309,7 @@ class BatchDrillTests(unittest.TestCase):
                 self.wfile.write(body)
 
             def do_GET(self):
-                self.reply(drill.state)
+                self.reply(drill.rows() if self.path == '/api/delivery-queue' else drill.state)
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -373,6 +383,115 @@ class BatchDrillTests(unittest.TestCase):
             source.assert_not_called()
             prepare.assert_not_called()
         self.assertEqual(self.state['batch']['status'], 'validating')
+
+
+class RecoveryOwnershipTests(unittest.TestCase):
+    """回收只看交付自身阶段会误伤正在进行的组合批次：活动批次的成员与候选必须保留。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        patcher = patch.object(r, 'RUN', self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        (self.root / 'delivery-batch.json').write_text(json.dumps(dict(enabled=True, controller_environment='prod', window_seconds=60)))
+        (self.root / 'int-meta.json').write_text(json.dumps(dict(release_id='r0', commit='e' * 40)))
+        (self.root / 'prod-meta.json').write_text(json.dumps(dict(release_id='r0', commit='e' * 40)))
+        meta = patch.object(r, 'meta_path', lambda env: self.root / (env + '-meta.json'))
+        meta.start()
+        self.addCleanup(meta.stop)
+
+    def recover(self, batch):
+        identity = '00000000-0000-0000-0000-0000000000a1'
+        row = dict(id=identity, phase='approved', source_commit='a' * 40, worker_token='t1', revision=1)
+        worker = object.__new__(w.Worker)
+        worker.env = 'prod'
+        worker.batch_call = lambda body=None: batch
+        worker.api = lambda path, *a, **k: [dict(row)]
+        worker.own_candidate = lambda d: dict(id='c1', status='verifying', delivery_id=identity, source='/tmp/source')
+        worker.finish_publication = lambda d: self.finished.append(d['id'])
+        self.finished = []
+        (self.root / 'publication-leases').mkdir(exist_ok=True)
+        (self.root / 'publication-leases' / (identity + '.json')).write_text(json.dumps(dict(delivery_id=identity, generation=1)))
+        with patch.object(r, 'check_process_ownership'), patch.object(r, 'release_candidate') as release:
+            worker.recover_finished_publications([row])
+            return release
+
+    def test_active_batch_member_keeps_candidate_and_lease(self):
+        batch = dict(batch=dict(id='b1', status='validating', worker_token='w1'),
+                     members=[dict(delivery_id='00000000-0000-0000-0000-0000000000a1', result='pending')])
+        release = self.recover(batch)
+        release.assert_not_called()
+        self.assertEqual(self.finished, [])
+        self.assertTrue((self.root / 'publication-leases' / '00000000-0000-0000-0000-0000000000a1.json').exists())
+
+    def test_disabled_batch_feature_does_not_query_legacy_server(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        with patch.object(w.Worker,'batch_config',return_value=None), patch.object(w.Worker,'batch_call') as api:
+            self.assertEqual(worker.active_batch_members(),set())
+            api.assert_not_called()
+
+    def test_finished_batch_member_releases_candidate_and_lease(self):
+        batch = dict(batch=dict(id='b1', status='validating', worker_token='w1'),
+                     members=[dict(delivery_id='00000000-0000-0000-0000-0000000000a1', result='withdrawn')])
+        release = self.recover(batch)
+        release.assert_called_once_with('c1')
+        self.assertEqual(self.finished, ['00000000-0000-0000-0000-0000000000a1'])
+
+    def test_no_active_batch_keeps_previous_approved_cleanup(self):
+        release = self.recover(dict(batch=None, members=[]))
+        release.assert_called_once_with('c1')
+        self.assertEqual(self.finished, ['00000000-0000-0000-0000-0000000000a1'])
+
+
+class BatchAuthorizationGateTests(unittest.TestCase):
+    """组合候选在 push 主分支之前复核成员授权，拒绝时不能已经写进 main。"""
+
+    def test_release_checks_approval_before_push(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        candidate = dict(id='c1', commit='c' * 40, source=str(root), batch_id='b1', delivery_id='d1', status='accepted',batch_members=[])
+        batch = dict(id='b1', status='publishing', worker_token='w1')
+        worker = object.__new__(w.Worker)
+        worker.env = 'prod'
+        worker.publication = lambda *a, **k: dict(generation=1)
+        worker.batch_call = lambda body=None: dict(batch=batch, members=[])
+        worker.finish_publication = lambda d: None
+        calls = []
+        with patch.object(r, 'RUN', root), patch.object(w.Worker, 'batch_config', return_value=dict(enabled=True)), \
+                patch.object(r, 'run', side_effect=lambda args, **k: calls.append(args)), \
+                patch.object(w.subprocess, 'run', return_value=type('R', (), {'returncode': 0})()), \
+                patch.object(r, 'check_delivery_approval', side_effect=RuntimeError('成员授权已失效')), \
+                patch.object(r, 'release_candidate'):
+            worker.batch_release(batch, candidate, dict(id='d1'), [])
+        self.assertEqual([call for call in calls if 'push' in call], [], '授权复核失败后仍然推送了主分支')
+
+
+class BatchAcceptanceTests(unittest.TestCase):
+    def test_only_exact_representative_evidence_accepts_combination(self):
+        worker=object.__new__(w.Worker)
+        candidate=dict(id='combo',commit='c'*40,delivery_id='d1')
+        members=[dict(delivery_id='d1'),dict(delivery_id='d2')]
+        evidence=[dict(name='combined',status='passed',evidence='actual fixture')]
+        def row(identity,candidate_id='combo',commit='c'*40):
+            return dict(id=identity,candidate_id=candidate_id,acceptance_submitted=True,evidence=evidence,plan_snapshot=dict(candidate_commit=commit))
+        self.assertIsNone(worker.batch_acceptance(candidate,members,[row('d2')]))
+        self.assertIsNone(worker.batch_acceptance(candidate,members,[row('d1','old-single')]))
+        self.assertIsNone(worker.batch_acceptance(candidate,members,[row('d1',commit='e'*40)]))
+        self.assertEqual(worker.batch_acceptance(candidate,members,[row('d1')]),evidence)
+
+    def test_publication_phase_restart_resumes_request_after_fence(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        batch=dict(id='b1',worker_token='token')
+        candidate=dict(id='combo',batch_id='b1',delivery_id='d1',status='accepted')
+        state=dict(batch=dict(batch,status='publishing'),members=[dict(delivery_id='d1')])
+        with tempfile.TemporaryDirectory() as root,patch.object(r,'RUN',Path(root)),patch.object(r,'candidate_path',return_value=Path(root)/'candidate') as path,patch.object(r,'candidate',return_value=candidate),patch.object(w.Worker,'publication'),patch.object(w.Worker,'batch_call',return_value=state) as api,patch.object(w.Worker,'batch_release',return_value=True) as release:
+            path.return_value.write_text('{}')
+            worker.batch_check_release(batch,[dict(id='d1')])
+            self.assertEqual(api.call_args.args[0]['action'],'publishing')
+            release.assert_called_once()
 
 
 if __name__ == '__main__':

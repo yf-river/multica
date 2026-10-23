@@ -59,6 +59,10 @@ class Worker:
         c=r.candidate() if r.candidate_path().exists() else None
         if not c or c.get('delivery_id')!=d['id']:return None
         return c
+    def candidate_url(self):
+        # 组合候选地址取当前 int 的联调入口；成员按同一地址验收同一份固定候选。
+        path=r.meta_path('int')
+        return (r.read(path).get('frontend_url') or '') if path.exists() else ''
     def busy(self,d):
         c=r.candidate() if r.candidate_path().exists() else None
         return c and c.get('status') not in ('released','succeeded','failed') and c.get('delivery_id')!=d['id']
@@ -123,16 +127,28 @@ class Worker:
             if (current.get('state')=='idle' and current.get('generation',0)>=lease.get('generation',1)) or (current.get('delivery_id')!=d['id'] and current.get('generation',0)>lease.get('generation',0)):
                 path.unlink();return
             self.publication(d,'check');self.publication(d,'release');path.unlink()
+    def active_batch_members(self):
+        # 修改 11. 活动批次里的成员仍停在 approved，单据本身不能证明发布已结束；
+        # 回收判定必须同时看批次归属，否则会释放正在验收的组合候选和发布占用。
+        if not self.batch_config():
+            local=r.candidate() if r.candidate_path().exists() else {}
+            if not local.get('batch_id') or local.get('status') in ('released','succeeded','failed'):return set()
+        state=self.batch_call()
+        batch=state.get('batch') or {}
+        if batch.get('status') not in ('collecting','frozen','preparing','validating','publishing'):return set()
+        return {m['delivery_id'] for m in state.get('members') or [] if m.get('result','pending')=='pending'}
+
     def recover_finished_publications(self,rows):
         # 业务阶段提交和本地清理之间可能重启；持久占用必须在领取下一项前收尾。
         records={d['id']:d for d in rows}
+        batch_members=self.active_batch_members()
         for path in (r.RUN/'publication-leases').glob('*.json'):
             identity=path.stem
             if identity not in records:
                 records.update({d['id']:d for d in self.api('delivery-queue?current='+identity)})
             d=records.get(identity)
             if not d:raise r.RecoveryRequired('发布占用对应的交付记录缺失')
-            finished=d['phase'] in ('published','cancelled','needs_changes','approved') or (d['phase']=='awaiting_review' and not d.get('plan_snapshot',{}).get('authorization_pending'))
+            finished=d['phase'] in ('published','cancelled','needs_changes') or (d['phase']=='approved' and identity not in batch_members) or (d['phase']=='awaiting_review' and not d.get('plan_snapshot',{}).get('authorization_pending'))
             if not finished:continue
             c=self.own_candidate(d)
             if c:
@@ -214,8 +230,9 @@ class Worker:
         if subprocess.run(['git','merge-base','--is-ancestor','origin/personal-studio-upstream',tested],cwd=r.ROOT).returncode:
             self.advance(d,'fail',error='队列外主分支发生变化，候选与证据已保留，需要核对后重排');r.release_candidate(c['id']);self.finish_publication(d);return
         self.publication(d,'check')
-        if d.get('phase')=='publishing':r.check_delivery_approval(c)
-        else:self.advance(d,'publishing')
+        if d.get('phase')!='publishing':self.advance(d,'publishing')
+        # 修改 15. 单项发布同样先复核再 push：进入 publishing 后仍可能被撤权，顺序不能反。
+        r.check_delivery_approval(c)
         self.publication(d,'check')
         r.run(['git','push','origin',tested+':refs/heads/personal-studio-upstream'],cwd=path)
         if r.output(['git','ls-remote','origin','refs/heads/personal-studio-upstream'],cwd=r.ROOT).split()[0]!=tested:raise RuntimeError('远端主分支核对失败')
@@ -234,7 +251,9 @@ class Worker:
         except urllib.error.HTTPError as e:
             if e.code!=404:raise
             return False
-        return record.get('seed_id')==current.get('seed_id') and record.get('seed_sha256')==current.get('dump_sha256') and record.get('seed_verified') is True
+        # 修改 9. 单槽位查询返回 verified（列表接口才是 seed_verified）；按实际接口响应判断，
+        # 否则有 current seed 时每次领取都会被误判成版本不一致而隔离。
+        return record.get('seed_id')==current.get('seed_id') and record.get('seed_sha256')==current.get('dump_sha256') and record.get('verified') is True
 
     def ensure_seed(self):
         # 修改 1. 换任务前先核对槽位数据版本：与当前种子不一致就按单槽位维护恢复，
@@ -342,14 +361,20 @@ class Worker:
                     reuse=job.get('stage')=='waiting_slot' and job.get('source_commit')==d['source_commit'] and bool(job.get('artifact')) and Path(job['artifact']).exists()
                     if reuse:
                         artifact=Path(job['artifact'])
-                        save('waiting_slot',artifact=str(artifact),source_commit=d['source_commit'])
+                        source=Path(job.get('source') or r.read(artifact/'release.json')['source_directory'])
+                        save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
                     else:
                         source=self.source(d,integrate=True)
                         save('building',source_commit=d['source_commit'])
                         artifact=r.build_verification(source,delivery)
-                        save('waiting_slot',artifact=str(artifact),source_commit=d['source_commit'])
+                        save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
                     # 2. 等槽位必须有上限：槽位被隔离时无限等待会让这个单元长期占住并发名额。
-                    self.ensure_seed()
+                    # 修改 10. 三槽全忙时 ensure_seed 抛 Busy，这只说明第四项要排队；
+                    # 旧代码让它落到通用异常被记成 needs_changes，D 永远走不到后面的等槽逻辑。
+                    try:self.ensure_seed()
+                    except Busy:
+                        # job 已是 waiting_slot 且带产物，下一轮直接从这里续接。
+                        stopped.set();return
                     deadline=time.monotonic()+600
                     while lease is None:
                         d=refresh()
@@ -361,7 +386,7 @@ class Worker:
                             if detail.get('error')!='没有可用验收槽位':raise
                             if time.monotonic()>=deadline:
                                 # 超时只记录现场，进度回执失败不能把交付判成故障。
-                                try:save('waiting_slot',artifact=str(artifact),source_commit=d['source_commit'],timeout=True)
+                                try:save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'],timeout=True)
                                 except Exception:pass
                                 raise SlotWaitTimeout('等待验收槽位超过 10 分钟，交给下一轮续接')
                             time.sleep(5)
@@ -442,7 +467,7 @@ class Worker:
     def batch_source(self,batch,members):
         """最新主分支 + 各成员固定提交；冲突时回填到具体成员，不半发布。"""
         r.run(['git','-C',r.ROOT,'fetch','origin','refs/heads/personal-studio-upstream'])
-        base=r.output(['git','-C',r.ROOT,'rev-parse','origin/personal-studio-upstream'])
+        base=batch.get('base_commit') or r.output(['git','-C',r.ROOT,'rev-parse','origin/personal-studio-upstream'])
         path=r.RUN/'delivery-sources'/('batch-'+batch['id']);branch='feature/delivery/batch-'+batch['id']
         if path.exists():
             if r.output(['git','status','--porcelain','--untracked-files=all'],cwd=path):raise RuntimeError('批次构建目录存在未保存内容')
@@ -489,54 +514,52 @@ class Worker:
                 path,base,commit,conflict=self.batch_source(batch,members)
             except Exception as error:
                 self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=str(error)[:1200]))
+                self.finish_publication(delivery)
                 return True
             if conflict:
                 detail='提交 %s 无法合并到最新主分支，请在原任务分支解决后重新交付'%conflict['source_commit']
                 self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=detail,conflict_delivery_id=conflict['delivery_id']))
                 self.finish_publication(delivery)
                 return True
-            # 修改 5. 构建名单以准备阶段返回的 pending 成员为准：此时撤权的成员不进入候选，
-            # 名单变化就按剩余成员重新合并，避免候选夹带已撤权代码。
+            # 修改 5. 构建名单以准备阶段返回的 pending 成员为准：名单一变说明代表可能已被撤权，
+            # 旧代表持有的 delivery/租约不再代表本批，整批退出释放，下一批由剩余成员重新领取。
             state=self.batch_call(dict(action='preparing',batch_id=batch['id'],worker_token=batch['worker_token'],base_commit=base))
             if state['batch']['status']!='preparing':
                 self.finish_publication(delivery);return True
             active=self.pending_members(state)
             if [m['delivery_id'] for m in active]!=[m['delivery_id'] for m in members]:
-                members=active
-                if not members:
-                    self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='批次成员授权全部失效'))
-                    self.finish_publication(delivery);return True
-                try:
-                    path,base,commit,conflict=self.batch_source(batch,members)
-                except Exception as error:
-                    self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=str(error)[:1200]))
-                    self.finish_publication(delivery);return True
-                if conflict:
-                    detail='提交 %s 无法合并到最新主分支，请在原任务分支解决后重新交付'%conflict['source_commit']
-                    self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=detail,conflict_delivery_id=conflict['delivery_id']))
-                    self.finish_publication(delivery);return True
+                self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='批次成员授权已变化，按剩余有效成员重新组批'))
+                self.finish_publication(delivery)
+                return True
             fence()
             try:
                 record=r.prepare_int(path,delivery=dict(delivery_id=delivery['id'],delivery_env=self.env,
                     approved_source=delivery['source_commit'],publication_lease=lease,batch_id=batch['id'],
                     batch_members=[dict(delivery_id=m['delivery_id'],source_commit=m['source_commit']) for m in members]),fence=fence)
+            except r.RecoveryRequired:
+                # 环境恢复尚未完成时保留批次与租约，不能让下一批覆盖现场。
+                raise
             except Exception as error:
                 # 修改 6. 构建异常必须结束整批：成员保留授权等下一批，不能把批次留在 preparing。
                 try:self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='组合构建失败：'+str(error)[:1000]))
                 finally:self.finish_publication(delivery)
                 raise
             state=self.batch_call(dict(action='validating',batch_id=batch['id'],worker_token=batch['worker_token'],
-                candidate_id=record['id'],candidate_commit=commit))
+                candidate_id=record['id'],candidate_commit=commit,candidate_url=self.candidate_url()))
             # 修改 7. 候选固定后成员撤权时服务端已让批次安全停下：丢弃这份候选，不通知成员进入发布。
             if state['batch']['status']!='validating':
                 r.release_candidate(record['id']);self.finish_publication(delivery);return True
+        self.notify_batch_ready(members)
+        return True
+
+    def notify_batch_ready(self,members):
+        rows=self.api('delivery-queue')
         for member in members:
             row=self.batch_row(rows,member['delivery_id'])
             if not row:continue
             try:self.advance(row,'notify-result',stage='batch_ready')
             except urllib.error.HTTPError as error:
                 if error.code!=409:raise
-        return True
 
     def batch_resume(self,batch,members,rows):
         # 修改 8. 准备阶段重启：候选已部署就接续验收，构建中断且 int 未切换就重来，明确失败则结束整批。
@@ -544,22 +567,24 @@ class Worker:
         if candidate and candidate.get('batch_id')!=batch['id']:candidate=None
         if candidate and candidate['status'] in ('verifying','accepted'):
             state=self.batch_call(dict(action='validating',batch_id=batch['id'],worker_token=batch['worker_token'],
-                candidate_id=candidate['id'],candidate_commit=candidate['commit']))
+                candidate_id=candidate['id'],candidate_commit=candidate['commit'],candidate_url=self.candidate_url()))
             if state['batch']['status']!='validating':
-                r.release_candidate(candidate['id']);return True
-            for member in members:
-                row=self.batch_row(rows,member['delivery_id'])
-                if not row:continue
-                try:self.advance(row,'notify-result',stage='batch_ready')
-                except urllib.error.HTTPError as error:
-                    if error.code!=409:raise
+                r.release_candidate(candidate['id']);self.finish_publication(self.batch_row(rows,candidate['delivery_id']));return True
+            self.notify_batch_ready(members)
             return True
         if candidate:
-            if candidate['status'] in ('failed','recovery_required'):
+            if candidate['status']=='recovery_required':
+                raise r.RecoveryRequired('组合环境恢复未完成：'+candidate.get('error',''))
+            if candidate['status']=='failed':
                 self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],
                     error=('组合构建未完成：'+(candidate.get('error') or candidate['status']))[:1200]))
+                representative=self.batch_row(rows,candidate.get('delivery_id',''))
+                if representative:self.finish_publication(representative)
+                if candidate['status']=='failed':r.release_candidate(candidate['id'])
                 return True
             if candidate['status']=='building':
+                if candidate.get('publisher_pid') not in (None,os.getpid()) and r.exists(candidate['publisher_pid']):
+                    raise Busy('组合构建进程仍在运行')
                 # 半成品只有在 int 仍是构建前版本时才能丢弃重来，否则需要核对现场。
                 live=r.read(r.meta_path('int'))
                 if live['release_id']!=candidate.get('previous_int_release'):
@@ -568,16 +593,30 @@ class Worker:
         if not members:return True
         return self.batch_prepare(batch,members,rows)
 
+    def batch_acceptance(self,candidate,members,rows):
+        row=self.batch_row(rows,candidate.get('delivery_id',''))
+        if (row and row.get('candidate_id')==candidate['id'] and row.get('acceptance_submitted')
+                and row.get('plan_snapshot',{}).get('candidate_commit')==candidate['commit']):
+            return row.get('evidence') or None
+        return None
+
     def batch_validate(self,batch,members,rows):
         representative=self.batch_row(rows,members[0]['delivery_id']) if members else None
         candidate=r.candidate() if r.candidate_path().exists() else None
         if not candidate or candidate.get('batch_id')!=batch['id']:
             self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='组合候选记录缺失，需要核对 int 现场'))
             return True
+        representative=self.batch_row(rows,candidate.get('delivery_id',''))
         if representative:self.publication(representative,'heartbeat')
+        self.notify_batch_ready(members)
         if candidate['status']=='verifying':
-            # 组合验收由批次代表交付提交；证据与候选一起归档后才进入发布。
-            return True
+            # 修改 13. 组合验收由批次成员在同一个固定候选上提交，证据与候选一起归档后才进入发布。
+            checks=self.batch_acceptance(candidate,members,rows)
+            if not checks:return True
+            evidence=r.RUN/'delivery-evidence'/(candidate['id']+'.json')
+            r.write(evidence,dict(candidate=candidate['id'],summary='组合候选实际功能验收',checks=checks),True)
+            r.accept(candidate['id'],evidence)
+            candidate=r.candidate()
         if candidate['status']!='accepted':return True
         state=self.batch_call(dict(action='publishing',batch_id=batch['id'],worker_token=batch['worker_token']))
         if state['batch']['status']!='publishing':
@@ -589,6 +628,15 @@ class Worker:
         r.run(['git','fetch','origin','personal-studio-upstream'],cwd=r.ROOT)
         if subprocess.run(['git','merge-base','--is-ancestor','origin/personal-studio-upstream',tested],cwd=r.ROOT).returncode:
             self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='队列外主分支发生变化，候选与成员证据已保留，需要核对后重排'))
+            self.finish_publication(delivery);r.release_candidate(candidate['id']);return True
+        self.publication(delivery,'check')
+        # 修改 14. 撤权复核必须在 push 之前：先推主分支再验证会让未批准的成员代码进入 main。
+        if [(m['delivery_id'],m['source_commit']) for m in members if m.get('result','pending')=='pending'] != [(m['delivery_id'],m['source_commit']) for m in candidate.get('batch_members',[])]:
+            self.batch_call(dict(action='abort',batch_id=batch['id'],worker_token=batch['worker_token'],error='固定成员已变化，重新组批'))
+            self.finish_publication(delivery);r.release_candidate(candidate['id']);return True
+        try:r.check_delivery_approval(candidate)
+        except Exception as error:
+            self.batch_call(dict(action='abort',batch_id=batch['id'],worker_token=batch['worker_token'],error='推送前授权复核失败：'+str(error)[:1000]))
             self.finish_publication(delivery);r.release_candidate(candidate['id']);return True
         self.publication(delivery,'check')
         r.run(['git','push','origin',tested+':refs/heads/personal-studio-upstream'],cwd=path)
@@ -604,7 +652,12 @@ class Worker:
             return True
         if representative:self.publication(representative,'heartbeat')
         target=r.request_path(candidate['id'])
-        if not target.exists():return True
+        if not target.exists():
+            state=self.batch_call(dict(action='publishing',batch_id=batch['id'],worker_token=batch['worker_token']))
+            if state['batch']['status']!='publishing':
+                if representative:self.finish_publication(representative)
+                r.release_candidate(candidate['id']);return True
+            return self.batch_release(batch,candidate,representative,state['members'])
         result=r.read(target)
         if result['status'] in ('queued','publishing'):return True
         if result['status']=='succeeded':

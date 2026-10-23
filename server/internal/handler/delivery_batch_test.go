@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"github.com/go-chi/chi/v5"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -86,6 +88,26 @@ func deliveryPhase(t *testing.T, delivery string) string {
 	return phase
 }
 
+func batchAcceptRequest(t *testing.T, delivery, candidate string, revision int64) *http.Request {
+	t.Helper()
+	var issue string
+	dbfx.QueryRow(t, `SELECT issue_id::text FROM issue_delivery WHERE id=$1`, delivery).Scan(&issue)
+	var owner coordinationOwner
+	_ = testPool.QueryRow(context.Background(), `SELECT token::text,generation FROM delivery_owner WHERE issue_id=$1 AND execution_id=$2`, issue, "batch-test-"+delivery).Scan(&owner.Token, &owner.Generation)
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "batch-test-"+delivery, owner, "")).Want(200).JSON(&owner)
+	req := deliveryRequest(issue, map[string]any{"action": "accept", "revision": revision, "candidate_id": candidate, "evidence": []deliveryCheck{{Name: "组合业务", Status: "passed", Evidence: "受控真实数据库接口验收"}}}, owner)
+	chi.RouteContext(req.Context()).URLParams.Add("deliveryId", delivery)
+	return req
+}
+
+func acceptBatchFixture(t *testing.T, batch string) {
+	t.Helper()
+	var delivery, candidate string
+	var revision int64
+	dbfx.QueryRow(t, `SELECT d.id::text,b.candidate_id,d.revision FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id JOIN issue_delivery d ON d.id=m.delivery_id WHERE b.id=$1 AND m.result='pending' ORDER BY m.created_at,m.delivery_id LIMIT 1`, batch).Scan(&delivery, &candidate, &revision)
+	testutil.Call(t, testHandler.ActIssueDelivery, batchAcceptRequest(t, delivery, candidate, revision)).Want(200)
+}
+
 func TestDeliveryBatchCollectsApprovedDeliveriesInOneWindow(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -163,6 +185,7 @@ func TestDeliveryBatchDropsMemberWithoutAuthorizationBeforePublish(t *testing.T)
 	if deliveryPhase(t, kept) != "approved" {
 		t.Fatal("未撤回授权的成员被连带退出")
 	}
+	acceptBatchFixture(t, batch.ID)
 	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
 	if deliveryPhase(t, kept) != "publishing" {
 		t.Fatalf("有效成员未进入发布阶段: %s", deliveryPhase(t, kept))
@@ -276,6 +299,7 @@ func TestDeliveryBatchPublishesMembersOnceWithOneCandidate(t *testing.T) {
 	batch, _ = freezeBatch(t, batch.ID)
 	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
 	batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "candidate-2", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+	acceptBatchFixture(t, batch.ID)
 	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
 	response := batchAction(t, map[string]any{"action": "published", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_commit": strings.Repeat("d", 40)}).Want(200)
 	var state map[string]any
@@ -347,5 +371,75 @@ func TestDeleteDeliveryDataCleansBatchMembers(t *testing.T) {
 	dbfx.QueryRow(t, `SELECT count(*) FROM delivery_batch WHERE id=$1`, batch).Scan(&batches)
 	if members != 0 || batches != 0 {
 		t.Fatalf("删除交付后仍残留成员或空批次: members=%d batches=%d", members, batches)
+	}
+}
+
+func TestDeliveryBatchAcceptanceBindsExactCandidateAndReplaysOnce(t *testing.T) {
+	batchCleanup(t)
+	batchFixture(t)
+	batchFixture(t)
+	batch, _ := openBatch(t, 60)
+	batch, _ = freezeBatch(t, batch.ID)
+	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+	body := map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "batch-real-api", "candidate_commit": strings.Repeat("d", 40), "candidate_url": "http://fixture.invalid"}
+	batchAction(t, body).Want(200)
+	batchAction(t, body).Want(200)
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(409)
+	var representative, other, token, issue string
+	var revision int64
+	dbfx.QueryRow(t, `SELECT d.id::text,d.revision,d.worker_token::text,d.issue_id::text FROM delivery_batch_member m JOIN issue_delivery d ON d.id=m.delivery_id WHERE m.batch_id=$1 ORDER BY m.created_at,m.delivery_id LIMIT 1`, batch.ID).Scan(&representative, &revision, &token, &issue)
+	dbfx.QueryRow(t, `SELECT delivery_id::text FROM delivery_batch_member WHERE batch_id=$1 AND delivery_id<>$2`, batch.ID, representative).Scan(&other)
+	var otherRev int64
+	dbfx.QueryRow(t, `SELECT revision FROM issue_delivery WHERE id=$1`, other).Scan(&otherRev)
+	testutil.Call(t, testHandler.ActIssueDelivery, batchAcceptRequest(t, other, "batch-real-api", otherRev)).Want(409)
+	testutil.Call(t, testHandler.ActIssueDelivery, batchAcceptRequest(t, representative, "wrong-candidate", revision)).Want(409)
+	testutil.Call(t, testHandler.ActIssueDelivery, batchAcceptRequest(t, representative, "batch-real-api", revision)).Want(200)
+	testutil.Call(t, testHandler.ActIssueDelivery, batchAcceptRequest(t, representative, "batch-real-api", revision)).Want(200)
+	var count int
+	dbfx.QueryRow(t, `SELECT count(*) FROM delivery_evidence WHERE delivery_id=$1 AND candidate_id='batch-real-api'`, representative).Scan(&count)
+	if count != 1 {
+		t.Fatalf("验收重放重复记录: %d", count)
+	}
+	dbfx.QueryRow(t, `SELECT revision FROM issue_delivery WHERE id=$1`, representative).Scan(&revision)
+	for n := 0; n < 2; n++ {
+		testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": representative, "revision": revision, "worker_token": token, "action": "notify-result", "stage": "batch_ready", "source_commit": strings.Repeat("a", 40)})).Want(200)
+	}
+	dbfx.QueryRow(t, `SELECT count(*) FROM comment c JOIN delivery_notice n ON n.comment_id=c.id WHERE n.delivery_id=$1 AND n.stage='batch_ready'`, representative).Scan(&count)
+	if count != 1 {
+		t.Fatalf("就绪通知重复: %d", count)
+	}
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := deliveryAuthorizationReady(context.Background(), tx, testWorkspaceID, issue, representative)
+	tx.Rollback(context.Background())
+	if err != nil || !ready {
+		t.Fatalf("发布器自身通知使授权失效: ready=%v err=%v", ready, err)
+	}
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
+}
+
+func TestDeliveryBatchAbortRestoresRemainingApprovedCandidate(t *testing.T) {
+	batchCleanup(t)
+	first, _ := batchFixture(t)
+	second, _ := batchFixture(t)
+	dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='single-before-batch' WHERE id IN($1,$2)`, first, second)
+	batch, _ := openBatch(t, 60)
+	batch, _ = freezeBatch(t, batch.ID)
+	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+	batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "old-combination", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL WHERE id=$1`, first)
+	// 无有效证据也先处理撤权：整个旧组合停止，剩余成员不能继续发布它。
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
+	var phase, candidate string
+	dbfx.QueryRow(t, `SELECT phase,candidate_id FROM issue_delivery WHERE id=$1`, second).Scan(&phase, &candidate)
+	if phase != "approved" || candidate != "single-before-batch" {
+		t.Fatalf("撤权后未恢复剩余成员: %s %s", phase, candidate)
+	}
+	next, _ := openBatch(t, 60)
+	next, members := freezeBatch(t, next.ID)
+	if next.ID == batch.ID || next.WorkerToken == batch.WorkerToken || len(members) != 1 || members[0].DeliveryID != second {
+		t.Fatalf("新批次没有独立身份: %+v %+v", next, members)
 	}
 }

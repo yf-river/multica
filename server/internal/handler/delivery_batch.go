@@ -58,7 +58,7 @@ func scanDeliveryBatch(row pgx.Row) (deliveryBatch, error) {
 
 func (h *Handler) deliveryBatchMembers(r *http.Request, batch string) ([]deliveryBatchMember, error) {
 	members := []deliveryBatchMember{}
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(jsonb_build_object('delivery_id',m.delivery_id,'issue_id',m.issue_id,'number',i.number,'source_commit',m.source_commit,'result',m.result,'error',m.error) ORDER BY m.created_at),'[]') FROM delivery_batch_member m JOIN issue i ON i.id=m.issue_id WHERE m.batch_id=$1`, batch).Scan(&members)
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(jsonb_build_object('delivery_id',m.delivery_id,'issue_id',m.issue_id,'number',i.number,'source_commit',m.source_commit,'result',m.result,'error',m.error) ORDER BY m.created_at,m.delivery_id),'[]') FROM delivery_batch_member m JOIN issue i ON i.id=m.issue_id WHERE m.batch_id=$1`, batch).Scan(&members)
 	return members, err
 }
 
@@ -93,6 +93,7 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 		BaseCommit       string `json:"base_commit"`
 		CandidateID      string `json:"candidate_id"`
 		CandidateCommit  string `json:"candidate_commit"`
+		CandidateURL     string `json:"candidate_url"`
 		WorkerToken      string `json:"worker_token"`
 		Error            string `json:"error"`
 		ConflictDelivery string `json:"conflict_delivery_id"`
@@ -148,9 +149,9 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 	case "preparing":
 		err = h.prepareDeliveryBatch(r, tx, ws, &current, body.BaseCommit)
 	case "validating":
-		err = h.validateDeliveryBatch(r, tx, ws, &current, body.CandidateID, body.CandidateCommit)
+		err = h.validateDeliveryBatch(r, tx, ws, &current, body.CandidateID, body.CandidateCommit, body.CandidateURL)
 	case "publishing":
-		if current.Status != batchValidating {
+		if current.Status != batchValidating && current.Status != batchPublishing {
 			err = fmt.Errorf("批次不在待发布阶段")
 			break
 		}
@@ -164,9 +165,18 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 		if err == nil && len(withdrawn) == 0 {
 			var pending int
 			if err = tx.QueryRow(r.Context(), `SELECT count(*) FROM delivery_batch_member WHERE batch_id=$1 AND result='pending'`, current.ID).Scan(&pending); err == nil {
-				if pending == 0 {
+				// 修改 9. 组合候选必须有成员在固定组合上提交的实际验收证据；没有证据就停下，
+				// 不能用批次状态直接宣布已验收后发布。
+				var verified bool
+				if pending > 0 {
+					err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM delivery_evidence e WHERE e.delivery_id=(SELECT delivery_id FROM delivery_batch_member WHERE batch_id=$1 AND result='pending' ORDER BY created_at,delivery_id LIMIT 1) AND e.candidate_id=$2::text AND e.source_commit=$3::text)`, current.ID, current.CandidateID, current.CandidateCommit).Scan(&verified)
+				}
+				if err == nil && pending > 0 && !verified {
+					err = fmt.Errorf("组合候选缺少成员实际验收证据")
+				}
+				if err == nil && pending == 0 {
 					_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET status='cancelled',error='没有有效授权的成员',updated_at=now() WHERE id=$1`, current.ID)
-				} else {
+				} else if err == nil {
 					// 组合候选已在 int 通过验收：成员进入发布阶段，同一份产物随后切换到生产。
 					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='publishing',candidate_id=$2::text,release_validated=true,error='',revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, current.ID, current.CandidateID)
 					if err == nil {
@@ -175,6 +185,12 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	case "abort":
+		if strings.TrimSpace(body.Error) == "" || (current.Status != batchPreparing && current.Status != batchValidating && current.Status != batchPublishing) {
+			err = fmt.Errorf("需要活动批次及具体停止原因")
+			break
+		}
+		err = h.stopStaleBatch(r, tx, current.ID, body.Error)
 	case "published":
 		err = h.publishDeliveryBatch(r, tx, current, body.CandidateCommit, &demoted)
 	case "fail":
@@ -357,12 +373,18 @@ func (h *Handler) prepareDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, cu
 // 整批停止并由下一批按剩余成员重新构建和验收，禁止剩余成员继续发布旧组合。
 const staleBatchReason = "成员发布授权已失效，已固定候选包含撤权成员代码，整批停止并按剩余成员重新组批"
 
-func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, current *deliveryBatch, candidate, commit string) error {
+func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, current *deliveryBatch, candidate, commit, url string) error {
 	if current.Status == batchValidating {
+		if current.CandidateID != candidate || current.CandidateCommit != commit {
+			return fmt.Errorf("组合候选已固定，不能替换")
+		}
 		return nil
 	}
 	if current.Status != batchPreparing {
 		return fmt.Errorf("批次不在验收阶段")
+	}
+	if strings.TrimSpace(candidate) == "" || !deliveryCommit.MatchString(commit) {
+		return fmt.Errorf("需要准确组合候选及完整提交")
 	}
 	_, withdrawn, err := h.withdrawInvalidMembers(r, tx, ws, current.ID)
 	if err != nil {
@@ -371,12 +393,47 @@ func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, c
 	if len(withdrawn) > 0 {
 		return h.stopStaleBatch(r, tx, current.ID, staleBatchReason)
 	}
+	// 修改 7. 固定组合就是成员这一轮要验收的候选：把候选归属和授权复核里的候选同步到同一份组合，
+	// 成员才能通过正式验收接口提交证据，后续撤权复核也不会把同一组合误判成授权失效。
+	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET candidate_id=$2::text,candidate_url=$3::text,acceptance_submitted=false,plan_snapshot=jsonb_set(jsonb_set(jsonb_set(jsonb_set(COALESCE(d.plan_snapshot,'{}'::jsonb),'{batch_previous_candidate}',to_jsonb(d.candidate_id)),'{batch_previous_review}',COALESCE(d.plan_snapshot->'authorization_review','{}'::jsonb)),'{candidate_commit}',to_jsonb($4::text)),'{authorization_review}',CASE WHEN d.plan_snapshot ? 'authorization_review' THEN jsonb_set(d.plan_snapshot->'authorization_review','{candidate_id}',to_jsonb($2::text)) ELSE '{}'::jsonb END),revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, current.ID, candidate, url, commit)
+	if err != nil {
+		return err
+	}
+	// 修改 8. 组合就绪通知要有持久通知号，否则成员侧的 notify-result 一定失败，批次也停在验收阶段。
+	rows, err := tx.Query(r.Context(), `SELECT m.delivery_id::text FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.result='pending'`, current.ID)
+	if err != nil {
+		return err
+	}
+	var notice []string
+	for rows.Next() {
+		var delivery string
+		if err = rows.Scan(&delivery); err != nil {
+			rows.Close()
+			return err
+		}
+		notice = append(notice, delivery)
+	}
+	rows.Close()
+	for _, delivery := range notice {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,'batch_ready',$2) ON CONFLICT(delivery_id,stage) DO UPDATE SET comment_id=EXCLUDED.comment_id,delivered_at=NULL`, delivery, dbid.NewV7()); err != nil {
+			return err
+		}
+	}
 	_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET candidate_id=$2::text,candidate_commit=$3::text,status='validating',updated_at=now() WHERE id=$1 AND status='preparing'`, current.ID, candidate, commit)
 	return err
 }
 
 func (h *Handler) stopStaleBatch(r *http.Request, tx pgx.Tx, batch, reason string) error {
+	if err := h.resetPendingBatchMembers(r, tx, batch, reason); err != nil {
+		return err
+	}
 	_, err := tx.Exec(r.Context(), `UPDATE delivery_batch SET status='cancelled',error=$2::text,updated_at=now() WHERE id=$1 AND status IN ('preparing','validating','publishing')`, batch, reason)
+	return err
+}
+
+// 候选作废后恢复成员原批准候选；新批次重新领取，不复用旧组合验收。
+func (h *Handler) resetPendingBatchMembers(r *http.Request, tx pgx.Tx, batch, reason string) error {
+	_, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='approved',release_validated=false,acceptance_submitted=false,candidate_url='',candidate_id=COALESCE(NULLIF(d.plan_snapshot->>'batch_previous_candidate',''),d.candidate_id),plan_snapshot=CASE WHEN d.plan_snapshot ? 'batch_previous_review' THEN jsonb_set(d.plan_snapshot,'{authorization_review}',d.plan_snapshot->'batch_previous_review') ELSE d.plan_snapshot END,error=$2::text,revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, batch, reason)
 	return err
 }
 
@@ -431,6 +488,9 @@ func (h *Handler) withdrawMember(r *http.Request, tx pgx.Tx, ws, batch, delivery
 func (h *Handler) publishDeliveryBatch(r *http.Request, tx pgx.Tx, current deliveryBatch, candidateCommit string, demoted *[]string) error {
 	if current.Status != batchPublishing {
 		return fmt.Errorf("批次不在发布阶段")
+	}
+	if candidateCommit != current.CandidateCommit {
+		return fmt.Errorf("生产提交与固定候选不一致")
 	}
 	rows, err := tx.Query(r.Context(), `SELECT delivery_id::text,issue_id::text FROM delivery_batch_member WHERE batch_id=$1 AND result='pending' ORDER BY created_at`, current.ID)
 	if err != nil {
@@ -492,6 +552,19 @@ func (h *Handler) failDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, curre
 			return err
 		}
 	}
+	if err := h.resetPendingBatchMembers(r, tx, current.ID, message); err != nil {
+		return err
+	}
 	_, err := tx.Exec(r.Context(), `UPDATE delivery_batch SET status='needs_changes',error=$2::text,updated_at=now() WHERE id=$1`, current.ID, message)
 	return err
+}
+
+// 组合验收由确定顺序的代表交付提交，证据绑定本批固定候选。
+func batchAcceptanceCandidate(r *http.Request, tx pgx.Tx, ws, delivery string) (string, error) {
+	var candidate string
+	err := tx.QueryRow(r.Context(), `SELECT b.candidate_id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE b.workspace_id=$1 AND m.delivery_id=$2 AND m.result='pending' AND b.status='validating' AND b.candidate_id<>'' AND m.delivery_id=(SELECT delivery_id FROM delivery_batch_member WHERE batch_id=b.id AND result='pending' ORDER BY created_at,delivery_id LIMIT 1)`, ws, delivery).Scan(&candidate)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return candidate, err
 }

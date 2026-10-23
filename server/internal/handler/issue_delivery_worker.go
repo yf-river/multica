@@ -94,7 +94,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "交付不存在")
 		return
 	}
-	if rev != body.Revision {
+	// 修改 3. 组合就绪通知不改交付阶段，成员记录可能刚被固定组合改写：按当前版本通知，
+	// 由 delivery_notice 唯一键保证只发一次，其余动作仍要求提交时看到的版本。
+	if rev != body.Revision && !(body.Action == "notify-result" && body.Stage == "batch_ready") {
 		writeError(w, 409, "交付已变化")
 		return
 	}
@@ -232,7 +234,19 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case "tested":
-			if (phase != "testing" && phase != "preparing_release") || !validDeliveryChecks(body.Checks) {
+			batchCandidate := ""
+			if phase == "approved" {
+				batchCandidate, err = batchAcceptanceCandidate(r, tx, ws, body.ID)
+				if err != nil {
+					writeError(w, 500, "读取组合验收状态失败")
+					return
+				}
+				if batchCandidate == "" || body.Candidate != batchCandidate {
+					writeError(w, 409, "需要代表交付及准确组合候选")
+					return
+				}
+			}
+			if (phase != "testing" && phase != "preparing_release" && batchCandidate == "") || !validDeliveryChecks(body.Checks) {
 				writeError(w, 409, "当前候选缺少实际自动验收证据")
 				return
 			}
