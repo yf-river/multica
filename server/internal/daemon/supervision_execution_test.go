@@ -11,6 +11,38 @@ import (
 	"github.com/multica-ai/multica/server/pkg/investigation"
 )
 
+func TestSupervisionInstructionsIncludeOnlyBoundRoleSkill(t *testing.T) {
+	task := Task{SupervisionPrompt: `{"materials":[]}`, Agent: &AgentData{
+		Instructions: "最高优先级：只读调查",
+		Skills: []SkillData{
+			{Name: "ida-development", Content: "开发与部署操作"},
+			{Name: "delivery-review", Content: "提交审查结论"},
+			{Name: "delivery-supervision", Content: "按准确提交核对用量证据"},
+		},
+	}}
+	got := supervisionInstructions(task)
+	if !strings.HasPrefix(got, task.Agent.Instructions) || !strings.Contains(got, task.Agent.Skills[2].Content) {
+		t.Fatal("supervision lost its priority instructions or bound role skill")
+	}
+	for _, unrelated := range task.Agent.Skills[:2] {
+		if strings.Contains(got, unrelated.Content) {
+			t.Fatal("unrelated workflow leaked into supervision instructions")
+		}
+	}
+	if task.Agent.Instructions != "最高优先级：只读调查" {
+		t.Fatal("instruction snapshot was mutated")
+	}
+	task.SupervisionPrompt = ""
+	if supervisionInstructions(task) != task.Agent.Instructions {
+		t.Fatal("ordinary task instructions changed")
+	}
+	task.SupervisionPrompt = "{}"
+	task.Agent.Skills = task.Agent.Skills[:2]
+	if supervisionInstructions(task) != task.Agent.Instructions {
+		t.Fatal("an unbound role skill was injected")
+	}
+}
+
 func TestSupervisionSourceScopeDoesNotBroadenRunDirectories(t *testing.T) {
 	workspace := t.TempDir()
 	project := t.TempDir()

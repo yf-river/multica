@@ -6598,7 +6598,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var instructions string
 	agentName = task.Agent.Name
 	skills = task.Agent.Skills
-	instructions = task.Agent.Instructions
+	instructions = supervisionInstructions(task)
 
 	// 准备隔离执行环境。
 	// 仓库只作为元数据传入——agent 按需通过 `multica repo checkout <url>` 检出。
