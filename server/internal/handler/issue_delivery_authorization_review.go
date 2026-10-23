@@ -130,7 +130,10 @@ func deliveryAuthorizationNoticeFor(ctx context.Context, tx pgx.Tx, ws, issue, i
 }
 
 // 通知文案说明为什么暂停和唯一继续路径，避免负责人重新向用户索取已给出的授权。
-const deliveryReviewNotice = "交付 %s 已在 int 完成功能验收，候选 %s（源码提交 %s）。用户已授权发布（授权记录 %s，来源评论 %s），但该授权尚未复核当前候选，发布暂停。请阅读最新用户评论，核对改动范围、候选提交和验收证据，再按 `multica issue delivery status` 的 user_comments_version，用 `multica issue delivery approve` 提交 authorization_id、scope_review 和当前 user_comments_version 完成复核；范围未变时不要再让用户重复确认。归属仍被上一轮验收运行持有时先核对再 recover-owner 接续，不要抢占其他任务。候选实质变化、范围扩大或用户撤回授权时不要继续发布。"
+// 1. 验收环境不写死 int：同一文案既用于独立验收（verify-N）通过后的唤醒，也用于组合候选在 int
+// 通过后的唤醒，写明“以该候选的验收记录为准”并点明独立验收不等同最终 int，避免把独立验收误读为
+// 最终组合验收已过。
+const deliveryReviewNotice = "交付 %s 的候选 %s（源码提交 %s）已通过功能验收，验收环境以该候选的验收记录为准（独立验收不等同于最终 int 组合验收）。用户已授权发布（授权记录 %s，来源评论 %s），但该授权尚未复核当前候选，发布暂停。请阅读最新用户评论，核对改动范围、候选提交和验收证据，再按 `multica issue delivery status` 的 user_comments_version，用 `multica issue delivery approve` 提交 authorization_id、scope_review 和当前 user_comments_version 完成复核；范围未变时不要再让用户重复确认。归属仍被上一轮验收运行持有时先核对再 recover-owner 接续，不要抢占其他任务。候选实质变化、范围扩大或用户撤回授权时不要继续发布。"
 
 // 复核失败或长期未接续时的可见说明，避免记录只剩“待审核”而没有下一步。
 const deliveryReviewStalledNotice = "已有发布授权，但负责人复核未接续（候选 %s）。请核对通知是否送达、负责人运行是否结束，再显式接续复核；不要手工改写批准状态。"
@@ -230,7 +233,7 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 	if phase != "awaiting_review" {
 		return fmt.Errorf("当前无需授权核对")
 	}
-	state, _, err := deliveryReleaseState(r.Context(), tx, ws, issue, id)
+	state, authorization, err := deliveryReleaseState(r.Context(), tx, ws, issue, id)
 	if err != nil {
 		return err
 	}
@@ -244,8 +247,20 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 		return fmt.Errorf("当前没有等待负责人复核的有效授权")
 	}
 	notice := deliveryAuthorizationNoticeOf(snapshot)
+	// 5. 历史记录：早于本次部署进入 awaiting_review、已有有效授权但从未登记待复核意图的交付，
+	// 先补登记再走同一条通知路径，避免这类记录永久停在待审核。
 	if notice.CommentID == "" {
-		return fmt.Errorf("待复核意图尚未生成，等待队列重新登记")
+		raw, genErr := deliveryAuthorizationNoticeFor(r.Context(), tx, ws, issue, id, authorization)
+		if genErr != nil {
+			return genErr
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,error=$3 WHERE id=$1`, id, raw, "已有发布授权，等待负责人复核当前候选"); err != nil {
+			return err
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			return err
+		}
+		return h.deliverDeliveryAuthorizationReview(r, ws, issue, id)
 	}
 	var delivered bool
 	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment WHERE id=$1 AND issue_id=$2)`, notice.CommentID, issue).Scan(&delivered); err != nil {
