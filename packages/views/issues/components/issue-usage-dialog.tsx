@@ -233,7 +233,15 @@ function CostByAgent({
       .map((agentId) => {
         const own = tasks.filter((task) => task.agent_id === agentId);
         const summary = summarizeTaskUsageAcross(own.map((task) => task.usage));
-        return { agentId, cost: summary?.cost ?? 0, tokens: summary?.tokens ?? 0 };
+        // 每行只用自己的用量判断：整窗里有一个可定价模型，不代表这个 agent 的
+        // 花费是已知的，直接沿用整窗标志会把"不知道"写成 $0.00。
+        const ownCostKnown = hasKnownCost(own.flatMap((task) => task.usage ?? []));
+        return {
+          agentId,
+          cost: summary?.cost ?? 0,
+          tokens: summary?.tokens ?? 0,
+          costKnown: ownCostKnown,
+        };
       })
       .toSorted((a, b) => b.cost - a.cost);
   }, [agentIds, tasks, pricings]);
@@ -267,7 +275,7 @@ function CostByAgent({
               {formatTokens(row.tokens)}
             </div>
             <div className="text-right text-caption font-medium tabular-nums">
-              {costKnown ? formatUsd(row.cost) : "—"}
+              {row.costKnown ? formatUsd(row.cost) : "—"}
             </div>
           </div>
         ))}
@@ -323,12 +331,7 @@ function RunTable({
         </thead>
         <tbody>
           {tasks.map((task) => (
-            <RunRow
-              key={task.id}
-              task={task}
-              maxTokens={maxTokens}
-              costKnown={costKnown}
-            />
+            <RunRow key={task.id} task={task} maxTokens={maxTokens} />
           ))}
         </tbody>
         <tfoot>
@@ -351,15 +354,7 @@ function RunTable({
 /**
  * 明细表的一行（一条运行）。
  */
-function RunRow({
-  task,
-  maxTokens,
-  costKnown,
-}: {
-  task: AgentTask;
-  maxTokens: number;
-  costKnown: boolean;
-}) {
+function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
   const { t } = useT("issues");
   const trigger = useTriggerText(task);
   const statusLabel = useStatusLabel(task.status, task.failure_reason);
@@ -420,7 +415,7 @@ function RunRow({
         </div>
       </td>
       <td className="!pr-0 font-medium">
-        {costKnown ? formatUsd(summary.cost) : "—"}
+        {hasKnownCost(task.usage ?? []) ? formatUsd(summary.cost) : "—"}
       </td>
     </tr>
   );

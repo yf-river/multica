@@ -406,6 +406,19 @@ export function DashboardPage() {
     () => mergeAgentDashboardRows(agentTokenRows, runTimeRows),
     [agentTokenRows, runTimeRows],
   );
+  // 每个 agent 单独判断"这批用量有没有价格来源"。窗口级的标志只适合 KPI 合计，
+  // 拿它给每一行用，会让恰好只有不可定价模型的 agent 也显示 $0.00。
+  const costKnownByAgent = useMemo(() => {
+    const grouped = new Map<string, typeof byAgentUsage>();
+    for (const row of byAgentUsage) {
+      const list = grouped.get(row.agent_id);
+      if (list) list.push(row);
+      else grouped.set(row.agent_id, [row]);
+    }
+    const result = new Map<string, boolean>();
+    for (const [agentId, rows] of grouped) result.set(agentId, hasKnownCost(rows));
+    return result;
+  }, [byAgentUsage]);
 
   // 把「已硬删除的 Agent」的汇总行折进一个聚合的 "Deleted agents" 行，而不是
   // 显示成一串裸 UUID（MUL-3771）或直接丢弃——丢弃会让分 Agent 明细与仍计入
@@ -589,6 +602,7 @@ export function DashboardPage() {
                   deletedAgentCount={deletedAgentCount}
                   lessThanMinuteLabel={lessThanMinuteLabel}
                   costKnown={costKnown}
+                  costKnownByAgent={costKnownByAgent}
                 />
               </>
             )}
