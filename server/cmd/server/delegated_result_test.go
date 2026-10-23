@@ -29,6 +29,11 @@ func TestDelegatedResultProjectionValidatesIdentityBeforeDispatch(t *testing.T) 
 		t.Fatal("spoofed worker identity accepted")
 	}
 	payload["agent_id"] = worker
+	event.WorkspaceID = "00000000-0000-0000-0000-000000000001"
+	if _, err := consumeDelegatedResult(ctx, q, event, svc); err == nil {
+		t.Fatal("cross-workspace event accepted")
+	}
+	event.WorkspaceID = testWorkspaceID
 	for i := 0; i < 2; i++ {
 		if _, err := consumeDelegatedResult(ctx, q, event, svc); err != nil {
 			t.Fatal(err)

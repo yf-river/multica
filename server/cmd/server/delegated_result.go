@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -21,6 +22,9 @@ func consumeDelegatedResult(ctx context.Context, q *db.Queries, event events.Eve
 	_, task, exists, err := loadTaskProjectionRow(ctx, q, event)
 	if err != nil || !exists {
 		return nil, err
+	}
+	if event.WorkspaceID == "" || event.WorkspaceID != tasks.ResolveTaskWorkspaceID(ctx, task) {
+		return nil, fmt.Errorf("delegated result event workspace mismatch")
 	}
 	return nil, tasks.RecoverDelegatedTaskResult(ctx, task)
 }
