@@ -1,0 +1,38 @@
+{
+ "operation_id": "9cd1dada-cf0c-4631-8f36-4d8f7fdc5023",
+ "source_commit": "261d3dea102350903564b509d81c2a6de8420b84",
+ "source_branch": "feature/ida-developer/gong-58",
+ "base_commit": "4083bea317283f23ff7c0b64b5be279905cf9e6b",
+ "evidence": [
+  {
+   "name": "delivery-api",
+   "status": "passed",
+   "evidence": "同一固定提交 261d3dea1（候选 898c7c67）在 2026-10-23 17:05(+08) 的实际执行 [\"python3\", \"scripts/verify-delivery-coordination.py\"]；日志 /data/ida/multica/.run/delivery-evidence/898c7c6705c146d5e6daeffb601e4967fc2569e9-1792746040342393242-delivery-api.log"
+  },
+  {
+   "name": "delivery-runtime",
+   "status": "passed",
+   "evidence": "同一固定提交 261d3dea1（候选 898c7c67）在 2026-10-23 17:05(+08) 的实际执行 [\"go\", \"-C\", \"server\", \"test\", \"./internal/daemon\", \"-run\", \"^TestReleasePause|^TestDeploymentDrain\", \"-count=1\"]；日志 /data/ida/multica/.run/delivery-evidence/898c7c6705c146d5e6daeffb601e4967fc2569e9-1792746040342393242-delivery-runtime.log"
+  },
+  {
+   "name": "delivery-worker",
+   "status": "passed",
+   "evidence": "同一固定提交 261d3dea1（候选 898c7c67）在 2026-10-23 17:05(+08) 的实际执行 [\"python3\", \"scripts/issue-delivery-worker.test.py\"]；日志 /data/ida/multica/.run/delivery-evidence/898c7c6705c146d5e6daeffb601e4967fc2569e9-1792746040342393242-delivery-worker.log"
+  },
+  {
+   "name": "delivery-publisher",
+   "status": "passed",
+   "evidence": "同一固定提交 261d3dea1（候选 898c7c67）在 2026-10-23 17:05(+08) 的实际执行 [\"python3\", \"scripts/release-environments.test.py\"]；日志 /data/ida/multica/.run/delivery-evidence/898c7c6705c146d5e6daeffb601e4967fc2569e9-1792746040342393242-delivery-publisher.log"
+  },
+  {
+   "name": "delivery-coordination",
+   "status": "passed",
+   "evidence": "同一固定提交 261d3dea1（候选 898c7c67）在 2026-10-23 17:05(+08) 的实际执行 [\"python3\", \"scripts/delivery-coordination.test.py\"]；日志 /data/ida/multica/.run/delivery-evidence/898c7c6705c146d5e6daeffb601e4967fc2569e9-1792746040342393242-delivery-coordination.log"
+  },
+  {
+   "name": "batch-closeout-api",
+   "status": "passed",
+   "evidence": "同一固定提交 261d3dea1（候选 898c7c67）在 2026-10-23 17:05(+08) 的实际执行 [\"python3\", \"scripts/verify-batch-closeout.py\"]；日志 /data/ida/multica/.run/delivery-evidence/898c7c6705c146d5e6daeffb601e4967fc2569e9-1792746040342393242-batch-closeout-api.log"
+  }
+ ]
+}
