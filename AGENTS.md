@@ -16,7 +16,7 @@ Ordinary feature requests proceed through confirmed plan, isolated task branch, 
 
 Use persisted delivery records and the existing external publisher for queueing, recovery, integration and production updates. Build from pinned commits rather than ephemeral task directories. Only explicit user requests allow independent environments with `MULTICA_LOCAL_DEV=1`. Explicit local-only or no-deployment boundaries take precedence.
 
-并行验收使用固定 `verify-1/2/3`，最终集成仍使用固定 `int`，生产发布另行授权；验收数据来自当前已验证种子，换任务按种子恢复、证据绑定种子版本，入口以 `docs/operations/environment-releases.md` 为准，禁止把验收副本或种子凭据用于生产。
+并行验收使用固定 `verify-1/2/3`，最终集成仍使用固定 `int`，生产发布另行授权；验收数据来自当前已验证种子，换任务按种子恢复、证据绑定种子版本，入口以 `docs/operations/environment-releases.md` 为准，禁止把验收副本或种子凭据用于生产。发布授权按任务逐个给出；组批机制启用后把窗口内已批准的多项交付合成一个候选发布一次，未启用时仍走单项交付，启用条件见同一文档。
 
 ### Architecture
 

@@ -224,6 +224,7 @@ def scrub_checks(container, database):
         ('历史交付不再执行', 'issue_delivery', "SELECT count(*) FROM public.issue_delivery WHERE phase NOT IN ('needs_changes','published','cancelled')", 0),
         ('发布占用已清空', 'delivery_publication', 'SELECT count(*) FROM public.delivery_publication', 0),
         ('验收槽位占用未带入', 'verification_slot', 'SELECT count(*) FROM public.verification_slot', 0),
+        ('发布批次未带入', 'delivery_batch', 'SELECT count(*) FROM public.delivery_batch', 0),
     ]
     for name, table, statement, expected in rules:
         if not table_exists(container, database, table):
@@ -251,11 +252,26 @@ def api_checks(env):
     workspaces = call(meta['backend_url'] + '/api/workspaces', token=login['token'])
     workspace = next((w for w in workspaces if w['id'] == r.read(meta['daemon_profile_path'])['workspace_id']), None)
     checks.append(dict(name='工作区身份可用', status='passed' if workspace else 'failed', evidence=(workspace or {}).get('slug', '缺少槽位工作区')))
-    workspace_id = (workspace or {}).get('id', '')
-    issues = call(meta['backend_url'] + '/api/issues?workspace_id=' + workspace_id, token=login['token'])
-    checks.append(dict(name='任务列表可读取', status='passed' if isinstance(issues, list) and issues else 'failed', evidence='%d 个任务' % (len(issues) if isinstance(issues, list) else 0)))
-    agents = call(meta['backend_url'] + '/api/agents?workspace_id=' + workspace_id, token=login['token'])
-    checks.append(dict(name='Agent 列表可读取', status='passed' if isinstance(agents, list) and agents else 'failed', evidence='%d 个 Agent' % (len(agents) if isinstance(agents, list) else 0)))
+    def total(payload):
+        if isinstance(payload, list):
+            return len(payload)
+        if isinstance(payload, dict):
+            return len(payload.get('issues') or payload.get('agents') or [])
+        return 0
+
+    # 2. 列表接口按工作区分页返回，业务样本不一定在 Daemon 工作区；逐个工作区核对实际可读到的数据量。
+    issue_total = 0
+    agent_total = 0
+    witness = ''
+    for item in workspaces:
+        issues = total(call(meta['backend_url'] + '/api/issues?workspace_id=' + item['id'], token=login['token']))
+        agents = total(call(meta['backend_url'] + '/api/agents?workspace_id=' + item['id'], token=login['token']))
+        if issues and agents and not witness:
+            witness = item['slug']
+        issue_total = max(issue_total, issues)
+        agent_total = max(agent_total, agents)
+    checks.append(dict(name='任务列表可读取', status='passed' if issue_total else 'failed', evidence='最多 %d 个任务（工作区 %s）' % (issue_total, witness or '空')))
+    checks.append(dict(name='Agent 列表可读取', status='passed' if agent_total else 'failed', evidence='最多 %d 个 Agent（工作区 %s）' % (agent_total, witness or '空')))
     return checks
 
 
@@ -324,7 +340,9 @@ def restore(env, seed, pgconfig):
             request = urllib.request.Request(meta['backend_url'] + '/api/workspaces', headers={'Authorization': 'Bearer ' + login['token']})
             with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request) as response:
                 workspaces = json.load(response)
-            ws = next((w for w in workspaces if w['slug'] == 'ai-studio'), None) or (workspaces[0] if workspaces else i.api(meta['backend_url'], '/api/workspaces', dict(name='任务验收', slug='verification'), login['token']))
+            # 1. 种子里的业务样本可能在任一工作区；按真实任务数选择，Daemon 才能打开有数据的那个。
+            ranked = sorted(workspaces, key=lambda item: counter(container, dbname, "SELECT count(*) FROM issue WHERE workspace_id='%s'" % item['id']), reverse=True)
+            ws = ranked[0] if ranked else i.api(meta['backend_url'], '/api/workspaces', dict(name='任务验收', slug='verification'), login['token'])
             profile_path = Path(meta['daemon_profile_path']); profile = r.read(profile_path)
             profile.update(token=login['token'], workspace_id=ws['id']); r.write(profile_path, profile, True)
             account = i.pwd.getpwnam(cfg['daemon']['MULTICA_SERVICE_USER']); os.chown(profile_path, account.pw_uid, account.pw_gid)
@@ -394,7 +412,8 @@ def build_seed(seed_id, origin, release, pgconfig):
         copy_report = json.loads(copied.stdout.strip().splitlines()[-1])
         schema = schema_identity(container, target)
         counts = row_counts(container, target)
-        checks = data_checks(container, target, dict(manifest, fixture=dict(manifest.get('fixture', {}), row_counts=counts)))
+        # 1. 重建种子的结构目标是本次候选，不是来源种子的旧结构；比对基准改为刚迁移出的目标结构。
+        checks = data_checks(container, target, dict(manifest, fixture=dict(manifest.get('fixture', {}), row_counts=counts), schema=dict(fingerprint=schema['fingerprint'])))
         checks += scrub_checks(container, target)
         failed = [c for c in checks if c['status'] != 'passed']
         if failed:
@@ -512,7 +531,7 @@ if __name__ == '__main__':
     for item in (verify, reset_command, ensure_command, status_command):
         item.add_argument('--control', choices=('prod', 'int', *r.VERIFICATION_ENVS), default='prod', help='承载交付队列接口的控制端；演练时指向隔离环境')
     args = parser.parse_args()
-    CONTROL_ENVIRONMENT = args.control
+    CONTROL_ENVIRONMENT = getattr(args, 'control', 'prod')
     if args.action == 'export':
         export_seed(args.destination.resolve())
     elif args.action == 'reset':

@@ -1,100 +1,294 @@
 {
-  "version": 2,
-  "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
-  "rules": [
-    {"table": "webhook_delivery", "sql": "DELETE FROM public.\"webhook_delivery\""},
-    {"table": "agent_task_queue", "sql": "UPDATE public.\"agent_task_queue\" SET autopilot_run_id=NULL, status='cancelled', completed_at=COALESCE(completed_at,now()), session_id=NULL, work_dir=NULL, wait_reason=NULL WHERE status NOT IN ('completed','failed','cancelled') OR autopilot_run_id IS NOT NULL"},
-    {"table": "autopilot_run", "sql": "DELETE FROM public.\"autopilot_run\""},
-    {"table": "autopilot_quota_reservation", "sql": "DELETE FROM public.\"autopilot_quota_reservation\""},
-    {"table": "personal_access_token", "sql": "DELETE FROM public.\"personal_access_token\""},
-    {"table": "daemon_token", "sql": "DELETE FROM public.\"daemon_token\""},
-    {"table": "task_token", "sql": "DELETE FROM public.\"task_token\""},
-    {"table": "channel_binding_token", "sql": "DELETE FROM public.\"channel_binding_token\""},
-    {"table": "lark_binding_token", "sql": "DELETE FROM public.\"lark_binding_token\""},
-    {"table": "external_credential_profile", "sql": "DELETE FROM public.\"external_credential_profile\""},
-    {"table": "vcs_connection", "sql": "DELETE FROM public.\"vcs_connection\""},
-    {"table": "daemon_connection", "sql": "DELETE FROM public.\"daemon_connection\""},
-    {"table": "user_composio_connection", "sql": "DELETE FROM public.\"user_composio_connection\""},
-    {"table": "plugin_secret", "sql": "DELETE FROM public.\"plugin_secret\""},
-    {"table": "plugin_remote_mcp_secret", "sql": "DELETE FROM public.\"plugin_remote_mcp_secret\""},
-    {"table": "plugin_installation_config", "sql": "DELETE FROM public.\"plugin_installation_config\""},
-    {"table": "lark_inbound_audit", "sql": "DELETE FROM public.\"lark_inbound_audit\""},
-    {"table": "lark_installation", "sql": "DELETE FROM public.\"lark_installation\""},
-    {"table": "github_installation", "sql": "DELETE FROM public.\"github_installation\""},
-    {"table": "github_pending_installation", "sql": "DELETE FROM public.\"github_pending_installation\""},
-    {"table": "channel_installation", "sql": "UPDATE public.\"channel_installation\" SET ws_lease_token=NULL"},
-    {"table": "plugin_installation", "sql": "UPDATE public.\"plugin_installation\" SET token_hash=NULL"},
-    {"table": "plugin_hook_schedule", "sql": "UPDATE public.\"plugin_hook_schedule\" SET enabled=false"},
-    {"table": "autopilot", "sql": "UPDATE public.\"autopilot\" SET status='paused'"},
-    {"table": "autopilot_trigger", "sql": "UPDATE public.\"autopilot_trigger\" SET enabled=false, signing_secret=NULL, webhook_token=NULL"},
-    {"table": "supervision_config", "sql": "UPDATE public.\"supervision_config\" SET enabled=false"},
-    {"table": "supervision_batch", "sql": "DELETE FROM public.\"supervision_batch\""},
-    {"table": "supervision_action", "sql": "DELETE FROM public.\"supervision_action\""},
-    {"table": "supervision_investigation", "sql": "DELETE FROM public.\"supervision_investigation\""},
-    {"table": "supervision_finding", "sql": "DELETE FROM public.\"supervision_finding\""},
-    {"table": "supervision_material", "sql": "DELETE FROM public.\"supervision_material\""},
-    {"table": "supervision_subject", "sql": "DELETE FROM public.\"supervision_subject\""},
-    {"table": "review_config", "sql": "UPDATE public.\"review_config\" SET enabled=false"},
-    {"table": "issue_review", "sql": "DELETE FROM public.\"issue_review\""},
-    {"table": "upstream_sync_config", "sql": "UPDATE public.\"upstream_sync_config\" SET sync_state='paused'"},
-    {"table": "upstream_sync_run", "sql": "DELETE FROM public.\"upstream_sync_run\""},
-    {"table": "upstream_sync_item", "sql": "DELETE FROM public.\"upstream_sync_item\""},
-    {"table": "upstream_sync_commit", "sql": "DELETE FROM public.\"upstream_sync_commit\""},
-    {"table": "upstream_sync_absorption_task", "sql": "DELETE FROM public.\"upstream_sync_absorption_task\""},
-    {"table": "agent_runtime", "sql": "UPDATE public.\"agent_runtime\" SET status='offline'"},
-    {"table": "agent", "sql": "UPDATE public.\"agent\" SET status='offline', custom_env='{}', runtime_config='{}', mcp_config=NULL"},
-    {"table": "task_message", "sql": "DELETE FROM public.\"task_message\""},
-    {"table": "task_trace_event", "sql": "DELETE FROM public.\"task_trace_event\""},
-    {"table": "life_cognition_job", "sql": "DELETE FROM public.\"life_cognition_job\""},
-    {"table": "sys_cron_executions", "sql": "DELETE FROM public.\"sys_cron_executions\""},
-    {"table": "domain_event_outbox", "sql": "DELETE FROM public.\"domain_event_outbox\""},
-    {"table": "domain_event_delivery", "sql": "DELETE FROM public.\"domain_event_delivery\""},
-    {"table": "channel_inbound_message_dedup", "sql": "DELETE FROM public.\"channel_inbound_message_dedup\""},
-    {"table": "lark_inbound_message_dedup", "sql": "DELETE FROM public.\"lark_inbound_message_dedup\""},
-    {"table": "channel_inbound_audit", "sql": "DELETE FROM public.\"channel_inbound_audit\""},
-    {"table": "issue_delivery", "sql": "UPDATE public.\"issue_delivery\" SET phase='needs_changes', error='验收种子中的历史交付，不执行', worker_token=NULL, approved_by=NULL, approved_at=NULL"},
-    {"table": "issue_delivery_plan", "sql": "DELETE FROM public.\"issue_delivery_plan\""},
-    {"table": "issue_delivery_authorization", "sql": "DELETE FROM public.\"issue_delivery_authorization\""},
-    {"table": "delivery_owner", "sql": "DELETE FROM public.\"delivery_owner\""},
-    {"table": "delivery_publication", "sql": "DELETE FROM public.\"delivery_publication\""},
-    {"table": "delivery_notice", "sql": "DELETE FROM public.\"delivery_notice\""},
-    {"table": "delivery_evidence", "sql": "DELETE FROM public.\"delivery_evidence\""},
-    {"table": "release_paused_task", "sql": "DELETE FROM public.\"release_paused_task\""},
-    {"table": "release_window", "sql": "DELETE FROM public.\"release_window\""},
-    {"table": "channel_task_delivery", "sql": "DELETE FROM public.\"channel_task_delivery\""},
-    {"table": "issue_source_context_object_intent", "sql": "UPDATE public.\"issue_source_context_object_intent\" SET lease_token=NULL"},
-    {"table": "github_pull_request_check_run", "sql": "DELETE FROM public.\"github_pull_request_check_run\""}
-  ],
-  "coverage": {
-    "patterns": [
-      "%token%",
-      "%credential%",
-      "%secret%",
-      "%connection",
-      "%installation",
-      "%hook%",
-      "%queue%",
-      "%_run",
-      "%_job%",
-      "outbox",
-      "%dedup%",
-      "%_audit",
-      "review%",
-      "supervision%",
-      "autopilot%",
-      "upstream_sync%",
-      "delivery%",
-      "release_%",
-      "%_delivery"
-    ],
-    "exempt": {
-      "autopilot_collaborator": "自动化协作者配置；执行入口 autopilot/trigger 已暂停",
-      "autopilot_rule_version": "自动化规则版本属于业务配置；执行入口已暂停",
-      "autopilot_subscriber": "自动化订阅关系属于业务样本；执行入口已暂停",
-      "autopilot_quota_period": "历史额度账期属于业务样本；预约与运行记录已清空",
-      "daemon_pairing_session": "配对会话不含可用凭据；Daemon 令牌单独清空",
-      "chat_session": "会话属于业务样本；运行时与队列已清空",
-      "runtime_usage": "历史用量统计属于业务样本"
-    }
+ "version": 3,
+ "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
+ "rules": [
+  {
+   "table": "webhook_delivery",
+   "sql": "DELETE FROM public.\"webhook_delivery\""
+  },
+  {
+   "table": "agent_task_queue",
+   "sql": "UPDATE public.\"agent_task_queue\" SET autopilot_run_id=NULL, status='cancelled', completed_at=COALESCE(completed_at,now()), session_id=NULL, work_dir=NULL, wait_reason=NULL WHERE status NOT IN ('completed','failed','cancelled') OR autopilot_run_id IS NOT NULL"
+  },
+  {
+   "table": "autopilot_run",
+   "sql": "DELETE FROM public.\"autopilot_run\""
+  },
+  {
+   "table": "autopilot_quota_reservation",
+   "sql": "DELETE FROM public.\"autopilot_quota_reservation\""
+  },
+  {
+   "table": "personal_access_token",
+   "sql": "DELETE FROM public.\"personal_access_token\""
+  },
+  {
+   "table": "daemon_token",
+   "sql": "DELETE FROM public.\"daemon_token\""
+  },
+  {
+   "table": "task_token",
+   "sql": "DELETE FROM public.\"task_token\""
+  },
+  {
+   "table": "channel_binding_token",
+   "sql": "DELETE FROM public.\"channel_binding_token\""
+  },
+  {
+   "table": "lark_binding_token",
+   "sql": "DELETE FROM public.\"lark_binding_token\""
+  },
+  {
+   "table": "external_credential_profile",
+   "sql": "DELETE FROM public.\"external_credential_profile\""
+  },
+  {
+   "table": "vcs_connection",
+   "sql": "DELETE FROM public.\"vcs_connection\""
+  },
+  {
+   "table": "daemon_connection",
+   "sql": "DELETE FROM public.\"daemon_connection\""
+  },
+  {
+   "table": "user_composio_connection",
+   "sql": "DELETE FROM public.\"user_composio_connection\""
+  },
+  {
+   "table": "plugin_secret",
+   "sql": "DELETE FROM public.\"plugin_secret\""
+  },
+  {
+   "table": "plugin_remote_mcp_secret",
+   "sql": "DELETE FROM public.\"plugin_remote_mcp_secret\""
+  },
+  {
+   "table": "plugin_installation_config",
+   "sql": "DELETE FROM public.\"plugin_installation_config\""
+  },
+  {
+   "table": "lark_inbound_audit",
+   "sql": "DELETE FROM public.\"lark_inbound_audit\""
+  },
+  {
+   "table": "lark_installation",
+   "sql": "DELETE FROM public.\"lark_installation\""
+  },
+  {
+   "table": "github_installation",
+   "sql": "DELETE FROM public.\"github_installation\""
+  },
+  {
+   "table": "github_pending_installation",
+   "sql": "DELETE FROM public.\"github_pending_installation\""
+  },
+  {
+   "table": "channel_installation",
+   "sql": "UPDATE public.\"channel_installation\" SET ws_lease_token=NULL"
+  },
+  {
+   "table": "plugin_installation",
+   "sql": "UPDATE public.\"plugin_installation\" SET token_hash=NULL"
+  },
+  {
+   "table": "plugin_hook_schedule",
+   "sql": "UPDATE public.\"plugin_hook_schedule\" SET enabled=false"
+  },
+  {
+   "table": "autopilot",
+   "sql": "UPDATE public.\"autopilot\" SET status='paused'"
+  },
+  {
+   "table": "autopilot_trigger",
+   "sql": "UPDATE public.\"autopilot_trigger\" SET enabled=false, signing_secret=NULL, webhook_token=NULL"
+  },
+  {
+   "table": "supervision_config",
+   "sql": "UPDATE public.\"supervision_config\" SET enabled=false"
+  },
+  {
+   "table": "supervision_batch",
+   "sql": "DELETE FROM public.\"supervision_batch\""
+  },
+  {
+   "table": "supervision_action",
+   "sql": "DELETE FROM public.\"supervision_action\""
+  },
+  {
+   "table": "supervision_investigation",
+   "sql": "DELETE FROM public.\"supervision_investigation\""
+  },
+  {
+   "table": "supervision_finding",
+   "sql": "DELETE FROM public.\"supervision_finding\""
+  },
+  {
+   "table": "supervision_material",
+   "sql": "DELETE FROM public.\"supervision_material\""
+  },
+  {
+   "table": "supervision_subject",
+   "sql": "DELETE FROM public.\"supervision_subject\""
+  },
+  {
+   "table": "review_config",
+   "sql": "UPDATE public.\"review_config\" SET enabled=false"
+  },
+  {
+   "table": "issue_review",
+   "sql": "DELETE FROM public.\"issue_review\""
+  },
+  {
+   "table": "upstream_sync_config",
+   "sql": "UPDATE public.\"upstream_sync_config\" SET sync_state='paused'"
+  },
+  {
+   "table": "upstream_sync_run",
+   "sql": "DELETE FROM public.\"upstream_sync_run\""
+  },
+  {
+   "table": "upstream_sync_item",
+   "sql": "DELETE FROM public.\"upstream_sync_item\""
+  },
+  {
+   "table": "upstream_sync_commit",
+   "sql": "DELETE FROM public.\"upstream_sync_commit\""
+  },
+  {
+   "table": "upstream_sync_absorption_task",
+   "sql": "DELETE FROM public.\"upstream_sync_absorption_task\""
+  },
+  {
+   "table": "agent_runtime",
+   "sql": "UPDATE public.\"agent_runtime\" SET status='offline'"
+  },
+  {
+   "table": "agent",
+   "sql": "UPDATE public.\"agent\" SET status='offline', custom_env='{}', runtime_config='{}', mcp_config=NULL"
+  },
+  {
+   "table": "task_message",
+   "sql": "DELETE FROM public.\"task_message\""
+  },
+  {
+   "table": "task_trace_event",
+   "sql": "DELETE FROM public.\"task_trace_event\""
+  },
+  {
+   "table": "life_cognition_job",
+   "sql": "DELETE FROM public.\"life_cognition_job\""
+  },
+  {
+   "table": "sys_cron_executions",
+   "sql": "DELETE FROM public.\"sys_cron_executions\""
+  },
+  {
+   "table": "domain_event_outbox",
+   "sql": "DELETE FROM public.\"domain_event_outbox\""
+  },
+  {
+   "table": "domain_event_delivery",
+   "sql": "DELETE FROM public.\"domain_event_delivery\""
+  },
+  {
+   "table": "channel_inbound_message_dedup",
+   "sql": "DELETE FROM public.\"channel_inbound_message_dedup\""
+  },
+  {
+   "table": "lark_inbound_message_dedup",
+   "sql": "DELETE FROM public.\"lark_inbound_message_dedup\""
+  },
+  {
+   "table": "channel_inbound_audit",
+   "sql": "DELETE FROM public.\"channel_inbound_audit\""
+  },
+  {
+   "table": "issue_delivery",
+   "sql": "UPDATE public.\"issue_delivery\" SET phase='needs_changes', error='验收种子中的历史交付，不执行', worker_token=NULL, approved_by=NULL, approved_at=NULL"
+  },
+  {
+   "table": "issue_delivery_plan",
+   "sql": "DELETE FROM public.\"issue_delivery_plan\""
+  },
+  {
+   "table": "issue_delivery_authorization",
+   "sql": "DELETE FROM public.\"issue_delivery_authorization\""
+  },
+  {
+   "table": "delivery_owner",
+   "sql": "DELETE FROM public.\"delivery_owner\""
+  },
+  {
+   "table": "delivery_publication",
+   "sql": "DELETE FROM public.\"delivery_publication\""
+  },
+  {
+   "table": "delivery_notice",
+   "sql": "DELETE FROM public.\"delivery_notice\""
+  },
+  {
+   "table": "delivery_evidence",
+   "sql": "DELETE FROM public.\"delivery_evidence\""
+  },
+  {
+   "table": "delivery_batch_member",
+   "sql": "DELETE FROM public.\"delivery_batch_member\""
+  },
+  {
+   "table": "delivery_batch",
+   "sql": "DELETE FROM public.\"delivery_batch\""
+  },
+  {
+   "table": "release_paused_task",
+   "sql": "DELETE FROM public.\"release_paused_task\""
+  },
+  {
+   "table": "release_window",
+   "sql": "DELETE FROM public.\"release_window\""
+  },
+  {
+   "table": "channel_task_delivery",
+   "sql": "DELETE FROM public.\"channel_task_delivery\""
+  },
+  {
+   "table": "issue_source_context_object_intent",
+   "sql": "UPDATE public.\"issue_source_context_object_intent\" SET lease_token=NULL"
+  },
+  {
+   "table": "github_pull_request_check_run",
+   "sql": "DELETE FROM public.\"github_pull_request_check_run\""
   }
+ ],
+ "coverage": {
+  "patterns": [
+   "%token%",
+   "%credential%",
+   "%secret%",
+   "%connection",
+   "%installation",
+   "%hook%",
+   "%queue%",
+   "%_run",
+   "%_job%",
+   "outbox",
+   "%dedup%",
+   "%_audit",
+   "review%",
+   "supervision%",
+   "autopilot%",
+   "upstream_sync%",
+   "delivery%",
+   "release_%",
+   "%_delivery"
+  ],
+  "exempt": {
+   "autopilot_collaborator": "自动化协作者配置；执行入口 autopilot/trigger 已暂停",
+   "autopilot_rule_version": "自动化规则版本属于业务配置；执行入口已暂停",
+   "autopilot_subscriber": "自动化订阅关系属于业务样本；执行入口已暂停",
+   "autopilot_quota_period": "历史额度账期属于业务样本；预约与运行记录已清空",
+   "daemon_pairing_session": "配对会话不含可用凭据；Daemon 令牌单独清空",
+   "chat_session": "会话属于业务样本；运行时与队列已清空",
+   "runtime_usage": "历史用量统计属于业务样本"
+  }
+ }
 }
