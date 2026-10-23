@@ -268,12 +268,22 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			}
 			eventCount++
 
-			// `_requestId` 由子进程自己生成并写在 status/result 事件上，作为 provider 请求标识保存；
+			// `_requestId` 由子进程自己生成并写在 assistant/status/result 事件上，作为 provider 请求标识保存；
 			// AgentLens 的 trace/span 对应另行验收。取第一条非空值即可：同一个 CLI 进程只有一个
 			// 根请求，后续事件重复的是同一个值。绝不能拿父进程环境变量
 			// CODEBUDDY_ROOT_REQUEST_ID 顶替——那是 daemon 自己的请求标识。
 			if requestID == "" && msg.ProviderRequestID != "" {
 				requestID = msg.ProviderRequestID
+			}
+
+			// 初次SDK会话标识绑定根会话；其它信封的不同会话不能悄悄替换它。
+			if msg.SessionID != "" {
+				if sessionID != "" && msg.SessionID != sessionID {
+					b.cfg.Logger.Warn("codebuddy SDK session conflict", "root_session", sessionID, "event_session", msg.SessionID, "event_type", msg.Type)
+				}
+				if sessionID == "" || msg.Type == "result" {
+					sessionID = msg.SessionID
+				}
 			}
 
 			switch msg.Type {
@@ -288,15 +298,11 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			case "user":
 				b.handleUser(msg, msgCh)
 			case "system":
-				if msg.SessionID != "" {
-					sessionID = msg.SessionID
-				}
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
 				sawResult = true
 				finalResultText = msg.ResultText
 				resultIsError = msg.IsError
-				sessionID = msg.SessionID
 				resultUsage = codebuddyResultUsage(msg, opts.Model)
 				closeStdin()
 			case "log":
@@ -377,7 +383,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			)
 		}
 
-		usage = codebuddySelectUsage(usage, resultUsage, b.cfg.Logger)
+		usage = codebuddySelectUsage(usage, resultUsage, opts.ResumeSessionID != "", b.cfg.Logger)
 		resCh <- Result{
 			Status:          finalStatus,
 			Output:          finalOutput,
@@ -693,34 +699,37 @@ type codebuddyUsageCall struct {
 	request, message, model string
 }
 
-// 两份来源按完整模型用量择一；字段拼接或模型别名猜测都会制造不存在的调用汇总。
-func codebuddySelectUsage(stream, summary map[string]TokenUsage, logger *slog.Logger) map[string]TokenUsage {
+// assistant 流属于本轮实际调用；result 摘要可能跨会话轮次累计，不能覆盖已观测流。
+func codebuddySelectUsage(stream, summary map[string]TokenUsage, resumed bool, logger *slog.Logger) map[string]TokenUsage {
 	if len(stream) == 0 {
-		return summary
+		if !resumed || len(summary) == 0 {
+			return summary
+		}
+		logger.Warn("codebuddy usage source conflict", "reason", "resumed_summary_scope_unknown", "stream_usage", stream, "result_usage", summary, "chosen_source", "none", "scope", "session summary cannot establish current run usage")
+		return stream
 	}
 	if len(summary) == 0 {
 		return stream
 	}
-	reason := "summary_below_observed_stream"
-	complete := len(stream) == len(summary)
+	reason := "result_summary_differs_from_observed_stream"
+	equal := len(stream) == len(summary)
 	for model, observed := range stream {
 		reported, ok := summary[model]
 		if !ok {
 			reason = "model_identity_conflict"
-			complete = false
+			equal = false
 			break
 		}
-		if reported.InputTokens < observed.InputTokens || reported.OutputTokens < observed.OutputTokens || reported.CacheReadTokens < observed.CacheReadTokens || reported.CacheWriteTokens < observed.CacheWriteTokens {
-			complete = false
+		if reported != observed {
+			equal = false
 		}
 	}
 	if len(stream) != len(summary) {
 		reason = "model_identity_conflict"
 	}
-	if complete {
-		return summary
+	if !equal {
+		logger.Warn("codebuddy usage source conflict", "reason", reason, "stream_usage", stream, "result_usage", summary, "chosen_source", "assistant_stream_observed", "scope", "observed SDK calls; calls absent from stream remain unknown")
 	}
-	logger.Warn("codebuddy usage source conflict", "reason", reason, "stream_usage", stream, "result_usage", summary, "chosen_source", "assistant_stream_observed", "scope", "observed SDK calls; calls absent from stream remain unknown")
 	return stream
 }
 

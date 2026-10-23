@@ -166,12 +166,14 @@ CodeBuddy 的 assistant 流携带单次模型调用的用量快照；实际 `_re
 共同标识调用。同调用的重复工具消息只计一次，更新快照替换该调用原贡献；缺少稳定标识的
 旧协议仍按已有流式方式累计，不能视为已证明调用去重。缓存输入先归一为不含缓存的输入。
 
-结束 `result.modelUsage` 是 SDK 当前进程统计服务的摘要。模型键一致且完整数值覆盖已观测
-流时采用摘要；较小、交叉冲突或模型键不一致时选择完整的流式来源，不拼接字段最大值、
-不猜模型别名、不把两图相加。冲突两图和 `chosen_source` 记录在带任务上下文的 daemon
-日志中，不是 API 可查询的 task_trace metadata。流式来源只证明已观测调用，不能证明未落盘
-或未出现在流中的调用不存在。CodeBuddy 实际请求标识与外部 AgentLens trace/span 的对应仍
-须通过外部观测系统验证；平台精确关联落库不代表外部全链已验收。
+结束 `result.modelUsage` 可能包含同一会话之前轮次的累计用量。存在本轮 assistant 流时，
+选择完整的流式来源，即使摘要模型键一致且数值更大；不拼接字段最大值、不猜模型别名、
+不把两图相加。摘要与流不同时，两图和 `chosen_source` 记录在带任务上下文的 daemon
+日志中，不是 API 可查询的 task_trace metadata。全新会话缺流时兼容已有摘要回退；续接
+会话缺流时保留用量缺口，不能把会话累计量算成本轮消费。流式来源只证明已观测调用，不能
+证明未落盘或未出现在流中的调用不存在。SDK 事件中已观测的实际 session ID 在结束包缺值
+时仍予保留。CodeBuddy 实际请求标识与外部 AgentLens trace/span 的对应仍须通过外部观测
+系统验证；平台精确关联落库不代表外部全链已验收。
 
 `POST /api/daemon/tasks/{id}/usage` 按 run 加锁并整批事务写入、回读核对。正常 daemon
 在 runner 返回后上报一次完整 run/model 聚合，不传 `executed_at`；实时 token/cost counter
