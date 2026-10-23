@@ -5028,23 +5028,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
 
-	// 在任何提前返回前先上报用量——无论任务完成、出错还是被轮询 goroutine 中途
-	// 取消，agent 都会累计 token。即使 runCtx 被取消，claude.go 与 codex.go 也会
-	// 填充 result.Usage，因此在取消路径上丢弃它等于静默少报账单。
-	if len(result.Usage) > 0 {
-		if usageErr := d.client.ReportTaskUsage(ctx, task.ID, result.Usage); usageErr != nil {
-			taskLog.Warn("report task usage failed", "error", usageErr)
-		}
-	}
-
-	// 链路关联与用量分开上报：即使一次模型请求都没发出去（usage 为空），或该
-	// backend 根本不上报用量，子进程自报的根请求 id 仍要落到任务上，否则"给定任务
-	// 号枚举全部执行与链路"永远做不到。失败只记日志——关联缺失不能阻断任务收尾。
-	if traceEntries := buildTaskTraceEntries(provider, result.ProviderTraceIDs); len(traceEntries) > 0 {
-		if traceErr := d.client.ReportTaskTraces(ctx, task.ID, traceEntries); traceErr != nil {
-			taskLog.Warn("report task traces failed", "error", traceErr)
-		}
-	}
+	// 取消与停止路径同样记录已经发生的用量及链路；上报有独立的总时限。
+	d.reportTaskAccounting(ctx, task.ID, provider, result, taskLog)
 
 	if pauseFlag.Load() {
 		if !releaseCheckpointReady(task, result) {
@@ -8065,6 +8050,10 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	}
 	defer drainCancel()
 
+	// 取消后继续消费已有消息，直到末结果回收结束，避免 backend 因消息管道满而无法退出。
+	messageCtx, stopMessages := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopMessages()
+
 	var toolCount atomic.Int32
 	// lastActivityAt 记录（纳秒）排空循环最近一次从 backend 收到消息的时间。
 	// 空闲看门狗读它来决定 agent 是否静默过久。初始化为起点，这样从不发任何
@@ -8292,7 +8281,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					})
 					mu.Unlock()
 				}
-			case <-drainCtx.Done():
+			case <-messageCtx.Done():
 				goto drainDone
 			}
 		}
@@ -8313,57 +8302,46 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	waitForDrain := func() {
 		select {
 		case <-drainFinished:
+			return
 		case <-time.After(10 * time.Second):
-			drainCancel()
-			select {
-			case <-drainFinished:
-			case <-time.After(12 * time.Second):
-				taskLog.Warn("transcript drain did not stop after cancel; completing anyway")
-			}
+		case <-drainCtx.Done():
+		}
+		stopMessages()
+		select {
+		case <-drainFinished:
+		case <-time.After(12 * time.Second):
+			taskLog.Warn("transcript drain did not stop after cancel; completing anyway")
 		}
 	}
 
+	interrupted := func(result agent.Result, interruption error) agent.Result {
+		if idleWatchdogFired.Load() {
+			result.Status = "idle_watchdog"
+			result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
+		} else if errors.Is(interruption, context.Canceled) {
+			result.Status = "cancelled"
+			result.Error = "task cancelled by upstream context (server cancel or daemon shutdown)"
+		} else if interruption != nil {
+			result.Status = "timeout"
+			result.Error = "agent did not produce result within drain timeout"
+		}
+		return result
+	}
 	select {
 	case result := <-session.Result:
+		// 以结果收到时的截止状态分类；尾部冲刷超时不能抹掉已经正常到达的结果。
+		interruption := drainCtx.Err()
 		waitForDrain()
-		if idleWatchdogFired.Load() {
-			// backend 的等待 goroutine（例如 claude.go）把我们经 agentCancel 送的
-			// SIGKILL 翻译成 Status="aborted"。重新标记为 "idle_watchdog"，让
-			// runTask 把处置路由到专用 failure_reason，而不是 aborted 路径落进的
-			// 泛化 "agent_error" 桶。
-			result.Status = "idle_watchdog"
-			if result.Error == "" {
-				result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
-			}
-		}
-		return result, toolCount.Load(), nil
+		return interrupted(result, interruption), toolCount.Load(), nil
 	case <-drainCtx.Done():
-		// 排空循环正因同一个 Done 信号退出；等它的最终冲刷，让下面的
-		// timeout/watchdog/cancel 终态不会交还（并让 runTask 判失败并广播）一份
-		// 仍在冲刷中的 transcript。
+		agentCancel()
+		result, collected := awaitInterruptedBackendResult(session.Result)
+		if !collected {
+			taskLog.Warn("backend final result unavailable after interruption; accounting may be incomplete", "grace", interruptedResultGrace)
+		}
+		stopMessages()
 		waitForDrain()
-		// 空闲看门狗经 agentCancel() 取消，在这里体现为 context.Canceled。要在
-		// 泛化的 cancelled/timeout 分类器之前检查它，避免看门狗导致的停止被误报
-		// 为 "task cancelled by server"。
-		if idleWatchdogFired.Load() {
-			return agent.Result{
-				Status: "idle_watchdog",
-				Error:  idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load())),
-			}, toolCount.Load(), nil
-		}
-		// 区分外部取消（例如服务器发起的取消——issue 被重新分配，或用户调用
-		// CancelTask）与真实的排空截止超时。context.Canceled 表示上游 runCtx 触发
-		// 了 runCancel()；context.DeadlineExceeded 是排空截止自行到期。
-		if errors.Is(drainCtx.Err(), context.Canceled) {
-			return agent.Result{
-				Status: "cancelled",
-				Error:  "task cancelled by upstream context (server cancel or daemon shutdown)",
-			}, toolCount.Load(), nil
-		}
-		return agent.Result{
-			Status: "timeout",
-			Error:  "agent did not produce result within drain timeout",
-		}, toolCount.Load(), nil
+		return interrupted(result, drainCtx.Err()), toolCount.Load(), nil
 	}
 }
 

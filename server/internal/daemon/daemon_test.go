@@ -3429,8 +3429,9 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnInactivity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	cancelledAt := make(chan time.Time, 1)
 	start := time.Now()
-	result, _, err := d.executeAndDrain(ctx, idleWatchdogBackend{emitOne: true}, "p", agent.ExecOptions{}, slog.Default(), "t-idle", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, cancellationObservedBackend{idleWatchdogBackend{emitOne: true}, cancelledAt}, "p", agent.ExecOptions{}, slog.Default(), "t-idle", "", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3443,7 +3444,7 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnInactivity(t *testing.T) {
 	// The watchdog should fire within a few ticks (interval = window/2 with
 	// no floor for sub-minute windows). 5× window is generous and keeps the
 	// test from racing in slow CI.
-	if elapsed := time.Since(start); elapsed > 5*d.cfg.AgentIdleWatchdog {
+	if elapsed := (<-cancelledAt).Sub(start); elapsed > 5*d.cfg.AgentIdleWatchdog {
 		t.Fatalf("watchdog took too long to fire: %s (window=%s)", elapsed, d.cfg.AgentIdleWatchdog)
 	}
 }
@@ -3478,10 +3479,11 @@ func TestExecuteAndDrain_IdleWatchdog_UsesPerRunOverride(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	cancelledAt := make(chan time.Time, 1)
 	start := time.Now()
 	result, _, err := d.executeAndDrain(
 		ctx,
-		idleWatchdogBackend{emitOne: true},
+		cancellationObservedBackend{idleWatchdogBackend{emitOne: true}, cancelledAt},
 		"p",
 		agent.ExecOptions{IdleWatchdogTimeout: 50 * time.Millisecond},
 		slog.Default(),
@@ -3498,7 +3500,7 @@ func TestExecuteAndDrain_IdleWatchdog_UsesPerRunOverride(t *testing.T) {
 	if !strings.Contains(result.Error, "50ms") {
 		t.Fatalf("expected error to report the per-run threshold, got %q", result.Error)
 	}
-	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+	if elapsed := (<-cancelledAt).Sub(start); elapsed > 250*time.Millisecond {
 		t.Fatalf("per-run watchdog override did not fire promptly: %s", elapsed)
 	}
 }
@@ -3736,15 +3738,16 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnStuckInFlightTool(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	cancelledAt := make(chan time.Time, 1)
 	start := time.Now()
-	result, _, err := d.executeAndDrain(ctx, stuckInFlightToolBackend{}, "p", agent.ExecOptions{}, slog.Default(), "t-stuck-tool", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, cancellationObservedBackend{stuckInFlightToolBackend{}, cancelledAt}, "p", agent.ExecOptions{}, slog.Default(), "t-stuck-tool", "", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Status != "idle_watchdog" {
 		t.Fatalf("expected status=idle_watchdog for a hung in-flight tool, got %q (err=%q)", result.Status, result.Error)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
+	if elapsed := (<-cancelledAt).Sub(start); elapsed > 2*time.Second {
 		t.Fatalf("tool watchdog took too long to fire: %s (window=%s)", elapsed, d.cfg.AgentToolWatchdog)
 	}
 }
