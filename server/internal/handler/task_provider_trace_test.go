@@ -2,8 +2,12 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -203,5 +207,114 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 	}
 	if total, _ := countRows(); total != 0 {
 		t.Fatalf("deleting the task must remove its trace links, %d rows left", total)
+	}
+}
+
+func TestTaskProviderSDKTraceProvenance(t *testing.T) {
+	ctx := context.Background()
+	agent := dbfx.Agent(t, "SDK trace fixture", testRuntimeID)
+	issue := dbfx.Issue(t, "SDK trace fixture")
+	task := dbfx.Task(t, agent, testutil.Cols{"runtime_id": testRuntimeID, "issue_id": issue, "status": "completed"})
+	base := map[string]any{"provider": "codebuddy", "provider_trace_id": "actual-cid", "session_id": "actual-session", "correlation": "exact", "source": "local_session_jsonl", "sdk_trace_id": strings.Repeat("a", 32), "sdk_trace_source_sha256": strings.Repeat("b", 64), "sdk_trace_source_path": "providerData.traceId"}
+	copyPayload := func() map[string]any {
+		out := map[string]any{}
+		for k, v := range base {
+			out[k] = v
+		}
+		return out
+	}
+	post := func(rows ...map[string]any) *httptest.ResponseRecorder {
+		return testutil.Call(t, testHandler.ReportTaskTraces, withURLParam(newRequest(http.MethodPost, "/traces", map[string]any{"traces": rows}), "taskId", task)).ResponseRecorder
+	}
+	for i := 0; i < 2; i++ {
+		if r := post(base); r.Code != 204 {
+			t.Fatalf("write/replay: %d %s", r.Code, r.Body.String())
+		}
+	}
+	load := func() map[string]any {
+		var raw []byte
+		if err := testPool.QueryRow(ctx, `SELECT metadata FROM task_provider_trace WHERE task_id=$1 AND provider_trace_id='actual-cid'`, task).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	for _, key := range []string{"sdk_trace_id", "sdk_trace_source_sha256", "sdk_trace_source_path"} {
+		if load()[key] != base[key] {
+			t.Fatalf("metadata missing %s", key)
+		}
+	}
+	rows := []AgentTaskResponse{{ID: task}}
+	testHandler.hydrateTaskTraces(ctx, parseUUID(issue), rows)
+	if len(rows[0].Traces) != 1 || rows[0].Traces[0].SDKTraceID != base["sdk_trace_id"] || rows[0].Traces[0].SDKTraceSourceSHA256 != base["sdk_trace_source_sha256"] || rows[0].Traces[0].SDKTraceSourcePath != "providerData.traceId" {
+		t.Fatalf("response missing source: %+v", rows)
+	}
+	legacy := map[string]any{"provider": "codebuddy", "provider_trace_id": "actual-cid", "session_id": "actual-session"}
+	if r := post(legacy); r.Code != 204 {
+		t.Fatalf("legacy daemon: %d %s", r.Code, r.Body.String())
+	}
+	for _, key := range []string{"sdk_trace_id", "sdk_trace_source_sha256"} {
+		changed := copyPayload()
+		changed[key] = strings.Repeat("c", len(base[key].(string)))
+		other := map[string]any{"provider": "codebuddy", "provider_trace_id": "must-roll-back"}
+		if r := post(other, changed); r.Code != 409 {
+			t.Fatalf("conflict %s: %d %s", key, r.Code, r.Body.String())
+		}
+		if load()[key] != base[key] {
+			t.Fatalf("conflict overwrote %s", key)
+		}
+		var n int
+		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM task_provider_trace WHERE task_id=$1 AND provider_trace_id='must-roll-back'`, task).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("partial conflicting batch: %d %v", n, err)
+		}
+	}
+	for _, change := range []map[string]any{{"session_id": ""}, {"provider": "codex"}, {"correlation": "inferred_window"}, {"source": "stream_json"}, {"sdk_trace_id": "bad"}, {"sdk_trace_source_sha256": "bad"}, {"sdk_trace_source_path": "_meta.traceparent"}} {
+		bad := copyPayload()
+		for k, v := range change {
+			bad[k] = v
+		}
+		if r := post(bad); r.Code != 400 {
+			t.Fatalf("invalid provenance %v: %d %s", change, r.Code, r.Body.String())
+		}
+	}
+	wrongSession := copyPayload()
+	wrongSession["session_id"] = "wrong-session"
+	if r := post(wrongSession); r.Code != 409 {
+		t.Fatalf("wrong SDK session: %d %s", r.Code, r.Body.String())
+	}
+	legacy["session_id"] = "conflicting-session"
+	if r := post(legacy); r.Code != 409 {
+		t.Fatalf("session conflict: %d %s", r.Code, r.Body.String())
+	}
+	if load()["session_conflict"] == nil || load()["sdk_trace_id"] != base["sdk_trace_id"] {
+		t.Fatalf("lost independent conflict audit: %+v", load())
+	}
+	// 同一CID同时补不同SDK身份：一个成功，一个明确409，不能相互覆盖。
+	codes := make(chan int, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{strings.Repeat("d", 32), strings.Repeat("e", 32)} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			p := copyPayload()
+			p["provider_trace_id"] = "concurrent-cid"
+			p["sdk_trace_id"] = id
+			req := withURLParam(newRequest(http.MethodPost, "/traces", map[string]any{"traces": []map[string]any{p}}), "taskId", task)
+			r := httptest.NewRecorder()
+			testHandler.ReportTaskTraces(r, req)
+			codes <- r.Code
+		}(id)
+	}
+	wg.Wait()
+	close(codes)
+	count := map[int]int{}
+	for code := range codes {
+		count[code]++
+	}
+	if count[204] != 1 || count[409] != 1 {
+		t.Fatalf("concurrent source changed silently: %v", count)
 	}
 }

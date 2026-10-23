@@ -175,6 +175,19 @@ CodeBuddy 的 assistant 流携带单次模型调用的用量快照；实际 `_re
 时仍予保留。CodeBuddy 实际请求标识与外部 AgentLens trace/span 的对应仍须通过外部观测
 系统验证；平台精确关联落库不代表外部全链已验收。
 
+精确本地来源的 CodeBuddy 关联可通过既有 traces 上报入口补充 `sdk_trace_id`、
+`sdk_trace_source_sha256` 与固定 `sdk_trace_source_path=providerData.traceId`。这三项一起
+提供，要求 `provider=codebuddy`、`correlation=exact`、`source=local_session_jsonl` 和实际
+session；SDK ID 为32位十六进制，文件来源为 SHA256。它们保存在原行 metadata 并随执行
+记录读回，`provider_trace_id` 继续保存实际 conversationRequestId。相同来源重放幂等；
+SDK ID、文件hash或session冲突返回409并保留原证据，旧daemon不传这些字段仍可上报。
+SDK自报的 traceId 与外部 AgentLens 的解析/权限/逐span对照是不同证据，后者仍需单独验证。
+
+取消立即终止backend，最多5秒收取末Result，期间继续消费已在途消息。已观测的 Usage、
+session、provider 请求标识随结果保留，取消/超时/watchdog终态不变；末结果未返回时明确
+记录 accounting incomplete，不能当成零消费。记账沿原daemon凭据，使用不继承父取消的
+总5秒上下文上报usage和traces，session沿既有trace元组保存，不增加会话机制。
+
 `POST /api/daemon/tasks/{id}/usage` 按 run 加锁并整批事务写入、回读核对。正常 daemon
 在 runner 返回后上报一次完整 run/model 聚合，不传 `executed_at`；实时 token/cost counter
 只记录首次成功写入的新实时模型行。重放、更正和显式 `executed_at` 历史补齐不向当前

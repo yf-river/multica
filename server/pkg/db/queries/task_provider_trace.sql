@@ -44,6 +44,21 @@ DO UPDATE SET
     finished_at       = COALESCE(EXCLUDED.finished_at, task_provider_trace.finished_at),
     updated_at        = now();
 
+-- name: SetTaskProviderSDKTrace :execrows
+-- SDK自身trace标识与精确文件来源只补空或幂等重放，冲突保留先前证据。
+UPDATE task_provider_trace
+SET metadata = metadata || jsonb_build_object(
+    'sdk_trace_id', sqlc.arg(sdk_trace_id)::text,
+    'sdk_trace_source_sha256', sqlc.arg(sdk_trace_source_sha256)::text,
+    'sdk_trace_source_path', sqlc.arg(sdk_trace_source_path)::text),
+    updated_at = now()
+WHERE task_id = sqlc.arg(task_id) AND provider = 'codebuddy'
+  AND provider_trace_id = sqlc.arg(provider_trace_id) AND correlation = 'exact'
+  AND session_id = sqlc.arg(session_id)
+  AND (metadata->>'sdk_trace_id' IS NULL OR metadata->>'sdk_trace_id' = sqlc.arg(sdk_trace_id)::text)
+  AND (metadata->>'sdk_trace_source_sha256' IS NULL OR metadata->>'sdk_trace_source_sha256' = sqlc.arg(sdk_trace_source_sha256)::text)
+  AND (metadata->>'sdk_trace_source_path' IS NULL OR metadata->>'sdk_trace_source_path' = sqlc.arg(sdk_trace_source_path)::text);
+
 -- name: ListTaskProviderTraces :many
 SELECT * FROM task_provider_trace
 WHERE task_id = $1
@@ -59,6 +74,7 @@ SELECT
     t.provider_trace_id,
     t.correlation,
     t.source,
+    t.metadata,
     t.created_at
 FROM task_provider_trace t
 JOIN agent_task_queue atq ON atq.id = t.task_id
