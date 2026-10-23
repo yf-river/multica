@@ -12,6 +12,19 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_new_verification_server_persists_its_baseline_mode(self):
+        import ast
+        import base64
+        import secrets
+        source=Path(__file__).with_name('verification-environments.py')
+        install=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='install')
+        assignment=next(n for n in install.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='cfg' for t in n.targets))
+        scope=dict(appbase={},agentbase={},dbuser='owned',dbpass='fixture',pgport='1234',dbname='owned',backend='1235',pprof='1236',front='http://fixture',frontend='1237',back='http://backend',slotroot=Path('/owned-slot'),secrets=secrets,base64=base64)
+        # 只执行真实安装的配置生产语句，不创建账户、数据库或启动服务。
+        exec(compile(ast.Module(body=[assignment],type_ignores=[]),str(source),'exec'),scope)
+        self.assertEqual(scope['cfg']['server']['MULTICA_MIGRATION_BASELINE'],'true')
+        self.assertNotIn('MULTICA_MIGRATION_BASELINE',scope['cfg']['daemon'])
+
     def test_database_check_uses_same_pinned_controller_bundle(self):
         with tempfile.TemporaryDirectory() as tmp:
             pinned=Path(tmp)/'pinned/release.py'
