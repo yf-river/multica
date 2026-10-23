@@ -327,6 +327,22 @@ type ActiveSiblingRunData struct {
 	StartedAt       string `json:"started_at,omitempty"`
 }
 
+// DeliveryContextData 让每轮提示直接看到本任务的交付阶段、候选、分配环境与种子，
+// 不用去猜环境、也不要自行升级阶段或重置数据。
+type DeliveryContextData struct {
+	ID               string `json:"id"`
+	Phase            string `json:"phase"`
+	CandidateID      string `json:"candidate_id,omitempty"`
+	CandidateCommit  string `json:"candidate_commit,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	EnvironmentState string `json:"environment_state,omitempty"`
+	SeedID           string `json:"seed_id,omitempty"`
+	SeedSHA256       string `json:"seed_sha256,omitempty"`
+	BatchID          string `json:"batch_id,omitempty"`
+	BatchStatus      string `json:"batch_status,omitempty"`
+	BatchMembers     int    `json:"batch_members,omitempty"`
+}
+
 // taskIssueStatusCap 限制 claim 负载里自定义状态的上限。这是防御性封顶，
 // 不是产品上限：真实目录只有寥寥数条，而脚本化建了数百条状态的工作区，
 // brief 不能被无限撑大。溢出通过 IssueStatusesOmitted 上报，brief 能明示截断。
@@ -383,19 +399,22 @@ type AgentTaskResponse struct {
 	// 能说明列表不完整，而不是把截断后的目录当成全部。
 	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
 	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
-	ThreadName           string                 `json:"thread_name,omitempty"` // 供厂商原生会话/线程历史使用的语义化标题
-	Status               string                 `json:"status"`
-	Priority             int32                  `json:"priority"`
-	DispatchedAt         *string                `json:"dispatched_at"`
-	StartedAt            *string                `json:"started_at"`
-	CompletedAt          *string                `json:"completed_at"`
-	Result               any                    `json:"result"`
-	Error                *string                `json:"error"`
-	FailureReason        string                 `json:"failure_reason,omitempty"` // 见 TaskService.MaybeRetryFailedTask
-	Attempt              int32                  `json:"attempt"`
-	MaxAttempts          int32                  `json:"max_attempts"`
-	ParentTaskID         *string                `json:"parent_task_id,omitempty"`
-	IsLeaderTask         bool                   `json:"is_leader_task,omitempty"`
+	// DeliveryContext 只在该任务已有交付记录时存在：阶段、候选、被分配的验收环境、
+	// 当前种子和所在批次。它是本轮事实，不是权限：环境由平台分配，阶段由交付流程推进。
+	DeliveryContext *DeliveryContextData `json:"delivery_context,omitempty"`
+	ThreadName      string               `json:"thread_name,omitempty"` // 供厂商原生会话/线程历史使用的语义化标题
+	Status          string               `json:"status"`
+	Priority        int32                `json:"priority"`
+	DispatchedAt    *string              `json:"dispatched_at"`
+	StartedAt       *string              `json:"started_at"`
+	CompletedAt     *string              `json:"completed_at"`
+	Result          any                  `json:"result"`
+	Error           *string              `json:"error"`
+	FailureReason   string               `json:"failure_reason,omitempty"` // 见 TaskService.MaybeRetryFailedTask
+	Attempt         int32                `json:"attempt"`
+	MaxAttempts     int32                `json:"max_attempts"`
+	ParentTaskID    *string              `json:"parent_task_id,omitempty"`
+	IsLeaderTask    bool                 `json:"is_leader_task,omitempty"`
 	// LeaderRoleResolved 是仅 claim 具备的能力，此处恒为 true：IsLeaderTask/
 	// SquadID 已权威地回答「是否 leader 运行」，daemon 不得再从 brief 文本反推
 	// 角色。早于 #4951 的服务器不发 is_leader_task，之后发送也不保证 brief——

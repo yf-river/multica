@@ -55,6 +55,9 @@ func backendResumeContinuityNotice(task Task) string {
 func perTurnContextBlocks(task Task, opts promptOpts) string {
 	var b strings.Builder
 	b.WriteString(buildActiveSiblingRunsBlock(task.IssueID, task.ActiveSiblingRuns))
+	if task.DeliveryContext != nil {
+		b.WriteString(buildDeliveryContextBlock(*task.DeliveryContext))
+	}
 	b.WriteString(buildSharedLocalDirectoryBlock(opts.sharedLocalDirectory))
 	b.WriteString(buildWorktreeReplayConflictBlock(opts.worktreeReplayConflicts))
 	if task.PriorSessionResumeUnavailable {
@@ -149,6 +152,69 @@ func buildWorktreeReplayConflictBlock(files []string) string {
 	}
 	b.WriteString("\nResolve it before anything else, with ordinary git commands — `git status` lists the unmerged paths, `git diff` shows both sides, `git add <file>` marks each one done. The \"ours\" side is what you wrote last turn; \"theirs\" is the user's newer edit, and it is the side you have not seen before, so read it before choosing. Keep both intentions where they are compatible; where they are not, prefer the user's and say so in your reply.\n\n")
 	b.WriteString("This run cannot deliver its branch while any file is still unmerged — the task fails and the worktree is kept for a human instead. Do not commit conflict markers.\n\n")
+	return b.String()
+}
+
+// buildDeliveryContextBlock 把本任务当前所处的交付阶段、候选、平台分配的验收环境和
+// 种子写进每轮提示，省掉“环境在哪、要不要自己起一套”的猜测，也避免把单项验收当成
+// 已发布。环境、种子和阶段都由平台推进，提示只陈述事实和边界。
+func buildDeliveryContextBlock(d DeliveryContextData) string {
+	if d.ID == "" && d.Phase == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Delivery Context\n\n")
+	if d.Phase != "" {
+		fmt.Fprintf(&b, "This issue is tracked by a delivery at stage `%s`", d.Phase)
+		if d.ID != "" {
+			fmt.Fprintf(&b, " (`%s`)", d.ID)
+		}
+		b.WriteString(".\n")
+	}
+	switch d.Phase {
+	case "waiting_int":
+		b.WriteString("It is waiting for a fixed int candidate. Do not build, deploy or pick an environment yourself.\n")
+	case "testing":
+		b.WriteString("It is being verified on its assigned acceptance environment. Run the real functional checks there; a passing call is not enough.\n")
+	case "awaiting_review":
+		b.WriteString("Its acceptance evidence is recorded and the user has not decided yet. Report and wait; do not release or close it on your own.\n")
+	case "approved":
+		b.WriteString("The user authorized release for this delivery. The publisher merges the approved deliveries into one candidate; do not publish a build of your own.\n")
+	case "preparing_release", "publishing":
+		b.WriteString("Its candidate is being built and switched. Keep the source fixed and answer questions; do not change the commit under release.\n")
+	case "published":
+		b.WriteString("It is already released. Only handle follow-up findings on the released version.\n")
+	case "needs_changes":
+		b.WriteString("It was returned for changes. Fix the reported points, verify locally, then resubmit through the delivery record.\n")
+	}
+	if d.CandidateID != "" || d.CandidateCommit != "" {
+		b.WriteString("- Candidate")
+		if d.CandidateID != "" {
+			fmt.Fprintf(&b, " `%s`", d.CandidateID)
+		}
+		if d.CandidateCommit != "" {
+			fmt.Fprintf(&b, ", commit `%s`", d.CandidateCommit)
+		}
+		b.WriteString("\n")
+	}
+	if d.Environment != "" {
+		fmt.Fprintf(&b, "- Assigned environment `%s`", d.Environment)
+		if d.EnvironmentState != "" {
+			fmt.Fprintf(&b, " (state `%s`)", d.EnvironmentState)
+		}
+		if d.SeedID != "" {
+			seed := d.SeedID
+			if d.SeedSHA256 != "" && len(d.SeedSHA256) >= 12 {
+				seed = fmt.Sprintf("%s (%s…)", seed, d.SeedSHA256[:12])
+			}
+			fmt.Fprintf(&b, ", acceptance seed `%s`", seed)
+		}
+		b.WriteString("\n")
+	}
+	if d.BatchID != "" {
+		fmt.Fprintf(&b, "- Released as part of batch `%s` (state `%s`, %d member(s))\n", d.BatchID, d.BatchStatus, d.BatchMembers)
+	}
+	b.WriteString("\nThe environment, seed and stage are assigned by the platform: do not switch environments, reset its data, or move the delivery forward yourself. Finishing verification is not the same as releasing this task.\n\n")
 	return b.String()
 }
 

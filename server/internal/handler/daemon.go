@@ -3238,6 +3238,37 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	// 交付上下文：让这一轮提示直接知道任务处于哪个阶段、用哪个候选、被分到哪个验收
+	// 环境和种子，避免 Agent 自行挑环境或按通用完成提示提前结束。查询失败只降级为空，
+	// 不影响领取；老库没有批次表时也走降级路径。
+	if task.IssueID.Valid {
+		var deliveryID, phase, candidateID, candidateCommit, environment, environmentState string
+		var seedID, seedSHA, batchID, batchStatus string
+		var batchMembers int
+		err := h.DB.QueryRow(r.Context(), `
+SELECT d.id::text,d.phase,d.candidate_id,COALESCE(d.plan_snapshot->>'candidate_commit',''),
+       COALESCE(s.name,''),COALESCE(s.state,''),COALESCE(x.seed_id,''),COALESCE(x.seed_sha256,''),
+       COALESCE(b.id::text,''),COALESCE(b.status,''),
+       COALESCE((SELECT count(*) FROM delivery_batch_member m2 WHERE m2.batch_id=b.id),0)
+FROM issue_delivery d
+LEFT JOIN verification_slot s ON s.delivery_id=d.id
+LEFT JOIN verification_slot_seed x ON x.name=s.name
+LEFT JOIN delivery_batch_member m ON m.delivery_id=d.id
+LEFT JOIN delivery_batch b ON b.id=m.batch_id
+WHERE d.issue_id=$1 AND d.phase<>'cancelled'
+ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID)).Scan(&deliveryID, &phase, &candidateID, &candidateCommit, &environment, &environmentState, &seedID, &seedSHA, &batchID, &batchStatus, &batchMembers)
+		if err == nil {
+			resp.DeliveryContext = &DeliveryContextData{
+				ID: deliveryID, Phase: phase, CandidateID: candidateID, CandidateCommit: candidateCommit,
+				Environment: environment, EnvironmentState: environmentState,
+				SeedID: seedID, SeedSHA256: seedSHA, BatchID: batchID, BatchStatus: batchStatus, BatchMembers: batchMembers,
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("task claim: failed to load delivery context",
+				"task_id", uuidToString(task.ID), "issue_id", uuidToString(task.IssueID), "error", err)
+		}
+	}
+
 	// Workspace-level Context (workspace.context DB column) — the per-workspace
 	// system prompt that workspace owners set in Settings → General. Inject it
 	// into the brief regardless of task kind (issue / chat / autopilot /
