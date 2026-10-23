@@ -40,7 +40,7 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 	if err != nil || done {
 		return false, err
 	}
-	var suppress bool
+	var completedAudit bool
 	if stage == "published" {
 		pending, completed, checkErr := h.resumedPublishedCloseout(r.Context(), ws, issue, delivery, candidate)
 		if checkErr != nil {
@@ -50,7 +50,7 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 			// 恢复任务还在执行，通知保持未投递，由既有持久队列重试。
 			return true, nil
 		}
-		suppress = completed
+		completedAudit = completed
 	}
 	if stage == "batch_ready" {
 		var representative string
@@ -70,11 +70,12 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 			mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
 		}
 		text := deliveryNoticeText(stage, delivery, candidate, detail)
-		body := map[string]any{"id": id, "content": mention + text}
-		if suppress {
-			body["suppress_agent_ids"] = []string{assignee}
+		if completedAudit {
+			// 便签在创建、完成补派和评论重放路径都持久免触发。
+			mention = ""
+			text = fmt.Sprintf("/note 交付 %s 的候选 %s 已发布；本次发布恢复执行已完成生产验收，任务已完成。", delivery, candidate)
 		}
-		payload, _ := json.Marshal(body)
+		payload, _ := json.Marshal(map[string]any{"id": id, "content": mention + text})
 		rr := r.Clone(r.Context())
 		rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(id)))
 		route := chi.NewRouteContext()
