@@ -543,35 +543,6 @@ def reviewed_supervision_settings_change(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
-REVIEWED_USAGE_ROLLUP_SELFHEAL_SHA256 = '66b2f05cab3a2602005e9284fc6572725bc238d7de8976fc5bb13efe06ca7f93'
-
-
-def reviewed_usage_rollup_selfheal(migration):
-    """634 的放行：已逐句审查的内容 + 精确内容 hash 绑定，不再做通用正则判断。
-
-    之前的正则版本会把带双引号的业务表写操作漏掉（`UPDATE "task_usage" ...`
-    不进 writes 集合），等于给了一条可绕过的通用放行通道。这里撤回那套判断：
-    只接受**这一份**已审查内容，其余一律拒绝，交人工评审。
-
-    审查结论（依据见 docs/operations/usage-metrics.md 的"634 迁移审查记录"）：
-      * 整份文件只有一条 CREATE OR REPLACE FUNCTION rollup_task_usage_hourly()，
-        同名、同参数、同返回类型；CREATE OR REPLACE 保持原函数 OID 与默认权限，
-        旧程序的定时调用不受影响。
-      * 迁移执行时只替换函数定义，不写任何业务数据。
-      * 函数体只写 task_usage_hourly_rollup_state（INSERT ... ON CONFLICT DO NOTHING
-        与三处 UPDATE ... WHERE id = 1），对 task_usage 只读；其余写入经既有的
-        rollup_task_usage_hourly_window()（幂等窗口重算）与
-        prune_task_usage_hourly_dirty()（脏队列 TTL 清理）完成。
-      * 咨询锁 4246 取不到即返回 0，正常路径、query_canceled、OTHERS 三条路径都解锁。
-      * 回退迁移只把函数体换回旧版本，不改数据，小时桶由幂等窗口重算。
-
-    hash 只用来防止审查之后被改动，不代替上面的审查；要改 SQL 就必须重新审查并
-    同步这里的指纹。
-    """
-    return (migration.name == '634_task_usage_hourly_rollup_selfheal.up.sql'
-            and hashlib.sha256(migration.read_bytes()).hexdigest() == REVIEWED_USAGE_ROLLUP_SELFHEAL_SHA256)
-
-
 def prepare_database(release, cfg, previous):
     old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
     for migration in sorted((Path(release)/'server/migrations').glob('*.up.sql')):
@@ -581,7 +552,7 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements) and not reviewed_supervision_settings_change(migration) and not reviewed_usage_rollup_selfheal(migration):
+            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements) and not reviewed_supervision_settings_change(migration):
                 raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)

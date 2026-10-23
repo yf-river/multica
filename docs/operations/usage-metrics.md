@@ -91,14 +91,13 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 
 ## 5. 小时汇总与自愈
 
-`rollup_task_usage_hourly()` 是单例水位（`task_usage_hourly_rollup_state.id = 1`）。替换函数体属于
-非新增结构变更，发布器只按"已审查内容 + 指纹"放行这一份迁移，审查依据见第 6 节。
-迁移 634 之后：
+`rollup_task_usage_hourly()` 是单例水位（`task_usage_hourly_rollup_state.id = 1`）。自愈在
+调度器 handler 里完成，不改函数、不需要迁移（原因见第 6 节）。行为：
 
 - 状态行缺失时按最早一条 `task_usage` 播种，不再永久空转；
 - `1970-01-01` 视为"从未汇总"，直接跳到真实最早数据；
 - 单次 tick 内按 1 天窗口连续追赶，上限 60 天；
-- 追赶 tick 被 `statement_timeout` 取消时显式释放咨询锁 4246。
+- 整轮跑在一条固定连接上，取消/超时后归还连接池前显式 `pg_advisory_unlock(4246)`，锁不会跟着连接回到池里。
 
 排查顺序：`task_usage` 有行但 `task_usage_hourly` 为空 → 先看状态行是否存在、水位
 是否停在 1970；两者都正常再看脏队列 `task_usage_hourly_dirty`。
@@ -107,43 +106,22 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 把水位回填到"现在"之前前，确认历史行的 `updated_at` 不是入库时刻，否则它们会被
 水位跳过。
 
-## 6. 634 迁移审查记录（发布器放行依据）
+## 6. 自愈为什么在应用层
 
-`634_task_usage_hourly_rollup_selfheal` 是函数体替换，不属于"新增表/并发索引"的自动迁移
-范围，发布器按下面这份审查放行，并用内容 SHA-256 绑定：
+小时汇总的自愈（补建状态行、把 1970 水位当作未汇总、按天连续追赶）最初写成
+`rollup_task_usage_hourly()` 的函数体替换，即一份非新增结构的迁移。发布器只自动应用
+新增表与并发索引，遇到函数体替换会要求"单独的数据库兼容方案，旧站继续运行"；把例外
+塞进发布脚本又只有等它先进主分支才生效，等于绕不过去的先后顺序。
 
-```
-sha256 = 66b2f05cab3a2602005e9284fc6572725bc238d7de8976fc5bb13efe06ca7f93
-```
+因此自愈改到调度器 handler（`internal/scheduler/jobs_task_usage.go`）：
 
-指纹只防止审查之后被改动，不代替审查。改动 SQL 必须重新审查并同步指纹。
+- 调用汇总函数前先 `INSERT ... ON CONFLICT (id) DO NOTHING` 补齐状态行，水位按最早一条
+  `task_usage` 播种；再对 `watermark_at <= 1970-01-02` 的行做一次校正。
+- 之后连续调用既有的 `rollup_task_usage_hourly()`，每次仍是一天窗口；水位不再推进
+  （已追平，或没拿到 4246）就停，单次 tick 最多 60 次，即最多追赶 60 天。
 
-**语句与执行期影响**：整份文件只有一条 `CREATE OR REPLACE FUNCTION
-rollup_task_usage_hourly()`。迁移执行时只替换函数定义，不读写业务数据；重复执行幂等。
-
-**兼容性**：同名、零参数、返回 `BIGINT`。PostgreSQL 的 `CREATE OR REPLACE` 在签名不变时
-保留原函数 OID 与默认权限（生产 `pg_proc.oid=16523`，`proacl` 为默认），旧程序
-`scheduler` 的 `SELECT rollup_task_usage_hourly()` 调用方式不变。
-
-**写入范围**：函数体只写 `task_usage_hourly_rollup_state`——一处 `INSERT ... ON CONFLICT
-(id) DO NOTHING`、三处 `UPDATE ... WHERE id = 1`（含异常路径写 `last_error`）。对
-`task_usage` 只有 `MIN(created_at)` 只读查询。其余写入经既有原语：
-`rollup_task_usage_hourly_window(from,to)`（幂等窗口重算 `task_usage_hourly`，签名
-`(timestamptz,timestamptz)->bigint` 已生产核对）与 `prune_task_usage_hourly_dirty()`（脏队列
-TTL 清理）。没有 `DELETE`/`TRUNCATE`/`DROP`/`ALTER`，没有写 `agent_task_queue`、`task_usage`、
-`issue` 等业务表。
-
-**锁与取消**：入口 `pg_try_advisory_lock(4246)`，取不到直接返回 0，不排队、不阻塞；正常
-结束、`query_canceled`、`WHEN OTHERS` 三条路径都显式 `pg_advisory_unlock(4246)`，语句超时
-取消不会把锁留在会话上。
-
-**升级**：在 619 基线上只替换函数；单 tick 内按 1 天窗口连续追赶、上限 60 天，超出的部分
-留给后续 tick，不会在一条语句里重算数月。**回退**：`634...down.sql` 只把函数体换回旧版
-（每 tick 一个窗口、无自愈），不改任何数据；小时桶由幂等窗口重算，无需清理。
-
-**审查边界**：只接受上述这个文件名与内容的组合。任何改动——包括把写操作换成带引号的
-表名、追加顶层 SQL、换文件名——都会拒绝并要求重新审查。发布器不据此扩展成通用 SQL
-放行规则。
+这样不需要任何迁移来改变函数，旧程序在迁移前后都能继续跑；锁、取消与幂等语义仍是
+函数原有的那套。代价是自愈依赖调度器在跑——生产与自托管的汇总本来就由它驱动。
 
 ## 7. 历史补齐
 
