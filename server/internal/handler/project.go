@@ -662,6 +662,10 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publishEvent(event)
+	// 修改 1. 项目描述同样存在库里，agent 运行中改写它时文件 diff 看不到这次改动。
+	h.recordRunTextChange(r.Context(), h.Queries, r, workspaceID,
+		runTextTarget{Kind: "project", ID: uuidToString(project.ID), Name: project.Title},
+		"description", prevProject.Description.String, project.Description.String)
 	writeJSON(w, http.StatusOK, resp)
 }
 

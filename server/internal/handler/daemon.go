@@ -3920,14 +3920,7 @@ type TaskCompleteRequest struct {
 // durable_work_dir, branch_name, session_id) are all TEXT, and result is
 // JSONB; neither tolerates a NUL.
 func sanitizeTaskCompleteRequest(req *TaskCompleteRequest) {
-	if req.CodeDiff != nil {
-		req.CodeDiff.Before = util.SanitizeTextForPostgres(req.CodeDiff.Before)
-		req.CodeDiff.After = util.SanitizeTextForPostgres(req.CodeDiff.After)
-		for i := range req.CodeDiff.Files {
-			req.CodeDiff.Files[i].Path = util.SanitizeTextForPostgres(req.CodeDiff.Files[i].Path)
-			req.CodeDiff.Files[i].Patch = util.SanitizeTextForPostgres(req.CodeDiff.Files[i].Patch)
-		}
-	}
+	sanitizeCodeDiff(req.CodeDiff)
 
 	req.PRURL = util.SanitizeTextForPostgres(req.PRURL)
 	req.Output = util.SanitizeTextForPostgres(req.Output)
@@ -3939,6 +3932,7 @@ func sanitizeTaskCompleteRequest(req *TaskCompleteRequest) {
 }
 
 func sanitizeTaskFailRequest(req *TaskFailRequest) {
+	sanitizeCodeDiff(req.CodeDiff)
 	req.Error = util.SanitizeTextForPostgres(req.Error)
 	req.SessionID = util.SanitizeTextForPostgres(req.SessionID)
 	req.WorkDir = util.SanitizeTextForPostgres(req.WorkDir)
@@ -3946,6 +3940,62 @@ func sanitizeTaskFailRequest(req *TaskFailRequest) {
 	req.FailureReason = util.SanitizeTextForPostgres(req.FailureReason)
 	req.BranchName = util.SanitizeTextForPostgres(req.BranchName)
 	req.RetiredSessionID = util.SanitizeTextForPostgres(req.RetiredSessionID)
+}
+
+// sanitizeCodeDiff scrubs every caller-supplied string inside a captured diff.
+// The whole value lands in a JSONB column, so an embedded NUL anywhere would
+// roll the terminal transaction back (GH #7098).
+func sanitizeCodeDiff(diff *codediff.Diff) {
+	if diff == nil {
+		return
+	}
+	clean := func(value string) string { return util.SanitizeTextForPostgres(value) }
+	diff.Before = clean(diff.Before)
+	diff.After = clean(diff.After)
+	diff.Reason = clean(diff.Reason)
+	for i := range diff.Files {
+		diff.Files[i].Path = clean(diff.Files[i].Path)
+		diff.Files[i].Patch = clean(diff.Files[i].Patch)
+	}
+	for i := range diff.Roots {
+		root := &diff.Roots[i]
+		root.Path = clean(root.Path)
+		root.Label = clean(root.Label)
+		root.Branch = clean(root.Branch)
+		root.Base = clean(root.Base)
+		root.Reason = clean(root.Reason)
+		for j := range root.Files {
+			root.Files[j].Path = clean(root.Files[j].Path)
+			root.Files[j].Patch = clean(root.Files[j].Patch)
+		}
+		for j := range root.Dirs {
+			root.Dirs[j].Path = clean(root.Dirs[j].Path)
+		}
+	}
+}
+
+// persistFailedRunResult attaches the captured diff and the platform-text edits
+// to a failed task's result. The failure transaction deliberately leaves result
+// NULL, so this is a separate best-effort write after it commits.
+func (h *Handler) persistFailedRunResult(ctx context.Context, taskID string, req TaskFailRequest) {
+	taskUUID, err := parseUUIDLoose(taskID)
+	if err != nil {
+		return
+	}
+	envelope := map[string]json.RawMessage{}
+	if encoded, marshalErr := json.Marshal(req.CodeDiff); marshalErr == nil && req.CodeDiff != nil {
+		envelope["code_diff"] = encoded
+	}
+	envelope = h.attachRunTextChanges(ctx, taskID, envelope)
+	if len(envelope) == 0 {
+		return
+	}
+	if err := h.Queries.SetAgentTaskResult(ctx, db.SetAgentTaskResultParams{
+		ID:     taskUUID,
+		Result: marshalResultEnvelope(envelope),
+	}); err != nil {
+		slog.Warn("fail task: store run result failed", "task_id", taskID, "error", err)
+	}
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -3990,6 +4040,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		)
 		h.failTask(w, r, taskID, workspaceID, TaskFailRequest{
 			Error:          req.Output,
+			CodeDiff:       req.CodeDiff,
 			FailureReason:  string(taskfailure.ReasonAgentContextOverflow),
 			SessionID:      req.SessionID,
 			WorkDir:        req.WorkDir,
@@ -4004,7 +4055,10 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, _ := json.Marshal(req)
+	rawResult, _ := json.Marshal(req)
+	envelope := parseResultEnvelope(rawResult)
+	envelope = h.attachRunTextChanges(r.Context(), taskID, envelope)
+	result := marshalResultEnvelope(envelope)
 	// MUL-5305: SessionRolloutMissing is applied inside CompleteTask's terminal
 	// transaction (force session_id NULL + flag the row), so an auto-retry the
 	// same commit creates and wakes can never observe the withheld pointer or a
@@ -4664,11 +4718,14 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 
 // FailTask marks a running task as failed.
 type TaskFailRequest struct {
-	Error          string `json:"error"`
-	SessionID      string `json:"session_id,omitempty"`
-	WorkDir        string `json:"work_dir,omitempty"`
-	DurableWorkDir string `json:"durable_work_dir,omitempty"`
-	FailureReason  string `json:"failure_reason,omitempty"`
+	Error string `json:"error"`
+	// 1. 失败的运行同样改过文件：diff 必须随失败一起上报，否则用户只能看到
+	//    "失败了" 而看不到失败前已经写到哪一步。
+	CodeDiff       *codediff.Diff `json:"code_diff,omitempty"`
+	SessionID      string         `json:"session_id,omitempty"`
+	WorkDir        string         `json:"work_dir,omitempty"`
+	DurableWorkDir string         `json:"durable_work_dir,omitempty"`
+	FailureReason  string         `json:"failure_reason,omitempty"`
 	// BranchName: a failed run can still have produced a branch — worktree mode
 	// commits whatever the agent left before tearing the worktree down. Report
 	// it so a partially-successful run is still findable.
@@ -4731,6 +4788,11 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 		return
 	}
 	h.TaskService.NotifyTaskFinished(*task)
+
+	// 2. 失败行本身不带 result；把这次运行留下的 diff 与提示词改动补写到
+	//    result 上，让卡片在失败任务里也能显示"改到哪一步"。写失败只丢卡片，
+	//    不影响已经提交的失败终态。
+	h.persistFailedRunResult(r.Context(), taskID, req)
 
 	// Best-effort revoke of the mat_ task token minted at claim. Same
 	// rationale as CompleteTask — eager deletion shrinks the post-

@@ -178,6 +178,7 @@ class PoolServiceLifetimeTests(unittest.TestCase):
             self.assertEqual(command[command.index('--unit')+1],'multica-verify-'+identity+'.service')
             self.assertIn('--property=Type=exec',command)
             self.assertIn('--property=KillMode=process',command)
+            self.assertIn('--setenv=HOME='+w.pwd.getpwuid(w.os.getuid()).pw_dir,command)
             self.assertNotIn('--property=KillMode=control-group',command)
             self.assertEqual(command[-2:],['--pool-delivery',identity])
 
@@ -190,12 +191,15 @@ class PoolServiceLifetimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,patch.object(r,'ROOT',Path(tmp)):
             properties='LoadState=loaded\nActiveState=inactive\nWorkingDirectory='+tmp+'\nType=exec\nKillMode=process'
             def outputs(command_override=None,environment_override=None):
-                return [properties,json.dumps({'data':['/test/unit']}),json.dumps({'data':[[w.sys.executable,command_override or command,False]]}),json.dumps({'data':environment_override or ['MULTICA_RELEASE_ROOT='+tmp]})]
+                return [properties,json.dumps({'data':['/test/unit']}),json.dumps({'data':[[w.sys.executable,command_override or command,False]]}),json.dumps({'data':environment_override or ['MULTICA_RELEASE_ROOT='+tmp,'HOME='+w.pwd.getpwuid(w.os.getuid()).pw_dir]})]
             with patch.object(r,'output',side_effect=outputs()) as reads,patch.object(r,'run') as launch:
                 worker.start_pool_unit(identity)
                 self.assertEqual(reads.call_args_list[1].args[0][-1],'multica-verify-'+identity+'.service')
                 launch.assert_called_once_with(['systemctl','start','multica-verify-'+identity+'.service'])
-            for responses in [outputs(command_override=command[:-1]+['wrong-delivery']),outputs(environment_override=['MULTICA_RELEASE_ROOT=/wrong'])]:
+            active=outputs();active[0]=active[0].replace('ActiveState=inactive','ActiveState=active')
+            with patch.object(r,'output',side_effect=active),patch.object(r,'run') as launch:
+                worker.start_pool_unit(identity);launch.assert_not_called()
+            for responses in [outputs(command_override=command[:-1]+['wrong-delivery']),outputs(environment_override=['MULTICA_RELEASE_ROOT=/wrong']),outputs(environment_override=['MULTICA_RELEASE_ROOT='+tmp]),outputs(environment_override=['MULTICA_RELEASE_ROOT='+tmp,'HOME=/wrong'])]:
                 with patch.object(r,'output',side_effect=responses),patch.object(r,'run') as launch:
                     with self.assertRaises(r.RecoveryRequired):worker.start_pool_unit(identity)
                     launch.assert_not_called()

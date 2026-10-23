@@ -21,6 +21,22 @@ class Busy(RuntimeError): pass
 
 class SlotWaitTimeout(RuntimeError): pass
 
+def merge_source(path,arguments):
+    """只有真实未合并文件归为成员冲突，其它Git失败保留原始诊断。"""
+    result=subprocess.run(['git','merge',*arguments],cwd=path,capture_output=True,text=True)
+    if result.returncode==0:return True
+    detail=(result.stderr+'\n'+result.stdout).strip()
+    conflicts=subprocess.run(['git','diff','--name-only','--diff-filter=U'],cwd=path,capture_output=True,text=True)
+    pending=subprocess.run(['git','rev-parse','--verify','--quiet','MERGE_HEAD'],cwd=path,capture_output=True,text=True)
+    if pending.returncode==0:
+        cleanup=subprocess.run(['git','merge','--abort'],cwd=path,capture_output=True,text=True)
+        if cleanup.returncode:
+            raise r.RecoveryRequired('Git合并失败：'+detail+'；清理失败：'+(cleanup.stderr or cleanup.stdout).strip())
+    if conflicts.returncode:
+        raise RuntimeError('Git合并失败：'+detail+'；无法核对冲突：'+conflicts.stderr.strip())
+    if conflicts.stdout.strip():return False
+    raise RuntimeError('Git合并失败：'+detail)
+
 class Worker:
     def __init__(self,env):
         r.require_environment(env)
@@ -51,8 +67,7 @@ class Worker:
         if r.output(['git','status','--porcelain','--untracked-files=all'],cwd=path):raise RuntimeError('交付构建目录存在未保存内容，停止覆盖')
         if integrate:
             r.run(['git','fetch','origin','personal-studio-upstream'],cwd=path)
-            if subprocess.run(['git','merge','--no-edit','origin/personal-studio-upstream'],cwd=path).returncode:
-                r.run(['git','merge','--abort'],cwd=path)
+            if not merge_source(path,['--no-edit','origin/personal-studio-upstream']):
                 raise RuntimeError('与最新主分支存在合并冲突，请在原任务分支解决并重新提交审核')
         return path
     def own_candidate(self,d):
@@ -291,10 +306,10 @@ class Worker:
     def start_pool_unit(self,delivery):
         unit='multica-verify-'+delivery+'.service'
         command=[sys.executable,str(Path(__file__).resolve()),'--env',self.env,'--pool-delivery',delivery]
+        home=pwd.getpwuid(os.getuid()).pw_dir
         properties=dict(line.split('=',1) for line in r.output(['systemctl','show',unit,
             '--property=LoadState,ActiveState,WorkingDirectory,Type,KillMode','--no-pager']).splitlines() if '=' in line)
         if properties.get('LoadState')!='not-found':
-            if properties.get('ActiveState') in ('active','activating','deactivating'):return
             # systemd保留仍有持久服务的inactive单元；只续启参数完全匹配的原单元。
             object_path=json.loads(r.output(['busctl','--json=short','call','org.freedesktop.systemd1',
                 '/org/freedesktop/systemd1','org.freedesktop.systemd1.Manager','GetUnit','s',unit]))['data'][0]
@@ -302,18 +317,19 @@ class Worker:
                 object_path,'org.freedesktop.systemd1.Service','ExecStart']))['data']
             environment=json.loads(r.output(['busctl','--json=short','get-property','org.freedesktop.systemd1',
                 object_path,'org.freedesktop.systemd1.Service','Environment']))['data']
-            if (properties.get('LoadState')!='loaded' or properties.get('ActiveState') not in ('inactive','failed')
+            environment=dict(item.split('=',1) for item in environment if '=' in item)
+            if (properties.get('LoadState')!='loaded' or properties.get('ActiveState') not in ('inactive','failed','active','activating','deactivating')
                     or properties.get('WorkingDirectory')!=str(r.ROOT) or properties.get('Type')!='exec'
                     or properties.get('KillMode')!='process' or len(starts)!=1
                     or starts[0][0]!=sys.executable or starts[0][1]!=command or starts[0][2] is not False
-                    or 'MULTICA_RELEASE_ROOT='+str(r.ROOT) not in environment):
+                    or environment.get('MULTICA_RELEASE_ROOT')!=str(r.ROOT) or environment.get('HOME')!=home):
                 raise r.RecoveryRequired('已有验收接力单元身份不匹配，拒绝替换：'+unit)
-            r.run(['systemctl','start',unit])
+            if properties.get('ActiveState') not in ('active','activating','deactivating'):r.run(['systemctl','start',unit])
             return
         # 槽位服务跨交付存活，由canonical PID/profile管理停启；短命接力单元退出不能杀服务。
         r.run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec',
                '--property=KillMode=process','--working-directory',r.ROOT,
-               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),*command])
+               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*command])
 
     def pool_dispatch(self,rows,current_id,allow_new=True):
         if not allow_new and not (r.RUN/'verification-jobs').exists():return set()
@@ -507,10 +523,9 @@ class Worker:
             r.run(['git','-C',r.ROOT,'worktree','remove','--force',path])
         r.run(['git','-C',r.ROOT,'worktree','add','-B',branch,path,base])
         for member in members:
-            if subprocess.run(['git','-C',r.ROOT,'cat-file','-e',member['source_commit']+'^{commit}'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
-                return path,base,base,member
-            if subprocess.run(['git','merge','--no-ff','--no-edit',member['source_commit']],cwd=path,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
-                r.run(['git','merge','--abort'],cwd=path)
+            lookup=subprocess.run(['git','-C',r.ROOT,'cat-file','-e',member['source_commit']+'^{commit}'],capture_output=True,text=True)
+            if lookup.returncode:raise RuntimeError('Git提交读取失败：'+lookup.stderr.strip())
+            if not merge_source(path,['--no-ff','--no-edit',member['source_commit']]):
                 return path,base,None,member
         return path,base,r.output(['git','rev-parse','HEAD'],cwd=path),None
 
