@@ -233,6 +233,7 @@ def build(source, target):
     reusable = reusable_build(previous, current_files, version)
     target.mkdir(parents=True)
     env = os.environ.copy()
+    if not env.get('HOME'): env['HOME'] = pwd.getpwuid(os.getuid()).pw_dir
     for key in list(env):
         if key.startswith(('NEXT_PUBLIC_', 'MULTICA_', 'GOAL_TEST_')) or key in ('REMOTE_API_URL','FRONTEND_ORIGIN','DATABASE_URL','JWT_SECRET'): env.pop(key)
     env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=version, NEXT_TELEMETRY_DISABLED='1')
