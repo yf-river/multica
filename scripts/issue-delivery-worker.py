@@ -736,6 +736,19 @@ class Worker:
         if not candidate or candidate.get('batch_id')!=batch['id']:
             self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='组合候选记录缺失，需要核对 int 现场'))
             return True
+        # 队列通常不返回终态成员；按原交付查询，不能把缺行直接当作已取消。
+        member_rows=[]
+        for member in members:
+            row=self.batch_row(rows,member['delivery_id'])
+            if row is None:
+                row=self.batch_row(self.api('delivery-queue?current='+member['delivery_id']),member['delivery_id'])
+            if row:member_rows.append(row)
+        if candidate['status']=='released' or any(row['phase'] in ('cancelled','published') for row in member_rows):
+            self.batch_call(dict(action='abort',batch_id=batch['id'],worker_token=batch['worker_token'],error='组合候选已释放或成员已终态，结束失效批次并重排有效成员'))
+            if candidate['status'] in ('verifying','accepted'):r.release_candidate(candidate['id'])
+            representative=self.batch_row(member_rows,candidate.get('delivery_id',''))
+            if representative:self.finish_publication(representative)
+            return True
         representative=self.batch_row(rows,candidate.get('delivery_id',''))
         if representative:self.publication(representative,'heartbeat')
         self.notify_batch_ready(members)
