@@ -242,3 +242,5 @@ Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`
 - 当前任务令牌及最新执行核对位于 `SubmitIssueReviewVerdict`；业务验收见 `server/internal/handler/issue_review_test.go`。
 - 回复审查员的转交：`server/internal/handler/comment_review_reply.go` 按 `system_key=issue_review` 识别审查员并解析当前负责人；`server/internal/handler/comment.go` 的线程回复与显式 @ 共用同一解析，预览和保存结果一致。
 - 接收人提示与回执文案：`packages/views/issues/review-reply-copy.ts`、`packages/views/issues/components/comment-trigger-chips.tsx`。
+
+- `server/internal/handler/delivery_batch.go`, `issue_delivery.go`, `delivery_notice.go`: fixed combination candidate, representative acceptance with exact candidate identity and idempotent evidence, persistent batch-ready notification and revocation recovery.

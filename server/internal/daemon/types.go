@@ -44,6 +44,13 @@ type RepoData struct {
 
 // ProjectResourceData 镜像 handler.ProjectResourceData——单个传给 daemon 的项目
 // 资源。resource_ref 是随类型而异的 JSON。
+// WorkspaceRepoData 是 workspace 里登记的本地目录，供运行结束时的 diff 采集
+// 在任务目录之外寻找 agent 新建的 worktree。
+type WorkspaceRepoData struct {
+	Path  string `json:"path"`
+	Label string `json:"label,omitempty"`
+}
+
 type ProjectResourceData struct {
 	ID           string          `json:"id"`
 	ResourceType string          `json:"resource_type"`
@@ -65,6 +72,22 @@ type ActiveSiblingRunData struct {
 	Status          string `json:"status"`
 	CreatedAt       string `json:"created_at"`
 	StartedAt       string `json:"started_at,omitempty"`
+}
+
+// DeliveryContextData 镜像 claim 载荷里的交付上下文：阶段、候选、分配到的验收环境、
+// 当前种子和所在批次。镜像字段：internal/handler/agent.go 的同名结构。
+type DeliveryContextData struct {
+	ID               string `json:"id"`
+	Phase            string `json:"phase"`
+	CandidateID      string `json:"candidate_id,omitempty"`
+	CandidateCommit  string `json:"candidate_commit,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	EnvironmentState string `json:"environment_state,omitempty"`
+	SeedID           string `json:"seed_id,omitempty"`
+	SeedSHA256       string `json:"seed_sha256,omitempty"`
+	BatchID          string `json:"batch_id,omitempty"`
+	BatchStatus      string `json:"batch_status,omitempty"`
+	BatchMembers     int    `json:"batch_members,omitempty"`
 }
 
 // IssueStatusData 镜像 claim 载荷里的一个活动中的自定义 workspace 状态
@@ -109,6 +132,7 @@ type Task struct {
 	IssueStatuses        []IssueStatusData      `json:"issue_statuses,omitempty"`
 	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
 	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
+	DeliveryContext      *DeliveryContextData   `json:"delivery_context,omitempty"`
 	ThreadName           string                 `json:"thread_name,omitempty"` // 给 provider 原生会话/线程历史用的语义化标题
 	Agent                *AgentData             `json:"agent,omitempty"`
 	ConnectedApps        []ConnectedAppData     `json:"connected_apps,omitempty"` // 本次运行通过 runtime MCP overlays 挂载的每运行应用能力
@@ -117,7 +141,10 @@ type Task struct {
 	ProjectTitle         string                 `json:"project_title,omitempty"`       // 人类可读的项目标题，用于注入上下文
 	ProjectDescription   string                 `json:"project_description,omitempty"` // 持久化的项目级上下文，注入 brief
 	ProjectResources     []ProjectResourceData  `json:"project_resources,omitempty"`   // 需要暴露给 agent 的项目级资源
-	IsLeaderTask         bool                   `json:"is_leader_task,omitempty"`      // 为 true 表示本次在“小队队长”协调角色下执行
+	// WorkspaceRepos 是 workspace 级本地目录（与项目无关），用于在运行结束后发现
+	// agent 在任务目录之外新建的 worktree。镜像 handler.WorkspaceRepoData。
+	WorkspaceRepos []WorkspaceRepoData `json:"workspace_repos,omitempty"`
+	IsLeaderTask   bool                `json:"is_leader_task,omitempty"` // 为 true 表示本次在“小队队长”协调角色下执行
 	// LeaderRoleResolved 是服务器能力位：IsLeaderTask/SquadID 权威地回答了“这次是不是队长运行”。
 	// 早于该能力的服务器不保证这一点——#4951 之前的服务器从不发 is_leader_task，之后的虽然会发
 	// 但没有这个保证——因此 taskIsSquadLeader 对这两种情况都回退到 brief 里的标记（MUL-5811）。

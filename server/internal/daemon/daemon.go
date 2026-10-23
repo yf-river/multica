@@ -511,6 +511,11 @@ type Daemon struct {
 	// activeTasks 是当前处于 handleTask 中的任务的"所有权安全"计数。它刻意包含
 	// 准备阶段与 local_directory 等待者，因为重启/更新屏障不得杀掉任何已认领任务。
 	activeTasks atomic.Int64
+	// captureMu 保护 captureRunning：按 workspace 统计正在采集 diff 的运行数。
+	// 同一 workspace 有第二个任务同时在跑时，任务目录之外新出现的工作树无法确定
+	// 归属，采集会把它标成「未归属」而不是猜给某一个任务。
+	captureMu      sync.Mutex
+	captureRunning map[string]int
 	// runningTasks 统计活跃的 provider 执行会话，只在 backend.Execute 返回后开始
 	// 计数。它可能短暂落后于服务器侧 running 状态（后者从 provider 启动前的准备
 	// 阶段就开始）。resourceWaitTasks 统计阻塞在 local_directory 路径锁上的任务。
@@ -5450,6 +5455,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			kind:           terminalTaskReportFail,
 			taskID:         taskID,
 			errorMessage:   result.Comment,
+			codeDiff:       result.CodeDiff,
 			sessionID:      result.SessionID,
 			workDir:        result.WorkDir,
 			durableWorkDir: result.DurableWorkDir,
@@ -5478,7 +5484,7 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 	case terminalTaskReportComplete:
 		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff)
 	case terminalTaskReportFail:
-		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir)
+		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff)
 	default:
 		return fmt.Errorf("unsupported terminal task report kind %d", report.kind)
 	}
@@ -7411,24 +7417,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Info("resuming session", "session_id", task.PriorSessionID)
 	}
 
-	// Capture after runtime configuration injection and before the agent starts.
-	// Shared in-place directories cannot provide reliable run attribution.
-	if !env.LocalDirectory {
-		before, snapshotErr := codediff.Snapshot(ctx, env.WorkDir)
-		if snapshotErr == nil {
-			defer func() {
-				captureCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				defer cancel()
-				diff, captureErr := codediff.Collect(captureCtx, env.WorkDir, before)
-				if captureErr != nil {
-					taskLog.Warn("code diff capture unavailable", "error", captureErr)
-					taskResult.CodeDiff = &codediff.Diff{Unavailable: true, Files: []codediff.File{}}
-				} else {
-					taskResult.CodeDiff = diff
-				}
-			}()
+	// 1. 运行前取一次基线：workdir 的完整文件快照，加上任务相关仓库的工作树清单。
+	//    快照不再是 git 树快照——非 git 目录、被 ignore 的文件、未跟踪文件都要算进来，
+	//    而 git 基线只用来回答"checkout 出来的那些文件本来就在，不算改动"。
+	capture := d.startRunCapture(ctx, task, env)
+	defer func() {
+		diff := capture.finish()
+		if diff == nil {
+			taskLog.Warn("code diff capture unavailable", "error", "capture not started")
+			taskResult.CodeDiff = codediff.Unavailable("diff 采集未能开始")
+			return
 		}
-	}
+		taskResult.CodeDiff = diff
+		taskLog.Info("code diff captured",
+			"roots", len(diff.Roots),
+			"files", len(diff.Files),
+			"truncated", diff.Truncated,
+		)
+	}()
 	agentStartedAt := time.Now()
 	taskLog.Info("agent preparation completed",
 		"preparation_duration", agentStartedAt.Sub(runStartedAt).Round(time.Millisecond),

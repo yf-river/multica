@@ -1965,3 +1965,41 @@ func TestSupervisionInputHasNoAppendedWorkflow(t *testing.T) {
 		t.Fatalf("structured supervision input changed: %s", got)
 	}
 }
+
+// 交付上下文要写清阶段、候选、分配环境和种子，并明确不能自行换环境或把验收当成发布。
+func TestBuildPromptInjectsDeliveryContext(t *testing.T) {
+	task := Task{
+		IssueID: "issue-delivery",
+		DeliveryContext: &DeliveryContextData{
+			ID: "delivery-1", Phase: "testing", CandidateID: "candidate-9",
+			CandidateCommit: strings.Repeat("c", 40), Environment: "verify-2",
+			EnvironmentState: "verifying", SeedID: "seed-20261023-v2",
+			SeedSHA256: strings.Repeat("a", 64), BatchID: "batch-1", BatchStatus: "frozen", BatchMembers: 2,
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{
+		"## Delivery Context",
+		"`testing`",
+		"`delivery-1`",
+		"candidate-9",
+		"`verify-2`",
+		"state `verifying`",
+		"seed-20261023-v2",
+		"`batch-1`",
+		"2 member(s)",
+		"do not switch environments",
+		"Finishing verification is not the same as releasing",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestBuildPromptOmitsDeliveryContextWithoutDelivery(t *testing.T) {
+	out := BuildPrompt(Task{IssueID: "issue-plain"}, "claude")
+	if strings.Contains(out, "Delivery Context") {
+		t.Errorf("prompt must not claim a delivery that does not exist\n--- output ---\n%s", out)
+	}
+}

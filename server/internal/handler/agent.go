@@ -310,6 +310,16 @@ type ProjectResourceData struct {
 	Label        string          `json:"label,omitempty"`
 }
 
+// WorkspaceRepoData is one local directory in the workspace, independent of the
+// task's project. The daemon needs it to find worktrees an agent created
+// outside its own task directory: a task can belong to no project at all (that
+// is exactly the GONG-57 case) while the repository it touched is registered on
+// another project in the same workspace.
+type WorkspaceRepoData struct {
+	Path  string `json:"path"`
+	Label string `json:"label,omitempty"`
+}
+
 // ConnectedAppData 把 daemon-claim 的线字段类型限定在 handler 包内，
 // 同时与 runtime app 元数据包共享同一份规范 JSON 形状。
 type ConnectedAppData = runtimeapps.ConnectedApp
@@ -325,6 +335,22 @@ type ActiveSiblingRunData struct {
 	Status          string `json:"status"`
 	CreatedAt       string `json:"created_at"`
 	StartedAt       string `json:"started_at,omitempty"`
+}
+
+// DeliveryContextData 让每轮提示直接看到本任务的交付阶段、候选、分配环境与种子，
+// 不用去猜环境、也不要自行升级阶段或重置数据。
+type DeliveryContextData struct {
+	ID               string `json:"id"`
+	Phase            string `json:"phase"`
+	CandidateID      string `json:"candidate_id,omitempty"`
+	CandidateCommit  string `json:"candidate_commit,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	EnvironmentState string `json:"environment_state,omitempty"`
+	SeedID           string `json:"seed_id,omitempty"`
+	SeedSHA256       string `json:"seed_sha256,omitempty"`
+	BatchID          string `json:"batch_id,omitempty"`
+	BatchStatus      string `json:"batch_status,omitempty"`
+	BatchMembers     int    `json:"batch_members,omitempty"`
 }
 
 // taskIssueStatusCap 限制 claim 负载里自定义状态的上限。这是防御性封顶，
@@ -383,19 +409,22 @@ type AgentTaskResponse struct {
 	// 能说明列表不完整，而不是把截断后的目录当成全部。
 	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
 	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
-	ThreadName           string                 `json:"thread_name,omitempty"` // 供厂商原生会话/线程历史使用的语义化标题
-	Status               string                 `json:"status"`
-	Priority             int32                  `json:"priority"`
-	DispatchedAt         *string                `json:"dispatched_at"`
-	StartedAt            *string                `json:"started_at"`
-	CompletedAt          *string                `json:"completed_at"`
-	Result               any                    `json:"result"`
-	Error                *string                `json:"error"`
-	FailureReason        string                 `json:"failure_reason,omitempty"` // 见 TaskService.MaybeRetryFailedTask
-	Attempt              int32                  `json:"attempt"`
-	MaxAttempts          int32                  `json:"max_attempts"`
-	ParentTaskID         *string                `json:"parent_task_id,omitempty"`
-	IsLeaderTask         bool                   `json:"is_leader_task,omitempty"`
+	// DeliveryContext 只在该任务已有交付记录时存在：阶段、候选、被分配的验收环境、
+	// 当前种子和所在批次。它是本轮事实，不是权限：环境由平台分配，阶段由交付流程推进。
+	DeliveryContext *DeliveryContextData `json:"delivery_context,omitempty"`
+	ThreadName      string               `json:"thread_name,omitempty"` // 供厂商原生会话/线程历史使用的语义化标题
+	Status          string               `json:"status"`
+	Priority        int32                `json:"priority"`
+	DispatchedAt    *string              `json:"dispatched_at"`
+	StartedAt       *string              `json:"started_at"`
+	CompletedAt     *string              `json:"completed_at"`
+	Result          any                  `json:"result"`
+	Error           *string              `json:"error"`
+	FailureReason   string               `json:"failure_reason,omitempty"` // 见 TaskService.MaybeRetryFailedTask
+	Attempt         int32                `json:"attempt"`
+	MaxAttempts     int32                `json:"max_attempts"`
+	ParentTaskID    *string              `json:"parent_task_id,omitempty"`
+	IsLeaderTask    bool                 `json:"is_leader_task,omitempty"`
 	// LeaderRoleResolved 是仅 claim 具备的能力，此处恒为 true：IsLeaderTask/
 	// SquadID 已权威地回答「是否 leader 运行」，daemon 不得再从 brief 文本反推
 	// 角色。早于 #4951 的服务器不发 is_leader_task，之后发送也不保证 brief——
@@ -410,9 +439,12 @@ type AgentTaskResponse struct {
 	ProjectTitle       string                `json:"project_title,omitempty"`       // 用于在 agent 上下文中展示
 	ProjectDescription string                `json:"project_description,omitempty"` // 注入 brief 的持久项目级上下文
 	ProjectResources   []ProjectResourceData `json:"project_resources,omitempty"`   // 项目上挂载的资源
-	CreatedAt          string                `json:"created_at"`
-	PriorSessionID     string                `json:"prior_session_id,omitempty"` // 同一 issue 上一任务留下的会话 ID
-	PriorWorkDir       string                `json:"prior_work_dir,omitempty"`   // 同一 issue 上一任务留下的工作目录
+	// 1. Workspace 级本地目录清单，供 daemon 在运行结束时发现任务目录之外新建的
+	//    worktree。任务没有项目时这是唯一来源，GONG-57 就是这种情况。
+	WorkspaceRepos []WorkspaceRepoData `json:"workspace_repos,omitempty"`
+	CreatedAt      string              `json:"created_at"`
+	PriorSessionID string              `json:"prior_session_id,omitempty"` // 同一 issue 上一任务留下的会话 ID
+	PriorWorkDir   string              `json:"prior_work_dir,omitempty"`   // 同一 issue 上一任务留下的工作目录
 	// PriorSessionResumeUnavailable 在较新的 Codex 会话因缺失回滚被扣下时置位
 	// （MUL-5305）；PriorSessionID（如有）为较旧的兜底。即使旧会话正常恢复，
 	// daemon 也会在 brief 中点明这段连续性缺口。omitempty 让常见（无缺口）场景
@@ -2052,6 +2084,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update agent: "+err.Error())
 		return
 	}
+
+	// 1. 记录本次运行对提示词的改动：agent.instructions / description 存在库里，
+	//    文件 diff 看不到它们，审核时需要单独一条文本差异。
+	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "instructions", existing.Instructions, updated.Instructions)
+	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "description", existing.Description, updated.Description)
 
 	// 可空 runtime 覆盖项：请求里 null/空表示显式清空字段。UpdateAgent 的
 	// COALESCE 无法把列设为 NULL，因此 mcp_config、thinking_level、service_tier

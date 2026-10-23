@@ -5,7 +5,45 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    def test_install_bundles_exact_database_checker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);units=root/'units';units.mkdir()
+            def paths(value):
+                return units if str(value)=='/etc/systemd/system' else Path(value)
+            with patch.object(w,'Path',side_effect=paths),patch.object(r,'RUN',root),patch.object(r,'require_control_directory'),patch.object(r,'run') as run:
+                w.install('prod')
+            bundles=list((root/'publisher').glob('delivery-prod-*'))
+            self.assertEqual(len(bundles),1)
+            self.assertEqual((bundles[0]/'check-release-database.mjs').read_bytes(),Path(w.__file__).with_name('check-release-database.mjs').read_bytes())
+            self.assertIn(str(bundles[0]/'issue-delivery-worker.py'),(units/'multica-delivery-prod.service').read_text())
+            self.assertTrue(run.called)
     def git(self,root,*args):return subprocess.check_output(['git','-C',str(root),*args],stderr=subprocess.DEVNULL,text=True).strip()
+    def test_merge_distinguishes_real_conflicts_from_environment_errors(self):
+        for conflict in (False,True):
+            with self.subTest(conflict=conflict),tempfile.TemporaryDirectory() as folder:
+                root=Path(folder);self.git(root,'init');self.git(root,'config','user.name','Fixture');self.git(root,'config','user.email','fixture@example.test')
+                (root/'common').write_text('base');self.git(root,'add','.');self.git(root,'commit','-qm','base');base=self.git(root,'rev-parse','HEAD')
+                self.git(root,'checkout','-qb','side');(root/('common' if conflict else 'side')).write_text('side');self.git(root,'add','.');self.git(root,'commit','-qm','side')
+                self.git(root,'checkout','-qb','main',base);(root/('common' if conflict else 'main')).write_text('main');self.git(root,'add','.');self.git(root,'commit','-qm','main')
+                self.assertEqual(w.merge_source(root,['--no-ff','--no-edit','side']),not conflict)
+                self.assertEqual(self.git(root,'status','--porcelain'),'')
+                self.assertNotEqual(subprocess.run(['git','rev-parse','--verify','--quiet','MERGE_HEAD'],cwd=root,stdout=subprocess.DEVNULL).returncode,0)
+                if not conflict:self.assertEqual(len(self.git(root,'show','-s','--format=%P','HEAD').split()),2)
+                with patch.object(w.subprocess,'run',wraps=subprocess.run) as commands:
+                    with self.assertRaisesRegex(RuntimeError,'missing-ref'):w.merge_source(root,['--no-edit','missing-ref'])
+                    self.assertNotIn(['git','merge','--abort'],[list(c.args[0]) for c in commands.call_args_list])
+
+    def test_merge_cleanup_error_preserves_original_failure(self):
+        results=[subprocess.CompletedProcess([],1,'','ORIGINAL_GIT_FAILURE'),subprocess.CompletedProcess([],0,'conflicted-file',''),subprocess.CompletedProcess([],0,'merge-head',''),subprocess.CompletedProcess([],1,'','CLEANUP_FAILURE')]
+        with patch.object(w.subprocess,'run',side_effect=results):
+            with self.assertRaises(r.RecoveryRequired) as error:w.merge_source(Path('/controlled'),['target'])
+        self.assertIn('ORIGINAL_GIT_FAILURE',str(error.exception));self.assertIn('CLEANUP_FAILURE',str(error.exception))
+
+    def test_nonconflict_failure_with_merge_head_is_cleaned_but_not_mislabeled(self):
+        results=[subprocess.CompletedProcess([],1,'','HOOK_REJECTED'),subprocess.CompletedProcess([],0,'',''),subprocess.CompletedProcess([],0,'merge-head',''),subprocess.CompletedProcess([],0,'','')]
+        with patch.object(w.subprocess,'run',side_effect=results):
+            with self.assertRaisesRegex(RuntimeError,'HOOK_REJECTED'):w.merge_source(Path('/controlled'),['target'])
+
     def test_pinned_source_survives_original_worktree_removal_and_branch_changes(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)/'repo';root.mkdir();self.git(root,'init');self.git(root,'config','user.name','Fixture');self.git(root,'config','user.email','fixture@example.test')
@@ -67,9 +105,14 @@ class DeliveryTests(unittest.TestCase):
                 self.assertEqual(check.call_args_list[0].args[0],old);self.assertEqual(check.call_args_list[1].args[0],new);migrate.assert_called_once()
 
     def test_review_state_releases_previous_slot_after_process_restart(self):
-        worker=object.__new__(w.Worker);worker.env='prod';d={'id':'one','phase':'awaiting_review'}
-        current={'id':'candidate','delivery_id':'one','status':'accepted'}
-        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'candidate_path',return_value=Path(__file__)),patch.object(r,'candidate',return_value=current),patch.object(worker,'api',return_value=[d]),patch.object(worker,'pin'),patch.object(r,'release_candidate') as release:
+        import uuid
+        identity=str(uuid.uuid4());d={'id':identity,'phase':'awaiting_review','revision':2,'source_commit':'a'*40}
+        current={'id':'candidate','delivery_id':identity,'status':'accepted'}
+        def api(path,body=None,method=None):
+            # 队列列表返回待复核交付；推进回执按普通对象处理，验证进程重启后仍会释放旧槽位。
+            return {} if path.endswith('/advance') else [d]
+        worker=object.__new__(w.Worker);worker.env='prod'
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'candidate_path',return_value=Path(__file__)),patch.object(r,'candidate',return_value=current),patch.object(worker,'api',side_effect=api),patch.object(worker,'pin'),patch.object(r,'release_candidate') as release:
             worker.tick();release.assert_called_once_with('candidate')
     def test_restart_finishes_lease_even_after_candidate_was_released(self):
         import uuid

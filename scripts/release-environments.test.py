@@ -12,6 +12,130 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_new_verification_server_persists_its_baseline_mode(self):
+        import ast
+        import base64
+        import secrets
+        source=Path(__file__).with_name('verification-environments.py')
+        install=next(n for n in ast.parse(source.read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='install')
+        assignment=next(n for n in install.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='cfg' for t in n.targets))
+        scope=dict(appbase={},agentbase={},dbuser='owned',dbpass='fixture',pgport='1234',dbname='owned',backend='1235',pprof='1236',front='http://fixture',frontend='1237',back='http://backend',slotroot=Path('/owned-slot'),secrets=secrets,base64=base64)
+        # 只执行真实安装的配置生产语句，不创建账户、数据库或启动服务。
+        exec(compile(ast.Module(body=[assignment],type_ignores=[]),str(source),'exec'),scope)
+        self.assertEqual(scope['cfg']['server']['MULTICA_MIGRATION_BASELINE'],'true')
+        self.assertNotIn('MULTICA_MIGRATION_BASELINE',scope['cfg']['daemon'])
+
+    def test_database_check_uses_same_pinned_controller_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pinned=Path(tmp)/'pinned/release.py'
+            with patch.object(r,'__file__',str(pinned)),patch.object(r,'ROOT',Path(tmp)/'stale-control'),patch.object(r,'run') as run:
+                r.check_database(Path('/release'),{'server':{'DATABASE_URL':'owned-test','MULTICA_MIGRATION_BASELINE':'true'}})
+                self.assertEqual(run.call_args.args[0],['node',pinned.with_name('check-release-database.mjs'),Path('/release/server/queries.json')])
+                self.assertEqual(run.call_args.kwargs['env']['MULTICA_MIGRATION_BASELINE'],'true')
+
+    def test_readiness_snapshot_and_restore_use_real_http_status(self):
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler,HTTPServer
+        state={'status':'not_ready','checks':{'db':'ok','migrations':'out_of_date'}}
+        class Endpoint(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(503);self.end_headers();self.wfile.write(json.dumps(state).encode())
+            def log_message(self,*args): pass
+        server=HTTPServer(('127.0.0.1',0),Endpoint)
+        thread=threading.Thread(target=lambda:server.serve_forever(poll_interval=.05),daemon=True);thread.start()
+        try:
+            metadata={'backend_url':'http://127.0.0.1:'+str(server.server_port)}
+            previous=r.readiness_snapshot(metadata['backend_url']+'/healthz')
+            self.assertEqual(previous['http_status'],503)
+            r.check_readiness(metadata,prior_readiness=previous)
+            self.assertTrue(metadata['readiness']['restored_not_ready'])
+            state['checks']={'db':'error','migrations':'unknown'}
+            with self.assertRaisesRegex(RuntimeError,'新增故障'):r.check_readiness(metadata,prior_readiness=previous)
+        finally:server.shutdown();server.server_close();thread.join()
+
+    def test_only_exact_recorded_unready_state_can_be_restored(self):
+        previous={'http_status':503,'body':{'status':'not_ready','checks':{'db':'ok','migrations':'out_of_date'}}}
+        metadata={'backend_url':'http://old-api'}
+        with patch.object(r,'readiness_snapshot',return_value=previous),patch.object(r,'ready') as ready:
+            r.check_readiness(metadata,prior_readiness=previous)
+            self.assertTrue(metadata['readiness']['restored_not_ready'])
+            self.assertEqual(metadata['readiness']['http_status'],503)
+            ready.assert_not_called()
+        changed={'http_status':503,'body':{'status':'not_ready','checks':{'db':'error','migrations':'unknown'}}}
+        with patch.object(r,'readiness_snapshot',return_value=changed):
+            with self.assertRaisesRegex(RuntimeError,'新增故障'): r.check_readiness(metadata,prior_readiness=previous)
+        for prior in (None,{'http_status':200,'body':{'status':'ok'}}):
+            with patch.object(r,'ready',side_effect=RuntimeError('not ready')):
+                with self.assertRaisesRegex(RuntimeError,'not ready'): r.check_readiness(metadata,prior_readiness=prior)
+        improved={'http_status':200,'body':{'status':'ok','checks':{'db':'ok','migrations':'ok'}}}
+        with patch.object(r,'readiness_snapshot',return_value=improved):
+            r.check_readiness(metadata,prior_readiness=previous)
+            self.assertEqual(metadata['readiness'],improved)
+
+    def test_unready_backend_does_not_start_web_or_daemon(self):
+        metadata={'backend_url':'http://api','log_paths':{'server':'server.log'}}
+        def check(url,**kwargs):
+            if url.endswith('/healthz'): raise RuntimeError('migrations out_of_date')
+            return {'status':'ok'}
+        with patch.object(r,'start',return_value=123) as start, patch.object(r,'ready',side_effect=check), patch.object(r,'stop_maintenance') as maintenance, patch.object(r,'run') as run:
+            with self.assertRaisesRegex(RuntimeError,'migrations out_of_date'):
+                r.launch('int',Path('/release'),{'server':{}},metadata)
+            start.assert_called_once()
+            maintenance.assert_not_called()
+            run.assert_not_called()
+
+    def test_unready_backend_prevents_browser_acceptance(self):
+        with patch.object(r,'read',return_value={'backend_url':'http://api'}), patch.object(r,'ready',side_effect=RuntimeError('migrations out_of_date')) as ready, patch.object(r,'run') as run:
+            with self.assertRaisesRegex(RuntimeError,'migrations out_of_date'):
+                r.verify_browser('int')
+            ready.assert_called_once_with('http://api/healthz',timeout=10)
+            run.assert_not_called()
+
+    def test_ready_backend_continues_to_real_browser_check(self):
+        with patch.object(r,'read',return_value={'backend_url':'http://api'}), patch.object(r,'ready',return_value={'status':'ok'}), patch.object(r,'run') as run:
+            r.verify_browser('int')
+            self.assertEqual(run.call_args.kwargs['env']['GOAL_TEST_ENV'],'int')
+            self.assertEqual(run.call_args.args[0][0],'node')
+
+    def test_build_supplies_execution_user_home_and_preserves_custom_paths(self):
+        class ReachedGoBuild(Exception): pass
+        for home in (None,'','/custom/home'):
+            with self.subTest(home=home),tempfile.TemporaryDirectory() as folder:
+                base=Path(folder);source=base/'source';source.mkdir();commands=[]
+                inherited={'GOPATH':'/custom/go','GOMODCACHE':'/custom/modcache'}
+                if home is not None: inherited['HOME']=home
+                def command(args,**kwargs):
+                    commands.append((args,kwargs['env'].copy()))
+                    if args[0]=='go': raise ReachedGoBuild()
+                with patch.dict(r.os.environ,inherited,clear=True),patch.object(r,'checked_source',return_value=(source,'a'*40)),patch.object(r,'build_version',return_value='v-fixture'),patch.object(r,'source_digest',return_value=('digest',[])),patch.object(r,'read',return_value={'release_dir':str(base/'previous')}),patch.object(r,'copy_tree'),patch.object(r,'run',side_effect=command):
+                    with self.assertRaises(ReachedGoBuild): r.build(source,base/'target')
+                self.assertEqual([args[0] for args,env in commands],['pnpm','pnpm','go'])
+                for args,env in commands:
+                    self.assertEqual(env['HOME'],home or r.pwd.getpwuid(r.os.getuid()).pw_dir)
+                    self.assertEqual(env['GOPATH'],'/custom/go')
+                    self.assertEqual(env['GOMODCACHE'],'/custom/modcache')
+
+    def test_batch_checks_every_members_publication_generation(self):
+        import io
+        import json
+        record={'id':'candidate','commit':'c'*40,'git_common':'/controlled/git','publication_lease':{'generation':7},'batch_members':[{'delivery_id':i,'source_commit':i*40} for i in ('a','b')]}
+        records=[dict(m,id=m['delivery_id'],phase='publishing',approved_by='human',release_validated=True,candidate_id='candidate') for m in record['batch_members']]
+        profile={'token':'controlled-token','workspace_id':'controlled-workspace'}
+        for second_generation in (7,8):
+            with self.subTest(second_generation=second_generation):
+                responses=[io.BytesIO(json.dumps({'ready':True,'publication_generation':g}).encode()) for g in (7,second_generation)]
+                with patch.object(r.urllib.request,'build_opener') as opener, patch.object(r.subprocess,'run') as git:
+                    opener.return_value.open.side_effect=responses
+                    git.return_value.returncode=0
+                    if second_generation==7:
+                        r.batch_approval_records(record,records,{'backend_url':'http://controlled'},profile)
+                        self.assertEqual(git.call_count,2)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,'代次不匹配'):
+                            r.batch_approval_records(record,records,{'backend_url':'http://controlled'},profile)
+                        self.assertEqual(git.call_count,1)
+
     def test_external_publish_bundle_contains_matching_browser_dependencies(self):
         with tempfile.TemporaryDirectory() as tmp:
             r.copy_browser_operations(Path(tmp))
@@ -193,6 +317,7 @@ class ReleaseTests(unittest.TestCase):
                     first=r.request_release('v');second=r.request_release('v')
                     self.assertEqual(first['id'],second['id']);launch.assert_called_once()
                     self.assertEqual(launch.call_args.args[0][0],'systemd-run')
+                    self.assertEqual((r.RUN/'publisher/v/check-release-database.mjs').read_bytes(),Path(r.__file__).with_name('check-release-database.mjs').read_bytes())
                 failed=r.read(r.request_path('v'));failed['status']='failed';r.write(r.request_path('v'),failed)
                 with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'),patch.object(r,'check_delivery_approval'):
                     with self.assertRaisesRegex(RuntimeError,'重新联调'): r.request_release('v')
@@ -227,17 +352,18 @@ class ReleaseTests(unittest.TestCase):
             r.RUN=Path(d);artifact=r.RUN/'artifacts/new';artifact.mkdir(parents=True)
             r.write(artifact/'release.json',{'id':'new','files':{},'source_commit':'sha','source_digest':'digest'})
             old=r.RUN/'releases/prod/old';old.mkdir(parents=True)
-            m={'release_id':'old','release_dir':str(old),'daemon_profile':'p','pids':{'server':11,'web':12,'daemon':13},'log_paths':{}}
+            m={'backend_url':'http://old-api','release_id':'old','release_dir':str(old),'daemon_profile':'p','pids':{'server':11,'web':12,'daemon':13},'log_paths':{}}
             r.write(r.meta_path('prod'),m);r.write(r.config_path('prod'),{'config':'unchanged'})
-            def launching(env,release,cfg,metadata):
+            def launching(env,release,cfg,metadata,prior_readiness=None):
                 if release!=old:
                     metadata['pids']={'server':21};raise RuntimeError('startup failed')
                 return {'server':31,'web':32,'daemon':33}
             try:
-                with patch.object(r,'prepare_database'),patch.object(r,'start_maintenance'),patch.object(r,'check_live_environment'),patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
+                with patch.object(r,'readiness_snapshot',return_value={'http_status':200,'body':{'status':'ok'}}),patch.object(r,'prepare_database'),patch.object(r,'start_maintenance'),patch.object(r,'check_live_environment'),patch.object(r,'check_process_ownership'),patch.object(r,'isolation_check'),patch.object(r,'copy_tree'),patch.object(r,'process_env',return_value={'secret':'original'}),patch.object(r,'drain'),patch.object(r,'http'),patch.object(r,'exists',side_effect=lambda pid:pid in (11,12)),patch.object(r,'owned_stop'),patch.object(r,'launch',side_effect=launching),patch.object(r.Path,'resolve',autospec=True,side_effect=lambda p:old if str(p).startswith('/proc/') else p):
                     with self.assertRaisesRegex(RuntimeError,'startup failed'):r.deploy('prod',artifact)
                 restored=r.read(r.meta_path('prod'))
                 self.assertEqual(restored['release_id'],'old');self.assertEqual(restored['pids']['daemon'],33)
+                self.assertEqual(restored['readiness_before'],{'http_status':200,'body':{'status':'ok'}})
                 self.assertEqual(r.read(r.config_path('prod')),{'config':'unchanged'})
             finally:r.RUN=original
 

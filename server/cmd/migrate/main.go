@@ -118,6 +118,7 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
+	"637_run_text_change_task_idx":                "run_text_change_task_idx",
 	"568_upstream_sync_absorption_item":           "upstream_sync_absorption_task_item",
 	"566_task_trace_identity_compatibility":       "task_trace_event_pkey",
 	"565_user_account_compatibility":              "user_account_key",
@@ -192,11 +193,15 @@ var concurrentIndexCleanups = map[string]string{
 	"623_supervision_round_open":        "supervision_round_open",
 	"625_supervision_batch_round_key":   "supervision_batch_round_key",
 	"626_supervision_batch_round_round": "supervision_batch_round_round",
-	"633_task_provider_trace_unique":    "task_provider_trace_task_trace_unique",
-	"520_repository_id":                 "repository_id_idx",
-	"521_repository_identity":           "repository_identity_idx",
-	"522_repository_location_id":        "repository_location_id_idx",
-	"523_repository_location_daemon":    "repository_location_daemon_idx",
+	// 2. 种子槽位与发布批次的新索引同样并发建；建表与建索引分开成迁移，中断后按名清理 INVALID 残留再重试。
+	"629_verification_slot_maintenance_index":  "verification_slot_maintenance_name_created",
+	"630_delivery_batch_active_index":          "delivery_batch_active",
+	"631_delivery_batch_member_delivery_index": "delivery_batch_member_delivery",
+	"633_task_provider_trace_unique":           "task_provider_trace_task_trace_unique",
+	"520_repository_id":                        "repository_id_idx",
+	"521_repository_identity":                  "repository_identity_idx",
+	"522_repository_location_id":               "repository_location_id_idx",
+	"523_repository_location_daemon":           "repository_location_daemon_idx",
 
 	"498_cooking_favorite_unique":                                              "cooking_favorite_user_recipe_idx",
 	"457_domain_event_outbox_pending_index":                                    "domain_event_outbox_pending_idx",
@@ -509,6 +514,8 @@ func refuseChannelChatRouteHistoryRollbackWith(ctx context.Context, query rowQue
 }
 
 var upMigrationConditions = map[string]migrationCondition{
+	"501_health_data":         whenHealthSchemaMissing,
+	"508_chat_health_reports": whenChatHealthReportsMissing,
 	// 全新数据库若已成功建出 CJK 友好的 bigram 索引，就不必再建 trigram 兜底、
 	// 回头又要在 371 把它删掉。
 	"140_comment_content_trgm_index": whenIndexNotUsable(commentContentBigramIndex),
@@ -1005,6 +1012,9 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		applySQL := true
 		conditionReason := ""
 		if condition, ok := opts.Conditions[version]; ok && condition != nil {
+			if err := checkExistingHealthSQL(version, sql); err != nil {
+				return err
+			}
 			applySQL, conditionReason, err = condition(ctx, conn)
 			if err != nil {
 				return fmt.Errorf("evaluate migration condition for %q (%s): %w", version, opts.Direction, err)

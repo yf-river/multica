@@ -560,6 +560,11 @@ deleted_agent_builder_drafts AS (
 deleted_comment_reactions AS (
     DELETE FROM comment_reaction WHERE workspace_id = $1
 ),
+deleted_run_text_changes AS (
+    -- 修改 1. run_text_change 没有外键，任务行删除后不会连带清理；按 workspace_id 删掉，
+    --         避免删除工作区后留下孤立行。
+    DELETE FROM run_text_change WHERE workspace_id = $1
+),
 deleted_issue_reactions AS (
     DELETE FROM issue_reaction WHERE workspace_id = $1
 ),

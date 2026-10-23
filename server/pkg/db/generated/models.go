@@ -1755,6 +1755,22 @@ type RepositoryMigrationBackup struct {
 	Data []byte      `json:"data"`
 }
 
+type RunTextChange struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	TargetKind  string             `json:"target_kind"`
+	TargetID    string             `json:"target_id"`
+	TargetName  string             `json:"target_name"`
+	Field       string             `json:"field"`
+	BeforeText  string             `json:"before_text"`
+	AfterText   string             `json:"after_text"`
+	Added       int32              `json:"added"`
+	Deleted     int32              `json:"deleted"`
+	Redacted    bool               `json:"redacted"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

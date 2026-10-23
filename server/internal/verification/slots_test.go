@@ -43,7 +43,7 @@ func TestSlotLifecycle(t *testing.T) {
 	}
 	defer func() {
 		scoped.Close()
-		for _, table := range []string{"verification_event", "verification_slot", "issue_delivery", "issue_delivery_plan"} {
+		for _, table := range []string{"verification_slot_maintenance", "verification_slot_seed", "verification_event", "verification_slot", "issue_delivery", "issue_delivery_plan"} {
 			if _, e := base.Exec(ctx, "DROP TABLE IF EXISTS "+schema+"."+table); e != nil {
 				t.Error(e)
 			}
@@ -54,7 +54,7 @@ func TestSlotLifecycle(t *testing.T) {
 	}()
 	p = scoped
 
-	for _, name := range []string{"542_issue_delivery", "571_verification_slot", "572_verification_slot_name", "573_verification_slot_delivery"} {
+	for _, name := range []string{"542_issue_delivery", "571_verification_slot", "572_verification_slot_name", "573_verification_slot_delivery", "627_verification_seed_lifecycle"} {
 		sql, e := os.ReadFile(filepath.Join("../../migrations", name+".up.sql"))
 		if e != nil {
 			t.Fatal(e)
@@ -139,6 +139,10 @@ func TestSlotLifecycle(t *testing.T) {
 		t.Fatal("cancelled delivery extended lease")
 	}
 	l := leases[active[0]]
+	if _, e = p.Exec(ctx, `INSERT INTO verification_slot_seed(name,seed_id,seed_sha256,verified) VALUES($1,'seed-current',repeat('a',64),true)`, l.Name); e != nil {
+		t.Fatal(e)
+	}
+	// 同一租约的幂等领取不标脏，也不要求重新恢复。
 	again, e := claim(active[0])
 	if e != nil || again != l {
 		t.Fatalf("idempotency: %v", e)
@@ -159,6 +163,16 @@ func TestSlotLifecycle(t *testing.T) {
 		t.Fatal(e)
 	}
 	if e = s.Advance(ctx, l, "release", ""); e != nil {
+		t.Fatal(e)
+	}
+	var verified bool
+	if e = p.QueryRow(ctx, `SELECT verified FROM verification_slot_seed WHERE name=$1`, l.Name).Scan(&verified); e != nil || verified {
+		t.Fatalf("released task retained clean seed: %v", e)
+	}
+	if _, e = claim(waiting[0]); !errors.Is(e, ErrBusy) {
+		t.Fatalf("new task acquired previous task data: %v", e)
+	}
+	if _, e = p.Exec(ctx, `UPDATE verification_slot_seed SET verified=true WHERE name=$1`, l.Name); e != nil {
 		t.Fatal(e)
 	}
 	next, e := claim(waiting[0])
@@ -185,5 +199,20 @@ func TestSlotLifecycle(t *testing.T) {
 	}
 	if _, e = claim(waiting[1]); !errors.Is(e, ErrBusy) {
 		t.Fatal("quarantined slot stolen")
+	}
+	if _, e = s.Reset(ctx, next.Name, "operator", "故障进程已停止"); e != nil {
+		t.Fatal(e)
+	}
+	if e = p.QueryRow(ctx, `SELECT verified FROM verification_slot_seed WHERE name=$1`, next.Name).Scan(&verified); e != nil || verified {
+		t.Fatalf("reset retained used seed: %v", e)
+	}
+	if _, e = claim(waiting[1]); !errors.Is(e, ErrBusy) {
+		t.Fatalf("reset admitted stale task data: %v", e)
+	}
+	if _, e = p.Exec(ctx, `UPDATE verification_slot_seed SET verified=true WHERE name=$1`, next.Name); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = claim(waiting[1]); e != nil {
+		t.Fatal(e)
 	}
 }

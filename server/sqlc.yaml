@@ -11,6 +11,7 @@ sql:
       - "migrations/513_skill_assets.up.sql"
       - "migrations/515_workspace_mcp_checks.up.sql"
       - "migrations/519_repositories.up.sql"
+      - "migrations/636_run_text_change.up.sql"
       - "migrations/632_task_provider_trace.up.sql"
       - "migrations/633_task_provider_trace_unique.up.sql"
     gen:
