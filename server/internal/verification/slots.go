@@ -198,6 +198,9 @@ func (s Store) Reset(ctx context.Context, name, actor, reason string) (Lease, er
 	if state != "quarantined" && !expired {
 		return Lease{}, ErrBusy
 	}
+	if _, err = tx.Exec(ctx, `UPDATE verification_slot_seed SET verified=false,updated_at=now() WHERE name=$1`, name); err != nil {
+		return Lease{}, err
+	}
 	if _, err = tx.Exec(ctx, `UPDATE verification_slot SET state='idle',generation=generation+1,workspace_id=NULL,delivery_id=NULL,worker_token=NULL,source_commit='',candidate_id='',lease_expires_at=NULL,error='',updated_at=now() WHERE name=$1`, name); err != nil {
 		return Lease{}, err
 	}

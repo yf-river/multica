@@ -200,4 +200,19 @@ func TestSlotLifecycle(t *testing.T) {
 	if _, e = claim(waiting[1]); !errors.Is(e, ErrBusy) {
 		t.Fatal("quarantined slot stolen")
 	}
+	if _, e = s.Reset(ctx, next.Name, "operator", "故障进程已停止"); e != nil {
+		t.Fatal(e)
+	}
+	if e = p.QueryRow(ctx, `SELECT verified FROM verification_slot_seed WHERE name=$1`, next.Name).Scan(&verified); e != nil || verified {
+		t.Fatalf("reset retained used seed: %v", e)
+	}
+	if _, e = claim(waiting[1]); !errors.Is(e, ErrBusy) {
+		t.Fatalf("reset admitted stale task data: %v", e)
+	}
+	if _, e = p.Exec(ctx, `UPDATE verification_slot_seed SET verified=true WHERE name=$1`, next.Name); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = claim(waiting[1]); e != nil {
+		t.Fatal(e)
+	}
 }
