@@ -214,8 +214,79 @@ def reusable_build(previous, current_files, version):
     if previous.get('version') != version: return False
     return all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
 
+def executor_preflight(source, *, env=None, integration=False):
+    """只读核对当前执行器；不读取或输出凭据，不触发安装、迁移或环境切换。"""
+    source=Path(source).resolve()
+    effective=os.environ.copy() if env is None else env.copy()
+    if not effective.get('HOME'): effective['HOME']=pwd.getpwuid(os.getuid()).pw_dir
+    home=Path(effective['HOME'])
+    if not home.is_absolute() or not home.is_dir() or not os.access(home,os.R_OK|os.W_OK|os.X_OK):
+        raise RuntimeError('发布预检失败：当前执行用户无法使用 HOME')
+    def probe(name,args,cwd=source):
+        executable=shutil.which(name,path=effective.get('PATH'))
+        if not executable: raise RuntimeError('发布预检失败：缺少 '+name)
+        try:
+            value=subprocess.run([executable,*args],cwd=cwd,env=effective,check=True,capture_output=True,text=True,timeout=30).stdout.strip()
+        except (subprocess.SubprocessError,OSError) as error:
+            # 依赖的 stderr 可能含仓库 URL 或代理凭据，只返回检查名。
+            raise RuntimeError('发布预检失败：'+name+' '+args[0]+' 执行失败') from error
+        return executable,value
+    versions={}
+    for name,args in [('git',['--version']),('go',['env','GOVERSION']),('node',['--version']),('pnpm',['--version'])]:
+        executable,value=probe(name,args,source/'server' if name=='go' else source)
+        versions[name]=dict(path=executable,version=value)
+    if integration:
+        probe('git',['var','GIT_AUTHOR_IDENT']);probe('git',['var','GIT_COMMITTER_IDENT'])
+    _,cache_json=probe('go',['env','-json','GOCACHE','GOPATH'],source/'server')
+    for name,directory in json.loads(cache_json).items():
+        path=Path(directory)
+        if not path.is_absolute(): raise RuntimeError('发布预检失败：'+name+' 不是绝对目录')
+        while not path.exists() and path!=path.parent: path=path.parent
+        if not path.is_dir() or not os.access(path,os.W_OK|os.X_OK):
+            raise RuntimeError('发布预检失败：当前执行用户无法写入 '+name)
+    package=read(source/'package.json')
+    node_min=re.fullmatch(r'>=(\d+)',package.get('engines',{}).get('node',''))
+    if node_min and int(versions['node']['version'].lstrip('v').split('.')[0])<int(node_min.group(1)):
+        raise RuntimeError('发布预检失败：Node 版本低于 engines.node')
+    go_min=re.search(r'^go (\d+)\.(\d+)\.(\d+)$',(source/'server/go.mod').read_text(),re.M)
+    go_actual=re.fullmatch(r'go(\d+)\.(\d+)\.(\d+)',versions['go']['version'])
+    if go_min and (not go_actual or tuple(map(int,go_actual.groups()))<tuple(map(int,go_min.groups()))):
+        raise RuntimeError('发布预检失败：Go 版本低于 go.mod')
+    expected=package.get('packageManager','')
+    if expected.startswith('pnpm@') and versions['pnpm']['version']!=expected.split('@',1)[1].split('+',1)[0]:
+        raise RuntimeError('发布预检失败：pnpm 版本与 packageManager 不一致')
+    required=('pnpm-lock.yaml','pnpm-workspace.yaml','server/go.mod','server/go.sum',
+              'scripts/release-environments.py','scripts/issue-delivery-worker.py','scripts/release-maintenance.py',
+              'scripts/verification-environments.py','scripts/verification-seed.py','scripts/verification-seed-copy.mjs',
+              'scripts/verification-scrub.json','scripts/lib/verification-scrub.mjs','scripts/check-release-database.mjs',
+              'scripts/verify-release-browser.mjs','scripts/lib/goal-test-audit-env.mjs',
+              'scripts/lib/goal-test-browser-audit.mjs','scripts/lib/acceptance-artifacts.mjs')
+    missing=[name for name in required if not (source/name).is_file()]
+    if missing: raise RuntimeError('发布预检失败：构建/发布依赖文件缺失：'+', '.join(missing))
+    return dict(status='passed',executor_pid=os.getpid(),uid=os.getuid(),python=sys.version.split()[0],
+                controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                worker_sha256=hashlib.sha256(Path(__file__).with_name('issue-delivery-worker.py').read_bytes()).hexdigest(),
+                controller_matches_source=Path(__file__).read_bytes()==(source/'scripts/release-environments.py').read_bytes(),
+                worker_matches_source=Path(__file__).with_name('issue-delivery-worker.py').read_bytes()==(source/'scripts/issue-delivery-worker.py').read_bytes(),
+                source_commit=output(['git','rev-parse','HEAD'],cwd=source),tools=versions,
+                home_usable=True,git_identity_checked=integration,dependency_files_checked=len(required))
+
+@contextlib.contextmanager
+def build_stage(name):
+    started=time.monotonic()
+    print(json.dumps(dict(build_stage=name,status='started')),file=sys.stderr,flush=True)
+    try:
+        yield
+    except BaseException:
+        print(json.dumps(dict(build_stage=name,status='failed',elapsed_ms=round((time.monotonic()-started)*1000))),file=sys.stderr,flush=True)
+        raise
+    else:
+        print(json.dumps(dict(build_stage=name,status='passed',elapsed_ms=round((time.monotonic()-started)*1000))),file=sys.stderr,flush=True)
+
 def build(source, target, *, verification=False):
     source, sha = checked_source(source, verification=verification)
+    with build_stage('preflight'):
+        print(json.dumps(executor_preflight(source),ensure_ascii=False),file=sys.stderr)
     version = build_version(source, sha)
     digest, files = source_digest(source)
     groups = {'go': hashlib.sha256(), 'web': hashlib.sha256()}
@@ -241,8 +312,10 @@ def build(source, target, *, verification=False):
     if reusable and previous.get('inputs', {}).get('web') == inputs['web']:
         copy_tree(current, target, excludes=('/server/', '/release.json', '**/.next/cache/***'))
     else:
-        run(['pnpm', 'install', '--frozen-lockfile'], cwd=source, env=env)
-        run(['pnpm', '--filter', '@multica/web', 'build'], cwd=source, env=env)
+        with build_stage('dependencies'):
+            run(['pnpm', 'install', '--frozen-lockfile'], cwd=source, env=env)
+        with build_stage('web'):
+            run(['pnpm', '--filter', '@multica/web', 'build'], cwd=source, env=env)
         copy_tree(source/'apps/web/.next/standalone', target)
         copy_tree(source/'apps/web/.next/static', target/'apps/web/.next/static')
         copy_tree(source/'apps/web/public', target/'apps/web/public')
@@ -251,7 +324,8 @@ def build(source, target, *, verification=False):
     else:
         (target/'server/bin').mkdir(parents=True, exist_ok=True)
         for binary in ('server', 'multica', 'migrate'):
-            run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
+            with build_stage('go-'+binary):
+                run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
     for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
@@ -1264,7 +1338,7 @@ def require_control_directory():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset','delivery-worker'])
+    parser.add_argument('command',choices=['preflight','int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset','delivery-worker'])
     parser.add_argument('target',nargs='?')
     parser.add_argument('--source')
     parser.add_argument('--evidence')
@@ -1273,7 +1347,15 @@ def main():
     a=parser.parse_args()
     if a.timeout<=0: parser.error('timeout 必须大于 0')
     require_control_directory()
-    if a.command=='int':
+    if a.command=='preflight':
+        if not a.source: parser.error('preflight 需要 --source 任务 worktree')
+        result=executor_preflight(a.source,integration=True)
+        result['readiness']=readiness_snapshot(read(meta_path(a.env))['backend_url']+'/healthz')
+        result['readiness_note']='当前运行源的就绪快照；候选新增迁移仍由原生发布门禁核验'
+        if result['readiness']['http_status']!=200: result['status']='blocked'
+        print(json.dumps(result,ensure_ascii=False))
+        if result['status']=='blocked': raise SystemExit(1)
+    elif a.command=='int':
         if not a.source: parser.error('int 需要 --source 任务 worktree')
         prepare_int(a.source,a.timeout)
     elif a.command=='accept':

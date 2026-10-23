@@ -155,6 +155,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase='awaiting_review',error=$2,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, reason)
 			}
 			if err == nil {
+				err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, "authorization_wait", phase, body.Generation)
+			}
+			if err == nil {
 				err = tx.Commit(r.Context())
 			}
 			if err != nil {
@@ -231,7 +234,14 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		if tx.QueryRow(r.Context(), deliveryPlanValidSQL, body.ID).Scan(&valid) != nil || !valid {
 			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='needs_changes',error='方案已变化，需要重新确认',revision=revision+1 WHERE id=$1`, body.ID)
 			if err == nil {
+				err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, "plan_invalid", phase, body.Generation)
+			}
+			if err == nil {
 				err = tx.Commit(r.Context())
+			}
+			if err != nil {
+				writeError(w, 500, "记录方案失效失败")
+				return
 			}
 			writeError(w, 409, "方案已变化，需要重新确认")
 			return
@@ -438,6 +448,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				issueEvent = &event
 			}
 		}
+	}
+	if err == nil && body.Action != "notify" {
+		err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, body.Action, phase, body.Generation)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

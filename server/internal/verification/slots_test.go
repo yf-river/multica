@@ -175,6 +175,17 @@ func TestSlotLifecycle(t *testing.T) {
 	if _, e = p.Exec(ctx, `UPDATE verification_slot_seed SET verified=true WHERE name=$1`, l.Name); e != nil {
 		t.Fatal(e)
 	}
+	// 交付诊断事件不能改变进入 waiting_slot 的真实 FIFO 顺序。
+	j := jobs[waiting[0]]
+	if e = s.Progress(ctx, Lease{Workspace: j.workspace, Delivery: j.delivery, Token: j.token, Source: j.source}, "waiting_slot"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = p.Exec(ctx, `INSERT INTO verification_event(workspace_id,delivery_id,stage,detail) VALUES($1,$2,'delivery.retry','{}')`, j.workspace, j.delivery); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = claim(waiting[1]); !errors.Is(e, ErrBusy) {
+		t.Fatalf("diagnostic event changed FIFO: %v", e)
+	}
 	next, e := claim(waiting[0])
 	if e != nil {
 		t.Fatal(e)
