@@ -9,6 +9,24 @@ import (
 	"github.com/multica-ai/multica/server/pkg/investigation"
 )
 
+// 监督只允许专用 MCP，无法通过普通文件工具读取技能正文；在隔离环境与
+// 显式系统提示词中带入已绑定的监督技能，不加入开发、部署等无关技能。
+func supervisionInstructions(task Task) string {
+	if task.Agent == nil {
+		return ""
+	}
+	instructions := task.Agent.Instructions
+	if task.SupervisionPrompt == "" {
+		return instructions
+	}
+	for _, skill := range task.Agent.Skills {
+		if skill.Name == "delivery-supervision" && strings.TrimSpace(skill.Content) != "" {
+			return instructions + "\n\n## 已绑定的监督技能\n\n" + skill.Content
+		}
+	}
+	return instructions
+}
+
 func withinInvestigationRoot(root, candidate string) bool {
 	if root == "" || candidate == "" || !filepath.IsAbs(candidate) {
 		return false
