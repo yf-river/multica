@@ -112,9 +112,11 @@ Git 仓库只用来说明哪些文件本来就在：`multica repo checkout` 与 
 
 展示入口为运行的最新评论（含回复）、任务执行记录、执行实录和运行复盘；同一运行只在最新评论下展示一次。无修改时隐藏卡片。`code_diff` 只存 `result` JSONB，不写对象存储，也不修改业务表。
 
-## 运行文本改动迁移（620–621）
+## 运行文本改动迁移（636–637）
 
-620 只建 `run_text_change` 表，621 用单条 `CREATE INDEX CONCURRENTLY` 建 `(task_id, created_at)` 索引；发布门禁只接受建表与并发索引这两类增量，旧站继续服务。620 与既有 `620_upstream_sync_settings` 编号相同而版本串不同（`620_run_text_change` 按字符串排在其前），迁移按完整版本串执行，两者可以共存：int 台账中两条同时存在，表与索引均有效。仅保留实际查询使用的 `(task_id, created_at)` 索引，`workspace_id` 没有读取方，不建索引。
+636 只建 `run_text_change` 表，637 用单条 `CREATE INDEX CONCURRENTLY` 建 `(task_id, created_at)` 索引；发布门禁只接受建表与并发索引这两类增量，旧站继续服务。这两份迁移原为 620/621，与同期发布的 620–626 编号重复，发布协调统一改号为 636/637，只在发布前改名，不改动任何已发布迁移和台账。int 台账曾由更早的候选应用过 `620_run_text_change` / `621_run_text_change_task_idx`，表与索引都已存在；改号后的 636/637 使用 `IF NOT EXISTS`，在 int 上执行是空操作，旧记录保留不删。prod 没有这两份迁移的记录，表也不存在。
+
+仅保留实际查询使用的 `(task_id, created_at)` 索引，`workspace_id` 没有读取方，不建索引。
 
 程序回退保留新表与索引，不执行 down。删除工作区时按 `workspace_id` 清理该表（`DeleteWorkspaceLeafData`），避免没有外键的运行记录留在库里。新表不改变既有查询，旧程序可照常启动与读写。
 

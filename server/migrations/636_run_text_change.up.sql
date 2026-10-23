@@ -4,7 +4,7 @@
 -- 1. Only the table here: the release gate accepts a new table but not a plain
 --    CREATE INDEX, and a multi-statement file runs as one implicit transaction,
 --    where CREATE INDEX CONCURRENTLY is not allowed. The index therefore lives
---    in its own single-statement migration (621) so the old release keeps
+--    in its own single-statement migration (637) so the old release keeps
 --    serving while the new table is added.
 CREATE TABLE IF NOT EXISTS public.run_text_change (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
