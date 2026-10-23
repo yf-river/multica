@@ -58,10 +58,9 @@ export function UpstreamPage() {
   // 2. 执行体失去运行时、或绑定的运行时离线，之前只在设置面板里提示；页面自己也要说，
   //    否则列表照常显示"已追平"，用户不知道其实下一批不会被执行。
   //    徽标只放得下几个字，具体后果放进 title，点开就是设置面板里的修复入口。
-  const executorWarning =
-    !config?.agent_id || data?.executor_state === "none"
-      ? null
-      : data?.executor_state === "unbound"
+  const executorWarning = unconfigured
+    ? null
+    : data?.executor_state === "unbound"
         ? { badge: t(($) => $.page.status.executor_unbound_badge), detail: t(($) => $.page.status.executor_unbound) }
         : data?.runtime_online === false
           ? { badge: t(($) => $.page.status.runtime_offline_badge), detail: t(($) => $.page.status.runtime_offline) }

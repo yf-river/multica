@@ -2,8 +2,8 @@ package upstream
 
 import "strings"
 
-// ExecutorSystemKey 标记平台托管的同步执行体。全平台只有一条，换运行时只改绑定，
-// 不再按运行时前缀新建第二条。
+// ExecutorSystemKey 是不带运行时的短键，只在查找时兼容更早版本可能写入的行；
+// 本版本的新建和改绑都写 ExecutorSystemKeyFor 生成的键，全平台仍只有一条执行体。
 const ExecutorSystemKey = "upstream_sync"
 
 // ExecutorSystemKeyPrefix 是执行体键的前缀。键仍按运行时派生：旧程序按同一个键查找
