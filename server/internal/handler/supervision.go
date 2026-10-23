@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/supervision"
@@ -163,17 +164,28 @@ func (h *Handler) GetSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var summary json.RawMessage
+	// 统计按「完成轮次」口径：自动监督只在任务完成后产生轮次，未完成任务计入等待，
+	// 材料覆盖与是否存在质量问题分开计数。
 	err = h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object(
-      'total',count(*),'covered',count(*) FILTER(WHERE s.reviewed_version>=s.desired_version AND s.last_checked_at IS NOT NULL),
-      'no_runs',count(*) FILTER(WHERE s.last_checked_at IS NULL AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id)),
-      'pending',count(*) FILTER(WHERE s.desired_version>s.reviewed_version AND s.failures<3 AND isfinite(s.next_attempt_at) AND EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id) AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.issue_id=s.issue_id AND b.status IN('preparing','running'))),
+      'total',count(*),
+      'waiting',count(*) FILTER(WHERE `+supervision.CategorySQL("i")+`<>'done' AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.issue_id=s.issue_id AND b.status IN('preparing','running'))),
+      'covered',count(*) FILTER(WHERE `+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL AND s.last_checked_at IS NOT NULL
+        AND NOT EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)),
+      'no_runs',count(*) FILTER(WHERE `+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL AND s.last_checked_at IS NULL AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id)),
+      'pending',count(*) FILTER(WHERE `+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL AND s.failures<3 AND isfinite(s.next_attempt_at)
+        AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)
+        AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.issue_id=s.issue_id AND b.status IN('preparing','running'))),
       'running',count(*) FILTER(WHERE EXISTS(SELECT 1 FROM supervision_batch b WHERE b.issue_id=s.issue_id AND b.status IN('preparing','running'))),
-      'incomplete',count(*) FILTER(WHERE s.gaps<>'[]'::jsonb),'failed',count(*) FILTER(WHERE s.failures>=3),
- 'retrying',count(*) FILTER(WHERE s.failures>0 AND s.failures<3 AND s.desired_version>s.reviewed_version),
-      'oldest_pending_at',min(s.changed_at) FILTER(WHERE s.desired_version>s.reviewed_version AND s.failures<3 AND isfinite(s.next_attempt_at) AND EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id)),
+      'incomplete',count(*) FILTER(WHERE s.gaps<>'[]'::jsonb),'failed',count(*) FILTER(WHERE `+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL AND s.failures>=3),
+ 'retrying',count(*) FILTER(WHERE `+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL AND s.failures>0 AND s.failures<3
+        AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)),
+      'oldest_pending_at',min(s.changed_at) FILTER(WHERE `+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL AND s.failures<3 AND isfinite(s.next_attempt_at)
+        AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)),
       'open_findings',(SELECT count(*) FROM supervision_finding f WHERE f.workspace_id=$1 AND f.status IN('open','in_progress')),
       'issues_with_findings',(SELECT count(DISTINCT issue_id) FROM supervision_finding f WHERE f.workspace_id=$1 AND f.status IN('open','in_progress')))
-      FROM supervision_subject s JOIN issue i ON i.id=s.issue_id WHERE s.workspace_id=$1 AND COALESCE(i.origin_type,'')<>'health_report'`, ws).Scan(&summary)
+      FROM supervision_subject s JOIN issue i ON i.id=s.issue_id
+      LEFT JOIN supervision_round r ON r.workspace_id=s.workspace_id AND r.issue_id=s.issue_id AND r.status='open'
+      WHERE s.workspace_id=$1 AND COALESCE(i.origin_type,'')<>'health_report'`, ws).Scan(&summary)
 	if err != nil {
 		writeError(w, 500, "读取监督统计失败")
 		return
@@ -406,16 +418,26 @@ func (h *Handler) ListSupervisionSubjects(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	rows, err := h.DB.Query(r.Context(), `SELECT jsonb_build_object('issue_id',i.id,'title',i.title,'identifier',w.issue_prefix||'-'||i.number,'business_status',i.status,'project_id',i.project_id,
+	rows, err := h.DB.Query(r.Context(), `SELECT jsonb_build_object('issue_id',i.id,'title',i.title,'identifier',w.issue_prefix||'-'||i.number,'business_status',i.status,
+      'status_category',`+supervision.CategorySQL("i")+`,'project_id',i.project_id,
       'desired_version',s.desired_version,'reviewed_version',s.reviewed_version,'summary',s.summary,'efficiency',s.efficiency,'correctness',s.correctness,'gaps',s.gaps,'last_checked_at',s.last_checked_at,'error',s.error,'failures',s.failures,
+      'round_sequence',r.sequence,'round_opened_at',r.opened_at,'round_cutoff',r.material_cutoff,
+      'pending_materials',(SELECT count(*) FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
+        AND m.generation>m.reviewed_generation AND (r.id IS NULL OR m.changed_at<=r.material_cutoff)),
       'run_count',(SELECT count(*) FROM agent_task_queue t WHERE t.issue_id=i.id),
       'stopped',s.next_attempt_at='infinity'::timestamptz,'next_attempt_at',CASE WHEN isfinite(s.next_attempt_at) THEN s.next_attempt_at ELSE NULL END,'running',EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=i.id AND b.status IN('preparing','running')),
+      'manual_running',EXISTS(SELECT 1 FROM supervision_batch b JOIN supervision_batch_round br ON br.batch_id=b.id AND br.workspace_id=b.workspace_id WHERE b.workspace_id=$1 AND b.issue_id=i.id AND b.status IN('preparing','running') AND br.scope='manual'),
       'open_findings',(SELECT count(*) FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress')))
       FROM supervision_subject s JOIN issue i ON i.id=s.issue_id JOIN workspace w ON w.id=i.workspace_id
+      LEFT JOIN supervision_round r ON r.workspace_id=s.workspace_id AND r.issue_id=s.issue_id AND r.status='open'
       WHERE s.workspace_id=$1 AND COALESCE(i.origin_type,'')<>'health_report'
       AND ($2='' OR i.title ILIKE '%'||$2||'%' OR (w.issue_prefix||'-'||i.number) ILIKE '%'||$2||'%')
       AND ($3='' OR i.project_id=NULLIF($3,'')::uuid)
-      AND ($4='' OR $4='all' OR ($4='pending' AND s.desired_version>s.reviewed_version) OR ($4='incomplete' AND s.gaps<>'[]'::jsonb)
+      AND ($4='' OR $4='all'
+        OR ($4='waiting' AND `+supervision.CategorySQL("i")+`<>'done')
+        OR ($4='pending' AND `+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL
+          AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff))
+        OR ($4='incomplete' AND s.gaps<>'[]'::jsonb)
         OR ($4='problems' AND EXISTS(SELECT 1 FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress') AND (f.snoozed_until IS NULL OR f.snoozed_until<=now())))
         OR ($4='failed' AND s.failures>=3))
       ORDER BY EXISTS(SELECT 1 FROM supervision_finding f WHERE f.workspace_id=$1 AND f.issue_id=i.id AND f.status IN('open','in_progress') AND (f.snoozed_until IS NULL OR f.snoozed_until<=now())) DESC,s.changed_at DESC,i.id
@@ -480,7 +502,12 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		{`SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.last_seen_at DESC),'[]') FROM supervision_finding f WHERE workspace_id=$1 AND issue_id=$2`, &findings},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,EXTRACT(EPOCH FROM (COALESCE(t.started_at,t.completed_at,now())-b.created_at)) queue_seconds,
  EXTRACT(EPOCH FROM (COALESCE(t.completed_at,now())-t.started_at)) execution_seconds,
- EXTRACT(EPOCH FROM (COALESCE(b.completed_at,now())-t.completed_at)) persistence_seconds,jsonb_array_length(b.materials) material_count FROM supervision_batch b LEFT JOIN agent_task_queue t ON t.id=b.task_id WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, &batches},
+ EXTRACT(EPOCH FROM (COALESCE(b.completed_at,now())-t.completed_at)) persistence_seconds,jsonb_array_length(b.materials) material_count,
+ br.scope,r.sequence round_sequence,r.material_cutoff round_cutoff
+ FROM supervision_batch b LEFT JOIN agent_task_queue t ON t.id=b.task_id
+ LEFT JOIN supervision_batch_round br ON br.workspace_id=b.workspace_id AND br.batch_id=b.id
+ LEFT JOIN supervision_round r ON r.workspace_id=br.workspace_id AND r.id=br.round_id
+ WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, &batches},
 		{`SELECT COALESCE(jsonb_agg(x ORDER BY x.created_at),'[]') FROM (SELECT id,content,created_at FROM comment WHERE issue_id=$2 AND author_type='member' AND lower(ltrim(content))~'^/note([[:space:]]|$)' AND EXISTS(SELECT 1 FROM issue WHERE id=$2 AND workspace_id=$1))x`, &notes},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT a.id,a.finding_id,a.actor_id,a.action,a.reason,a.receipt,a.created_at FROM supervision_action a JOIN supervision_finding f ON f.id=a.finding_id AND f.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND f.issue_id=$2 ORDER BY a.created_at DESC LIMIT 50)x`, &actions},
 	} {
@@ -494,27 +521,49 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
             SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,EXTRACT(EPOCH FROM (COALESCE(t.started_at,t.completed_at,now())-b.created_at)) queue_seconds,
  EXTRACT(EPOCH FROM (COALESCE(t.completed_at,now())-t.started_at)) execution_seconds,
  EXTRACT(EPOCH FROM (COALESCE(b.completed_at,now())-t.completed_at)) persistence_seconds,jsonb_array_length(b.materials) material_count,
-              NULLIF(t.context->>'instructions','') instructions, NULLIF(t.context->>'instructions_sha256','') instructions_sha256
+              NULLIF(t.context->>'instructions','') instructions, NULLIF(t.context->>'instructions_sha256','') instructions_sha256,
+              br.scope,r.sequence round_sequence,r.material_cutoff round_cutoff
             FROM supervision_batch b LEFT JOIN agent_task_queue t ON t.id=b.task_id
+            LEFT JOIN supervision_batch_round br ON br.workspace_id=b.workspace_id AND br.batch_id=b.id
+            LEFT JOIN supervision_round r ON r.workspace_id=br.workspace_id AND r.id=br.round_id
             WHERE b.workspace_id=$1 AND b.issue_id=$2 ORDER BY b.created_at DESC LIMIT 30)x`, ws, id).Scan(&batches)
 		if err != nil {
 			writeError(w, 500, "读取审查指令失败")
 			return
 		}
 	}
+	var round json.RawMessage
+	err = h.DB.QueryRow(r.Context(), `SELECT COALESCE((SELECT to_jsonb(r) FROM supervision_round r WHERE r.workspace_id=$1 AND r.issue_id=$2
+      ORDER BY (r.status='open') DESC,r.sequence DESC LIMIT 1),'null'::jsonb)`, ws, id).Scan(&round)
+	if err != nil {
+		writeError(w, 500, "读取完成轮次失败")
+		return
+	}
 	var coverage json.RawMessage
+	// 覆盖统计同时给出全部材料与当前完成轮次范围内的材料：范围外的后续评论不算进
+	// 本轮，避免把「材料已覆盖」误读成任务整体没有问题。
 	err = h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('materials',count(*),'covered',count(*) FILTER(WHERE reviewed_generation>=generation),'runs',count(DISTINCT run_id),
  'partial',count(*) FILTER(WHERE reviewed_generation<generation AND reviewed_offset>0),
  'pending',count(*) FILTER(WHERE reviewed_generation<generation AND reviewed_offset=0),
+ 'round_materials',count(*) FILTER(WHERE r.material_cutoff IS NOT NULL AND changed_at<=r.material_cutoff),
+ 'round_covered',count(*) FILTER(WHERE r.material_cutoff IS NOT NULL AND changed_at<=r.material_cutoff AND reviewed_generation>=generation),
+ 'round_pending',count(*) FILTER(WHERE r.material_cutoff IS NOT NULL AND changed_at<=r.material_cutoff AND reviewed_generation<generation),
  'current',(SELECT jsonb_build_object('kind',m.kind,'id',m.source_id,'offset',m.reviewed_offset,'length',(
  SELECT (part->>'length')::integer FROM supervision_batch b CROSS JOIN LATERAL jsonb_array_elements(b.materials) part
  WHERE b.workspace_id=m.workspace_id AND b.issue_id=m.issue_id AND part->>'id'=m.source_id::text AND (part->>'generation')::bigint=m.generation
- ORDER BY b.created_at DESC LIMIT 1)) FROM supervision_material m WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.reviewed_generation<m.generation AND m.reviewed_offset>0 ORDER BY m.changed_at,m.source_id LIMIT 1)) FROM supervision_material WHERE workspace_id=$1 AND issue_id=$2`, ws, id).Scan(&coverage)
+ ORDER BY b.created_at DESC LIMIT 1)) FROM supervision_material m WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.reviewed_generation<m.generation AND m.reviewed_offset>0 ORDER BY m.changed_at,m.source_id LIMIT 1))
+ FROM supervision_material m LEFT JOIN LATERAL (SELECT material_cutoff FROM supervision_round
+   WHERE workspace_id=$1 AND issue_id=$2 ORDER BY (status='open') DESC,sequence DESC LIMIT 1) r ON true
+ WHERE m.workspace_id=$1 AND m.issue_id=$2`, ws, id).Scan(&coverage)
 	if err != nil {
 		writeError(w, 500, "读取覆盖范围失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"subject": subject, "title": issue.Title, "description": issue.Description.String, "assignee_type": textToPtr(issue.AssigneeType), "assignee_id": uuidToPtr(issue.AssigneeID), "findings": findings, "batches": batches, "notes": notes, "actions": actions, "investigations": investigations, "coverage": coverage})
+	writeJSON(w, 200, map[string]any{"subject": subject, "round": round, "title": issue.Title,
+		"description": issue.Description.String, "business_status": issue.Status,
+		"status_category": issuestatus.Effective(r.Context(), h.Queries, issue.WorkspaceID, issue.Status),
+		"assignee_type": textToPtr(issue.AssigneeType), "assignee_id": uuidToPtr(issue.AssigneeID),
+		"findings": findings, "batches": batches, "notes": notes, "actions": actions, "investigations": investigations, "coverage": coverage})
 }
 
 func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
@@ -632,7 +681,13 @@ func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE supervision_subject SET force_review=true,next_attempt_at=now(),failures=0,error='' WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid) AND (NOT $3::boolean OR failures>=3)`, ws, body.IssueID, body.RetryFailed)
+		// 5. 全工作区「检查新增内容」只安排已完成任务：手动检查未完成任务必须指定任务，
+		// 避免一次点击把自动监督重新扩散到开发中的任务。
+		_, err = tx.Exec(r.Context(), `UPDATE supervision_subject s SET force_review=true,next_attempt_at=now(),failures=0,error=''
+          FROM issue i LEFT JOIN supervision_round r ON r.workspace_id=i.workspace_id AND r.issue_id=i.id AND r.status='open'
+          WHERE i.workspace_id=$1 AND i.id=s.issue_id AND ($2='' OR s.issue_id=NULLIF($2,'')::uuid)
+          AND (NOT $3::boolean OR s.failures>=3)
+          AND ($2<>'' OR (`+supervision.CategorySQL("i")+`='done' AND r.id IS NOT NULL))`, ws, body.IssueID, body.RetryFailed)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -719,7 +774,10 @@ func deleteSupervisionData(ctx context.Context, tx pgx.Tx, ws string, issue stri
 		`DELETE FROM supervision_action WHERE workspace_id=$1 AND ($2='' OR finding_id IN(SELECT id FROM supervision_finding WHERE workspace_id=$1 AND issue_id=NULLIF($2,'')::uuid))`,
 		`DELETE FROM supervision_finding WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
 		`DELETE FROM supervision_material WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
+		// 6. 批次归属和完成轮次先于批次删除，避免删任务后留下没有归属的轮次。
+		`DELETE FROM supervision_batch_round WHERE workspace_id=$1 AND ($2='' OR batch_id IN(SELECT id FROM supervision_batch WHERE workspace_id=$1 AND issue_id=NULLIF($2,'')::uuid))`,
 		`DELETE FROM supervision_batch WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
+		`DELETE FROM supervision_round WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
 		`DELETE FROM supervision_subject WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
 		`DELETE FROM supervision_config WHERE workspace_id=$1 AND $2=''`,
 	} {

@@ -11,13 +11,16 @@ export const supervisionInstructionsSchema = z.object({ instructions: z.string()
 export type SupervisionInstructions = z.infer<typeof supervisionInstructionsSchema>;
 export const supervisionSnapshotSchema = z.object({
   config: supervisionConfigSchema, can_manage: z.boolean(),
-  summary: z.object({ total: z.number(), covered: z.number(), pending: z.number(), running: z.number(), no_runs: z.number(),
+  summary: z.object({ total: z.number(), covered: z.number(), pending: z.number(), running: z.number(), no_runs: z.number(), waiting: z.number().default(0),
     incomplete: z.number(), failed: z.number(), retrying:z.number().default(0), open_findings: z.number(), issues_with_findings: z.number(), oldest_pending_at: time }),
 }).loose();
 export const supervisionSubjectSchema = z.object({
-  issue_id: z.string(), title: z.string(), identifier: z.string(), business_status: z.string(), project_id: z.string().nullable(),
+  issue_id: z.string(), title: z.string(), identifier: z.string(), business_status: z.string(), status_category: z.string().default(""),
+  project_id: z.string().nullable(),
   desired_version: z.number(), reviewed_version: z.number(), summary: z.string(), efficiency: z.string(), correctness: z.string(), run_count: z.number(),
   gaps: z.array(z.string()), last_checked_at: time, error: z.string(), failures: z.number(), next_attempt_at:time.optional(), stopped: z.boolean().default(false), running: z.boolean(), open_findings: z.number(),
+  round_sequence: z.number().nullable().default(null), round_opened_at: time.default(null), round_cutoff: time.default(null),
+  pending_materials: z.number().default(0), manual_running: z.boolean().default(false), manual_checked: z.boolean().default(false),
 }).loose();
 export const supervisionListSchema = z.object({ items: z.array(supervisionSubjectSchema), has_more: z.boolean(), offset: z.number() });
 export const supervisionEvidenceSchema = z.object({ kind: z.string(), id: z.string(), run_id: z.string().optional(), batch_id: z.string().optional() });
@@ -34,10 +37,14 @@ export const supervisionDetailSchema = z.object({
   notes: z.array(z.object({ id: z.string(), content: z.string(), created_at: z.string() })),
   actions: z.array(z.object({ id: z.string(), finding_id: z.string(), actor_id: z.string(), action: z.string(), reason: z.string(), created_at: z.string(), receipt: z.object({ evidence: z.array(supervisionEvidenceSchema).optional() }).loose().nullable() })),
   investigations: z.array(z.object({ id:z.string(), batch_id:z.string(), created_at:z.string(), request:z.object({ reason:z.string(), path:z.string().optional() }).loose(), result:z.object({ tool:z.string(), source_label:z.string().optional(), path:z.string().optional(), error:z.string().optional(), offset:z.number(), end:z.number(), length:z.number(), truncated:z.boolean(), scope_truncated:z.boolean().optional(), content_truncated:z.boolean().optional(), next_cursor:z.string().optional() }).loose() })).default([]),
+  round: z.object({ id: z.string(), sequence: z.number(), status: z.string(), material_cutoff: z.string(), close_reason: z.string().default(""), opened_at: z.string(), closed_at: time }).loose().nullable().optional(),
   batches: z.array(z.object({ id: z.string(), task_id: z.string().nullable(), status: z.string(), error: z.string(), rules_version: z.string(),
+    scope: z.string().nullable().optional(), round_sequence: z.number().nullable().optional(), round_cutoff: time.optional(),
     instructions: z.string().nullable().optional(), instructions_sha256: z.string().nullable().optional(),
     queue_seconds: z.number().nullable().optional(), execution_seconds: z.number().nullable().optional(), persistence_seconds: z.number().nullable().optional(), created_at: z.string(), completed_at: time, material_count: z.number() })),
-  coverage: z.object({ materials: z.number(), covered: z.number(), runs: z.number(), partial: z.number().optional(), pending: z.number().optional(), current: z.object({ kind: z.string(), id: z.string(), offset: z.number(), length: z.number().nullable() }).nullable().optional() }),
+  coverage: z.object({ materials: z.number(), covered: z.number(), runs: z.number(), partial: z.number().optional(), pending: z.number().optional(),
+    round_materials: z.number().optional(), round_covered: z.number().optional(), round_pending: z.number().optional(),
+    current: z.object({ kind: z.string(), id: z.string(), offset: z.number(), length: z.number().nullable() }).nullable().optional() }),
 }).loose();
 export type SupervisionSnapshot = z.infer<typeof supervisionSnapshotSchema>;
 export type SupervisionList = z.infer<typeof supervisionListSchema>;
@@ -58,6 +65,6 @@ export type SupervisionEvidencePage = z.infer<typeof supervisionEvidencePageSche
 
 export const EMPTY_SUPERVISION: SupervisionSnapshot = {
   config: { enabled: false, investigation_enabled:false, agent_id: null, interval_seconds: 300, inventory_complete: false, error: "", instructions: "", instructions_customized: false }, can_manage: false,
-  summary: { total: 0, covered: 0, pending: 0, running: 0, no_runs: 0, incomplete: 0, failed: 0, retrying:0, open_findings: 0, issues_with_findings: 0, oldest_pending_at: null },
+  summary: { total: 0, covered: 0, pending: 0, running: 0, no_runs: 0, waiting: 0, incomplete: 0, failed: 0, retrying:0, open_findings: 0, issues_with_findings: 0, oldest_pending_at: null },
 };
 export const EMPTY_SUPERVISION_LIST: SupervisionList = { items: [], has_more: false, offset: 0 };

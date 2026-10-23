@@ -108,6 +108,20 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
 
             {canManage && !enabled && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.recheck_paused)}</p>}
 
+            {!data.status_category || data.status_category === "done" ? (
+              data.round ? (
+                <section aria-labelledby="supervision-round" className="rounded-lg border p-3">
+                  <h3 id="supervision-round" className="font-semibold">{t(($) => $.supervision.round_title, { sequence: data.round.sequence })}</h3>
+                  <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.round_scope, { cutoff: moment(data.round.material_cutoff) })}</p>
+                  <p className="mt-1 text-caption text-muted-foreground">
+                    {data.round.status === "open" ? t(($) => $.supervision.round_open) : t(($) => $.supervision.round_closed)}
+                  </p>
+                </section>
+              ) : null
+            ) : (
+              <p className="rounded-lg border border-dashed p-3 text-caption text-muted-foreground">{t(($) => $.supervision.waiting_conclusion)}</p>
+            )}
+
             <section aria-labelledby="supervision-conclusion">
               <h3 id="supervision-conclusion" className="font-semibold">{t(($) => $.supervision.current_conclusion)}</h3>
               <p className="mt-2 whitespace-pre-wrap text-body">{data.subject.summary || t(($) => $.supervision.no_conclusion)}</p>
@@ -207,10 +221,16 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                     style={{ width: (data.coverage.materials ? Math.min(100, (data.coverage.covered / data.coverage.materials) * 100) : 0) + "%" }}
                   />
                 </div>
+                {data.coverage.round_materials != null && (
+                  <p className="text-caption text-muted-foreground">
+                    {t(($) => $.supervision.round_coverage, { covered: data.coverage.round_covered ?? 0, total: data.coverage.round_materials })}
+                    {data.coverage.materials > data.coverage.round_materials && " · " + t(($) => $.supervision.round_outside, { count: data.coverage.materials - data.coverage.round_materials })}
+                  </p>
+                )}
                 <p className="text-caption text-muted-foreground">
                   {t(($) => $.supervision.last_check)} {moment(data.subject.last_checked_at)}
-                  {data.subject.desired_version > data.subject.reviewed_version && " · " + t(($) => $.supervision.status_changed)}
                 </p>
+                <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.coverage_not_pass)}</p>
                 {data.coverage.current?.length != null && <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.reading_position, { offset: data.coverage.current.offset, length: data.coverage.current.length })}</p>}
                 {data.coverage.runs > 0 && <p className="mt-1 text-caption text-muted-foreground">{data.coverage.covered < data.coverage.materials ? t(($) => $.supervision.reading_history) : t(($) => $.supervision.reading_caught_up)}</p>}
                 <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.coverage_hint)}</p>
@@ -284,6 +304,8 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                       <span className="tabular-nums">{moment(batch.created_at)}</span>
                       <Badge variant={batch.status === "failed" ? "destructive" : "outline"}>{statusLabel(batch.status)}</Badge>
                       <span className="text-muted-foreground">{batch.rules_version} · {t(($) => $.supervision.materials_count, { count: batch.material_count })}</span>
+                      {batch.round_sequence != null && <span className="text-muted-foreground">{t(($) => $.supervision.batch_round, { sequence: batch.round_sequence })}</span>}
+                      {batch.scope === "manual" && <Badge variant="outline">{t(($) => $.supervision.batch_manual)}</Badge>}
                     </div>
                     {batch.queue_seconds != null && <p className="mt-1 tabular-nums text-muted-foreground">{t(($) => $.supervision.batch_timing, { queue: Math.max(0, Math.round(batch.queue_seconds)), execution: batch.execution_seconds == null ? "—" : Math.max(0, Math.round(batch.execution_seconds)), persistence: batch.persistence_seconds == null ? "—" : Math.max(0, Math.round(batch.persistence_seconds)) })}</p>}
                     {batch.error && <p className="mt-1 break-words text-destructive">{batch.error}</p>}

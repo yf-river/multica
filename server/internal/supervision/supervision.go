@@ -22,7 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
-const RulesVersion = "supervision-v6"
+const RulesVersion = "supervision-v7"
 
 type Service struct {
 	Pool      *pgxpool.Pool
@@ -77,6 +77,9 @@ type Result struct {
 
 func uuid(s string) pgtype.UUID { u, _ := util.ParseUUID(s); return u }
 
+// noCutoff 表示不限制材料时间：手动检查读取当前全部未读材料。
+var noCutoff pgtype.Timestamptz
+
 // Tick 仅安排有待办的工作区；每个工作区的配置行与任务唯一索引共同限制并发派发。
 func (s *Service) Tick(ctx context.Context) error {
 	rows, err := s.Pool.Query(ctx, `SELECT workspace_id::text FROM supervision_config ORDER BY workspace_id`)
@@ -102,6 +105,11 @@ func (s *Service) Tick(ctx context.Context) error {
 			s.setError(ctx, ws, err)
 			continue
 		}
+		// 轮次先于派发对齐：完成状态变化可能由服务停机期间的其他入口推进。
+		if err = s.reconcileRounds(ctx, ws); err != nil {
+			s.setError(ctx, ws, err)
+			continue
+		}
 		var enabled bool
 		if err = s.Pool.QueryRow(ctx, `SELECT enabled FROM supervision_config WHERE workspace_id=$1`, ws).Scan(&enabled); err != nil {
 			return err
@@ -113,8 +121,13 @@ func (s *Service) Tick(ctx context.Context) error {
 			s.setError(ctx, ws, err)
 			continue
 		}
+		// 无执行记录的任务不调用模型；只对已完成且开放轮次的任务记账，未完成任务
+		// 不会被标成已监督。
 		_, err = s.Pool.Exec(ctx, `UPDATE supervision_subject s SET reviewed_version=desired_version,summary='暂无执行记录，尚无法评价执行质量。'
-		  WHERE workspace_id=$1 AND last_checked_at IS NULL AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id)`, ws)
+		  FROM issue i WHERE i.workspace_id=s.workspace_id AND i.id=s.issue_id AND s.workspace_id=$1 AND s.last_checked_at IS NULL
+		  AND `+categoryOf("i")+`='done'
+		  AND EXISTS(SELECT 1 FROM supervision_round r WHERE r.workspace_id=s.workspace_id AND r.issue_id=s.issue_id AND r.status='open')
+		  AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id)`, ws)
 		if err != nil {
 			s.setError(ctx, ws, err)
 			continue
@@ -158,21 +171,23 @@ func (s *Service) inventory(ctx context.Context, ws string) error {
       ORDER BY id LIMIT 200 ON CONFLICT DO NOTHING`, ws); err != nil {
 		return err
 	}
+	// 1. 盘点补齐历史材料时使用来源自身的时间，而不是当前时间：完成轮次按材料时间
+	// 划定范围，登记时间晚于完成时刻的历史材料仍应属于那次完成。
 	var inserted int
 	err = tx.QueryRow(ctx, `WITH sources AS (
-      SELECT i.id issue_id,'issue'::text kind,i.id source_id,NULL::uuid run_id FROM issue i WHERE i.workspace_id=$1
-      UNION ALL SELECT c.issue_id,'comment',c.id,NULL FROM comment c JOIN issue i ON i.id=c.issue_id WHERE i.workspace_id=$1
+      SELECT i.id issue_id,'issue'::text kind,i.id source_id,NULL::uuid run_id,i.updated_at changed_at FROM issue i WHERE i.workspace_id=$1
+      UNION ALL SELECT c.issue_id,'comment',c.id,NULL,GREATEST(c.created_at,c.updated_at) FROM comment c JOIN issue i ON i.id=c.issue_id WHERE i.workspace_id=$1
         AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.id=c.source_task_id AND t.context->>'type'='quality_supervision')
-      UNION ALL SELECT t.issue_id,'task',t.id,t.id FROM agent_task_queue t JOIN issue i ON i.id=t.issue_id WHERE i.workspace_id=$1 AND COALESCE(t.context->>'type','')<>'quality_supervision'
-      UNION ALL SELECT t.issue_id,'message',m.id,t.id FROM task_message m JOIN agent_task_queue t ON t.id=m.task_id JOIN issue i ON i.id=t.issue_id WHERE i.workspace_id=$1 AND COALESCE(t.context->>'type','')<>'quality_supervision'
-      UNION ALL SELECT e.issue_id,'trace',e.id,e.task_id FROM task_trace_event e WHERE e.workspace_id=$1
+      UNION ALL SELECT t.issue_id,'task',t.id,t.id,t.created_at FROM agent_task_queue t JOIN issue i ON i.id=t.issue_id WHERE i.workspace_id=$1 AND COALESCE(t.context->>'type','')<>'quality_supervision'
+      UNION ALL SELECT t.issue_id,'message',m.id,t.id,m.created_at FROM task_message m JOIN agent_task_queue t ON t.id=m.task_id JOIN issue i ON i.id=t.issue_id WHERE i.workspace_id=$1 AND COALESCE(t.context->>'type','')<>'quality_supervision'
+      UNION ALL SELECT e.issue_id,'trace',e.id,e.task_id,e.created_at FROM task_trace_event e WHERE e.workspace_id=$1
     ), missing AS (
       SELECT x.* FROM sources x JOIN supervision_subject s ON s.workspace_id=$1 AND s.issue_id=x.issue_id
       WHERE NOT EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=$1 AND m.kind=x.kind AND m.source_id=x.source_id)
       ORDER BY x.kind,x.source_id LIMIT 2000
     ), inserted AS (
-      INSERT INTO supervision_material(workspace_id,issue_id,kind,source_id,run_id)
-      SELECT $1,issue_id,kind,source_id,run_id FROM missing ON CONFLICT DO NOTHING RETURNING issue_id
+      INSERT INTO supervision_material(workspace_id,issue_id,kind,source_id,run_id,changed_at)
+      SELECT $1,issue_id,kind,source_id,run_id,COALESCE(changed_at,now()) FROM missing ON CONFLICT DO NOTHING RETURNING issue_id
     ) , dirtied AS (UPDATE supervision_subject SET desired_version=desired_version+1,next_attempt_at=now() WHERE workspace_id=$1 AND issue_id IN(SELECT issue_id FROM inserted) RETURNING issue_id)
  SELECT count(*) FROM inserted`, ws).Scan(&inserted)
 	if err != nil {
@@ -205,18 +220,20 @@ func sourceSQL(kind string) (string, error) {
 }
 
 // materials 使用字符偏移分片，读取正文完整范围前不会确认该引用已覆盖。
-func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string) ([]Material, error) {
+// cutoff 非空时只取该时刻之前登记的材料：完成轮次据此冻结审查范围。
+func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cutoff pgtype.Timestamptz) ([]Material, error) {
 	rows, err := tx.Query(ctx, `SELECT m.kind,m.source_id::text,COALESCE(m.run_id::text,''),m.generation,
       CASE WHEN m.generation<>m.reviewed_generation THEN m.reviewed_offset ELSE 0 END
       FROM supervision_material m
       LEFT JOIN task_message tm ON m.kind='message' AND tm.id=m.source_id
       LEFT JOIN agent_task_queue t ON t.id=m.run_id
       WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.generation>m.reviewed_generation
+      AND ($3::timestamptz IS NULL OR m.changed_at<=$3::timestamptz)
       ORDER BY CASE m.kind WHEN 'issue' THEN 0 WHEN 'comment' THEN 1 WHEN 'task' THEN 2 WHEN 'message' THEN 3 ELSE 4 END,
         CASE WHEN m.kind='comment' THEN m.changed_at END ASC,
         CASE WHEN m.kind='message' THEN t.created_at END,
         CASE WHEN m.kind='message' THEN m.run_id END,
-        tm.seq,m.changed_at,m.source_id LIMIT 24`, ws, issue)
+        tm.seq,m.changed_at,m.source_id LIMIT 24`, ws, issue, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -267,11 +284,11 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string) ([
 			break
 		}
 	}
-	return s.withMessageContext(ctx, tx, ws, out)
+	return s.withMessageContext(ctx, tx, ws, out, cutoff)
 }
 
 // withMessageContext 保存跨消息边界的原文；辅助片段不推进任何材料的阅读进度。
-func (s *Service) withMessageContext(ctx context.Context, tx pgx.Tx, ws string, materials []Material) ([]Material, error) {
+func (s *Service) withMessageContext(ctx context.Context, tx pgx.Tx, ws string, materials []Material, cutoff pgtype.Timestamptz) ([]Material, error) {
 	seen := map[string]bool{}
 	for _, m := range materials {
 		seen[m.ID] = true
@@ -293,9 +310,10 @@ func (s *Service) withMessageContext(ctx context.Context, tx pgx.Tx, ws string, 
      JOIN task_message current ON current.id=$1 AND current.task_id=n.task_id
      WHERE (($3::boolean AND (n.seq,n.id)<(current.seq,current.id))
          OR (NOT $3::boolean AND (n.seq,n.id)>(current.seq,current.id)))
+     AND ($4::timestamptz IS NULL OR sm.changed_at<=$4::timestamptz)
      ORDER BY CASE WHEN $3::boolean THEN n.seq END DESC,CASE WHEN $3::boolean THEN n.id END DESC,
        CASE WHEN NOT $3::boolean THEN n.seq END,CASE WHEN NOT $3::boolean THEN n.id END
-     LIMIT 1`, m.ID, ws, before).Scan(&id)
+     LIMIT 1`, m.ID, ws, before, cutoff).Scan(&id)
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
@@ -340,10 +358,9 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	}
 	defer tx.Rollback(ctx)
 	var agent, owner string
-	var interval int
 	var investigation bool
 	var instructions string
-	err = tx.QueryRow(ctx, `SELECT COALESCE(agent_id::text,''),owner_id::text,interval_seconds,investigation_enabled,instructions FROM supervision_config WHERE workspace_id=$1 AND enabled FOR UPDATE SKIP LOCKED`, ws).Scan(&agent, &owner, &interval, &investigation, &instructions)
+	err = tx.QueryRow(ctx, `SELECT COALESCE(agent_id::text,''),owner_id::text,investigation_enabled,instructions FROM supervision_config WHERE workspace_id=$1 AND enabled FOR UPDATE SKIP LOCKED`, ws).Scan(&agent, &owner, &investigation, &instructions)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -370,25 +387,65 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	var issue string
 	var version int64
 	var summary string
-	err = tx.QueryRow(ctx, `SELECT s.issue_id::text,s.desired_version,s.summary FROM supervision_subject s JOIN issue i ON i.id=s.issue_id
-      WHERE s.workspace_id=$1 AND s.desired_version>s.reviewed_version AND s.next_attempt_at<=now() AND s.failures<3
+	// 2. 自动派发只对「已完成 + 有开放轮次 + 轮次范围内仍有未读材料」的任务成立；
+	// force_review 是用户显式手动检查，允许未完成任务，但只跑一轮、不产生持续追踪。
+	err = tx.QueryRow(ctx, `SELECT s.issue_id::text FROM supervision_subject s JOIN issue i ON i.id=s.issue_id
+      LEFT JOIN supervision_round r ON r.workspace_id=s.workspace_id AND r.issue_id=s.issue_id AND r.status='open'
+      WHERE s.workspace_id=$1 AND s.next_attempt_at<=now() AND s.failures<3
       AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=s.workspace_id AND b.issue_id=s.issue_id AND b.status IN('preparing','running'))
-      AND (s.force_review OR s.last_checked_at IS NULL OR s.last_checked_at<now()-make_interval(secs=>$2::double precision)
-        OR EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id AND m.generation>m.reviewed_generation AND m.changed_at<=s.last_checked_at)
-        OR NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=s.issue_id AND t.status IN('queued','dispatched','running')))
-      ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id FOR UPDATE OF s SKIP LOCKED LIMIT 1`, ws, interval).Scan(&issue, &version, &summary)
+      AND (s.force_review OR (`+categoryOf("i")+`='done' AND r.id IS NOT NULL
+        AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
+          AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)))
+      ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id LIMIT 1`, ws).Scan(&issue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	}
 	if err != nil {
 		return err
 	}
-	materials, err := s.materials(ctx, tx, ws, issue)
+	// 3. 锁顺序固定为「轮次 → 任务台账 → 批次」：重开路径在同一顺序上关闭轮次并
+	// 取消排队批次，提交路径据此拒绝迟到结果，不会互相等锁。
+	round, hasRound, err := openRound(ctx, tx, ws, issue)
+	if err != nil {
+		return err
+	}
+	var forced, busy bool
+	if err = tx.QueryRow(ctx, `SELECT s.desired_version,s.summary,s.force_review FROM supervision_subject s
+      WHERE s.workspace_id=$1 AND s.issue_id=$2 FOR UPDATE`, ws, issue).Scan(&version, &summary, &forced); err != nil {
+		return err
+	}
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=$1 AND b.issue_id=$2 AND b.status IN('preparing','running'))`, ws, issue).Scan(&busy); err != nil {
+		return err
+	}
+	manual := forced
+	if manual {
+		hasRound = false
+	} else if round.ID != "" {
+		done, err := s.issueDone(ctx, tx, ws, issue)
+		if err != nil {
+			return err
+		}
+		var pending bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=$1 AND m.issue_id=$2
+          AND m.generation>m.reviewed_generation AND m.changed_at<=$3::timestamptz)`, ws, issue, round.Cutoff).Scan(&pending); err != nil {
+			return err
+		}
+		hasRound = done && pending
+	}
+	// 候选在等锁期间可能被重开、被其他批次占用或被手动操作改变，按锁后事实重新判定。
+	if busy || (!manual && (round.ID == "" || !hasRound)) {
+		return tx.Commit(ctx)
+	}
+	cutoff := pgtype.Timestamptz{}
+	if !manual {
+		cutoff = pgtype.Timestamptz{Time: round.Cutoff, Valid: true}
+	}
+	materials, err := s.materials(ctx, tx, ws, issue, cutoff)
 	if err != nil {
 		return err
 	}
 	if len(materials) == 0 {
-		_, err = tx.Exec(ctx, `UPDATE supervision_subject SET reviewed_version=$3,last_checked_at=now(),force_review=false WHERE workspace_id=$1 AND issue_id=$2`, ws, issue, version)
+		_, err = tx.Exec(ctx, `UPDATE supervision_subject SET force_review=false WHERE workspace_id=$1 AND issue_id=$2`, ws, issue)
 		if err != nil {
 			return err
 		}
@@ -399,8 +456,15 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	if _, err = tx.Exec(ctx, `INSERT INTO supervision_batch(id,workspace_id,issue_id,target_version,materials,rules_version,created_at) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp())`, batch, ws, issue, version, raw, RulesVersion); err != nil {
 		return err
 	}
+	scope := "manual"
+	if !manual {
+		scope = "completion"
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO supervision_batch_round(workspace_id,batch_id,round_id,scope) VALUES($1,$2,NULLIF($3,'')::uuid,$4)`, ws, batch, round.ID, scope); err != nil {
+		return err
+	}
 	var current json.RawMessage
-	err = tx.QueryRow(ctx, currentIssueSnapshotSQL, issue, ws).Scan(&current)
+	err = tx.QueryRow(ctx, currentIssueSnapshotSQL, issue, ws, cutoff).Scan(&current)
 	if err != nil {
 		return err
 	}
@@ -409,7 +473,11 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	if err != nil {
 		return err
 	}
-	prompt, err := BuildPrompt(batch, string(current), summary, string(open), materials, investigation)
+	var roundRef *Round
+	if !manual {
+		roundRef = &round
+	}
+	prompt, err := BuildPromptWithRound(batch, string(current), summary, string(open), materials, roundRef, investigation)
 	if err != nil {
 		return err
 	}
@@ -429,7 +497,8 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 
 const currentIssueSnapshotSQL = `SELECT jsonb_build_object('title',title,'description',left(description,8000),'acceptance_criteria',left(acceptance_criteria::text,4000),'status',status,
       'requirement_truncated',length(COALESCE(description,''))>8000 OR length(COALESCE(acceptance_criteria::text,''))>4000,
-      'pending_materials',(SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation),
+      'pending_materials',(SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation
+        AND ($3::timestamptz IS NULL OR changed_at<=$3::timestamptz)),
       'previous_attempt_error',(SELECT left(error,1000) FROM supervision_subject WHERE workspace_id=$2 AND issue_id=$1),
       'finding_decisions',(SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT f.id,f.status,f.human_resolution,left(f.title,300) title,left(a.reason,2000) reason,a.action,a.created_at
         FROM supervision_finding f JOIN LATERAL (SELECT reason,action,created_at FROM supervision_action WHERE workspace_id=$2 AND finding_id=f.id AND action IN('open','in_progress','resolved','ignored','auto_resolved') ORDER BY created_at DESC,id DESC LIMIT 1) a ON true
@@ -438,22 +507,41 @@ const currentIssueSnapshotSQL = `SELECT jsonb_build_object('title',title,'descri
       'latest_user_comments',(SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,left(content,4000) content,length(content)>4000 truncated,created_at,updated_at FROM comment WHERE issue_id=$1 AND author_type='member' ORDER BY GREATEST(updated_at,created_at) DESC,id DESC LIMIT 6)x))
       FROM issue WHERE id=$1 AND workspace_id=$2`
 
+// RoundInput 告诉监督员本轮对应哪次完成；手动检查没有完成快照。
+type RoundInput struct {
+	Sequence int    `json:"sequence"`
+	Cutoff   string `json:"material_cutoff"`
+	Scope    string `json:"scope"`
+}
+
+// BuildPrompt 组装批次输入；无完成快照的手动检查传 nil 轮次。
 func BuildPrompt(batch, current, summary, open string, materials []Material, investigate ...bool) (string, error) {
+	return BuildPromptWithRound(batch, current, summary, open, materials, nil, investigate...)
+}
+
+func BuildPromptWithRound(batch, current, summary, open string, materials []Material, round *Round, investigate ...bool) (string, error) {
 	coverage := []Evidence{}
 	for _, material := range materials {
 		if !material.ContextOnly {
 			coverage = append(coverage, material.Evidence)
 		}
 	}
+	var roundInput *RoundInput
+	if round != nil {
+		roundInput = &RoundInput{Sequence: round.Sequence, Cutoff: round.Cutoff.UTC().Format(time.RFC3339), Scope: "completion"}
+	} else {
+		roundInput = &RoundInput{Scope: "manual"}
+	}
 	raw, err := json.Marshal(struct {
 		BatchID              string          `json:"batch_id"`
+		Round                *RoundInput     `json:"round"`
 		Current              json.RawMessage `json:"current"`
 		PreviousSummary      string          `json:"previous_summary"`
 		OpenFindings         json.RawMessage `json:"open_findings"`
 		Materials            []Material      `json:"materials"`
 		Covered              []Evidence      `json:"covered"`
 		InvestigationEnabled bool            `json:"investigation_enabled"`
-	}{batch, json.RawMessage(redact.Text(current)), redact.Text(summary), json.RawMessage(redact.Text(open)), materials, coverage, len(investigate) > 0 && investigate[0]})
+	}{batch, roundInput, json.RawMessage(redact.Text(current)), redact.Text(summary), json.RawMessage(redact.Text(open)), materials, coverage, len(investigate) > 0 && investigate[0]})
 	return string(raw), err
 }
 
@@ -686,9 +774,12 @@ func (s *Service) reconcile(ctx context.Context, ws string) error {
 }
 
 func (s *Service) fail(ctx context.Context, batch string, cause error) error {
-	_, err := s.Pool.Exec(ctx, `WITH failed AS(UPDATE supervision_batch SET status='failed',error=$2,completed_at=now() WHERE id=$1 AND status IN('preparing','running') RETURNING workspace_id,issue_id)
+	// 轮次已关闭的失败只记录在批次上：重开后新轮次不应被旧轮次的失败退避拖住。
+	_, err := s.Pool.Exec(ctx, `WITH failed AS(UPDATE supervision_batch SET status='failed',error=$2,completed_at=now() WHERE id=$1 AND status IN('preparing','running') RETURNING workspace_id,issue_id,id)
       UPDATE supervision_subject s SET failures=failures+1,error=$2,next_attempt_at=now()+make_interval(secs=>60*power(5,LEAST(failures,2))::int)
-      FROM failed f WHERE s.workspace_id=f.workspace_id AND s.issue_id=f.issue_id`, batch, cause.Error())
+      FROM failed f WHERE s.workspace_id=f.workspace_id AND s.issue_id=f.issue_id
+      AND NOT EXISTS(SELECT 1 FROM supervision_batch_round br JOIN supervision_round r ON r.id=br.round_id AND r.workspace_id=br.workspace_id
+        WHERE br.batch_id=f.id AND r.status='closed')`, batch, cause.Error())
 	return err
 }
 
@@ -699,6 +790,21 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// 1. 先锁批次归属的轮次，再锁批次与台账：重开路径也是「轮次 → 批次」的顺序，
+	// 运行期间重开时这里会看到已关闭状态。
+	var roundID string
+	err = tx.QueryRow(ctx, `SELECT COALESCE(round_id::text,'') FROM supervision_batch_round WHERE workspace_id=$1 AND batch_id=$2`, ws, batch).Scan(&roundID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	roundOpen := false
+	if roundID != "" {
+		var roundStatus string
+		if err = tx.QueryRow(ctx, `SELECT status FROM supervision_round WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, ws, roundID).Scan(&roundStatus); err != nil {
+			return err
+		}
+		roundOpen = roundStatus == RoundOpen
+	}
 	var issue, status, taskID string
 	var target int64
 	var raw []byte
@@ -714,6 +820,29 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	}
 	if status != "running" {
 		return fmt.Errorf("批次已失效")
+	}
+	// 2. 任务在排队或运行期间被重开：结果只归档，不更新当前结论、问题清单和阅读
+	// 进度，避免污染重开后新开的轮次。
+	if roundID != "" {
+		done := roundOpen
+		if done {
+			if done, err = s.issueDone(ctx, tx, ws, issue); err != nil {
+				return err
+			}
+		}
+		if !done {
+			if roundOpen {
+				if err := closeRoundTx(ctx, tx, ws, roundID, RoundCloseReopened); err != nil {
+					return err
+				}
+			}
+			body, _ := json.Marshal(result)
+			if _, err = tx.Exec(ctx, `UPDATE supervision_batch SET status='cancelled',result=$2,error=$3,completed_at=now() WHERE id=$1`,
+				batch, body, "任务已重新打开，本轮结论只保留在审查历史，未更新当前问题状态和阅读进度。"); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
 	}
 	// 人工操作与结果提交共用任务锁，避免新决定插入检查与写入之间。
 	var subject string

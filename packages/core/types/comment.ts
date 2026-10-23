@@ -47,6 +47,10 @@ export interface Comment {
   // 本条评论里每个显式 @agent / @squad 提及的按目标结果（MUL-4525 §2）。
   // 只在创建/编辑响应里出现；旧服务器省略它。
   trigger_outcomes?: CommentTriggerOutcome[];
+  // 回复托管审查员时，实际接收这条回复的人及其派发结果（GONG-63）。审查员只接受
+  // 系统派发的审查任务，因此回复会转给任务当前负责人。只在创建/编辑响应里出现；
+  // 旧服务器省略它。
+  review_reply?: CommentReviewReply | null;
 }
 
 // 单个被显式提及的触发目标的领域结果。「成功形态」的状态
@@ -70,7 +74,22 @@ export interface CommentTriggerOutcome {
 export type CommentTriggerSource =
   | "issue_assignee"
   | "mention_agent"
-  | "mention_squad_leader";
+  | "mention_squad_leader"
+  // 回复审查员时转交给任务当前负责人（GONG-63）。
+  | "review_followup_assignee";
+
+/**
+ * 回复托管审查员的转交结果。`status` 说明实际发生了什么：预览阶段是 `will_notify`
+ * （会通知负责人）或人类/无负责人/被拦；保存后是 `queued` / `coalesced` /
+ * `deferred`（运行已排队或合并）或 `blocked`（附 `reason_code`）。
+ */
+export interface CommentReviewReply {
+  recipient_type?: string; // "agent" | "squad" | "member"
+  recipient_id?: string;
+  recipient_name?: string;
+  status: string;
+  reason_code?: string;
+}
 
 /** 触发预览中的单个 agent：谁会被触发 + 触发来源与原因。 */
 export interface CommentTriggerPreviewAgent {
@@ -87,4 +106,6 @@ export interface CommentTriggerPreview {
   // 原样发布时「不会」触发的显式 @agent/@squad 提及（MUL-4525 §2）。
   // 增量字段：旧服务器省略。
   blocked?: CommentTriggerOutcome[];
+  // 回复审查员时这条草稿会通知谁（GONG-63）。增量字段：旧服务器省略。
+  review_reply?: CommentReviewReply | null;
 }
