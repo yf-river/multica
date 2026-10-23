@@ -31,7 +31,6 @@ export function SupervisionSettings({ open, close, config }: Props) {
   const [thinking, setThinking] = useState(config.thinking_level ?? "");
   // null 表示跟随内置默认；只有用户实际编辑后才落成字符串。
   const [instructions, setInstructions] = useState<string | null>(config.instructions_customized && config.instructions ? config.instructions : null);
-  const [interval, setInterval] = useState<number | null>(null);
   const [investigation, setInvestigation] = useState<boolean | null>(null);
 
   const runtimes = useQuery({ ...runtimeListOptions(wsId), enabled: open });
@@ -56,7 +55,7 @@ export function SupervisionSettings({ open, close, config }: Props) {
   const save = useMutation({
     mutationFn: (enabled: boolean) => api.updateSupervision({
       enabled,
-      interval_seconds: interval ?? config.interval_seconds,
+      interval_seconds: config.interval_seconds,
       investigation_enabled: investigation ?? config.investigation_enabled,
       runtime_id: runtimeId,
       model,
@@ -150,25 +149,16 @@ export function SupervisionSettings({ open, close, config }: Props) {
               {" · "}
               {t(($) => $.supervision.instructions_count, { count: effectiveText.length })}
             </p>
+            {customized && (
+              <p className="rounded-md border border-warning/40 bg-warning/5 p-3 text-caption text-warning">{t(($) => $.supervision.instructions_conflict)}</p>
+            )}
           </div>
 
-          <div className="text-body">
+          <div className="space-y-1 text-body">
             <p className="font-medium">{t(($) => $.supervision.scope)}</p>
-            <p className="mt-1 text-muted-foreground">{t(($) => $.supervision.scope_description)}</p>
+            <p className="text-muted-foreground">{t(($) => $.supervision.scope_description)}</p>
+            <p className="text-caption text-muted-foreground">{t(($) => $.supervision.scope_trigger)}</p>
           </div>
-          <label className="block space-y-2 text-body" htmlFor="supervision-interval">
-            <span>{t(($) => $.supervision.interval)}</span>
-            <select
-              id="supervision-interval"
-              className="h-10 w-full rounded-md border bg-background px-3"
-              value={interval ?? config.interval_seconds}
-              onChange={(event) => setInterval(Number(event.target.value))}
-            >
-              <option value={60}>{t(($) => $.supervision.interval_short)}</option>
-              <option value={300}>{t(($) => $.supervision.minute_five)}</option>
-              <option value={900}>{t(($) => $.supervision.minute_fifteen)}</option>
-            </select>
-          </label>
           <label className="flex items-start gap-3 rounded-lg border p-3 text-body">
             <input
               type="checkbox"
@@ -181,7 +171,6 @@ export function SupervisionSettings({ open, close, config }: Props) {
               <span className="mt-1 block text-caption text-muted-foreground">{t(($) => $.supervision.investigation_hint)}</span>
             </span>
           </label>
-          <p className="text-caption text-muted-foreground">{t(($) => $.supervision.interval_hint)}</p>
           <p className="text-caption text-muted-foreground">{t(($) => $.supervision.feedback_manual)}</p>
           <div className="flex flex-wrap gap-2">
             <Button disabled={!ready} onClick={() => save.mutate(true)}>
