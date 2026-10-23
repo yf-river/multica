@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
@@ -180,5 +181,114 @@ func TestRevokedAuthorizationStopsAutomaticReview(t *testing.T) {
 	}
 	if !strings.Contains(detail, "等待用户发布授权") || state != "user_authorization" {
 		t.Fatalf("撤回后应说明等待用户授权: %s %s", detail, state)
+	}
+}
+
+func deliveryRevision(t *testing.T, delivery string) int64 {
+	t.Helper()
+	var rev int64
+	dbfx.QueryRow(t, `SELECT revision FROM issue_delivery WHERE id=$1`, delivery).Scan(&rev)
+	return rev
+}
+
+func advanceNotifyAuthorization(t *testing.T, delivery string, want int) *testutil.Response {
+	t.Helper()
+	return testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": "notify-authorization"})).Want(want)
+}
+
+// 1. 显式接续有次数上限：补发到上限后保留原意图并说明原因，重复调用不再补发，
+// 也不能清掉意图重新从零计数。
+func TestDeliveryReviewResendStopsAtLimit(t *testing.T) {
+	issue, delivery, token, _ := deliveryReviewFixture(t, true)
+	advanceAccepted(t, delivery, token)
+	if first := deliveryReviewNoticeCount(t, delivery); first != 1 {
+		t.Fatalf("首次应只通知一次，实际 %d", first)
+	}
+	for i := 0; i < deliveryReviewRewakeLimit; i++ {
+		advanceNotifyAuthorization(t, delivery, 200)
+	}
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1+deliveryReviewRewakeLimit {
+		t.Fatalf("补发次数应为 %d，实际通知 %d 条", deliveryReviewRewakeLimit, got)
+	}
+	advanceNotifyAuthorization(t, delivery, 409)
+	advanceNotifyAuthorization(t, delivery, 409)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1+deliveryReviewRewakeLimit {
+		t.Fatalf("超限后不得继续补发，实际通知 %d 条", got)
+	}
+	var attempts int
+	var stalled bool
+	dbfx.QueryRow(t, `SELECT COALESCE((plan_snapshot->'authorization_notice'->>'attempts')::int,0),COALESCE((plan_snapshot->>'authorization_stalled')::boolean,false) FROM issue_delivery WHERE id=$1`, delivery).Scan(&attempts, &stalled)
+	if attempts != deliveryReviewRewakeLimit || !stalled {
+		t.Fatalf("超限后应保留次数并标记停止: attempts=%d stalled=%v", attempts, stalled)
+	}
+	phase, pending, detail, state := deliveryReviewRow(t, issue, delivery)
+	if phase != "awaiting_review" || pending != "" || state != "review_incomplete" {
+		t.Fatalf("超限后交付状态应保持可见: %s %s %s", phase, pending, state)
+	}
+	if !strings.Contains(detail, "负责人复核未接续") {
+		t.Fatalf("超限后应保留具体原因: %s", detail)
+	}
+}
+
+// 2. 通知写入失败时保留待通知意图，恢复后由队列补发一次；不能因为一次失败丢工作。
+func TestDeliveryReviewNotificationFailureKeepsIntent(t *testing.T) {
+	issue, delivery, token, _ := deliveryReviewFixture(t, true)
+	dbfx.Exec(t, `CREATE OR REPLACE FUNCTION gong68_block_comment() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN RAISE EXCEPTION '通知写入失败'; END $body$`)
+	dbfx.Exec(t, `CREATE TRIGGER gong68_block_comment BEFORE INSERT ON comment FOR EACH ROW EXECUTE FUNCTION gong68_block_comment()`)
+	drop := func() {
+		dbfx.Exec(t, `DROP TRIGGER IF EXISTS gong68_block_comment ON comment`)
+		dbfx.Exec(t, `DROP FUNCTION IF EXISTS gong68_block_comment()`)
+	}
+	t.Cleanup(drop)
+	advanceAccepted(t, delivery, token)
+	phase, pending, detail, state := deliveryReviewRow(t, issue, delivery)
+	if phase != "awaiting_review" || pending != "true" || state != "owner_review" {
+		t.Fatalf("写入失败后应保留待通知意图: %s %s %s (%s)", phase, pending, state, detail)
+	}
+	if deliveryReviewNoticeCount(t, delivery) != 0 {
+		t.Fatal("写入失败时不应该留下半条通知")
+	}
+	drop()
+	advanceNotifyAuthorization(t, delivery, 200)
+	if _, pending, _, _ = deliveryReviewRow(t, issue, delivery); pending != "" {
+		t.Fatalf("恢复后应清掉待通知标记: %s", pending)
+	}
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("恢复后应恰好补发一次，实际 %d", got)
+	}
+}
+
+// 3. 服务重启不依赖内存状态：已落库的意图由新进程继续发送；“已写入通知但未清标记”
+// 的重启窗口也不会重复通知。
+func TestDeliveryReviewNotificationResumesAfterRestart(t *testing.T) {
+	issue, delivery, token, _ := deliveryReviewFixture(t, true)
+	var agent string
+	dbfx.QueryRow(t, `SELECT id FROM agent WHERE workspace_id=$1 AND name='Handler Test Agent'`, testWorkspaceID).Scan(&agent)
+	if agent == "" {
+		t.Fatal("缺少测试 Agent")
+	}
+	dbfx.Exec(t, `UPDATE issue SET assignee_type='agent',assignee_id=$2 WHERE id=$1`, issue, agent)
+	running := dbfx.Insert(t, "agent_task_queue", testutil.Cols{"agent_id": agent, "issue_id": issue, "status": "running", "runtime_id": handlerTestRuntimeID(t)})
+	advanceAccepted(t, delivery, token)
+	if _, pending, _, _ := deliveryReviewRow(t, issue, delivery); pending != "true" {
+		t.Fatal("负责人运行期间应先落库待通知意图")
+	}
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status='completed',completed_at=now() WHERE id=$1`, running)
+	restarted := New(testHandler.Queries, testPool, testHandler.Hub, testHandler.Bus, testHandler.EmailService, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
+	testutil.Call(t, restarted.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": "notify-authorization"})).Want(200)
+	if _, pending, _, _ := deliveryReviewRow(t, issue, delivery); pending != "" {
+		t.Fatal("重启接续后应清掉待通知标记")
+	}
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("重启后应恰好发送一次，实际 %d", got)
+	}
+	// 模拟“通知已写入、标记未清”时进程退出：重启后只清标记，不再补发。
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=plan_snapshot||'{"authorization_pending":true}'::jsonb WHERE id=$1`, delivery)
+	testutil.Call(t, restarted.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": "notify-authorization"})).Want(200)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("重启窗口不应重复通知，实际 %d", got)
+	}
+	if _, pending, _, _ := deliveryReviewRow(t, issue, delivery); pending != "" {
+		t.Fatal("重启窗口恢复后应清掉待通知标记")
 	}
 }

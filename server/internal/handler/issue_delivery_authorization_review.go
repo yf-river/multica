@@ -190,7 +190,8 @@ func (h *Handler) deliverDeliveryAuthorizationReview(r *http.Request, ws, issue,
 // renotifyDeliveryAuthorizationReview 显式接续已送达但未完成复核的交付。
 //
 // 自动路径不重复唤醒同一交付和候选；只有通知已发出、负责人运行已结束且复核仍未绑定时，
-// 才允许换新通知号补发一次，并有次数上限，避免无限重试。
+// 才允许换新通知号补发一次，并受 deliveryReviewRewakeLimit 约束。达到上限后保留原意图并
+// 标记 authorization_stalled，重复调用只返回同一失败原因，不再补发也不再从零计数。
 func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue, id string) error {
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -238,10 +239,18 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 	if busy {
 		return fmt.Errorf("上一次复核运行尚未结束，等待其完成再显式接续")
 	}
+	// 1. 达到补发上限后停止自动重试并保留原意图：清掉通知号会让下一次调用重新从 0 计数，
+	// 上限就失去意义。超限后只说明可见原因，等人工按原任务排查后显式接续。
 	if notice.Attempts >= deliveryReviewRewakeLimit {
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET error=$2,plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice' WHERE id=$1`, id, fmt.Sprintf(deliveryReviewStalledNotice, notice.CandidateID))
-		if err != nil {
+		var stalled bool
+		if err = tx.QueryRow(r.Context(), `SELECT COALESCE(plan_snapshot->>'authorization_stalled','')='true' FROM issue_delivery WHERE id=$1`, id).Scan(&stalled); err != nil {
 			return err
+		}
+		if !stalled {
+			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET error=$2,plan_snapshot=(plan_snapshot-'authorization_pending')||'{"authorization_stalled":true}'::jsonb WHERE id=$1`, id, fmt.Sprintf(deliveryReviewStalledNotice, notice.CandidateID))
+			if err != nil {
+				return err
+			}
 		}
 		if err = tx.Commit(r.Context()); err != nil {
 			return err
@@ -254,7 +263,7 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,error=$3 WHERE id=$1`, id, raw, fmt.Sprintf("已有发布授权，等待负责人复核当前候选（第 %d 次接续）", notice.Attempts))
+	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb-'authorization_stalled',error=$3 WHERE id=$1`, id, raw, fmt.Sprintf("已有发布授权，等待负责人复核当前候选（第 %d 次接续）", notice.Attempts))
 	if err != nil {
 		return err
 	}
