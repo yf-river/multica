@@ -13,6 +13,8 @@ import (
 
 	"github.com/mattn/go-shellwords"
 
+	"github.com/multica-ai/multica/server/internal/codediff"
+
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
@@ -121,14 +123,19 @@ type Config struct {
 	CodexFirstTurnNoProgressTimeout time.Duration
 	CodexHandshakeTimeout           time.Duration
 	CodexThreadHandshakeTimeout     time.Duration
-	OpenCodeIdleWatchdog            time.Duration // OpenCode 专用无消息窗口；0 回退到 AgentIdleWatchdog，大于它的值不能突破全局上限
-	AgentIdleWatchdog               time.Duration // 后端静默这么久且队列为空时强制停一次运行（0 = 禁用）
-	AgentToolWatchdog               time.Duration // 单个工具调用在途（静默）这么久时强制停一次运行（0 = 工具调用期间绝不强停）；缺省等于 AgentIdleWatchdog，让运维只调一个数，除非故意想要更宽的工具预算
-	ClaudeArgs                      []string
-	CodexArgs                       []string
-	CodebuddyArgs                   []string
-	QwenArgs                        []string
-	QwenpawArgs                     []string
+	// 运行 diff 采集的目录分类（MULTICA_RUN_DIFF_DEPENDENCY_DIRS /
+	// MULTICA_RUN_DIFF_BUILD_OUTPUT_DIRS，逗号分隔）。依赖目录只记目录级摘要，
+	// 构建产物照普通文件出补丁；两个清单重叠时构建产物优先。
+	RunDiffDependencyDirs  []string
+	RunDiffBuildOutputDirs []string
+	OpenCodeIdleWatchdog   time.Duration // OpenCode 专用无消息窗口；0 回退到 AgentIdleWatchdog，大于它的值不能突破全局上限
+	AgentIdleWatchdog      time.Duration // 后端静默这么久且队列为空时强制停一次运行（0 = 禁用）
+	AgentToolWatchdog      time.Duration // 单个工具调用在途（静默）这么久时强制停一次运行（0 = 工具调用期间绝不强停）；缺省等于 AgentIdleWatchdog，让运维只调一个数，除非故意想要更宽的工具预算
+	ClaudeArgs             []string
+	CodexArgs              []string
+	CodebuddyArgs          []string
+	QwenArgs               []string
+	QwenpawArgs            []string
 
 	// ProfileCommandOverrides 把自定义 runtime profile_id 映射到“本机该 profile 要用的
 	// 可执行文件绝对路径”（MUL-3284）。来自本地 CLI 配置
@@ -535,6 +542,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		CodexHandshakeTimeout:           codexHandshakeTimeout,
 		CodexThreadHandshakeTimeout:     codexThreadHandshakeTimeout,
 		OpenCodeIdleWatchdog:            openCodeIdleWatchdog,
+		RunDiffDependencyDirs:           splitDirList(envOrDefault("MULTICA_RUN_DIFF_DEPENDENCY_DIRS", ""), codediff.DefaultOptions().DependencyDirs),
+		RunDiffBuildOutputDirs:          splitDirList(os.Getenv("MULTICA_RUN_DIFF_BUILD_OUTPUT_DIRS"), nil),
 		AgentIdleWatchdog:               agentIdleWatchdog,
 		AgentToolWatchdog:               agentToolWatchdog,
 		ClaudeArgs:                      claudeArgs,
@@ -1026,4 +1035,21 @@ func isSafeAgentName(s string) bool {
 		}
 	}
 	return true
+}
+
+// splitDirList parses a comma-separated directory-name list, falling back to
+// the defaults when the variable is empty.
+func splitDirList(raw string, defaults []string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaults
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if name := strings.TrimSpace(part); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
