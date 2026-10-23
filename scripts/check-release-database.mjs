@@ -10,6 +10,12 @@ try {
   await client.query('BEGIN READ ONLY');
   await client.query("SET LOCAL statement_timeout='15s'");
   const failures = [];
+  // 快照初始化与逐条历史迁移使用不同版本集合，配置必须与真实台账一致。
+  const baseline = await client.query("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version='000_initial_schema') AS present");
+  const configuredBaseline = process.env.MULTICA_MIGRATION_BASELINE?.trim().toLowerCase() === 'true';
+  if (baseline.rows[0].present !== configuredBaseline) {
+    failures.push({ query: 'schema_migrations.baseline', message: 'MULTICA_MIGRATION_BASELINE 与数据库 000_initial_schema 台账不一致' });
+  }
   // 事件写入依赖数据库生成序号；PREPARE 不会验证 INSERT 时的默认值。
   const identity = await client.query("SELECT attidentity FROM pg_attribute WHERE attrelid=to_regclass('public.domain_event_outbox') AND attname='sequence_no'");
   if (identity.rows[0]?.attidentity !== 'a') failures.push({ query: 'domain_event_outbox.sequence_no', message: '缺少 GENERATED ALWAYS AS IDENTITY' });

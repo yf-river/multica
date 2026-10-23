@@ -146,7 +146,7 @@ def checksums(root):
                 result[rel] = h.hexdigest()
     return result
 
-def checked_source(source):
+def checked_source(source, *, verification=False):
     source = Path(source).resolve()
     if Path(output(['git', 'rev-parse', '--show-toplevel'], cwd=source)).resolve() != source:
         raise RuntimeError('必须指定 Git checkout 根目录')
@@ -162,7 +162,8 @@ def checked_source(source):
     published = RUN/'published.json'
     if not published.exists(): raise RuntimeError('缺少已发布源码记录，停止构建并检查运行配置')
     baseline = read(published)['commit']
-    if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
+    # 独立验收固定候选；最终 int 与生产发布才要求跟随已发布基线。
+    if not verification and subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, sha], cwd=source).returncode:
         raise RuntimeError('候选未包含最新已发布提交，请先整合代码')
     return source, sha
 
@@ -213,8 +214,8 @@ def reusable_build(previous, current_files, version):
     if previous.get('version') != version: return False
     return all(current_files.get(k) == v for k, v in previous.get('files', {}).items())
 
-def build(source, target):
-    source, sha = checked_source(source)
+def build(source, target, *, verification=False):
+    source, sha = checked_source(source, verification=verification)
     version = build_version(source, sha)
     digest, files = source_digest(source)
     groups = {'go': hashlib.sha256(), 'web': hashlib.sha256()}
@@ -233,6 +234,7 @@ def build(source, target):
     reusable = reusable_build(previous, current_files, version)
     target.mkdir(parents=True)
     env = os.environ.copy()
+    if not env.get('HOME'): env['HOME'] = pwd.getpwuid(os.getuid()).pw_dir
     for key in list(env):
         if key.startswith(('NEXT_PUBLIC_', 'MULTICA_', 'GOAL_TEST_')) or key in ('REMOTE_API_URL','FRONTEND_ORIGIN','DATABASE_URL','JWT_SECRET'): env.pop(key)
     env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=version, NEXT_TELEMETRY_DISABLED='1')
@@ -252,13 +254,13 @@ def build(source, target):
             run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
         script=source/'scripts'/name
         if script.exists():(operations/name).parent.mkdir(parents=True,exist_ok=True);(operations/name).write_bytes(script.read_bytes())
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
         destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
         destination.write_bytes((source/'scripts'/name).read_bytes())
-    if checked_source(source)[1] != sha or source_digest(source)[0] != digest:
+    if checked_source(source, verification=verification)[1] != sha or source_digest(source)[0] != digest:
         raise RuntimeError('构建期间源码变化，请重新联调')
     queries = []
     for file in sorted((source/'server/pkg/db/generated').glob('*.sql.go')):
@@ -574,11 +576,39 @@ def prepare_database(release, cfg, previous):
     check_database(previous,cfg)
     check_database(release,cfg)
 
-def launch(env, release, cfg, m):
+def readiness_snapshot(url):
+    try:
+        return dict(http_status=200, body=http(url))
+    except urllib.error.HTTPError as error:
+        if error.code != 503: raise
+        body=json.loads(error.read())
+        if body.get('status')!='not_ready' or not isinstance(body.get('checks'),dict):
+            raise RuntimeError('无法确认切换前的真实就绪状态')
+        return dict(http_status=503, body=body)
+
+def check_readiness(metadata,timeout=30,prior_readiness=None):
+    url=metadata['backend_url']+'/healthz'
+    previous=(prior_readiness or {}).get('body',{})
+    if (prior_readiness and prior_readiness.get('http_status')==503
+            and previous.get('status')=='not_ready'
+            and previous.get('checks')=={'db':'ok','migrations':'out_of_date'}):
+        current=readiness_snapshot(url)
+        if current['http_status']!=200:
+            if current!=prior_readiness:
+                raise RuntimeError('恢复后的就绪状态不同于切换前，拒绝接受新增故障')
+            metadata['readiness']={**current,'restored_not_ready':True}
+            print('恢复版本仍有已记录的迁移就绪缺口',file=sys.stderr)
+            return
+        metadata['readiness']=current
+        return
+    metadata['readiness']=dict(http_status=200,body=ready(url,timeout=timeout))
+
+def launch(env, release, cfg, m,prior_readiness=None):
     result={}
     m['pids']=result
     result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
     ready(m['backend_url']+'/health',pid=result['server'])
+    check_readiness(m,prior_readiness=prior_readiness)
     stop_maintenance(env)
     webcmd=['node',release/'apps/web/server.js'] if (release/'apps/web/server.js').exists() else ['node',release/'apps/web/node_modules/next/dist/bin/next','start','-p',str(m['frontend_port']),'-H','0.0.0.0']
     result['web']=start(webcmd,release/'apps/web',{**cfg['web'], 'MULTICA_RELEASE_MANIFEST': str(release/'release.json')},m['log_paths']['web'])
@@ -598,7 +628,7 @@ def launch(env, release, cfg, m):
     return result
 
 def check_database(release, cfg):
-    run(['node', ROOT/'scripts/check-release-database.mjs', Path(release)/'server/queries.json'],
+    run(['node', Path(__file__).with_name('check-release-database.mjs'), Path(release)/'server/queries.json'],
         env={**os.environ, **cfg['server']})
 
 
@@ -642,6 +672,7 @@ def deploy(env, release, timeout=900):
             print(env,'版本已运行，无需重启',release_id)
             return
         prior=json.loads(json.dumps(m))
+        prior['readiness_before']=readiness_snapshot(m['backend_url']+'/healthz')
         if env=='prod':
             prior['published_before']=read(RUN/'published.json') if (RUN/'published.json').exists() else None
         oldcfg={r:process_env(pid) for r,pid in m['pids'].items()}
@@ -672,7 +703,7 @@ def deploy(env, release, timeout=900):
                 for role in ('web','server'):
                     if exists(prior['pids'][role]): owned_stop(prior['pids'][role],role,old_cwds[role])
                 start_maintenance(env,prior)
-                prior['pids']=launch(env,oldrelease,oldcfg,prior)
+                prior['pids']=launch(env,oldrelease,oldcfg,prior,prior_readiness=prior['readiness_before'])
             write(meta_path(env),prior)
             isolation_check()
             print('发布失败，已恢复切换前版本；配置与数据未重置。',file=sys.stderr)
@@ -714,7 +745,8 @@ def copy_browser_operations(destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((source/name).read_bytes())
 
-def verify_browser(env='prod'):
+def verify_browser(env='prod',prior_readiness=None):
+    check_readiness(read(meta_path(env)),timeout=10,prior_readiness=prior_readiness)
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
     run(['node',Path(__file__).with_name('verify-release-browser.mjs')],cwd=ROOT,env=child_env)
 
@@ -739,12 +771,12 @@ def restore(env, timeout=900):
         cwd=Path(current['release_dir'])/ 'apps/web' if role=='web' else Path(current['release_dir'])
         owned_stop(current['pids'][role], role, cwd)
     baseline=prior.pop('published_before',None)
-    prior['pids']=launch(env, old, read(config_path(env)), prior)
+    prior['pids']=launch(env, old, read(config_path(env)), prior,prior_readiness=prior.get('readiness_before'))
     write(meta_path(env), prior)
     if env=='prod':
         if baseline is not None: write(RUN/'published.json',baseline,True)
         elif (RUN/'published.json').exists(): (RUN/'published.json').unlink()
-    verify_browser(env)
+    verify_browser(env,prior_readiness=prior.get('readiness_before'))
 
 def discard_previous(env):
     file=RUN/'deployments'/f'{env}-previous.json'
@@ -861,7 +893,7 @@ def prepare_int(source, timeout=900, delivery=None, fence=None):
 def build_verification(source, delivery_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', delivery_id):
         raise RuntimeError('非法交付编号')
-    source, sha = checked_source(source)
+    source, sha = checked_source(source, verification=True)
     target = RUN/'verification-builds'/'commits'/sha
     with lock('verification-build', wait=True):
         if (target/'release.json').exists():
@@ -872,7 +904,7 @@ def build_verification(source, delivery_id):
         if target.exists():
             assert_unused(target)
             shutil.rmtree(target)
-        build(source, target)
+        build(source, target, verification=True)
     return target
 
 
@@ -884,7 +916,7 @@ def prepare_verification(source, artifact, lease):
         active = candidate(env=env) if candidate_path(env).exists() else None
         if active and active['status'] not in ('released','failed','succeeded'):
             raise RuntimeError('验收槽位仍被候选占用')
-        source, sha = checked_source(source)
+        source, sha = checked_source(source, verification=True)
         manifest = read(Path(artifact)/'release.json')
         if manifest['source_commit'] != sha or manifest['files'] != checksums(artifact):
             raise RuntimeError('构建产物与候选提交不匹配')
@@ -913,11 +945,12 @@ def prepare_verification(source, artifact, lease):
 def validate_candidate(record, allow_finalized=False):
     env = record.get('environment', 'int')
     candidate_path(env)
+    verification = env in VERIFICATION_ENVS
     current=read(meta_path(env))
     if any(current.get(k) != record.get(k) for k in ('release_id','source_digest','deployed_at')):
         raise RuntimeError('int 在验收后发生变化，必须重新验证')
     if Path(record['source']).exists():
-        source, sha=checked_source(record['source'])
+        source, sha=checked_source(record['source'], verification=verification)
         if sha != record['commit'] or source_digest(source)[0] != record['source_digest']:
             raise RuntimeError('候选源码已变化，必须重新联调')
     elif not allow_finalized:
@@ -926,7 +959,7 @@ def validate_candidate(record, allow_finalized=False):
     if output(['git','--git-dir',common,'rev-parse',record['branch']]) != record['commit']:
         raise RuntimeError('候选分支发生变化')
     published=RUN/'published.json'
-    if published.exists() and subprocess.run(['git','--git-dir',common,'merge-base','--is-ancestor',read(published)['commit'],record['commit']]).returncode:
+    if not verification and published.exists() and subprocess.run(['git','--git-dir',common,'merge-base','--is-ancestor',read(published)['commit'],record['commit']]).returncode:
         raise RuntimeError('候选未包含最新生产提交')
     return current
 
@@ -1025,6 +1058,7 @@ def request_release(version,timeout=900):
         runner.parent.mkdir(parents=True,exist_ok=True)
         runner.write_bytes(Path(__file__).read_bytes());runner.chmod(0o700)
         copy_browser_operations(runner.parent)
+        (runner.parent/'check-release-database.mjs').write_bytes(Path(__file__).with_name('check-release-database.mjs').read_bytes())
         (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
 
         write(target,record,True);save_candidate(record)

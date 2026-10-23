@@ -167,38 +167,123 @@ class SeedGateTests(unittest.TestCase):
 
 
 class PoolServiceLifetimeTests(unittest.TestCase):
-    def test_dispatch_keeps_persistent_slot_services_after_worker_exit(self):
-        worker=object.__new__(w.Worker);worker.env='prod'
-        identity='00000000-0000-0000-0000-000000000002'
-        delivery=dict(id=identity,phase='waiting_int',created_at='2026-10-23T00:00:00Z')
-        inactive=type('R',(),{'returncode':1})()
-        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(w.subprocess,'run',return_value=inactive),patch.object(r,'output',return_value='LoadState=not-found\nActiveState=inactive'),patch.object(r,'run') as launch:
-            self.assertEqual(worker.pool_dispatch([delivery],None),{identity})
-            command=launch.call_args.args[0]
-            self.assertEqual(command[command.index('--unit')+1],'multica-verify-'+identity+'.service')
-            self.assertIn('--property=Type=exec',command)
-            self.assertIn('--property=KillMode=process',command)
-            self.assertNotIn('--property=KillMode=control-group',command)
-            self.assertEqual(command[-2:],['--pool-delivery',identity])
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name)
+        self.enterContext(patch.object(r,'ROOT',self.root))
+        self.enterContext(patch.object(r,'RUN',self.root/'.run'))
+        self.worker=object.__new__(w.Worker);self.worker.env='prod'
+        self.identity='00000000-0000-0000-0000-000000000003'
+        self.current=self.worker.pool_unit_name(self.identity)
+        self.legacy='multica-verify-'+self.identity+'.service'
+        self.units={}
+        self.enterContext(patch.object(r,'output',side_effect=self.output))
 
+    def unit(self,script=None,active='inactive',**extra):
+        script=str(script or Path(w.__file__).resolve())
+        return dict(LoadState='loaded',ActiveState=active,MainPID='0',ControlGroup='',
+            WorkingDirectory=str(r.ROOT),Type='exec',KillMode='process',
+            command=[w.sys.executable,script,'--env','prod','--pool-delivery',self.identity],
+            environment=['MULTICA_RELEASE_ROOT='+str(r.ROOT),'HOME='+w.pwd.getpwuid(w.os.getuid()).pw_dir],**extra)
 
-    def test_loaded_inactive_unit_restarts_only_with_exact_execution_identity(self):
+    def output(self,args):
         import json
-        worker=object.__new__(w.Worker);worker.env='prod'
-        identity='00000000-0000-0000-0000-000000000003'
-        command=[w.sys.executable,str(Path(w.__file__).resolve()),'--env','prod','--pool-delivery',identity]
-        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'ROOT',Path(tmp)):
-            properties='LoadState=loaded\nActiveState=inactive\nWorkingDirectory='+tmp+'\nType=exec\nKillMode=process'
-            def outputs(command_override=None,environment_override=None):
-                return [properties,json.dumps({'data':['/test/unit']}),json.dumps({'data':[[w.sys.executable,command_override or command,False]]}),json.dumps({'data':environment_override or ['MULTICA_RELEASE_ROOT='+tmp]})]
-            with patch.object(r,'output',side_effect=outputs()) as reads,patch.object(r,'run') as launch:
-                worker.start_pool_unit(identity)
-                self.assertEqual(reads.call_args_list[1].args[0][-1],'multica-verify-'+identity+'.service')
-                launch.assert_called_once_with(['systemctl','start','multica-verify-'+identity+'.service'])
-            for responses in [outputs(command_override=command[:-1]+['wrong-delivery']),outputs(environment_override=['MULTICA_RELEASE_ROOT=/wrong'])]:
-                with patch.object(r,'output',side_effect=responses),patch.object(r,'run') as launch:
-                    with self.assertRaises(r.RecoveryRequired):worker.start_pool_unit(identity)
-                    launch.assert_not_called()
+        if args[:2]==['systemctl','list-units']:return '\n'.join(self.units)
+        if args[:2]==['systemctl','show']:
+            state=self.units.get(args[2],dict(LoadState='not-found'))
+            return '\n'.join(k+'='+v for k,v in state.items() if k not in ('command','environment'))
+        if 'GetUnit' in args:return json.dumps({'data':[args[-1]]})
+        state=self.units[args[-3]]
+        if args[-1]=='ExecStart':return json.dumps({'data':[[w.sys.executable,state['command'],False]]})
+        if args[-1]=='Environment':return json.dumps({'data':state['environment']})
+        self.fail('unexpected output '+str(args))
+
+    def old_script(self):
+        script=r.RUN/'publisher'/'delivery-prod-0123456789abcdef'/'issue-delivery-worker.py'
+        script.parent.mkdir(parents=True);script.write_text('# immutable old controller')
+        return script
+
+    def test_new_unit_uses_controller_version_and_persistent_services(self):
+        with patch.object(r,'run') as launch:
+            self.worker.start_pool_unit(self.identity)
+        command=launch.call_args.args[0]
+        self.assertEqual(command[command.index('--unit')+1],self.current)
+        self.assertIn('--property=Type=exec',command)
+        self.assertIn('--property=KillMode=process',command)
+        self.assertIn('--setenv=HOME='+w.pwd.getpwuid(w.os.getuid()).pw_dir,command)
+
+    def test_same_controller_inactive_restarts_exact_unit(self):
+        self.units[self.current]=self.unit()
+        with patch.object(r,'run') as launch:
+            self.worker.start_pool_unit(self.identity)
+        launch.assert_called_once_with(['systemctl','start',self.current])
+
+    def test_upgrade_keeps_legacy_services_and_resumes_in_versioned_unit(self):
+        self.units[self.legacy]=self.unit(self.old_script())
+        with patch.object(r,'run') as launch,patch.object(self.worker,'check_idle_pool_services') as ownership:
+            self.worker.start_pool_unit(self.identity)
+        ownership.assert_called_once()
+        command=launch.call_args.args[0]
+        self.assertEqual(command[0],'systemd-run')
+        self.assertEqual(command[command.index('--unit')+1],self.current)
+        self.assertNotIn('stop',command)
+        self.assertNotIn('reset-failed',command)
+
+    def test_active_old_or_current_controller_is_not_duplicated(self):
+        old=self.old_script()
+        for unit,script in ((self.legacy,old),(self.current,Path(w.__file__).resolve())):
+            for active in ('active','activating','deactivating'):
+                self.units={unit:self.unit(script,active)}
+                with self.subTest(unit=unit,state=active),patch.object(r,'run') as launch:
+                    self.worker.start_pool_unit(self.identity);launch.assert_not_called()
+
+    def test_wrong_parameters_home_or_untrusted_script_are_rejected(self):
+        bad=[]
+        state=self.unit();state['command'][-1]='wrong-delivery';bad.append(state)
+        state=self.unit();state['environment']=['MULTICA_RELEASE_ROOT='+str(r.ROOT)];bad.append(state)
+        state=self.unit('/untrusted/issue-delivery-worker.py');bad.append(state)
+        for state in bad:
+            self.units={self.current:state}
+            with self.subTest(state=state),patch.object(r,'run') as launch:
+                with self.assertRaises(r.RecoveryRequired):self.worker.start_pool_unit(self.identity)
+                launch.assert_not_called()
+
+    def test_idle_unknown_process_blocks_handoff(self):
+        self.units[self.legacy]=self.unit(self.old_script())
+        with patch.object(self.worker,'check_idle_pool_services',side_effect=r.RecoveryRequired('unknown process')),patch.object(r,'run') as launch:
+            with self.assertRaisesRegex(r.RecoveryRequired,'unknown process'):self.worker.start_pool_unit(self.identity)
+            launch.assert_not_called()
+
+    def test_dispatch_counts_active_old_version_and_continues_after_bad_delivery(self):
+        import io
+        active=dict(id=self.identity,phase='testing',created_at='1')
+        bad=dict(id='00000000-0000-0000-0000-000000000004',phase='waiting_int',created_at='2')
+        next_delivery=dict(id='00000000-0000-0000-0000-000000000005',phase='waiting_int',created_at='3')
+        def states(identity):
+            if identity==active['id']:return [dict(ActiveState='active')]
+            if identity==bad['id']:raise r.RecoveryRequired('identity mismatch')
+            return []
+        with patch.object(self.worker,'pool_units',side_effect=states),patch.object(self.worker,'start_pool_unit') as launch,patch.object(w.sys,'stderr',new_callable=io.StringIO) as errors:
+            self.assertEqual(self.worker.pool_dispatch([active,bad,next_delivery],None),{d['id'] for d in (active,bad,next_delivery)})
+            launch.assert_called_once_with(next_delivery['id'])
+            self.assertIn(bad['id'],errors.getvalue())
+            self.assertIn('identity mismatch',errors.getvalue())
+
+    def test_start_failure_is_reported_without_stopping_other_deliveries(self):
+        import io
+        rows=[dict(id='00000000-0000-0000-0000-00000000000'+str(i),phase='testing',created_at=str(i)) for i in (4,5)]
+        def start(identity):
+            if identity==rows[0]['id']:raise r.RecoveryRequired('unknown cgroup child')
+        with patch.object(self.worker,'pool_units',return_value=[]),patch.object(self.worker,'start_pool_unit',side_effect=start) as launch,patch.object(w.sys,'stderr',new_callable=io.StringIO) as errors:
+            self.worker.pool_dispatch(rows,None)
+            self.assertEqual([c.args[0] for c in launch.call_args_list],[d['id'] for d in rows])
+            self.assertIn('unknown cgroup child',errors.getvalue())
+
+    def test_inactive_controller_with_main_pid_cannot_be_replaced(self):
+        self.units[self.current]=self.unit();self.units[self.current]['MainPID']='123'
+        with patch.object(r,'run') as launch:
+            with self.assertRaisesRegex(r.RecoveryRequired,'仍有控制进程'):self.worker.start_pool_unit(self.identity)
+            launch.assert_not_called()
 
 class MigrationGateTests(unittest.TestCase):
     """通用迁移路径只接受新建表和并发索引；普通 CREATE INDEX 不做新表豁免。"""

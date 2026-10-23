@@ -21,6 +21,22 @@ class Busy(RuntimeError): pass
 
 class SlotWaitTimeout(RuntimeError): pass
 
+def merge_source(path,arguments):
+    """只有真实未合并文件归为成员冲突，其它Git失败保留原始诊断。"""
+    result=subprocess.run(['git','merge',*arguments],cwd=path,capture_output=True,text=True)
+    if result.returncode==0:return True
+    detail=(result.stderr+'\n'+result.stdout).strip()
+    conflicts=subprocess.run(['git','diff','--name-only','--diff-filter=U'],cwd=path,capture_output=True,text=True)
+    pending=subprocess.run(['git','rev-parse','--verify','--quiet','MERGE_HEAD'],cwd=path,capture_output=True,text=True)
+    if pending.returncode==0:
+        cleanup=subprocess.run(['git','merge','--abort'],cwd=path,capture_output=True,text=True)
+        if cleanup.returncode:
+            raise r.RecoveryRequired('Git合并失败：'+detail+'；清理失败：'+(cleanup.stderr or cleanup.stdout).strip())
+    if conflicts.returncode:
+        raise RuntimeError('Git合并失败：'+detail+'；无法核对冲突：'+conflicts.stderr.strip())
+    if conflicts.stdout.strip():return False
+    raise RuntimeError('Git合并失败：'+detail)
+
 class Worker:
     def __init__(self,env):
         r.require_environment(env)
@@ -51,8 +67,7 @@ class Worker:
         if r.output(['git','status','--porcelain','--untracked-files=all'],cwd=path):raise RuntimeError('交付构建目录存在未保存内容，停止覆盖')
         if integrate:
             r.run(['git','fetch','origin','personal-studio-upstream'],cwd=path)
-            if subprocess.run(['git','merge','--no-edit','origin/personal-studio-upstream'],cwd=path).returncode:
-                r.run(['git','merge','--abort'],cwd=path)
+            if not merge_source(path,['--no-edit','origin/personal-studio-upstream']):
                 raise RuntimeError('与最新主分支存在合并冲突，请在原任务分支解决并重新提交审核')
         return path
     def own_candidate(self,d):
@@ -288,36 +303,108 @@ class Worker:
         import uuid
         return r.RUN/'verification-jobs'/(str(uuid.UUID(delivery))+'.json')
 
-    def start_pool_unit(self,delivery):
-        unit='multica-verify-'+delivery+'.service'
-        command=[sys.executable,str(Path(__file__).resolve()),'--env',self.env,'--pool-delivery',delivery]
-        properties=dict(line.split('=',1) for line in r.output(['systemctl','show',unit,
-            '--property=LoadState,ActiveState,WorkingDirectory,Type,KillMode','--no-pager']).splitlines() if '=' in line)
-        if properties.get('LoadState')!='not-found':
-            if properties.get('ActiveState') in ('active','activating','deactivating'):return
-            # systemd保留仍有持久服务的inactive单元；只续启参数完全匹配的原单元。
+    def pool_unit_name(self,delivery,script=None):
+        script=Path(script or __file__).resolve()
+        installed=re.fullmatch('delivery-'+self.env+'-([0-9a-f]{16})',script.parent.name)
+        version=installed[1] if installed else r.hashlib.sha256(str(script).encode()).hexdigest()[:16]
+        return 'multica-verify-'+delivery+'-'+version+'.service'
+
+    def check_idle_pool_services(self,unit,properties):
+        if properties.get('MainPID')!='0':
+            raise r.RecoveryRequired('验收接力单元仍有控制进程：'+unit)
+        group=properties.get('ControlGroup','')
+        if not group:return
+        if group!='/system.slice/'+unit:
+            raise r.RecoveryRequired('验收接力控制组身份不匹配：'+unit)
+        directory=Path('/sys/fs/cgroup')/group.lstrip('/')
+        pids=set()
+        for file in directory.rglob('cgroup.procs'):
+            pids.update(int(pid) for pid in file.read_text().split())
+        anchors={}
+        for env in r.VERIFICATION_ENVS:
+            path=r.meta_path(env)
+            if path.exists():
+                metadata=r.read(path)
+                for pid in metadata.get('pids',{}).values():anchors[int(pid)]=(env,metadata)
+        checked={}
+        for pid in pids:
+            identity=r.process_identity(pid)
+            if identity is None:continue
+            parent=pid;seen=set()
+            while parent not in anchors and parent>1 and parent not in seen:
+                seen.add(parent)
+                try:parent=int(Path('/proc',str(parent),'stat').read_text().split(') ')[1].split()[1])
+                except FileNotFoundError:break
+            if parent not in anchors:
+                if r.process_identity(pid) is None:continue
+                raise r.RecoveryRequired('旧验收接力控制组包含非槽位服务进程：'+str(pid))
+            env,metadata=anchors[parent]
+            before=r.process_identity(parent)
+            if env not in checked:
+                r.check_process_ownership(env,metadata)
+                checked[env]={int(value):r.process_identity(value) for value in metadata['pids'].values()}
+            if (before is None or checked[env].get(parent)!=before or r.process_identity(parent)!=before
+                    or r.process_identity(pid)!=identity):
+                raise r.RecoveryRequired('验收服务进程身份在交接期间变化：'+unit)
+
+    def pool_units(self,delivery):
+        self.pool_job_path(delivery)
+        legacy='multica-verify-'+delivery+'.service'
+        names={legacy,self.pool_unit_name(delivery)}
+        listed=r.output(['systemctl','list-units','--all','--plain','--no-legend','--full',
+                         'multica-verify-'+delivery+'*.service'])
+        names.update(line.split()[0] for line in listed.splitlines() if line.strip())
+        states=[]
+        for unit in sorted(names):
+            if unit!=legacy and not re.fullmatch('multica-verify-'+delivery+r'-[0-9a-f]{16}\.service',unit):
+                raise r.RecoveryRequired('验收接力单元名称不匹配：'+unit)
+            properties=dict(line.split('=',1) for line in r.output(['systemctl','show',unit,
+                '--property=LoadState,ActiveState,MainPID,ControlGroup,WorkingDirectory,Type,KillMode','--no-pager']).splitlines() if '=' in line)
+            if properties.get('LoadState')=='not-found':continue
             object_path=json.loads(r.output(['busctl','--json=short','call','org.freedesktop.systemd1',
                 '/org/freedesktop/systemd1','org.freedesktop.systemd1.Manager','GetUnit','s',unit]))['data'][0]
             starts=json.loads(r.output(['busctl','--json=short','get-property','org.freedesktop.systemd1',
                 object_path,'org.freedesktop.systemd1.Service','ExecStart']))['data']
             environment=json.loads(r.output(['busctl','--json=short','get-property','org.freedesktop.systemd1',
                 object_path,'org.freedesktop.systemd1.Service','Environment']))['data']
-            if (properties.get('LoadState')!='loaded' or properties.get('ActiveState') not in ('inactive','failed')
+            environment=dict(item.split('=',1) for item in environment if '=' in item)
+            command=starts[0][1] if len(starts)==1 else []
+            script=Path(command[1]).resolve() if len(command)==6 else None
+            current=Path(__file__).resolve()
+            trusted=script==current or (script is not None and script.name==current.name and script.is_file()
+                and script.parent.parent==(r.RUN/'publisher').resolve()
+                and re.fullmatch('delivery-'+self.env+'-[0-9a-f]{16}',script.parent.name))
+            if (properties.get('LoadState')!='loaded' or properties.get('ActiveState') not in ('inactive','failed','active','activating','deactivating')
                     or properties.get('WorkingDirectory')!=str(r.ROOT) or properties.get('Type')!='exec'
-                    or properties.get('KillMode')!='process' or len(starts)!=1
-                    or starts[0][0]!=sys.executable or starts[0][1]!=command or starts[0][2] is not False
-                    or 'MULTICA_RELEASE_ROOT='+str(r.ROOT) not in environment):
+                    or properties.get('KillMode')!='process' or len(starts)!=1 or not trusted
+                    or starts[0][0]!=sys.executable or starts[0][2] is not False
+                    or command!=[sys.executable,str(script),'--env',self.env,'--pool-delivery',delivery]
+                    or unit not in (legacy,self.pool_unit_name(delivery,script))
+                    or environment.get('MULTICA_RELEASE_ROOT')!=str(r.ROOT)
+                    or environment.get('HOME')!=pwd.getpwuid(os.getuid()).pw_dir):
                 raise r.RecoveryRequired('已有验收接力单元身份不匹配，拒绝替换：'+unit)
-            r.run(['systemctl','start',unit])
-            return
-        # 槽位服务跨交付存活，由canonical PID/profile管理停启；短命接力单元退出不能杀服务。
+            properties.update(unit=unit,script=str(script))
+            states.append(properties)
+        return states
+
+    def start_pool_unit(self,delivery):
+        unit=self.pool_unit_name(delivery)
+        states=self.pool_units(delivery)
+        # 活动旧版本先完成当前轮；同一作业仍由原文件锁和服务端令牌隔离。
+        if any(state['ActiveState'] in ('active','activating','deactivating') for state in states):return
+        for state in states:self.check_idle_pool_services(state['unit'],state)
+        if any(state['unit']==unit for state in states):
+            r.run(['systemctl','start',unit]);return
+        home=pwd.getpwuid(os.getuid()).pw_dir
+        command=[sys.executable,str(Path(__file__).resolve()),'--env',self.env,'--pool-delivery',delivery]
+        # 旧单元里的槽位服务继续由 canonical PID/profile 管理，新控制器独立接续原作业。
         r.run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec',
                '--property=KillMode=process','--working-directory',r.ROOT,
-               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),*command])
+               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*command])
 
     def pool_dispatch(self,rows,current_id,allow_new=True):
         if not allow_new and not (r.RUN/'verification-jobs').exists():return set()
-        managed=[]; active=0
+        managed=[]; active=set(); blocked=set()
         records={d['id']:d for d in rows}
         recovering=set()
         for path in (r.RUN/'verification-jobs').glob('*.json'):
@@ -337,14 +424,20 @@ class Worker:
             if d['id'] not in recovering and (d['phase'] not in ('waiting_int','testing') or not (allow_new or existing)):
                 continue
             managed.append(d)
-            unit='multica-verify-'+d['id']
-            if subprocess.run(['systemctl','is-active','--quiet',unit]).returncode==0:active+=1
+            try:
+                if any(state['ActiveState'] in ('active','activating','deactivating') for state in self.pool_units(d['id'])):
+                    active.add(d['id'])
+            except Exception as error:
+                blocked.add(d['id'])
+                print('验收接力恢复受阻 '+d['id']+'：'+str(error),file=sys.stderr)
         for d in managed:
-            unit='multica-verify-'+d['id']
-            if subprocess.run(['systemctl','is-active','--quiet',unit]).returncode==0:continue
-            if active>=4:break
-            self.start_pool_unit(d['id'])
-            active+=1
+            if d['id'] in active or d['id'] in blocked:continue
+            if len(active)>=4:break
+            try:
+                self.start_pool_unit(d['id'])
+                active.add(d['id'])
+            except Exception as error:
+                print('验收接力恢复受阻 '+d['id']+'：'+str(error),file=sys.stderr)
         return {d['id'] for d in managed}
 
     def pool_delivery(self,delivery):
@@ -507,10 +600,9 @@ class Worker:
             r.run(['git','-C',r.ROOT,'worktree','remove','--force',path])
         r.run(['git','-C',r.ROOT,'worktree','add','-B',branch,path,base])
         for member in members:
-            if subprocess.run(['git','-C',r.ROOT,'cat-file','-e',member['source_commit']+'^{commit}'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
-                return path,base,base,member
-            if subprocess.run(['git','merge','--no-ff','--no-edit',member['source_commit']],cwd=path,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
-                r.run(['git','merge','--abort'],cwd=path)
+            lookup=subprocess.run(['git','-C',r.ROOT,'cat-file','-e',member['source_commit']+'^{commit}'],capture_output=True,text=True)
+            if lookup.returncode:raise RuntimeError('Git提交读取失败：'+lookup.stderr.strip())
+            if not merge_source(path,['--no-ff','--no-edit',member['source_commit']]):
                 return path,base,None,member
         return path,base,r.output(['git','rev-parse','HEAD'],cwd=path),None
 
@@ -782,7 +874,7 @@ def install(env):
     r.require_control_directory()
     # 修改 3. 种子恢复由接力器调用，操作脚本必须与接力器同版本安装；沿用主工作区的旧脚本会让恢复和清理规则不同步。
     names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py','verification-environments.py',
-           'verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs') + r.BROWSER_OPERATIONS
+           'verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs') + r.BROWSER_OPERATIONS
     digest=r.hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in names)).hexdigest()[:16]
     directory=r.RUN/'publisher'/('delivery-'+env+'-'+digest)
     directory.mkdir(parents=True,exist_ok=True)

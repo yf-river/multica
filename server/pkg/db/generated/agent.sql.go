@@ -8069,6 +8069,25 @@ func (q *Queries) SetAgentTaskErrorIfEmpty(ctx context.Context, arg SetAgentTask
 	return err
 }
 
+const setAgentTaskResult = `-- name: SetAgentTaskResult :exec
+UPDATE agent_task_queue
+SET result = $2
+WHERE id = $1 AND result IS NULL
+`
+
+type SetAgentTaskResultParams struct {
+	ID     pgtype.UUID `json:"id"`
+	Result []byte      `json:"result"`
+}
+
+// The fail path records a terminal row without touching result (auto-retry and
+// resume pointers are read there). A failed run still has a diff worth seeing,
+// so it is attached right after the failure transaction commits.
+func (q *Queries) SetAgentTaskResult(ctx context.Context, arg SetAgentTaskResultParams) error {
+	_, err := q.db.Exec(ctx, setAgentTaskResult, arg.ID, arg.Result)
+	return err
+}
+
 const setDeferredChannelIssueTaskRuntimeOverlay = `-- name: SetDeferredChannelIssueTaskRuntimeOverlay :execrows
 UPDATE agent_task_queue
 SET runtime_mcp_overlay = $1,

@@ -626,6 +626,9 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.Queries.WithTx(tx)
 
+	// 1. Keep the pre-edit text so a prompt change made by a running task is
+	//    recorded as a reviewable diff, not only as a new value.
+	beforeContent, beforeDescription := skill.Content, skill.Description
 	params := db.UpdateSkillParams{
 		ID: parseUUID(id),
 	}
@@ -643,7 +646,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		params.Config = config
 	}
 
-	skill, err = qtx.UpdateSkill(r.Context(), params)
+	updatedSkill, err := qtx.UpdateSkill(r.Context(), params)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a skill with this name already exists")
@@ -653,6 +656,15 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2. Record the text edits on the running task's result. Placed after the
+	//    update so a rejected edit leaves no trace in the run log.
+	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updatedSkill.WorkspaceID),
+		runTextTarget{Kind: "skill", ID: uuidToString(updatedSkill.ID), Name: updatedSkill.Name},
+		"content", beforeContent, updatedSkill.Content)
+	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updatedSkill.WorkspaceID),
+		runTextTarget{Kind: "skill", ID: uuidToString(updatedSkill.ID), Name: updatedSkill.Name},
+		"description", beforeDescription, updatedSkill.Description)
+	skill = updatedSkill
 	// 若提供了 Files，整体替换所有文件。
 	var fileResps []SkillFileResponse
 	if req.Files != nil {
