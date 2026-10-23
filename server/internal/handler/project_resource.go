@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -987,6 +988,9 @@ type claimProjectContext struct {
 	Description string
 	Resources   []ProjectResourceData
 	Repos       []RepoData
+	// LocalDirs 是 workspace 级本地目录，用于在运行结束后发现任务目录之外新建的
+	// worktree。它与项目无关，所以即使任务没有项目也会带上。
+	LocalDirs []WorkspaceRepoData
 }
 
 // applyTo 把解析好的背景整体拷到 claim 响应上。调用方要么全量赋值、要么完全不赋，
@@ -999,6 +1003,9 @@ func (c claimProjectContext) applyTo(resp *AgentTaskResponse) {
 		resp.ProjectResources = c.Resources
 	}
 	resp.Repos = c.Repos
+	if len(c.LocalDirs) > 0 {
+		resp.WorkspaceRepos = c.LocalDirs
+	}
 }
 
 // resolveClaimProjectContext 为一次 daemon 认领加载项目背景。
@@ -1018,6 +1025,41 @@ func (c claimProjectContext) applyTo(resp *AgentTaskResponse) {
 // 只会让 agent 困惑——项目既然显式挂了仓库，那组就是权威集合。没有项目、没有
 // github_repo 资源、或引用已过期时，退回 workspace 仓库。
 func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, workspaceID pgtype.UUID) (claimProjectContext, error) {
+	out, err := h.resolveClaimProjectContextProject(ctx, projectID, workspaceID)
+	if err != nil {
+		return out, err
+	}
+	// 1. workspace 级本地目录与项目无关，必须独立加载：GONG-57 的任务没有项目，
+	//    只读项目资源会让 daemon 完全没有候选仓库可查。
+	out.LocalDirs = h.claimWorkspaceRepos(ctx, workspaceID)
+	return out, nil
+}
+
+// claimWorkspaceRepos lists the workspace's local directories for a claim. A
+// failure is not fatal: a task without this list loses worktree discovery, not
+// its run.
+func (h *Handler) claimWorkspaceRepos(ctx context.Context, workspaceID pgtype.UUID) []WorkspaceRepoData {
+	rows, err := h.Queries.ListLocalDirectoryResourcesInWorkspace(ctx, workspaceID)
+	if err != nil {
+		slog.Warn("claim: list workspace local directories failed", "error", err)
+		return nil
+	}
+	out := make([]WorkspaceRepoData, 0, len(rows))
+	for _, row := range rows {
+		var ref localDirectoryRef
+		if err := json.Unmarshal(row.ResourceRef, &ref); err != nil || ref.LocalPath == "" {
+			continue
+		}
+		label := ref.Label
+		if row.Label.Valid && row.Label.String != "" {
+			label = row.Label.String
+		}
+		out = append(out, WorkspaceRepoData{Path: ref.LocalPath, Label: label})
+	}
+	return out
+}
+
+func (h *Handler) resolveClaimProjectContextProject(ctx context.Context, projectID, workspaceID pgtype.UUID) (claimProjectContext, error) {
 	var out claimProjectContext
 
 	if projectID.Valid {
