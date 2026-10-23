@@ -197,8 +197,14 @@ func TestStatusRuleIsFactJudgmentAtBothMoments(t *testing.T) {
 		"whoever the assignee is",
 		// 目标和必要验证完成后交由用户审核。
 		"necessary verification are complete → `in_review` for human review",
-		// 用户明确确认完成后才标记 done。
-		"Set `done` only when the user explicitly confirms completion",
+		// 已授权发布的任务按「生产发布成功 + 真实验收通过」自行收尾，不再等第二次确认。
+		"Set `done` directly, without a further user confirmation, only when all three hold",
+		"real business acceptance then passed on that released version",
+		// 构建、部署启动、仅测试环境通过都不构成完成；发布或验收失败不得关闭任务。
+		"Test-environment acceptance, a successful build, or a deployment that merely starts never suffice",
+		"a failed release or a failed acceptance leaves the issue out of `done`",
+		// 未授权发布与非发布类任务保持各自的完成条件。
+		"this exception does not extend to them",
 		// Invariant 1: conversation does not move the board. Ancillary is
 		// defined by OUTPUT (no part of the issue's own deliverable), not by
 		// activity words like "research" that also describe real work.

@@ -9,6 +9,22 @@ import (
 	"net/http"
 )
 
+// 发布结果通知文案：已发布按「生产验证通过即收尾」，失败按「暂停并修复」，两者都不能让 Agent 把未完成的交付当成完成。
+const (
+	// 1. 生产验证通过即收尾，不再要求用户另行授权关闭；验证未通过或发布异常时明确禁止标记完成。
+	publishedNotice = "交付 %s 生产发布已完成，候选 %s。请核对实际生产版本、执行生产页面验证并上传截图；生产验证通过后直接标记任务完成，无需再次等待用户确认；验证未通过或发布异常时不要标记完成，按原因修复后重新交付。"
+	// 2. 发布失败只暂停交付，任务保持未完成，修复后按既有授权接续。
+	pausedNotice = "交付 %s 暂停，原因：%s。请核对实际环境和恢复资料，在既有授权内修复后接续；不要盲目重跑或覆盖其他任务占用。"
+)
+
+// deliveryNoticeText 按阶段选择通知文案，避免两处各写一份而漂移。
+func deliveryNoticeText(stage, delivery, candidate, detail string) string {
+	if stage == "needs_changes" {
+		return fmt.Sprintf(pausedNotice, delivery, detail)
+	}
+	return fmt.Sprintf(publishedNotice, delivery, candidate)
+}
+
 // notifyDeliveryResult 用持久化通知号续接任务，服务重启或响应丢失不重复派发。
 func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, stage string) error {
 	var id, kind, assignee, candidate, detail string
@@ -26,10 +42,7 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 		if assignee != "" && (kind == "agent" || kind == "squad") {
 			mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
 		}
-		text := "交付 " + delivery + " 生产发布已完成，候选 " + candidate + "。请核对实际生产版本、执行生产页面验证并上传截图；只有用户已授权关闭且生产验证通过后才能标记完成。"
-		if stage == "needs_changes" {
-			text = "交付 " + delivery + " 暂停，原因：" + detail + "。请核对实际环境和恢复资料，在既有授权内修复后接续；不要盲目重跑或覆盖其他任务占用。"
-		}
+		text := deliveryNoticeText(stage, delivery, candidate, detail)
 		payload, _ := json.Marshal(map[string]any{"id": id, "content": mention + text})
 		rr := r.Clone(r.Context())
 		rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(id)))

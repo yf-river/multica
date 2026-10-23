@@ -194,6 +194,14 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	// 门控来决定。
 	composioAllowlist := a.ComposioToolkitAllowlist
 
+	// 1. The managed reviewer cannot upload an avatar, and the row may predate the
+	// default; render the default here so comments keep a face without a data
+	// migration. A value already stored on the row still wins.
+	avatarURL := textToPtr(a.AvatarUrl)
+	if a.SystemKey.Valid && a.SystemKey.String == review.SystemKey {
+		avatarURL = textToPtr(pgtype.Text{String: review.AvatarURL(a.AvatarUrl.String), Valid: true})
+	}
+
 	return AgentResponse{
 		ID:                       uuidToString(a.ID),
 		WorkspaceID:              uuidToString(a.WorkspaceID),
@@ -204,7 +212,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		Instructions:             a.Instructions,
 		ConversationStarters:     conversationStarters,
 		SystemKey:                a.SystemKey.String,
-		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
+		AvatarURL:                h.resolveAvatarURLPtr(avatarURL),
 		RuntimeMode:              a.RuntimeMode,
 		RuntimeConfig:            rc,
 		CustomArgs:               customArgs,
