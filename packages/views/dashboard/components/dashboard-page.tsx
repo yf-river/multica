@@ -36,6 +36,7 @@ import {
   aggregateByWeek,
   formatTokens,
   hasKnownCost,
+  hasUnknownCostRemainder,
   todayIso,
 } from "../../runtimes/utils";
 import { useT } from "../../i18n";
@@ -168,7 +169,7 @@ export function DashboardPage() {
 
   // 用户可以在 runtimes 页保存模型价格；订阅这个 store，让他们保存时触发重渲染，
   // 使仪表盘反映新的费率。
-  useCustomPricingStore((s) => s.pricings);
+  const pricings = useCustomPricingStore((s) => s.pricings);
 
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const agentsQuery = useQuery(agentListOptions(wsId));
@@ -294,17 +295,17 @@ export function DashboardPage() {
   // 成本 / token 计算——usage、days 或自定义价格变化时重新派生。
   const totals = useMemo(
     () => computeDailyTotals(dailyUsageInWindow),
-    [dailyUsageInWindow],
+    [dailyUsageInWindow, pricings],
   );
   // 整段窗口内没有任何一行能定价时，费用是"未知"而不是 0——直接渲染 $0.00
   // 等于断言"这次一分钱没花"，而我们并没有这个依据。
   const costKnown = useMemo(
     () => hasKnownCost(dailyUsageInWindow),
-    [dailyUsageInWindow],
+    [dailyUsageInWindow, pricings],
   );
   const dailyCost = useMemo(
     () => aggregateDailyCost(dailyUsageInWindow),
-    [dailyUsageInWindow],
+    [dailyUsageInWindow, pricings],
   );
   const dailyTokens = useMemo(
     () => aggregateDailyTokens(dailyUsageInWindow),
@@ -387,7 +388,7 @@ export function DashboardPage() {
   );
   const agentTokenRows = useMemo(
     () => aggregateAgentTokens(byAgentUsage),
-    [byAgentUsage],
+    [byAgentUsage, pricings],
   );
 
   // 运行时长合计——taskCount + failedCount 求和给 KPI 行。
@@ -411,13 +412,15 @@ export function DashboardPage() {
   // 拿它给每一行用，会让恰好只有不可定价模型的 agent 也显示 $0.00。
   const costKnownByAgent_ = useMemo(
     () => buildCostKnownByAgent(byAgentUsage, knownAgentIds),
-    [byAgentUsage, knownAgentIds],
+    [byAgentUsage, knownAgentIds, pricings],
   );
   // 有可定价行、也有完全不可定价的行时，合计只是"已定价部分"的和。把这件事说出来，
   // 读者才不会把部分已知当成完整费用。
   const costPartial = useMemo(
-    () => costKnown && dailyUsageInWindow.some((row) => !hasKnownCost([row])),
-    [costKnown, dailyUsageInWindow],
+    () =>
+      costKnown &&
+      dailyUsageInWindow.some((row) => hasUnknownCostRemainder(row)),
+    [costKnown, dailyUsageInWindow, pricings],
   );
 
   // 把「已硬删除的 Agent」的汇总行折进一个聚合的 "Deleted agents" 行，而不是
