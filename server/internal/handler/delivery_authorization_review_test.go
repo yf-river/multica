@@ -29,6 +29,16 @@ func TestDeliveryReviewNoticeExplainsContinuation(t *testing.T) {
 	if strings.Contains(deliveryReviewNotice, "标记任务完成") || strings.Contains(deliveryReviewNotice, "已上线") {
 		t.Errorf("复核通知不能让负责人把未发布交付当作完成: %s", deliveryReviewNotice)
 	}
+	// 1. 同一通知既用于独立验收（verify-N）后的唤醒，也用于组合候选在 int 通过后的唤醒，
+	// 因此只能把验收环境指向该候选的验收记录，不能写死成已完成的 int 功能验收。
+	for _, want := range []string{"验收环境以该候选的验收记录为准", "独立验收不等同于最终 int"} {
+		if !strings.Contains(deliveryReviewNotice, want) {
+			t.Errorf("授权复核通知缺少准确的验收环境说明 %q: %s", want, deliveryReviewNotice)
+		}
+	}
+	if strings.Contains(deliveryReviewNotice, "已在 int") {
+		t.Errorf("授权复核通知不能声称已完成最终 int 功能验收: %s", deliveryReviewNotice)
+	}
 }
 
 // deliveryReviewFixture 造一份 int 验收完成、等待发布复核的交付，并按需挂上有效发布授权。
