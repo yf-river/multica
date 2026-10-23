@@ -81,7 +81,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunks, readErr := svc.materials(ctx, tx, f.WorkspaceID, issues[0])
+	chunks, readErr := svc.materials(ctx, tx, f.WorkspaceID, issues[0], noCutoff)
 	_ = tx.Rollback(ctx)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -226,7 +226,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0])
+	resumed, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0], noCutoff)
 	_ = tx.Rollback(ctx)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -274,7 +274,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withLate, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0])
+	withLate, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0], noCutoff)
 	_ = tx.Rollback(ctx)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -298,6 +298,11 @@ func TestIntPersistenceAndResume(t *testing.T) {
 
 	// 持续新增日志不能让运行中任务无限等待安静窗口。
 	f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issues[0], "status": "running", "started_at": dbfx.Raw("now()")})
+	// 自动监督只处理已完成任务的完成轮次，这两个任务先转入完成状态。
+	f.Exec(t, "UPDATE issue SET status='done' WHERE id IN($1,$2)", issues[0], issues[1])
+	if err = svc.reconcileRounds(ctx, f.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
 	f.Exec(t, "UPDATE supervision_config SET agent_id=$2,interval_seconds=60 WHERE workspace_id=$1", f.WorkspaceID, agent)
 	f.Exec(t, "UPDATE supervision_subject SET last_checked_at=now()-interval '10 minutes',changed_at=now(),desired_version=reviewed_version+1,force_review=false WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[0])
 	svc.Tasks = service.NewTaskService(db.New(pool), pool, nil, nil)

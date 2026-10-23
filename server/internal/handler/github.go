@@ -1828,6 +1828,8 @@ func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, worksp
 	// 主要完成路径上保持沉默。notifyParentOfChildDone 会重查每个守卫（prev !=
 	// done、父存在、父非终态），所以无条件调用是安全的。
 	h.notifyParentOfChildDone(ctx, issue, updated)
+	// 4. PR 合并是任务完成的主要路径之一，与 HTTP 更新一样开启监督完成轮次。
+	h.afterIssueStatusChangeForSupervision(ctx, issue, updated)
 
 	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
 	resp := issueToResponse(updated, prefix)
