@@ -75,6 +75,38 @@
         "python3",
         "scripts/verify-batch-closeout.py"
       ]
+    },
+    {
+      "name": "run-diff-capture",
+      "paths": [
+        "server/internal/codediff/",
+        "server/internal/daemon/run_capture.go",
+        "server/internal/handler/run_text_change.go"
+      ],
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "./internal/codediff",
+        "-count=1"
+      ]
+    },
+    {
+      "name": "run-text-migration",
+      "paths": [
+        "server/migrations/",
+        "server/cmd/migrate/"
+      ],
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "./cmd/migrate",
+        "./internal/migrations",
+        "-count=1"
+      ]
     }
   ]
 }

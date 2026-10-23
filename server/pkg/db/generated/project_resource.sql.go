@@ -158,6 +158,47 @@ func (q *Queries) GetProjectResourceInWorkspace(ctx context.Context, arg GetProj
 	return i, err
 }
 
+const listLocalDirectoryResourcesInWorkspace = `-- name: ListLocalDirectoryResourcesInWorkspace :many
+SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by, revision FROM project_resource
+WHERE workspace_id = $1 AND resource_type = 'local_directory'
+ORDER BY created_at ASC
+LIMIT 20
+`
+
+// Workspace-wide local directories, used by the daemon to find worktrees an
+// agent created outside its own task directory. Bounded: a capture is not a
+// workspace survey.
+func (q *Queries) ListLocalDirectoryResourcesInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ProjectResource, error) {
+	rows, err := q.db.Query(ctx, listLocalDirectoryResourcesInWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectResource{}
+	for rows.Next() {
+		var i ProjectResource
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.WorkspaceID,
+			&i.ResourceType,
+			&i.ResourceRef,
+			&i.Label,
+			&i.Position,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.Revision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectResources = `-- name: ListProjectResources :many
 SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by, revision FROM project_resource
 WHERE project_id = $1
