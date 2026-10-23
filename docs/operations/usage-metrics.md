@@ -92,7 +92,7 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 ## 5. 小时汇总与自愈
 
 `rollup_task_usage_hourly()` 是单例水位（`task_usage_hourly_rollup_state.id = 1`）。替换函数体属于
-非新增结构变更，发布器按 SQL 内容审查后放行（只允许重定义该函数、只允许写汇总状态行）。
+非新增结构变更，发布器只按"已审查内容 + 指纹"放行这一份迁移，审查依据见第 6 节。
 迁移 634 之后：
 
 - 状态行缺失时按最早一条 `task_usage` 播种，不再永久空转；
@@ -107,7 +107,45 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 把水位回填到"现在"之前前，确认历史行的 `updated_at` 不是入库时刻，否则它们会被
 水位跳过。
 
-## 6. 历史补齐
+## 6. 634 迁移审查记录（发布器放行依据）
+
+`634_task_usage_hourly_rollup_selfheal` 是函数体替换，不属于"新增表/并发索引"的自动迁移
+范围，发布器按下面这份审查放行，并用内容 SHA-256 绑定：
+
+```
+sha256 = 66b2f05cab3a2602005e9284fc6572725bc238d7de8976fc5bb13efe06ca7f93
+```
+
+指纹只防止审查之后被改动，不代替审查。改动 SQL 必须重新审查并同步指纹。
+
+**语句与执行期影响**：整份文件只有一条 `CREATE OR REPLACE FUNCTION
+rollup_task_usage_hourly()`。迁移执行时只替换函数定义，不读写业务数据；重复执行幂等。
+
+**兼容性**：同名、零参数、返回 `BIGINT`。PostgreSQL 的 `CREATE OR REPLACE` 在签名不变时
+保留原函数 OID 与默认权限（生产 `pg_proc.oid=16523`，`proacl` 为默认），旧程序
+`scheduler` 的 `SELECT rollup_task_usage_hourly()` 调用方式不变。
+
+**写入范围**：函数体只写 `task_usage_hourly_rollup_state`——一处 `INSERT ... ON CONFLICT
+(id) DO NOTHING`、三处 `UPDATE ... WHERE id = 1`（含异常路径写 `last_error`）。对
+`task_usage` 只有 `MIN(created_at)` 只读查询。其余写入经既有原语：
+`rollup_task_usage_hourly_window(from,to)`（幂等窗口重算 `task_usage_hourly`，签名
+`(timestamptz,timestamptz)->bigint` 已生产核对）与 `prune_task_usage_hourly_dirty()`（脏队列
+TTL 清理）。没有 `DELETE`/`TRUNCATE`/`DROP`/`ALTER`，没有写 `agent_task_queue`、`task_usage`、
+`issue` 等业务表。
+
+**锁与取消**：入口 `pg_try_advisory_lock(4246)`，取不到直接返回 0，不排队、不阻塞；正常
+结束、`query_canceled`、`WHEN OTHERS` 三条路径都显式 `pg_advisory_unlock(4246)`，语句超时
+取消不会把锁留在会话上。
+
+**升级**：在 619 基线上只替换函数；单 tick 内按 1 天窗口连续追赶、上限 60 天，超出的部分
+留给后续 tick，不会在一条语句里重算数月。**回退**：`634...down.sql` 只把函数体换回旧版
+（每 tick 一个窗口、无自愈），不改任何数据；小时桶由幂等窗口重算，无需清理。
+
+**审查边界**：只接受上述这个文件名与内容的组合。任何改动——包括把写操作换成带引号的
+表名、追加顶层 SQL、换文件名——都会拒绝并要求重新审查。发布器不据此扩展成通用 SQL
+放行规则。
+
+## 7. 历史补齐
 
 `cmd/backfill_task_usage_hourly` 按月切片重算桶并盖水位，幂等可续跑；它**不会**
 创建状态行——缺少状态行时只告警并返回，需要迁移 620 的函数来补。因此

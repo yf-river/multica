@@ -1,4 +1,4 @@
--- Restore the pre-620 rollup function (bounded one-window-per-tick, no self-heal).
+-- Restore the rollup function as it was before 634 (one window per tick, no self-heal).
 CREATE OR REPLACE FUNCTION rollup_task_usage_hourly()
 RETURNS BIGINT
 LANGUAGE plpgsql

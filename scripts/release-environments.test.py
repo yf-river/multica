@@ -285,34 +285,33 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
-    def test_reviewed_usage_rollup_selfheal_checks_sql_content_not_a_hash(self):
-        # 629 是函数体替换，不属于新增表/并发索引的自动范围。放行依据是 SQL 内容
-        # 审查：只能重定义那个函数，写入目标只能是汇总状态行，不能删改业务数据。
+    def test_reviewed_usage_rollup_selfheal_is_pinned_to_the_reviewed_content(self):
+        # 634 是函数体替换，只有"这一份已审查内容"可以放行，其余一律拒绝。
+        # 反例来自现场审计：旧实现用裸表名正则，`UPDATE "task_usage" ...` 能绕过。
         from tempfile import TemporaryDirectory
         source=Path(__file__).parent.parent/'server/migrations'
         name='634_task_usage_hourly_rollup_selfheal.up.sql'
+        original=(source/name).read_text()
         with TemporaryDirectory() as folder:
-            target=Path(folder)/name;target.write_bytes((source/name).read_bytes())
+            target=Path(folder)/name; target.write_text(original)
             self.assertTrue(r.reviewed_usage_rollup_selfheal(target))
 
-            # 追加一条删业务数据的语句：整份文件不再是单一函数定义，必须拒绝。
-            with_data_loss=target.read_text()+"\nDELETE FROM task_usage;\n"
-            target.write_text(with_data_loss)
+            # 1) 现场反例：带双引号的业务表 UPDATE 插在函数 END 前。
+            quoted=original.replace('\nEND;\n$$;', '\n    UPDATE "task_usage" SET input_tokens = 0;\nEND;\n$$;', 1)
+            self.assertNotEqual(quoted, original, 'fixture must actually change the SQL')
+            target.write_text(quoted)
             self.assertFalse(r.reviewed_usage_rollup_selfheal(target))
 
-            # 悄悄改成写另一张表（即便语法仍是合法函数体）同样拒绝。
-            target.write_text((source/name).read_text().replace(
-                'INSERT INTO task_usage_hourly_rollup_state',
-                'INSERT INTO task_usage_hourly',1))
+            # 2) 任意改写（哪怕语义无害）也拒绝：内容变了就必须重新审查。
+            target.write_text(original.replace('INTERVAL \'5 minutes\'', 'INTERVAL \'10 minutes\'',1))
             self.assertFalse(r.reviewed_usage_rollup_selfheal(target))
 
-            # 换函数名（签名漂移会让旧调用方找不到函数）也拒绝。
-            target.write_text((source/name).read_text().replace(
-                'FUNCTION rollup_task_usage_hourly()','FUNCTION rollup_task_usage_hourly_v2()',1))
+            # 3) 追加一条顶层 SQL。
+            target.write_text(original+'\nDROP TABLE task_usage;\n')
             self.assertFalse(r.reviewed_usage_rollup_selfheal(target))
 
-            # 别的迁移不能借用这份审查。
-            other=Path(folder)/'700_something.up.sql';other.write_text((source/name).read_text())
+            # 4) 同一份内容换成别的文件名（借用这次例外）也拒绝。
+            other=Path(folder)/'635_other.up.sql'; other.write_text(original)
             self.assertFalse(r.reviewed_usage_rollup_selfheal(other))
 
     def test_task_provider_trace_migrations_follow_index_and_fk_rules(self):
