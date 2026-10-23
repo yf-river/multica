@@ -48,23 +48,34 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		pool.Close()
-		for _, table := range []string{"verification_event", "verification_slot", "issue_delivery_authorization", "issue_delivery", "issue_delivery_plan"} {
-			if _, e := base.Exec(ctx, "DROP TABLE IF EXISTS "+schema+"."+table); e != nil {
-				t.Error(e)
-			}
-		}
-		if _, e := base.Exec(ctx, "DROP SCHEMA "+schema); e != nil {
+		// 迁移会建出交付归属、批次与发布占用等表，按表逐个删会漏；整个临时 schema 连对象一起回收。
+		if _, e := base.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); e != nil {
 			t.Error(e)
 		}
 	})
-	for _, pattern := range []string{"542_*.up.sql", "543_*.up.sql", "544_*.up.sql", "545_*.up.sql", "546_*.up.sql", "547_*.up.sql", "548_*.up.sql", "549_*.up.sql", "571_*.up.sql", "572_*.up.sql", "573_*.up.sql"} {
+	// 交付表分散在多个版本，公共基线由 verification_full_test 提供，这里只应用建表迁移；
+	// 不能整段应用 542 之后的全部迁移，那样会落到公共 schema 的既有表上做重复改动。
+	for _, pattern := range []string{"542_*.up.sql", "543_*.up.sql", "544_*.up.sql", "545_*.up.sql", "546_*.up.sql", "547_*.up.sql", "548_*.up.sql", "549_*.up.sql", "571_*.up.sql", "572_*.up.sql", "573_*.up.sql", "601_*.up.sql", "602_*.up.sql", "603_*.up.sql", "604_*.up.sql", "605_*.up.sql", "606_*.up.sql", "627_*.up.sql", "628_*.up.sql"} {
 		names, _ := filepath.Glob("../../migrations/" + pattern)
 		if len(names) != 1 {
-			t.Fatal(pattern)
+			t.Fatalf("迁移缺失或重名：%s", pattern)
 		}
 		sql, _ := os.ReadFile(names[0])
 		if _, err = pool.Exec(ctx, string(sql)); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", filepath.Base(names[0]), err)
+		}
+	}
+	// 新交付表或唯一索引加入时，缺少迁移会在流程中途报缺表/缺约束，这里先明确失败。
+	for _, table := range []string{"issue_delivery", "issue_delivery_plan", "issue_delivery_authorization", "verification_slot", "verification_event", "delivery_owner", "delivery_publication", "delivery_evidence", "delivery_notice", "delivery_batch", "delivery_batch_member", "verification_slot_seed", "verification_slot_maintenance"} {
+		var exists bool
+		if err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=$1 AND table_name=$2)`, schema, table).Scan(&exists); err != nil || !exists {
+			t.Fatalf("缺少交付表迁移：%s", table)
+		}
+	}
+	for _, index := range []string{"delivery_owner_key", "delivery_publication_key", "delivery_evidence_key", "delivery_notice_key"} {
+		var exists bool
+		if err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND indexname=$2)`, schema, index).Scan(&exists); err != nil || !exists {
+			t.Fatalf("缺少交付唯一索引迁移：%s", index)
 		}
 	}
 	f := fxt.New(pool, "", "")
@@ -82,12 +93,19 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 	comment := f.Insert(t, "comment", fxt.Cols{"issue_id": issue, "workspace_id": f.WorkspaceID, "author_type": "member", "author_id": f.UserID, "parent_id": request, "content": "1. 修改链接。2. 联调验证。\n完整计划：生产需单独批准。"})
 	confirmation := f.Insert(t, "comment", fxt.Cols{"issue_id": issue, "workspace_id": f.WorkspaceID, "author_type": "member", "author_id": f.UserID, "parent_id": comment, "content": "确认计划"})
 	h := &handler.Handler{DB: pool, Queries: db.New(pool), TxStarter: pool}
+	// 交付写入先要领取归属，凭据按任务轮换；未领取前不发送这两个头。
+	ownerToken := ""
+	var ownerGeneration int64
 	call := func(fn http.HandlerFunc, agent bool, body any, params ...string) (int, map[string]any) {
 		req := fxt.WithURLParams(fxt.WithHeaders(fxt.JSONRequest(http.MethodPost, "/", body), "X-User-ID", f.UserID, "X-Workspace-ID", f.WorkspaceID), params...)
 		req = req.WithContext(middleware.SetMemberContext(req.Context(), f.WorkspaceID, db.Member{}))
 		if agent {
 			req.Header.Set("X-Actor-Source", "task_token")
 			req.Header.Set("X-Agent-ID", dbid.NewV7().String())
+		}
+		if ownerToken != "" {
+			req.Header.Set("X-Delivery-Token", ownerToken)
+			req.Header.Set("X-Delivery-Generation", fmt.Sprintf("%d", ownerGeneration))
 		}
 		res := fxt.Call(t, fn, req)
 		var value map[string]any
@@ -100,6 +118,13 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 			t.Fatalf("want %d got %d: %v", want, code, v)
 		}
 	}
+	claimOwner := func(target string) {
+		t.Helper()
+		c, v := call(h.ManageDeliveryOwner, true, map[string]any{"action": "claim", "execution_id": "integration-verifier"}, "id", target)
+		want(c, 200, v)
+		ownerToken, ownerGeneration = v["token"].(string), int64(v["generation"].(float64))
+	}
+	claimOwner(issue)
 	code, s := call(h.RegisterIssuePlan, true, map[string]any{"comment_id": comment, "revision": 1}, "id", issue)
 	want(code, 200, s)
 	plan := s["plan"].(map[string]any)
@@ -137,7 +162,10 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 	code, s = call(h.ConfirmIssuePlan, true, map[string]any{"plan_id": plan["id"], "revision": 1, "comment_id": confirmation, "comment_revision": 1, "scope": "执行当前方案"}, "id", issue)
 	want(code, 200, s)
 	checks := []map[string]any{{"name": "真实功能操作", "status": "passed", "evidence": "指定页面及持久化检查通过"}}
-	body := map[string]any{"operation_id": dbid.NewV7().String(), "source_commit": strings.Repeat("a", 40), "base_commit": strings.Repeat("b", 40), "source_branch": "feature/test/delivery", "evidence": checks}
+	// 业务清单随方案登记，联调与最终集成各占一个阶段，提交与验收都必须覆盖对应阶段。
+	integrationChecks := []map[string]any{{"name": "组合集成冒烟", "status": "passed", "evidence": "同一候选上的整合冒烟与成员影响通过"}}
+	requiredChecks := []map[string]any{{"name": "真实功能操作", "stage": "verification"}, {"name": "组合集成冒烟", "stage": "integration"}}
+	body := map[string]any{"operation_id": dbid.NewV7().String(), "source_commit": strings.Repeat("a", 40), "base_commit": strings.Repeat("b", 40), "source_branch": "feature/test/delivery", "evidence": checks, "required_checks": requiredChecks}
 	code, s = call(h.SubmitIssueDelivery, true, body, "id", issue)
 	want(code, 200, s)
 	d := s["deliveries"].([]any)[0].(map[string]any)
@@ -152,9 +180,14 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 	want(code, 409, s)
 	revision := int64(1)
 	token := ""
+	// 最终集成到生产前要先领取环境发布占用，代次随占用递增，推进请求需要带上当前代次。
+	publicationGeneration := int64(0)
 	advance := func(action string, extra map[string]any) {
 		t.Helper()
 		b := map[string]any{"id": id, "revision": revision, "worker_token": token, "action": action}
+		if publicationGeneration > 0 {
+			b["publication_generation"] = publicationGeneration
+		}
 		for k, v := range extra {
 			b[k] = v
 		}
@@ -191,8 +224,8 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 		}
 	}
 	action("approve", true, nil, 409)
-	action("accept", true, map[string]any{"evidence": []any{}}, 409)
-	action("accept", true, map[string]any{"evidence": checks}, 200)
+	action("accept", true, map[string]any{"evidence": []any{}, "candidate_id": "candidate-one"}, 409)
+	action("accept", true, map[string]any{"evidence": checks, "candidate_id": "candidate-one"}, 200)
 	advance("accepted", nil)
 	lease["action"] = "drain"
 	code, s = call(h.AdvanceVerificationSlot, false, lease)
@@ -222,11 +255,19 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 	authorization := d["plan_snapshot"].(map[string]any)["authorization_review"].(map[string]any)["authorization_id"]
 
 	advance("claim", nil)
+	// 进入 preparing_release 后先领取环境发布占用，后续推进都要带当前代次。
+	publicationLease := map[string]any{"action": "claim", "delivery_id": id, "worker_token": token, "generation": publicationGeneration, "snapshot": map[string]any{"base_commit": strings.Repeat("b", 40)}}
+	code, s = call(h.PublicationLease, false, publicationLease)
+	want(code, 200, s)
+	publicationGeneration = int64(s["generation"].(float64))
 	advance("prepared", map[string]any{"candidate_id": "candidate-two", "candidate_url": "http://int.example.test"})
-	action("accept", true, map[string]any{"evidence": checks, "authorization_id": authorization, "scope_review": "整合后仍在已批准方案范围", "user_comments_version": version()}, 200)
+	action("accept", true, map[string]any{"evidence": integrationChecks, "candidate_id": "candidate-two", "authorization_id": authorization, "scope_review": "整合后仍在已批准方案范围", "user_comments_version": version()}, 200)
 	advance("validated", nil)
 	advance("publishing", nil)
 	advance("published", nil)
+	code, s = call(h.PublicationLease, false, map[string]any{"action": "release", "delivery_id": id, "worker_token": token, "generation": publicationGeneration, "snapshot": map[string]any{}})
+	want(code, 200, s)
+	publicationGeneration = 0
 	f.QueryRow(t, "SELECT status FROM issue WHERE id=$1", issue).Scan(&status)
 	if status != "in_review" {
 		t.Fatal("published auto-completed issue")
@@ -249,9 +290,13 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 		want(c, 200, v)
 		c, v = call(h.SubmitIssueDelivery, true, body, "id", issue)
 		want(c, 200, v)
-		prior := v["deliveries"].([]any)[0].(map[string]any)["id"].(string)
+		active := v["deliveries"].([]any)[0].(map[string]any)
+		prior := active["id"].(string)
 		body["operation_id"] = dbid.NewV7().String()
 		body["source_commit"] = strings.Repeat("d", 40)
+		// 不同提交必须显式替换当前活动交付，替换后旧版本进入 needs_changes。
+		body["replace_delivery_id"] = prior
+		body["replace_revision"] = int64(active["revision"].(float64))
 		c, v = call(h.SubmitIssueDelivery, true, body, "id", issue)
 		want(c, 200, v)
 		var previousPhase, savedPlan string
@@ -267,6 +312,7 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 
 	t.Run("conditional-release-and-new-user-decision", func(t *testing.T) {
 		issue = f.Issue(t, "提前授权与新要求")
+		claimOwner(issue)
 		planComment := f.Insert(t, "comment", fxt.Cols{"issue_id": issue, "workspace_id": f.WorkspaceID, "author_type": "member", "author_id": f.UserID, "content": "当前方案：修复菜单"})
 		grant := f.Insert(t, "comment", fxt.Cols{"issue_id": issue, "workspace_id": f.WorkspaceID, "author_type": "member", "author_id": f.UserID, "content": "照这个处理，测好没问题直接上线"})
 		c, v := call(h.RegisterIssuePlan, true, map[string]any{"comment_id": planComment, "revision": 1}, "id", issue)
@@ -296,8 +342,8 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 		token = ""
 		advance("claim", nil)
 		advance("prepared", map[string]any{"candidate_id": "conditional-one", "candidate_url": "http://int.example.test"})
-		action("accept", true, map[string]any{"evidence": checks, "authorization_id": authorization, "scope_review": "当前候选符合菜单修复范围", "user_comments_version": "stale"}, 409)
-		action("accept", true, map[string]any{"evidence": checks, "authorization_id": authorization, "scope_review": "当前候选符合菜单修复范围", "user_comments_version": version()}, 200)
+		action("accept", true, map[string]any{"evidence": checks, "candidate_id": "conditional-one", "authorization_id": authorization, "scope_review": "当前候选符合菜单修复范围", "user_comments_version": "stale"}, 409)
+		action("accept", true, map[string]any{"evidence": checks, "candidate_id": "conditional-one", "authorization_id": authorization, "scope_review": "当前候选符合菜单修复范围", "user_comments_version": version()}, 200)
 		advance("accepted", nil)
 		var phase string
 		f.QueryRow(t, `SELECT phase FROM issue_delivery WHERE id=$1`, id).Scan(&phase)
@@ -312,13 +358,13 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 			t.Fatal("新要求未阻断发布")
 		}
 		var notices int
-		f.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1 AND content LIKE '%等待授权范围复核%'`, issue).Scan(&notices)
+		f.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1 AND content LIKE '%尚未复核当前候选，发布暂停%'`, issue).Scan(&notices)
 		if notices != 1 {
 			t.Fatalf("授权核对通知数量：%d", notices)
 		}
 		c, v = call(h.AdvanceDelivery, false, map[string]any{"id": id, "revision": revision, "action": "notify-authorization"})
 		want(c, 200, v)
-		f.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1 AND content LIKE '%等待授权范围复核%'`, issue).Scan(&notices)
+		f.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1 AND content LIKE '%尚未复核当前候选，发布暂停%'`, issue).Scan(&notices)
 		if notices != 1 {
 			t.Fatal("通知重试产生重复评论")
 		}
@@ -332,6 +378,7 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 
 	t.Run("button-approval-current-membership", func(t *testing.T) {
 		issue = f.Issue(t, "页面按钮批准")
+		claimOwner(issue)
 		pc := f.Insert(t, "comment", fxt.Cols{"issue_id": issue, "workspace_id": f.WorkspaceID, "author_type": "member", "author_id": f.UserID, "content": "页面批准方案"})
 		c, v := call(h.RegisterIssuePlan, false, map[string]any{"comment_id": pc, "revision": 1}, "id", issue)
 		want(c, 200, v)
@@ -345,9 +392,14 @@ func TestFixedIntDeliveryWorkflow(t *testing.T) {
 		token = ""
 		advance("claim", nil)
 		advance("prepared", map[string]any{"candidate_id": "button-one", "candidate_url": "http://int.example.test"})
-		action("accept", true, map[string]any{"evidence": checks}, 200)
+		action("accept", true, map[string]any{"evidence": checks, "candidate_id": "button-one"}, 200)
 		advance("accepted", nil)
 		action("approve", false, nil, 200)
+		advance("claim", nil)
+		buttonLease := map[string]any{"action": "claim", "delivery_id": id, "worker_token": token, "generation": publicationGeneration, "snapshot": map[string]any{"base_commit": strings.Repeat("b", 40)}}
+		c, v = call(h.PublicationLease, false, buttonLease)
+		want(c, 200, v)
+		publicationGeneration = int64(v["generation"].(float64))
 		c, v = call(h.CheckDeliveryAuthorization, false, nil, "deliveryId", id)
 		want(c, 200, v)
 		if v["ready"] != true {
