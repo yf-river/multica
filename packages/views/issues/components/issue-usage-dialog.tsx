@@ -134,7 +134,7 @@ export function IssueUsageDialog({
               />
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_cache)}
-                value={formatUsd(total.cacheSavings)}
+                value={costKnown ? formatUsd(total.cacheSavings) : "—"}
                 accent={total.cacheSavings > 0 ? "success" : "default"}
                 hint={t(($) => $.usage_detail.kpi_cache_hint, {
                   pct: cacheHitRate,

@@ -2,6 +2,7 @@
 // (Agent, 模型) 返回的原始行，折叠成图表 / KPI / 排行需要的按日或按周聚合，
 // 并负责失败分类与「匿名桶」的归并。所有函数无副作用。
 
+import { hasKnownCost, type Priceable } from "../runtimes/utils";
 import type {
   DashboardUsageDaily,
   DashboardUsageByAgent,
@@ -308,6 +309,41 @@ export function bucketUnknownAgentRows(
     bucket.cost += r.cost;
   }
   return hasDeleted ? [...known, bucket] : known;
+}
+
+/**
+ * 按 agent 分组判断"这批用量有没有价格来源"，键是 agentId；被折进
+ * "已删除的智能体" 桶的 agent 合并成一条，用桶自己的用量判断。
+ *
+ * 为什么不能整窗一个标志：窗口里只要有一个可定价模型，其余完全不可定价的 agent
+ * 就会跟着显示 $0.00，等于断言"这个 agent 免费"。桶也一样——它是一组真实用量，
+ * 不是"未知"。
+ */
+export function costKnownByAgent(
+  rows: readonly (Priceable & { agent_id: string })[],
+  knownAgentIds: ReadonlySet<string> | null,
+): Map<string, boolean> {
+  const grouped = new Map<string, (Priceable & { agent_id: string })[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.agent_id);
+    if (list) list.push(row);
+    else grouped.set(row.agent_id, [row]);
+  }
+  const deleted: (Priceable & { agent_id: string })[] = [];
+  const result = new Map<string, boolean>();
+  for (const [agentId, own] of grouped) {
+    if (
+      knownAgentIds &&
+      !knownAgentIds.has(agentId) &&
+      agentId !== RESTRICTED_AGENTS_ROW_ID
+    ) {
+      deleted.push(...own);
+      continue;
+    }
+    result.set(agentId, hasKnownCost(own));
+  }
+  if (deleted.length > 0) result.set(DELETED_AGENTS_ROW_ID, hasKnownCost(deleted));
+  return result;
 }
 
 /** 判断某 agentId 是否为一个合成的桶行（渲染成聚合桶而不是单个 Agent）。

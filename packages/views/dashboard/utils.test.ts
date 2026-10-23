@@ -15,6 +15,7 @@ import {
   bucketUnknownAgentRows,
   computeDailyTotals,
   computeFailureTotals,
+  costKnownByAgent,
   DELETED_AGENTS_ROW_ID,
   formatDuration,
   hasRateSample,
@@ -783,5 +784,55 @@ describe("anonymizeUnresolvedAgentRows", () => {
     const known = new Set(["visible", "private-a", "private-b"]);
     // Same reference, not just equal — nothing needed rewriting.
     expect(anonymizeUnresolvedAgentRows(rows, known)).toBe(rows);
+  });
+});
+
+describe("costKnownByAgent", () => {
+  const row = (agent_id: string, model: string) => ({
+    agent_id,
+    model,
+    provider: "codebuddy",
+    input_tokens: 10,
+    output_tokens: 10,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    cost_usd_ticks: 0,
+  });
+
+  it("judges each agent from its own usage, not from the window", () => {
+    // claude-sonnet-5 has a rate-table entry; the deepseek ids do not.
+    const map = costKnownByAgent(
+      [
+        row("priced-agent", "claude-sonnet-5"),
+        row("unpriced-agent", "deepseek-v4-pro-ioa"),
+      ],
+      new Set(["priced-agent", "unpriced-agent"]),
+    );
+    expect(map.get("priced-agent")).toBe(true);
+    expect(map.get("unpriced-agent")).toBe(false);
+  });
+
+  it("judges the deleted-agents bucket from the rows it actually holds", () => {
+    const deletedAgents = new Set(["alive"]);
+    const map = costKnownByAgent(
+      [
+        row("alive", "claude-sonnet-5"),
+        row("gone-a", "deepseek-v4-pro-ioa"),
+        row("gone-b", "gpt-6-astra"),
+      ],
+      deletedAgents,
+    );
+    // The bucket sums rows that nothing prices — it must not inherit the
+    // window's "some row is priceable" verdict.
+    expect(map.get("alive")).toBe(true);
+    expect(map.get(DELETED_AGENTS_ROW_ID)).toBe(false);
+  });
+
+  it("marks the bucket priced when any row inside it is priceable", () => {
+    const map = costKnownByAgent(
+      [row("gone-a", "claude-sonnet-5"), row("gone-b", "gpt-6-astra")],
+      new Set<string>(),
+    );
+    expect(map.get(DELETED_AGENTS_ROW_ID)).toBe(true);
   });
 });

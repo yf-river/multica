@@ -17,7 +17,8 @@
     "run_time_label": "Run time · {{days}}D",
     "run_time_hint": "Across {{tasks}} tasks",
     "tasks_label": "Tasks · {{days}}D",
-    "tasks_hint": "{{failed}} failed"
+    "tasks_hint": "{{failed}} failed",
+    "cost_partial_hint": "Some usage has no price source; the amount covers priced usage only"
   },
   "dim": {
     "label": "Dimension",
