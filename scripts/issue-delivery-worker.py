@@ -21,10 +21,6 @@ class Busy(RuntimeError): pass
 
 class SlotWaitTimeout(RuntimeError): pass
 
-class Fenced(RuntimeError):
-    """服务端围栏拦下的写入：该执行已不是当前触发评论的最新运行，或交付阶段已变化。
-    协议内的正常结果，不是交付故障；保留槽位与候选，交给最新执行或下一轮续接决定去向。"""
-
 def merge_source(path,arguments):
     """只有真实未合并文件归为成员冲突，其它Git失败保留原始诊断。"""
     result=subprocess.run(['git','merge',*arguments],cwd=path,capture_output=True,text=True)
@@ -476,7 +472,7 @@ class Worker:
             r.release_candidate(c['id'],env=lease['name'])
             slot(lease,'release')
             save('released',candidate_id=c['id'])
-        lease=None; stopped=threading.Event(); heartbeat_errors=[]
+        lease=None; c=None; stopped=threading.Event(); heartbeat_errors=[]
         with r.lock('verification-job-'+delivery):
             try:
                 d=refresh()
@@ -544,53 +540,54 @@ class Worker:
                     while not stopped.wait(20):
                         try:slot(lease,'heartbeat')
                         except Exception as e:
-                            heartbeat_errors.append(str(e));return
+                            heartbeat_errors.append(e);return
                 heartbeat_thread=threading.Thread(target=heartbeat,daemon=True);heartbeat_thread.start()
                 if c is None:
                     c=r.prepare_verification(source,artifact,lease)
                     lease['candidate_id']=c['id'];slot(lease,'prepared')
                     save('verifying',lease=lease,candidate_id=c['id'])
-                if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
-                try:
+                if heartbeat_errors:raise heartbeat_errors[0]
+                d=refresh()
+                if d['phase']=='testing':
+                    if d['candidate_id']!=c['id']:
+                        self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
+                notified=False
+                while True:
                     d=refresh()
-                    if d['phase']=='testing':
-                        if d['candidate_id']!=c['id']:
-                            self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
-                        if not (d.get('verification_owner') or {}).get('external'):self.advance(d,'notify')
-                    while True:
+                    if not d or d['phase']!='testing':break
+                    if heartbeat_errors:raise heartbeat_errors[0]
+                    try:
+                        if not d['acceptance_submitted']:
+                            # 外部归属结束后补派一次；被归属围栏延后的通知不算送达。
+                            # 服务端固定评论标识与实际执行记录负责跨进程幂等。
+                            if not notified and not d.get('verification_run') and not (d.get('verification_owner') or {}).get('external'):
+                                result=self.advance(d,'notify')
+                                notified=result.get('verification_deferred') is not True
+                            pending=self.verification_pending(d,notify=False)
+                    except urllib.error.HTTPError as e:
+                        if e.code!=409:raise
+                        # 服务端围栏：该执行不是当前触发评论的最新运行，或阶段已经变化。
+                        # 这不是交付故障，不能隔离槽位或用兜底 fail 把被拦下的写入重做一遍。
                         d=refresh()
                         if not d or d['phase']!='testing':break
-                        if heartbeat_errors:raise r.RecoveryRequired('验收心跳失效')
-                        try:
-                            # 通知已在进入循环前发过，轮询只判断进度，不重复发送同一条通知。
-                            pending=self.verification_pending(d,notify=False)
-                        except urllib.error.HTTPError as e:
-                            if e.code!=409:raise
-                            # 服务端围栏：该执行不是当前触发评论的最新运行，或阶段已经变化。
-                            # 这不是交付故障，不能隔离槽位或用兜底 fail 把被拦下的写入重做一遍。
-                            d=refresh()
-                            if not d or d['phase']!='testing':break
-                            time.sleep(5);continue
-                        if not d['acceptance_submitted'] and not pending:break
-                        if d['acceptance_submitted']:
-                            evidence=r.RUN/'delivery-evidence'/(delivery+'.json')
-                            r.write(evidence,dict(candidate=c['id'],summary='任务验收',checks=d['evidence']),True)
-                            if c['status']!='accepted':r.accept(c['id'],evidence,env=lease['name'])
-                            self.advance(d,'accepted');break
-                        time.sleep(5)
-                except urllib.error.HTTPError as e:
-                    if e.code!=409:raise
-                    raise Fenced('服务端围栏拦下的写入（409），交付状态已由其他执行推进')
+                        time.sleep(5);continue
+                    if not d['acceptance_submitted'] and not pending:break
+                    if d['acceptance_submitted']:
+                        evidence=r.RUN/'delivery-evidence'/(delivery+'.json')
+                        r.write(evidence,dict(candidate=c['id'],summary='任务验收',checks=d['evidence']),True)
+                        if c['status']!='accepted':r.accept(c['id'],evidence,env=lease['name'])
+                        self.advance(d,'accepted');break
+                    time.sleep(5)
                 stopped.set();heartbeat_thread.join(timeout=25)
                 release(lease,c)
             except SlotWaitTimeout:
                 # 3. 等槽位超时不是交付失败：保留构建产物与现场，交给下一轮重新排队。
                 stopped.set();return
-            except Fenced as e:
-                # 围栏拦下的写入保留现场：槽位和候选不隔离也不释放，由最新执行结束后的常规路径决定去向。
-                stopped.set();save('fenced',lease=lease,candidate_id=c['id'] if c else '',detail=str(e)[:500]);return
             except Exception as e:
                 stopped.set()
+                if isinstance(e,urllib.error.HTTPError) and e.code==409:
+                    # 槽位代次或心跳已被围栏拒绝，旧接力不能再隔离或失败回填新归属。
+                    save('fenced',lease=lease,candidate_id=c['id'] if c else '',detail=str(e)[:500]);return
                 if lease:
                     try:slot(lease,'quarantine',str(e)[:1500])
                     except Exception:pass
