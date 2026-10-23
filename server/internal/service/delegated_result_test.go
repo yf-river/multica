@@ -118,3 +118,30 @@ func TestDelegatedResultConcurrentReplayCreatesOneSuccessor(t *testing.T) {
 		t.Fatalf("concurrent replay created %d successors", n)
 	}
 }
+
+func TestDelegatedResultPreservesChildStageBarrier(t *testing.T) {
+	for _, status := range []string{"done", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			f, svc := seedDelegatedFailureFixture(t)
+			ctx := context.Background()
+			id := f.insertWorkerTask(t, "completed", "comment", 1, 2)
+			if _, err := f.pool.Exec(ctx, `UPDATE issue SET status=$2 WHERE id=$1`, f.workerIssue, status); err != nil {
+				t.Fatal(err)
+			}
+			task, err := svc.Queries.GetAgentTask(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.RecoverDelegatedTaskResult(ctx, task); err != nil {
+				t.Fatal(err)
+			}
+			var n int
+			if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM comment WHERE source_task_id=$1`, id).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			if n != 0 {
+				t.Fatalf("terminal child bypassed stage barrier with %d callbacks", n)
+			}
+		})
+	}
+}

@@ -5807,6 +5807,9 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 	if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid || agent.WorkspaceID != issue.WorkspaceID {
 		return nil, nil
 	}
+	if covered, err := delegatedIssueBarrierCoversResult(ctx, q, failed, issue, agent); err != nil || covered {
+		return nil, err
+	}
 	return &delegatedFailureRecoveryTarget{failed: failed, source: source, issue: issue, agent: agent}, nil
 }
 
