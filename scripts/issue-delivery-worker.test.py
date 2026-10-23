@@ -67,9 +67,14 @@ class DeliveryTests(unittest.TestCase):
                 self.assertEqual(check.call_args_list[0].args[0],old);self.assertEqual(check.call_args_list[1].args[0],new);migrate.assert_called_once()
 
     def test_review_state_releases_previous_slot_after_process_restart(self):
-        worker=object.__new__(w.Worker);worker.env='prod';d={'id':'one','phase':'awaiting_review'}
-        current={'id':'candidate','delivery_id':'one','status':'accepted'}
-        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'candidate_path',return_value=Path(__file__)),patch.object(r,'candidate',return_value=current),patch.object(worker,'api',return_value=[d]),patch.object(worker,'pin'),patch.object(r,'release_candidate') as release:
+        import uuid
+        identity=str(uuid.uuid4());d={'id':identity,'phase':'awaiting_review','revision':2,'source_commit':'a'*40}
+        current={'id':'candidate','delivery_id':identity,'status':'accepted'}
+        def api(path,body=None,method=None):
+            # 队列列表返回待复核交付；推进回执按普通对象处理，验证进程重启后仍会释放旧槽位。
+            return {} if path.endswith('/advance') else [d]
+        worker=object.__new__(w.Worker);worker.env='prod'
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'candidate_path',return_value=Path(__file__)),patch.object(r,'candidate',return_value=current),patch.object(worker,'api',side_effect=api),patch.object(worker,'pin'),patch.object(r,'release_candidate') as release:
             worker.tick();release.assert_called_once_with('candidate')
     def test_restart_finishes_lease_even_after_candidate_was_released(self):
         import uuid

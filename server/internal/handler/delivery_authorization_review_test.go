@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func deliveryReviewFixture(t *testing.T, withAuthorization bool) (issue, deliver
 
 func advanceAccepted(t *testing.T, delivery, token string) {
 	t.Helper()
-	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": 1, "worker_token": token, "action": "accepted"})).Want(200)
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "worker_token": token, "action": "accepted"})).Want(200)
 }
 
 func deliveryReviewNoticeCount(t *testing.T, delivery string) int {
@@ -163,10 +164,10 @@ func TestDeliveryReviewNotificationDeduplicates(t *testing.T) {
 	if pending != "" || deliveryReviewNoticeCount(t, delivery) != 1 {
 		t.Fatalf("运行结束后应补发一次通知并清掉待通知标记: %s %d", pending, deliveryReviewNoticeCount(t, delivery))
 	}
-	// 上一次复核运行还在队列里时不得再唤醒一轮。
-	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": 2, "worker_token": token, "action": "notify-authorization"})).Want(409)
+	// 刚补发过的交付进入冷却：后台轮询不会立刻再唤醒一轮。
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": 2, "worker_token": token, "action": "notify-authorization"})).Want(200)
 	if count := deliveryReviewNoticeCount(t, delivery); count != 1 {
-		t.Fatalf("复核运行未结束时不得重复唤醒，实际 %d", count)
+		t.Fatalf("冷却期内不得重复唤醒，实际 %d", count)
 	}
 }
 
@@ -196,6 +197,56 @@ func advanceNotifyAuthorization(t *testing.T, delivery string, want int) *testut
 	return testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": "notify-authorization"})).Want(want)
 }
 
+// 2. 冷却期内的轮询只做检查不补发；冷却结束后补发一次。队列以同一条件筛选候选行。
+func TestDeliveryReviewRenotifyWaitsForCooldown(t *testing.T) {
+	_, delivery, token, _ := deliveryReviewFixture(t, true)
+	advanceAccepted(t, delivery, token)
+	advanceNotifyAuthorization(t, delivery, 200)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("冷却期内不应补发，实际通知 %d 条", got)
+	}
+	expireReviewCooldown(t, delivery)
+	if queue := deliveryQueueIDs(t); !queue[delivery] {
+		t.Fatal("冷却结束后队列应包含该待复核交付")
+	}
+	advanceNotifyAuthorization(t, delivery, 200)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 2 {
+		t.Fatalf("冷却结束后应补发一次，实际通知 %d 条", got)
+	}
+	if queue := deliveryQueueIDs(t); queue[delivery] {
+		t.Fatal("刚补发过的交付应重新进入冷却，队列不应再返回")
+	}
+}
+
+func expireReviewCooldown(t *testing.T, delivery string) {
+	t.Helper()
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',(plan_snapshot->'authorization_notice')||'{"notified_at":"2026-01-01T00:00:00Z"}'::jsonb) WHERE id=$1`, delivery)
+}
+
+func deliveryQueueIDs(t *testing.T) map[string]bool {
+	t.Helper()
+	var body []struct {
+		ID string `json:"id"`
+	}
+	testutil.Call(t, testHandler.ListDeliveryQueue, newRequest("GET", "/api/delivery-queue", nil)).Want(200).JSON(&body)
+	ids := map[string]bool{}
+	for _, d := range body {
+		ids[d.ID] = true
+	}
+	return ids
+}
+
+func deliveryNoticeOf(t *testing.T, delivery string) deliveryAuthorizationNotice {
+	t.Helper()
+	var raw []byte
+	dbfx.QueryRow(t, `SELECT plan_snapshot->'authorization_notice' FROM issue_delivery WHERE id=$1`, delivery).Scan(&raw)
+	var notice deliveryAuthorizationNotice
+	if err := json.Unmarshal(raw, &notice); err != nil {
+		t.Fatalf("待复核意图无法解析: %v (%s)", err, raw)
+	}
+	return notice
+}
+
 // 1. 显式接续有次数上限：补发到上限后保留原意图并说明原因，重复调用不再补发，
 // 也不能清掉意图重新从零计数。
 func TestDeliveryReviewResendStopsAtLimit(t *testing.T) {
@@ -205,12 +256,15 @@ func TestDeliveryReviewResendStopsAtLimit(t *testing.T) {
 		t.Fatalf("首次应只通知一次，实际 %d", first)
 	}
 	for i := 0; i < deliveryReviewRewakeLimit; i++ {
+		expireReviewCooldown(t, delivery)
 		advanceNotifyAuthorization(t, delivery, 200)
 	}
 	if got := deliveryReviewNoticeCount(t, delivery); got != 1+deliveryReviewRewakeLimit {
 		t.Fatalf("补发次数应为 %d，实际通知 %d 条", deliveryReviewRewakeLimit, got)
 	}
+	expireReviewCooldown(t, delivery)
 	advanceNotifyAuthorization(t, delivery, 409)
+	expireReviewCooldown(t, delivery)
 	advanceNotifyAuthorization(t, delivery, 409)
 	if got := deliveryReviewNoticeCount(t, delivery); got != 1+deliveryReviewRewakeLimit {
 		t.Fatalf("超限后不得继续补发，实际通知 %d 条", got)
@@ -228,6 +282,67 @@ func TestDeliveryReviewResendStopsAtLimit(t *testing.T) {
 	if !strings.Contains(detail, "负责人复核未接续") {
 		t.Fatalf("超限后应保留具体原因: %s", detail)
 	}
+	if queue := deliveryQueueIDs(t); queue[delivery] {
+		t.Fatal("超限后队列不应再返回该交付")
+	}
+}
+
+// 4. 通知里的“来源评论”必须指向用户给出授权的那条评论，不能是本次通知自身。
+func TestDeliveryReviewNoticeCitesAuthorizationComment(t *testing.T) {
+	_, delivery, token, authorization := deliveryReviewFixture(t, true)
+	advanceAccepted(t, delivery, token)
+	notice := deliveryNoticeOf(t, delivery)
+	if notice.AuthorizationComment == "" || notice.AuthorizationComment == notice.CommentID {
+		t.Fatalf("来源评论应指向授权评论: %+v", notice)
+	}
+	var source string
+	dbfx.QueryRow(t, `SELECT comment_id::text FROM issue_delivery_authorization WHERE id=$1`, authorization).Scan(&source)
+	if notice.AuthorizationComment != source {
+		t.Fatalf("来源评论与授权记录不一致: %s != %s", notice.AuthorizationComment, source)
+	}
+	var content string
+	dbfx.QueryRow(t, `SELECT content FROM comment WHERE id=$1`, notice.CommentID).Scan(&content)
+	if !strings.Contains(content, source) {
+		t.Fatalf("通知正文没有引用授权评论 %s: %s", source, content)
+	}
+}
+
+// 5. 候选变化后旧复核作废：retest 清掉旧意图，新候选重新登记通知而不是复用旧通知。
+func TestCandidateChangeReissuesAuthorizationReview(t *testing.T) {
+	issue, delivery, token, _ := deliveryReviewFixture(t, true)
+	advanceAccepted(t, delivery, token)
+	first := deliveryNoticeOf(t, delivery)
+	ownerToken, generation := claimReviewOwner(t, issue)
+	retest := newRequest("POST", "/api/issues/"+issue+"/deliveries/"+delivery, map[string]any{"action": "retest", "revision": deliveryRevision(t, delivery)})
+	retest = withURLParams(retest, "id", issue, "deliveryId", delivery)
+	retest.Header.Set("X-Delivery-Token", ownerToken)
+	retest.Header.Set("X-Delivery-Generation", strconv.FormatInt(generation, 10))
+	testutil.Call(t, testHandler.ActIssueDelivery, retest).Want(200)
+	phase, _, _, _ := deliveryReviewRow(t, issue, delivery)
+	if phase != "waiting_int" {
+		t.Fatalf("retest 后应回到等待联调，实际 %s", phase)
+	}
+	var cleared bool
+	dbfx.QueryRow(t, `SELECT NOT (plan_snapshot ? 'authorization_notice') FROM issue_delivery WHERE id=$1`, delivery).Scan(&cleared)
+	if !cleared {
+		t.Fatal("retest 后旧复核意图应失效")
+	}
+	dbfx.Exec(t, `UPDATE issue_delivery SET phase='testing',candidate_id='candidate-2',acceptance_submitted=true,worker_token=$2 WHERE id=$1`, delivery, token)
+	advanceAccepted(t, delivery, token)
+	second := deliveryNoticeOf(t, delivery)
+	if second.CommentID == first.CommentID || second.CandidateID != "candidate-2" || second.Attempts != 0 {
+		t.Fatalf("新候选应重新登记通知: first=%+v second=%+v", first, second)
+	}
+	if got := deliveryReviewNoticeCount(t, delivery); got != 2 {
+		t.Fatalf("新旧候选各一条通知，实际 %d", got)
+	}
+}
+
+func claimReviewOwner(t *testing.T, issue string) (string, int64) {
+	t.Helper()
+	var owner coordinationOwner
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "review-test", coordinationOwner{}, "")).Want(200).JSON(&owner)
+	return owner.Token, owner.Generation
 }
 
 // 2. 通知写入失败时保留待通知意图，恢复后由队列补发一次；不能因为一次失败丢工作。

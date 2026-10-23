@@ -395,7 +395,9 @@ class Worker:
                     try:self.pin(d)
                     except Exception as e:self.advance(d,'fail',error='无法固定交付提交：'+str(e)[:1500]);return
             # 先完成已占用环境的交付，再按创建顺序处理排队项。
-            active=[d for d in rows if d['phase'] in ('testing','preparing_release','publishing','published','needs_changes') or (d['phase']=='awaiting_review' and d.get('plan_snapshot',{}).get('authorization_pending'))]
+            # 4. 待复核的 awaiting_review 也由队列推进：服务端只在通知未送达、或已送达但负责人
+            # 长时间未接续时返回该行，是否补发与次数上限由服务端判定，这里只负责触发一次检查。
+            active=[d for d in rows if d['phase'] in ('testing','preparing_release','publishing','published','needs_changes','awaiting_review')]
             queued=[d for d in rows if d['phase'] in ('waiting_int','approved')]
             for d in active+queued:
                 try:

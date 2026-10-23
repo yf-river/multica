@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -21,8 +22,11 @@ const (
 	deliveryReleaseMissing = "missing"
 )
 
-// 已有有效发布授权时的唤醒上限：自动通知只发一次，显式接续允许有限次补发。
-const deliveryReviewRewakeLimit = 3
+// 已有有效发布授权时的唤醒上限与冷却：首次通知后按冷却时间由队列补发，补满即停止。
+const (
+	deliveryReviewRewakeLimit    = 3
+	deliveryReviewRewakeCooldown = 10 * time.Minute
+)
 
 // 有效发布授权：评论版本、任务归属、用户身份与撤销状态都为真。
 const deliveryReleaseAuthorizationSQL = `SELECT a.id::text FROM issue_delivery_authorization a
@@ -31,14 +35,19 @@ const deliveryReleaseAuthorizationSQL = `SELECT a.id::text FROM issue_delivery_a
  WHERE a.workspace_id=$1 AND a.issue_id=$2 AND a.plan_id=$3 AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')
  ORDER BY a.created_at DESC LIMIT 1`
 
+// 授权依据评论：通知里要指向用户真正给出授权的那条评论，而不是本次通知本身。
+const deliveryAuthorizationCommentSQL = `SELECT comment_id::text FROM issue_delivery_authorization WHERE id=$1`
+
 // deliveryAuthorizationNotice 记录待复核意图：通知号预先固定，重复轮询不会重复唤醒。
 type deliveryAuthorizationNotice struct {
-	CommentID       string `json:"comment_id"`
-	CandidateID     string `json:"candidate_id"`
-	SourceCommit    string `json:"source_commit"`
-	CommentsVersion string `json:"comments_version"`
-	AuthorizationID string `json:"authorization_id"`
-	Attempts        int    `json:"attempts"`
+	CommentID            string `json:"comment_id"`
+	CandidateID          string `json:"candidate_id"`
+	SourceCommit         string `json:"source_commit"`
+	CommentsVersion      string `json:"comments_version"`
+	AuthorizationID      string `json:"authorization_id"`
+	AuthorizationComment string `json:"authorization_comment"`
+	Attempts             int    `json:"attempts"`
+	NotifiedAt           string `json:"notified_at,omitempty"`
 }
 
 func deliverySnapshotValue(snapshot json.RawMessage, key string) json.RawMessage {
@@ -104,12 +113,17 @@ func deliveryAuthorizationNoticeFor(ctx context.Context, tx pgx.Tx, ws, issue, i
 	}
 	notice := deliveryAuthorizationNoticeOf(snapshot)
 	if notice.CommentID == "" || notice.CandidateID != candidate || notice.SourceCommit != source || notice.CommentsVersion != version || notice.AuthorizationID != authorization {
+		var authorizationComment string
+		if err = tx.QueryRow(ctx, deliveryAuthorizationCommentSQL, authorization).Scan(&authorizationComment); err != nil {
+			return nil, err
+		}
 		notice = deliveryAuthorizationNotice{
-			CommentID:       dbid.NewV7().String(),
-			CandidateID:     candidate,
-			SourceCommit:    source,
-			CommentsVersion: version,
-			AuthorizationID: authorization,
+			CommentID:            dbid.NewV7().String(),
+			CandidateID:          candidate,
+			SourceCommit:         source,
+			CommentsVersion:      version,
+			AuthorizationID:      authorization,
+			AuthorizationComment: authorizationComment,
 		}
 	}
 	return json.Marshal(notice)
@@ -155,7 +169,14 @@ func (h *Handler) deliverDeliveryAuthorizationReview(r *http.Request, ws, issue,
 		return err
 	}
 	if delivered {
-		_, err := h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending' WHERE id=$1`, id)
+		// 已送达但缺通知时刻（旧记录）：补上时刻开始冷却，避免重启后立刻重复派发。
+		if notice.NotifiedAt != "" {
+			_, err := h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending' WHERE id=$1`, id)
+			return err
+		}
+		notice.NotifiedAt = time.Now().UTC().Format(time.RFC3339)
+		raw, _ := json.Marshal(notice)
+		_, err := h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=(plan_snapshot-'authorization_pending')||jsonb_build_object('authorization_notice',$2::jsonb) WHERE id=$1`, id, raw)
 		return err
 	}
 	var busy bool
@@ -170,7 +191,7 @@ func (h *Handler) deliverDeliveryAuthorizationReview(r *http.Request, ws, issue,
 	if assignee != "" && (kind == "agent" || kind == "squad") {
 		mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
 	}
-	content := fmt.Sprintf(deliveryReviewNotice, id, notice.CandidateID, notice.SourceCommit, notice.AuthorizationID, notice.CommentID)
+	content := fmt.Sprintf(deliveryReviewNotice, id, notice.CandidateID, notice.SourceCommit, notice.AuthorizationID, notice.AuthorizationComment)
 	payload, _ := json.Marshal(map[string]any{"id": notice.CommentID, "content": mention + content})
 	rr := r.Clone(r.Context())
 	rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(notice.CommentID)))
@@ -183,7 +204,10 @@ func (h *Handler) deliverDeliveryAuthorizationReview(r *http.Request, ws, issue,
 	if response.status >= 400 {
 		return fmt.Errorf("通知负责人失败：%d", response.status)
 	}
-	_, err = h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending' WHERE id=$1`, id)
+	// 2. 记录通知时刻并清掉待通知标记：后续补发按冷却时间由队列驱动，不再每轮重复派发。
+	notice.NotifiedAt = time.Now().UTC().Format(time.RFC3339)
+	raw, _ := json.Marshal(notice)
+	_, err = h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=(plan_snapshot-'authorization_pending')||jsonb_build_object('authorization_notice',$2::jsonb) WHERE id=$1`, id, raw)
 	return err
 }
 
@@ -220,12 +244,34 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 		return fmt.Errorf("当前没有等待负责人复核的有效授权")
 	}
 	notice := deliveryAuthorizationNoticeOf(snapshot)
+	if notice.CommentID == "" {
+		return fmt.Errorf("待复核意图尚未生成，等待队列重新登记")
+	}
 	var delivered bool
 	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment WHERE id=$1 AND issue_id=$2)`, notice.CommentID, issue).Scan(&delivered); err != nil {
 		return err
 	}
-	if !delivered && notice.CommentID != "" {
+	if !delivered {
 		return fmt.Errorf("通知尚未送达，等待自动重试")
+	}
+	// 3. 通知已送达但还没有通知时刻（旧记录）：先记下时刻开始冷却，不立刻补发。
+	if notice.NotifiedAt == "" {
+		notice.NotifiedAt = time.Now().UTC().Format(time.RFC3339)
+		raw, _ := json.Marshal(notice)
+		if _, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb) WHERE id=$1`, id, raw); err != nil {
+			return err
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			return err
+		}
+		return nil
+	}
+	// 4. 冷却期内不补发：给负责人留出实际处理时间，队列每轮只做一次无副作用检查。
+	if notified, parseErr := time.Parse(time.RFC3339, notice.NotifiedAt); parseErr == nil && time.Since(notified) < deliveryReviewRewakeCooldown {
+		if err = tx.Commit(r.Context()); err != nil {
+			return err
+		}
+		return nil
 	}
 	// 上一次复核运行仍未结束，再来一轮只会并行改写同一交付。
 	var assignee string
