@@ -129,7 +129,7 @@ def write_release(directory, migration=b'CREATE TABLE sample(id int);'):
     (directory / 'server/bin').mkdir(parents=True)
     (directory / 'server/migrations/001_sample.up.sql').write_bytes(migration)
     (directory / 'server/bin/migrate').write_bytes(b'test-migrate')
-    (directory / 'release.json').write_text(json.dumps({'files': s.r.checksums(directory)}))
+    (directory / 'release.json').write_text(json.dumps({'id':directory.name,'source_commit':'c'*40,'source_digest':'d'*64,'files': s.r.checksums(directory)}))
 
 
 class CompatibilityTests(unittest.TestCase):
@@ -146,6 +146,20 @@ class CompatibilityTests(unittest.TestCase):
         other = self.root / 'other'
         write_release(other)
         s.validate_seed_release(self.manifest, other)
+
+    def test_new_task_migrations_select_verified_full_seed_baseline(self):
+        other=self.root/'task-a';write_release(other,b'CREATE TABLE task_a(id int);')
+        manifest=dict(self.manifest,build={'release':str(self.release)})
+        self.assertEqual(s.restore_release(manifest,other),self.release)
+        self.assertEqual(s.restore_release(manifest,self.release),self.release)
+
+    def test_baseline_full_package_or_current_migration_tampering_stops_restore(self):
+        other=self.root/'task-a';write_release(other,b'CREATE TABLE task_a(id int);')
+        manifest=dict(self.manifest,build={'release':str(self.release)})
+        (self.release/'untracked-program').write_text('unexpected')
+        with self.assertRaisesRegex(RuntimeError,'完整制品校验失败'):s.restore_release(manifest,other)
+        (other/'server/bin/migrate').write_bytes(b'tampered')
+        with self.assertRaisesRegex(RuntimeError,'校验失败'):s.restore_release(manifest,other)
 
     def test_legacy_built_seed_uses_immutable_release_identity(self):
         s.validate_seed_release({'schema': {'fingerprint': SHA},
@@ -187,6 +201,22 @@ class CompatibilityTests(unittest.TestCase):
                 s.restore('verify-1', seed, self.root / 'pg.json')
             drain.assert_not_called()
             sql.assert_not_called()
+
+    def test_active_candidate_or_interrupted_different_seed_stops_before_mutation(self):
+        seed=self.root/'seed';write_seed(seed,dict(self.manifest,seed_id='seed-x'))
+        cfg={'server':{'DATABASE_URL':'postgres://verify_1@127.0.0.1:54321/multica_verify_1'}}
+        original_read=s.r.read
+        for active in (True,False):
+            with self.subTest(active=active):
+                def read_fixture(path):
+                    if 'deployments' in Path(path).parts:return {'release_dir':str(self.release)}
+                    if Path(path).name.endswith('-services.json'):return cfg
+                    if 'verification-install' in Path(path).parts:return {'stage':'resetting','seed_id':'other','seed_sha256':SHA}
+                    return original_read(path)
+                with patch.dict(os.environ,{},clear=True),patch.object(s,'postgres',return_value=('own','54321','fake')),patch.object(s.r,'RUN',self.root),patch.object(s.r,'lock',return_value=nullcontext()),patch.object(s.r,'read',side_effect=read_fixture),patch.object(s.r,'validate_verification_config'),patch.object(s.r,'candidate_path') as cp,patch.object(s.r,'candidate',return_value={'status':'verifying'}),patch.object(s,'sql') as sql,patch.object(s.r,'drain') as drain:
+                    cp.return_value.exists.return_value=active
+                    with self.assertRaisesRegex(RuntimeError,'未完成候选|不能切换恢复目标'):s.restore('verify-1',seed,self.root/'pg.json')
+                    sql.assert_not_called();drain.assert_not_called()
 
     def test_restored_schema_or_scrub_failure_keeps_slot_in_maintenance(self):
         seed = self.root / 'seed'

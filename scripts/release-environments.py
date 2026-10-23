@@ -611,6 +611,16 @@ def check_live_environment(env, metadata, cfg):
         raise RuntimeError('Web/API 环境身份不一致，拒绝停止服务')
 
 
+def update_release_metadata(env, metadata, release, previous):
+    manifest=read(Path(release)/'release.json');release_id=manifest['id']
+    metadata.update(release_id=release_id,release_dir=str(release),
+        previous_release_id=previous.get('release_id') if previous.get('release_id')!=release_id else previous.get('previous_release_id'),
+        commit=manifest['source_commit'],source_digest=manifest['source_digest'],deployed_at=time.strftime('%FT%TZ',time.gmtime()),
+        build_version=release_id,frontend_mode='standalone',runtime_config_file=str(config_path(env)),
+        binary_versions={'multica':output([Path(release)/'server/bin/multica','version'])})
+    metadata.pop('role_release_dirs',None)
+
+
 def deploy(env, release, timeout=900):
     require_environment(env)
     if env == 'prod' and os.environ.get('MULTICA_TASK_ID'):
@@ -667,10 +677,8 @@ def deploy(env, release, timeout=900):
             isolation_check()
             print('发布失败，已恢复切换前版本；配置与数据未重置。',file=sys.stderr)
             raise
-        m.update(release_id=release_id,release_dir=str(release),previous_release_id=prior.get('release_id') if prior.get('release_id')!=release_id else prior.get('previous_release_id'),commit=manifest['source_commit'],source_digest=manifest['source_digest'],deployed_at=time.strftime('%FT%TZ',time.gmtime()))
-        m.update(build_version=release_id,frontend_mode='standalone',runtime_config_file=str(config_path(env)),binary_versions={'multica':output([release/'server/bin/multica','version'])})
+        update_release_metadata(env,m,release,prior)
         m['log_offsets']={role: min(offsets[role],16*1024*1024) if offsets[role]>64*1024*1024 and role in ('server','web') else offsets[role] for role in offsets}
-        m.pop('role_release_dirs', None)
         write(RUN/'deployments'/f'{env}-previous.json',prior)
         write(meta_path(env),m)
         for role,pid in m['pids'].items(): (RUN/f'{env}-{role}.pid').write_text(str(pid)+'\n')

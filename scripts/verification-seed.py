@@ -321,6 +321,25 @@ def write_manifest(path, manifest):
     r.write(path / 'seed.json', manifest, True)
 
 
+def restore_release(manifest, current):
+    # 当前制品损坏不能借归位基线掩盖；只有合法的不同迁移集合才选择已验证种子的完整制品。
+    release_schema_identity(current)
+    try:
+        validate_seed_release(manifest,current)
+        return Path(current)
+    except RuntimeError:
+        baseline=(manifest.get('build') or {}).get('release')
+        if not baseline:raise
+        baseline=Path(baseline).resolve()
+        package=r.read(baseline/'release.json')
+        if r.checksums(baseline)!=package.get('files'):
+            raise RuntimeError('种子基线完整制品校验失败，拒绝恢复')
+        for key in ('id','source_commit','source_digest'):
+            if not package.get(key):raise RuntimeError('种子基线制品身份不完整')
+        validate_seed_release(manifest,baseline)
+        return baseline
+
+
 def restore(env, seed, pgconfig):
     """把种子装进专属槽位；调用方必须先让槽位进入维护态。"""
     if env not in r.VERIFICATION_ENVS or os.environ.get('MULTICA_TASK_ID'):
@@ -338,29 +357,54 @@ def restore(env, seed, pgconfig):
             raise RuntimeError('槽位存在未完成候选')
         record_path = r.RUN/'verification-install'/(env + '.json')
         record = r.read(record_path)
-        release = Path(meta['release_dir'])
-        validate_seed_release(manifest, release)
-        if record.get('stage') == 'resetting':
-            if any(r.exists(pid) for pid in meta['pids'].values()):
-                raise RuntimeError('重置中断后仍有运行进程，需要核对现场')
+        running = Path(meta['release_dir'])
+        restoring = record.get('stage') in ('stopping','resetting','account','starting')
+        if restoring:
+            if record.get('seed_id')!=(manifest.get('seed_id') or path.name) or record.get('seed_sha256')!=artifact['sha256']:
+                raise RuntimeError('上次种子恢复未完成，不能切换恢复目标')
+            release=Path(record.get('restore_release') or running)
+            validate_seed_release(manifest,release)
+            package=r.read(release/'release.json')
+            actual=r.checksums(release)
+            if any(actual.get(key)!=value for key,value in package.get('files',{}).items()):
+                raise RuntimeError('恢复中的目标制品已变化')
         else:
+            selected=restore_release(manifest,running)
+            release=running
+            if selected.resolve()!=running.resolve():
+                release=r.idle_slot(env)
+                r.copy_tree(selected,release)
+                if r.checksums(release)!=r.read(selected/'release.json')['files']:
+                    raise RuntimeError('种子基线复制后完整校验失败')
             r.check_process_ownership(env, meta)
             r.check_live_environment(env, meta, cfg)
+        # 记录选定的完整制品；停机或启动中断后仍按同一目标和原PID核对接续。
+        record.update(stage='stopping',seed=str(path),seed_id=manifest.get('seed_id') or path.name,
+                      seed_sha256=artifact['sha256'],restore_release=str(release))
+        r.write(record_path,record,True)
+        r.check_process_ownership(env,meta,allow_unhealthy=True)
+        daemon=meta['pids'].get('daemon')
+        if daemon and r.exists(daemon):
             r.drain(env, meta)
             r.http(r.health_url(env) + '/shutdown', 'POST')
             deadline = time.monotonic() + 30
-            while r.exists(meta['pids']['daemon']) and time.monotonic() < deadline:
-                time.sleep(.2)
-            if r.exists(meta['pids']['daemon']):
-                raise RuntimeError('Daemon 未退出')
-            for service in ('web', 'server'):
-                r.owned_stop(meta['pids'][service], service, release/'apps/web' if service == 'web' else release)
+            while r.exists(daemon) and time.monotonic() < deadline:time.sleep(.2)
+            if r.exists(daemon):raise RuntimeError('Daemon 未退出')
+        for service in ('web','server'):
+            pid=meta['pids'].get(service)
+            if pid:r.owned_stop(pid,service,running/'apps/web' if service=='web' else running)
         # 不使用 FORCE；出现未识别连接时保留现场并停止。
         if sql(container, 'postgres', "SELECT count(*) FROM pg_stat_activity WHERE datname='" + dbname + "'") != '0':
             raise RuntimeError('验收数据库仍有消费者，拒绝重置')
-        record.update(stage='resetting', seed=str(path), seed_id=manifest.get('seed_id') or path.name); r.write(record_path, record, True)
+        record['stage']='resetting';r.write(record_path,record,True)
         sql(container, 'postgres', f'DROP DATABASE {dbname};\nCREATE DATABASE {dbname} OWNER {role};\nREVOKE CONNECT ON DATABASE {dbname} FROM PUBLIC;\nGRANT CONNECT ON DATABASE {dbname} TO {role};')
         r.run([release/'server/bin/migrate', 'up'], cwd=release/'server', env={**cfg['server'], 'MULTICA_MIGRATION_BASELINE':'true'})
+        pending=record.get('staging_database')
+        if pending:
+            if not re.fullmatch(r'verification_seed_import_[0-9a-f]{16}',pending):raise RuntimeError('恢复导入库身份不符')
+            if counter(container,'postgres',"SELECT count(*) FROM pg_stat_activity WHERE datname='%s'" % pending):
+                raise RuntimeError('上次种子导入仍有消费者，保持维护')
+            sql(container,'postgres','DROP DATABASE IF EXISTS '+pending+';')
         staging = 'verification_seed_import_' + secrets.token_hex(8)
         record['staging_database'] = staging; r.write(record_path, record, True)
         sql(container, 'postgres', f'CREATE DATABASE {staging};')
@@ -374,7 +418,12 @@ def restore(env, seed, pgconfig):
         # 种子可能来自另一槽位；登录凭据属于槽位安装记录，重置后重新绑定到本槽位密码。
         hashed = password_hash(record['password']).replace("'", "''")
         sql(container, dbname, "UPDATE \"user\" SET password_hash='%s' WHERE account='%s';" % (hashed, record['account'].replace("'", "''")))
+        previous=dict(meta)
+        if release.resolve()!=running.resolve():r.update_release_metadata(env,meta,release,previous)
+        meta['pids']={};r.write(r.meta_path(env),meta,True)
+        record['stage']='account';r.write(record_path,record,True)
         pid = r.start([release/'server/bin/server'], release, cfg['server'], meta['log_paths']['server'])
+        meta['pids']={'server':pid};r.write(r.meta_path(env),meta,True)
         try:
             r.ready(meta['backend_url'] + '/health', pid=pid)
             login = i.api(meta['backend_url'], '/auth/login', dict(account=record['account'], password=record['password']))
@@ -392,7 +441,14 @@ def restore(env, seed, pgconfig):
             account = i.pwd.getpwnam(cfg['daemon']['MULTICA_SERVICE_USER']); os.chown(profile_path, account.pw_uid, account.pw_gid)
         finally:
             r.owned_stop(pid, 'server', release)
-        meta['pids'] = r.launch(env, release, cfg, meta); r.write(r.meta_path(env), meta, True)
+        record['stage']='starting';r.write(record_path,record,True)
+        meta['pids']={};r.write(r.meta_path(env),meta,True)
+        try:
+            meta['pids'] = r.launch(env, release, cfg, meta)
+        finally:
+            # 部分启动也保存已创建的PID；重入只回收归属核对通过的进程。
+            r.write(r.meta_path(env), meta, True)
+            for service,pid in meta['pids'].items():(r.RUN/(env+'-'+service+'.pid')).write_text(str(pid)+'\n')
         i.verify_installed(env)
     return dict(environment=env, seed_id=manifest.get('seed_id') or path.name, container=container, database=dbname)
 
