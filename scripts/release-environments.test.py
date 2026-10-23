@@ -108,7 +108,8 @@ class ReleaseTests(unittest.TestCase):
                 def command(args,**kwargs):
                     commands.append((args,kwargs['env'].copy()))
                     if args[0]=='go': raise ReachedGoBuild()
-                with patch.dict(r.os.environ,inherited,clear=True),patch.object(r,'checked_source',return_value=(source,'a'*40)),patch.object(r,'build_version',return_value='v-fixture'),patch.object(r,'source_digest',return_value=('digest',[])),patch.object(r,'read',return_value={'release_dir':str(base/'previous')}),patch.object(r,'copy_tree'),patch.object(r,'run',side_effect=command):
+                # 1. build() 先跑执行器预检，本用例只验证构建环境变量，预检在这里 mock 掉。
+                with patch.dict(r.os.environ,inherited,clear=True),patch.object(r,'executor_preflight',return_value={'fixture':'preflight mocked'}),patch.object(r,'checked_source',return_value=(source,'a'*40)),patch.object(r,'build_version',return_value='v-fixture'),patch.object(r,'source_digest',return_value=('digest',[])),patch.object(r,'read',return_value={'release_dir':str(base/'previous')}),patch.object(r,'copy_tree'),patch.object(r,'run',side_effect=command):
                     with self.assertRaises(ReachedGoBuild): r.build(source,base/'target')
                 self.assertEqual([args[0] for args,env in commands],['pnpm','pnpm','go'])
                 for args,env in commands:
@@ -224,7 +225,8 @@ class ReleaseTests(unittest.TestCase):
             inputs={key:r.hashlib.sha256().hexdigest() for key in ('go','web')}
             # 产物复用同时核对注入的版本串；测试源码无版本脚本，使用提交前缀。
             r.write(current/'release.json',{'version':'a'*12,'inputs':inputs,'files':r.checksums(current)})
-            with patch.object(r,'RUN',root/'state'), patch.object(r,'checked_source',return_value=(source,'a'*40)), patch.object(r,'source_digest',return_value=('b'*64,[])):
+            # 2. 预检依赖真实执行器与源码清单，产物身份用例只需要构建结果，改为 mock。
+            with patch.object(r,'executor_preflight',return_value={'fixture':'preflight mocked'}), patch.object(r,'RUN',root/'state'), patch.object(r,'checked_source',return_value=(source,'a'*40)), patch.object(r,'source_digest',return_value=('b'*64,[])):
                 r.write(r.meta_path('int'),{'release_dir':str(current)})
                 first=r.build(source,root/'first'); second=r.build(source,root/'second')
             self.assertNotEqual(first['id'],second['id'])
