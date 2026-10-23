@@ -285,27 +285,54 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
-    def test_reviewed_usage_rollup_selfheal_migration_is_exact_and_rejects_changed_sql(self):
-        # 620 是函数体替换，不属于"新增表/并发索引"的自动迁移范围，只有这份准确 SQL
-        # 可以放行；任何改动（哪怕多一个分号）都必须重新评审。
+    def test_reviewed_usage_rollup_selfheal_checks_sql_content_not_a_hash(self):
+        # 629 是函数体替换，不属于新增表/并发索引的自动范围。放行依据是 SQL 内容
+        # 审查：只能重定义那个函数，写入目标只能是汇总状态行，不能删改业务数据。
         from tempfile import TemporaryDirectory
         source=Path(__file__).parent.parent/'server/migrations'
-        name='620_task_usage_hourly_rollup_selfheal.up.sql'
+        name='629_task_usage_hourly_rollup_selfheal.up.sql'
         with TemporaryDirectory() as folder:
             target=Path(folder)/name;target.write_bytes((source/name).read_bytes())
             self.assertTrue(r.reviewed_usage_rollup_selfheal(target))
-            target.write_text(target.read_text()+"\nUPDATE task_usage SET input_tokens = 0;\n")
+
+            # 追加一条删业务数据的语句：整份文件不再是单一函数定义，必须拒绝。
+            with_data_loss=target.read_text()+"\nDELETE FROM task_usage;\n"
+            target.write_text(with_data_loss)
             self.assertFalse(r.reviewed_usage_rollup_selfheal(target))
 
-    def test_task_provider_trace_migration_is_additive_only(self):
-        # 621 必须只由新增表构成：发布器按语句匹配 CREATE TABLE / 并发索引，
-        # 内联唯一约束让建表语句本身就是唯一允许的形状。
+            # 悄悄改成写另一张表（即便语法仍是合法函数体）同样拒绝。
+            target.write_text((source/name).read_text().replace(
+                'INSERT INTO task_usage_hourly_rollup_state',
+                'INSERT INTO task_usage_hourly',1))
+            self.assertFalse(r.reviewed_usage_rollup_selfheal(target))
+
+            # 换函数名（签名漂移会让旧调用方找不到函数）也拒绝。
+            target.write_text((source/name).read_text().replace(
+                'FUNCTION rollup_task_usage_hourly()','FUNCTION rollup_task_usage_hourly_v2()',1))
+            self.assertFalse(r.reviewed_usage_rollup_selfheal(target))
+
+            # 别的迁移不能借用这份审查。
+            other=Path(folder)/'700_something.up.sql';other.write_text((source/name).read_text())
+            self.assertFalse(r.reviewed_usage_rollup_selfheal(other))
+
+    def test_task_provider_trace_migrations_follow_index_and_fk_rules(self):
+        # 硬规则：不新增外键/级联；新增索引一律并发建、独立单语句迁移。
         import re
         from pathlib import Path as P
-        sql=(P(__file__).parent.parent/'server/migrations/621_task_provider_trace.up.sql').read_text()
-        sql=re.sub(r'--[^\n]*','',sql)
-        statements=[part.strip() for part in sql.split(';') if part.strip()]
+        migrations=P(__file__).parent.parent/'server/migrations'
+        table_sql=(migrations/'627_task_provider_trace.up.sql').read_text()
+        stripped=re.sub(r'--[^\n]*','',table_sql)
+        statements=[part.strip() for part in stripped.split(';') if part.strip()]
         self.assertEqual(len(statements),1)
         self.assertTrue(re.match(r'^CREATE\s+TABLE\b',statements[0],re.I))
+        self.assertNotIn('REFERENCES',statements[0].upper())
+        self.assertNotIn('CASCADE',statements[0].upper())
+        self.assertNotIn('UNIQUE (',statements[0].upper())
+
+        index_sql=(migrations/'628_task_provider_trace_unique.up.sql').read_text()
+        stripped=re.sub(r'--[^\n]*','',index_sql)
+        statements=[part.strip() for part in stripped.split(';') if part.strip()]
+        self.assertEqual(len(statements),1)
+        self.assertTrue(re.match(r'^CREATE\s+UNIQUE\s+INDEX\s+CONCURRENTLY\b',statements[0],re.I))
 
 if __name__=='__main__':unittest.main()

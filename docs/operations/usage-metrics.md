@@ -81,14 +81,19 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 父进程环境里的 `CODEBUDDY_ROOT_REQUEST_ID` 是**调用方**的请求标识，不能当作子进程
 标识；两者在实测中确实不同。
 
+`task_provider_trace` 刻意不建外键、不建级联：任务行删除时由 `DeleteTaskBatch` 在同一事务里
+显式删除本表行，上报路径先按主键取任务并解析工作区，取不到或工作区不匹配就不写库。唯一索引
+是独立单语句的并发建索引迁移，重复上报靠该索引 + `ON CONFLICT` 幂等。
+
 `correlation` 字段区分数据性质：`exact`（子进程直接给出）与 `inferred_window`
 （事后按"会话 + 时间窗"检索到的候选）。候选关联不得当成精确归属；按会话查一天
 可能返回多条链路，必须逐条核对。
 
 ## 5. 小时汇总与自愈
 
-`rollup_task_usage_hourly()` 是单例水位（`task_usage_hourly_rollup_state.id = 1`）。
-迁移 620 之后：
+`rollup_task_usage_hourly()` 是单例水位（`task_usage_hourly_rollup_state.id = 1`）。替换函数体属于
+非新增结构变更，发布器按 SQL 内容审查后放行（只允许重定义该函数、只允许写汇总状态行）。
+迁移 629 之后：
 
 - 状态行缺失时按最早一条 `task_usage` 播种，不再永久空转；
 - `1970-01-01` 视为"从未汇总"，直接跳到真实最早数据；

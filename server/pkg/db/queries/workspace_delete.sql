@@ -420,6 +420,11 @@ batch AS MATERIALIZED (
 deleted_task_usage AS (
     DELETE FROM task_usage WHERE task_id IN (SELECT id FROM batch)
 ),
+-- 链路关联故意不建外键（新增外键与级联被硬规则禁止），任务行删除时在这里显式清理，
+-- 与上面几条并列，保证工作区拆除后不留下指向已删任务的孤儿行。
+deleted_task_provider_traces AS (
+    DELETE FROM task_provider_trace WHERE task_id IN (SELECT id FROM batch)
+),
 deleted_task_messages AS (
     DELETE FROM task_message WHERE task_id IN (SELECT id FROM batch)
 ),

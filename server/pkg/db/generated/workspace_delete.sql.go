@@ -19,6 +19,9 @@ batch AS MATERIALIZED (
 deleted_task_usage AS (
     DELETE FROM task_usage WHERE task_id IN (SELECT id FROM batch)
 ),
+deleted_task_provider_traces AS (
+    DELETE FROM task_provider_trace WHERE task_id IN (SELECT id FROM batch)
+),
 deleted_task_messages AS (
     DELETE FROM task_message WHERE task_id IN (SELECT id FROM batch)
 ),
@@ -44,6 +47,8 @@ DELETE FROM agent_task_queue WHERE id IN (SELECT id FROM batch)
 // them, every arm keyed by task_id against an existing index, then the task rows
 // by primary key. The legacy FK cascades stay a safety net only: this statement
 // is what actually removes the rows, so teardown keeps working when they go.
+// 链路关联故意不建外键（新增外键与级联被硬规则禁止），任务行删除时在这里显式清理，
+// 与上面几条并列，保证工作区拆除后不留下指向已删任务的孤儿行。
 func (q *Queries) DeleteTaskBatch(ctx context.Context, taskIds []pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteTaskBatch, taskIds)
 	return err

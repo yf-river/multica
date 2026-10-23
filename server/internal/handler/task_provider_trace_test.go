@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // TestReportTaskTracesPersistsAndIsIdempotent 覆盖链路关联的写入契约：
@@ -45,7 +47,11 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
 		t.Fatalf("insert task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() {
+		// 本表不建外键/级联：任务行删掉不会带走关联，测试自己按应用层同样的方式清理。
+		testPool.Exec(ctx, `DELETE FROM task_provider_trace WHERE task_id = $1`, taskID)
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
 
 	post := func(body any) *httptest.ResponseRecorder {
 		req := withURLParam(newRequest(http.MethodPost, "/api/daemon/tasks/"+taskID+"/traces", body), "taskId", taskID)
@@ -124,5 +130,14 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 		if tr.ProviderTraceID == "" || tr.Provider != "codebuddy" {
 			t.Fatalf("unexpected hydrated trace: %#v", tr)
 		}
+	}
+
+	// 本表不建外键/级联，任务行删除必须由应用层同一事务里的 DeleteTaskBatch 带走关联。
+	// 这里走真实查询而不是手写 DELETE，验证清理确实挂在既有删除路径上。
+	if err := testHandler.Queries.DeleteTaskBatch(ctx, []pgtype.UUID{parseUUID(taskID)}); err != nil {
+		t.Fatalf("delete task batch: %v", err)
+	}
+	if total, _ := countRows(); total != 0 {
+		t.Fatalf("deleting the task must remove its trace links, %d rows left", total)
 	}
 }
