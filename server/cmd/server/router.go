@@ -1679,6 +1679,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/delivery-queue/slots/seed", h.GetVerificationSlotSeed)
 			r.Post("/api/delivery-queue/slots/seed", h.RecordVerificationSlotSeed)
 			r.Get("/api/delivery-queue/slots", h.GetVerificationLease)
+			// 选择性组合发布：一个批次对应一份候选和一次生产切换。
+			r.Get("/api/delivery-queue/batches", h.DeliveryBatch)
+			r.Post("/api/delivery-queue/batches", h.DeliveryBatch)
 			r.Get("/api/delivery-queue/{deliveryId}/authorization", h.CheckDeliveryAuthorization)
 
 			// 审核中列的审查设置：运行时、模型与提示词。

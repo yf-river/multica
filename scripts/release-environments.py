@@ -950,6 +950,26 @@ def request_path(request_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',request_id): raise RuntimeError('非法请求编号')
     return RUN/'publish-requests'/f'{request_id}.json'
 
+def batch_approval_records(record, records, meta, profile):
+    """1. 组合发布逐个成员核对：每个成员都要有自己的有效授权、固定提交和同一候选。"""
+    members=record.get('batch_members') or []
+    backend=meta['backend_url'].rstrip('/')
+    for index,member in enumerate(members):
+        delivery=next((d for d in records if d['id']==member['delivery_id']),None)
+        url=backend+'/api/delivery-queue/'+member['delivery_id']+'/authorization'
+        request=urllib.request.Request(url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request,timeout=15) as response:authorization=json.load(response)
+        if index==0 and authorization.get('publication_generation')!=record.get('publication_lease',{}).get('generation'):
+            raise RuntimeError('最终发布占用代次不匹配')
+        if not authorization.get('ready'):
+            raise RuntimeError('成员 %s 的发布授权或用户要求已变化，需要负责人重新核对'%member['delivery_id'])
+        if (not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by')
+                or not delivery.get('release_validated') or delivery['source_commit']!=member['source_commit']
+                or delivery['candidate_id']!=record['id']):
+            raise RuntimeError('成员 %s 的生产批准或组合复核已失效'%member['delivery_id'])
+        if subprocess.run(['git','--git-dir',record['git_common'],'merge-base','--is-ancestor',member['source_commit'],record['commit']]).returncode:
+            raise RuntimeError('发布候选未包含成员 %s 的批准提交'%member['delivery_id'])
+
 def check_delivery_approval(record):
     if record.get('environment', 'int') != 'int':
         raise RuntimeError('任务验收候选不能直接发布生产，必须完成 int 集成验收')
@@ -958,6 +978,8 @@ def check_delivery_approval(record):
     meta=read(meta_path('prod'));profile=read(meta['daemon_profile_path'])
     req=urllib.request.Request(meta['backend_url'].rstrip('/')+'/api/delivery-queue',headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=15) as response: records=json.load(response)
+    if record.get('batch_members'):
+        return batch_approval_records(record, records, meta, profile)
     delivery=next((d for d in records if d['id']==record['delivery_id']),None)
     authorization_url=meta['backend_url'].rstrip('/')+'/api/delivery-queue/'+record['delivery_id']+'/authorization'
     authorization_request=urllib.request.Request(authorization_url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})

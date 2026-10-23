@@ -15,12 +15,17 @@ const (
 	publishedNotice = "交付 %s 生产发布已完成，候选 %s。请核对实际生产版本、执行生产页面验证并上传截图；生产验证通过后直接标记任务完成，无需再次等待用户确认；验证未通过或发布异常时不要标记完成，按原因修复后重新交付。"
 	// 2. 发布失败只暂停交付，任务保持未完成，修复后按既有授权接续。
 	pausedNotice = "交付 %s 暂停，原因：%s。请核对实际环境和恢复资料，在既有授权内修复后接续；不要盲目重跑或覆盖其他任务占用。"
+	// 3. 组合候选就绪：本次发布清单已固定，成员一起验证组合路径，未纳入的交付不会被夹带。
+	batchReadyNotice = "交付 %s 已进入组合候选 %s，本批成员在此候选上一起验收登录、聊天、Agent 执行及相互影响。提交证据后按批次发布，未纳入本批的任务保持原状。"
 )
 
 // deliveryNoticeText 按阶段选择通知文案，避免两处各写一份而漂移。
 func deliveryNoticeText(stage, delivery, candidate, detail string) string {
 	if stage == "needs_changes" {
 		return fmt.Sprintf(pausedNotice, delivery, detail)
+	}
+	if stage == "batch_ready" {
+		return fmt.Sprintf(batchReadyNotice, delivery, candidate)
 	}
 	return fmt.Sprintf(publishedNotice, delivery, candidate)
 }

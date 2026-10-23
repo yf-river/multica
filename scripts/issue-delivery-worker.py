@@ -406,6 +406,141 @@ class Worker:
             finally:
                 stopped.set()
 
+    # 1. 选择性组合发布：发布器空闲时开一个收集窗口，把已验收且仍有授权的交付固定成一批，
+    # 一个批次只构建、验收和发布一次，成员各自回填结果。
+    def batch_config(self):
+        path=r.RUN/'delivery-batch.json'
+        if not path.exists():return None
+        config=r.read(path)
+        if config.get('enabled') is not True or config.get('controller_environment')!=self.env:return None
+        return config
+
+    def batch_window(self):
+        return int((self.batch_config() or {}).get('window_seconds') or 60)
+
+    def batch_call(self,body=None):
+        return self.api('delivery-queue/batches',body)
+
+    def publication_owner(self):
+        current=self.api('delivery-queue/publication')
+        return None if current.get('state')=='idle' else current
+
+    def batch_row(self,rows,identity):
+        return next((d for d in rows if d['id']==identity),None)
+
+    def batch_source(self,batch,members):
+        """最新主分支 + 各成员固定提交；冲突时回填到具体成员，不半发布。"""
+        r.run(['git','-C',r.ROOT,'fetch','origin','refs/heads/personal-studio-upstream'])
+        base=r.output(['git','-C',r.ROOT,'rev-parse','origin/personal-studio-upstream'])
+        path=r.RUN/'delivery-sources'/('batch-'+batch['id']);branch='feature/delivery/batch-'+batch['id']
+        if path.exists():
+            if r.output(['git','status','--porcelain','--untracked-files=all'],cwd=path):raise RuntimeError('批次构建目录存在未保存内容')
+            r.run(['git','-C',r.ROOT,'worktree','remove','--force',path])
+        r.run(['git','-C',r.ROOT,'worktree','add','-B',branch,path,base])
+        for member in members:
+            if subprocess.run(['git','-C',r.ROOT,'cat-file','-e',member['source_commit']+'^{commit}'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+                return path,base,base,member
+            if subprocess.run(['git','merge','--no-ff','--no-edit',member['source_commit']],cwd=path,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+                r.run(['git','merge','--abort'],cwd=path)
+                return path,base,None,member
+        return path,base,r.output(['git','rev-parse','HEAD'],cwd=path),None
+
+    def tick_batches(self,rows):
+        if not self.batch_config():return False
+        state=self.batch_call();batch=state.get('batch');members=state.get('members') or []
+        if not batch:
+            if not any(d['phase']=='approved' for d in rows):return False
+            if self.publication_owner():return True
+            self.batch_call(dict(action='open',window_seconds=self.batch_window()))
+            return True
+        token=batch.get('worker_token') or ''
+        if batch['status']=='collecting':
+            if time.time()<batch['collect_until']:return True
+            state=self.batch_call(dict(action='freeze',batch_id=batch['id']))
+            batch=state['batch'];members=state.get('members') or []
+            if batch['status'] in ('cancelled','needs_changes'):return True
+        if batch['status']=='frozen':return self.batch_prepare(batch,members,rows)
+        if batch['status']=='validating':return self.batch_validate(batch,members,rows)
+        if batch['status']=='publishing':return self.batch_check_release(batch,rows)
+        return True
+
+    def batch_prepare(self,batch,members,rows):
+        representative=members[0]
+        delivery=self.batch_row(rows,representative['delivery_id'])
+        if not delivery:return True
+        with self.publication_guard(delivery) as (lease,fence):
+            try:
+                path,base,commit,conflict=self.batch_source(batch,members)
+            except Exception as error:
+                self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=str(error)[:1200]))
+                return True
+            if conflict:
+                detail='提交 %s 无法合并到最新主分支，请在原任务分支解决后重新交付'%conflict['source_commit']
+                self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=detail,conflict_delivery_id=conflict['delivery_id']))
+                self.finish_publication(delivery)
+                return True
+            self.batch_call(dict(action='preparing',batch_id=batch['id'],worker_token=batch['worker_token'],base_commit=base))
+            fence()
+            record=r.prepare_int(path,delivery=dict(delivery_id=delivery['id'],delivery_env=self.env,
+                approved_source=delivery['source_commit'],publication_lease=lease,batch_id=batch['id'],
+                batch_members=[dict(delivery_id=m['delivery_id'],source_commit=m['source_commit']) for m in members]),fence=fence)
+        self.batch_call(dict(action='validating',batch_id=batch['id'],worker_token=batch['worker_token'],
+            candidate_id=record['id'],candidate_commit=commit))
+        for member in members:
+            row=self.batch_row(rows,member['delivery_id'])
+            if not row:continue
+            try:self.advance(row,'notify-result',stage='batch_ready')
+            except urllib.error.HTTPError as error:
+                if error.code!=409:raise
+        return True
+
+    def batch_validate(self,batch,members,rows):
+        representative=self.batch_row(rows,members[0]['delivery_id']) if members else None
+        candidate=r.candidate() if r.candidate_path().exists() else None
+        if not candidate or candidate.get('batch_id')!=batch['id']:
+            self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='组合候选记录缺失，需要核对 int 现场'))
+            return True
+        if representative:self.publication(representative,'heartbeat')
+        if candidate['status']=='verifying':
+            # 组合验收由批次代表交付提交；证据与候选一起归档后才进入发布。
+            return True
+        if candidate['status']!='accepted':return True
+        state=self.batch_call(dict(action='publishing',batch_id=batch['id'],worker_token=batch['worker_token']))
+        if state['batch']['status']!='publishing':
+            self.finish_publication(representative);r.release_candidate(candidate['id']);return True
+        return self.batch_release(batch,candidate,representative,state['members'])
+
+    def batch_release(self,batch,candidate,delivery,members):
+        path=Path(candidate['source']);tested=candidate['commit']
+        r.run(['git','fetch','origin','personal-studio-upstream'],cwd=r.ROOT)
+        if subprocess.run(['git','merge-base','--is-ancestor','origin/personal-studio-upstream',tested],cwd=r.ROOT).returncode:
+            self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error='队列外主分支发生变化，候选与成员证据已保留，需要核对后重排'))
+            self.finish_publication(delivery);r.release_candidate(candidate['id']);return True
+        self.publication(delivery,'check')
+        r.run(['git','push','origin',tested+':refs/heads/personal-studio-upstream'],cwd=path)
+        if r.output(['git','ls-remote','origin','refs/heads/personal-studio-upstream'],cwd=r.ROOT).split()[0]!=tested:
+            raise RuntimeError('远端主分支核对失败')
+        r.request_release(candidate['id'])
+        return True
+
+    def batch_check_release(self,batch,rows):
+        representative=self.batch_row(rows,(r.candidate().get('delivery_id') if r.candidate_path().exists() else ''))
+        candidate=r.candidate() if r.candidate_path().exists() else None
+        if not candidate or candidate.get('batch_id')!=batch['id']:
+            return True
+        if representative:self.publication(representative,'heartbeat')
+        target=r.request_path(candidate['id'])
+        if not target.exists():return True
+        result=r.read(target)
+        if result['status'] in ('queued','publishing'):return True
+        if result['status']=='succeeded':
+            self.batch_call(dict(action='published',batch_id=batch['id'],worker_token=batch['worker_token'],candidate_commit=candidate['commit']))
+        else:
+            self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=result.get('error','生产更新失败')[:1200]))
+        if representative:self.finish_publication(representative)
+        r.release_candidate(candidate['id'])
+        return True
+
     def tick(self):
         # 固定 int/prod 只由生产控制队列调度，int 数据库不能另建同名占用抢写环境。
         if self.env!='prod':return
@@ -420,6 +555,12 @@ class Worker:
             else:
                 managed=self.pool_dispatch(rows,current_id,allow_new=False)
             rows=[d for d in rows if d['id'] not in managed]
+            # 2. 启用组批后，已批准交付统一由批次发布；单项流程不再单独领取，避免同一任务被发布两次。
+            if self.batch_config():
+                try:
+                    if self.tick_batches(rows):return
+                except Busy:return
+                rows=[d for d in rows if d['phase']!='approved']
             owner=next((d for d in rows if d['id']==current_id),None)
             if current and owner and (owner['phase'] in ('cancelled','needs_changes') or (owner['phase']=='awaiting_review' and not owner.get('plan_snapshot',{}).get('authorization_pending'))) and current['status'] in ('verifying','accepted'):
                 r.release_candidate(current['id'])

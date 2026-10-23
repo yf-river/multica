@@ -65,6 +65,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		Generation      int64           `json:"publication_generation"`
 		ValidationPlan  json.RawMessage `json:"validation_plan"`
 		CandidateCommit string          `json:"candidate_commit"`
+		Stage           string          `json:"stage"`
 		Checks          []deliveryCheck `json:"evidence"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil {
@@ -98,7 +99,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Action == "notify-result" {
-		if token == "" || token != body.Token || (phase != "published" && phase != "needs_changes") {
+		// 修改 1. 组合候选就绪时成员还在授权阶段：只按持久通知号提醒一次组合验收，不改交付阶段。
+		batchReady := body.Stage == "batch_ready" && phase == "approved"
+		if token == "" || token != body.Token || (phase != "published" && phase != "needs_changes" && !batchReady) {
 			writeError(w, 409, "当前交付不允许通知结果")
 			return
 		}
@@ -106,7 +109,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "读取通知状态失败")
 			return
 		}
-		if err = h.notifyDeliveryResult(r, ws, issue, body.ID, phase); err != nil {
+		if err = h.notifyDeliveryResult(r, ws, issue, body.ID, ternaryStage(batchReady, "batch_ready", phase)); err != nil {
 			writeError(w, 500, "结果通知失败，后台将重试")
 			return
 		}
