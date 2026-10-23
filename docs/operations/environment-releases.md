@@ -73,6 +73,7 @@ multica issue delivery confirm-plan GONG-24 --file /absolute/confirmation.json
 multica issue delivery revoke-release GONG-24 --file /absolute/revocation.json
 multica issue delivery submit GONG-24 --file /absolute/delivery.json
 multica issue delivery status GONG-24
+multica issue delivery bind-checks GONG-24 --delivery <UUID> --file /absolute/required-checks.json
 multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidence.json
 ```
 
@@ -81,7 +82,19 @@ multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidenc
 - revoke-release：同样引用当前方案和用户撤销评论及 revision、`scope`；保留原授权及撤销依据，不删除历史。
 - status：返回 `authorizations`（用户原话、类型、范围、登记者和撤销状态）、`user_comments_version`（当前用户评论版本摘要）及原交付记录。每条交付带 `authorization_state`：`user_authorization` 表示等待用户授权，`owner_review` 表示已落库待通知/待负责人核对，`review_incomplete` 表示通知已发出但复核尚未接续；其他阶段为空。
 - delivery：固定 `operation_id`、完整 `source_commit`、`source_branch`、`base_commit` 和本地 `evidence`。证据是非空数组，每项含 `name`、`status: passed`、实际 `evidence`。重试保持操作号与内容一致。
-- accept：当前交付 `revision` 和真实 int 业务验证的 `evidence`。存在发布授权时，同时提交 `authorization_id`、`scope_review`、`user_comments_version`，说明准确候选仍在授权范围内；缺少范围复核时只完成联调，不能自动发布。由按钮批准的候选复验使用 `authorization_id: "button"`，仅既有真实按钮批准允许复用。
+- required_checks：提交时按已确认方案列出业务检查，保存到交付的 `plan_snapshot`，每项包含 `name` 与 `stage`（`verification` 独立功能验收、`integration` 最终组合验收），两个阶段各至少一项。六个协调检查名称不能充当业务检查。清单一经绑定不能删减或替换；范围变化使用新方案和交付。
+- bind-checks：已有未发布交付缺清单时，负责人引用原 `plan_id`、当前 `revision` 和 `required_checks` 显式绑定，相同清单可幂等重试，无需用户重复授权。已发布历史不重开，失败交付不会因此自动重试。
+
+```json
+{"revision":3,"plan_id":"<当前方案UUID>","required_checks":[
+  {"name":"真实模型与用量归属","stage":"verification"},
+  {"name":"集成用量对账与页面","stage":"integration"}
+]}
+```
+
+自动协调结果可以保留，但缺业务清单或必要项时 `acceptance_submitted` 为 false，平台通知负责人补验；不能靠六项协调结果晋级。`accept`、`approve`、发布器晋级和批次发布都核对业务项；组合代表的同一候选证据覆盖每个成员的集成清单。返回缺项时补真实检查，禁止把未执行事项改名标成通过。最终发布授权核对在 publishing 或已复核阶段也会拒绝缺项，并返回独立的 `business_error`，不把业务缺口解释成用户撤权。证据记录中保留每项实际来源，接口校验覆盖关系不能代替真实性审查。
+
+- accept：当前交付 `revision`、准确 `candidate_id` 和实际业务验证的 `evidence`。存在发布授权时，同时提交 `authorization_id`、`scope_review`、`user_comments_version`，说明准确候选仍在授权范围内；缺少范围复核时只完成联调，不能自动发布。由按钮批准的候选复验使用 `authorization_id: "button"`，仅既有真实按钮批准允许复用。
 - approve：验收后可引用新用户评论，提供 `comment_id`、`comment_revision`、`scope`、`scope_review`、`user_comments_version`；也可直接引用已有 `authorization_id` 并提供范围复核。任务身份不能无依据自批。
 
 ## 排队与源码恢复

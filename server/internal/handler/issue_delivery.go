@@ -209,13 +209,14 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		OperationID     string          `json:"operation_id"`
-		Commit          string          `json:"source_commit"`
-		Branch          string          `json:"source_branch"`
-		Base            string          `json:"base_commit"`
-		Checks          []deliveryCheck `json:"evidence"`
-		ReplaceID       string          `json:"replace_delivery_id"`
-		ReplaceRevision int64           `json:"replace_revision"`
+		OperationID     string                  `json:"operation_id"`
+		Commit          string                  `json:"source_commit"`
+		Branch          string                  `json:"source_branch"`
+		Base            string                  `json:"base_commit"`
+		Checks          []deliveryCheck         `json:"evidence"`
+		ReplaceID       string                  `json:"replace_delivery_id"`
+		ReplaceRevision int64                   `json:"replace_revision"`
+		RequiredChecks  []requiredDeliveryCheck `json:"required_checks"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body) != nil || !deliveryCommit.MatchString(body.Commit) || !deliveryCommit.MatchString(body.Base) || !deliveryBranch.MatchString(body.Branch) || strings.Contains(body.Branch, "..") || !validDeliveryChecks(body.Checks) {
 		writeError(w, 400, "需要完整提交、任务分支、基线及通过的检查证据")
@@ -282,6 +283,20 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "替换交付失败")
 		return
 	}
+	if len(body.RequiredChecks) > 0 {
+		required, checkErr := normalizeRequiredDeliveryChecks(body.RequiredChecks)
+		if checkErr != nil {
+			writeError(w, 400, checkErr.Error())
+			return
+		}
+		var snapshot map[string]json.RawMessage
+		if json.Unmarshal(planSnapshot, &snapshot) != nil {
+			writeError(w, 500, "读取方案快照失败")
+			return
+		}
+		snapshot["required_checks"], _ = json.Marshal(required)
+		planSnapshot, _ = json.Marshal(snapshot)
+	}
 	evidence, _ := json.Marshal(body.Checks)
 	tag, err := tx.Exec(r.Context(), `INSERT INTO issue_delivery(id,workspace_id,issue_id,operation_id,plan_id,source_commit,source_branch,base_commit,evidence,verification_comment_id,release_comment_id,plan_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, dbid.NewV7(), ws, issue, op, plan, body.Commit, body.Branch, body.Base, evidence, dbid.NewV7(), dbid.NewV7(), planSnapshot)
 	if err == nil && tag.RowsAffected() == 1 {
@@ -315,10 +330,12 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Action      string          `json:"action"`
-		Revision    int64           `json:"revision"`
-		Checks      []deliveryCheck `json:"evidence"`
-		CandidateID string          `json:"candidate_id"`
+		Action         string                  `json:"action"`
+		Revision       int64                   `json:"revision"`
+		Checks         []deliveryCheck         `json:"evidence"`
+		CandidateID    string                  `json:"candidate_id"`
+		PlanID         string                  `json:"plan_id"`
+		RequiredChecks []requiredDeliveryCheck `json:"required_checks"`
 		deliveryAuthorizationInput
 		AuthorizationID string `json:"authorization_id"`
 		ScopeReview     string `json:"scope_review"`
@@ -346,6 +363,16 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "交付记录不存在")
 		return
 	}
+	if body.Action == "accept" && phase != "published" {
+		stage := "verification"
+		if phase == "preparing_release" || phase == "approved" {
+			stage = "integration"
+		}
+		if err = requireDeliveryChecks(r.Context(), tx, id, body.CandidateID, stage, body.Checks); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
+	}
 	if body.Action == "accept" && body.CandidateID != "" && body.CandidateID == candidate && validDeliveryChecks(body.Checks) {
 		checks, _ := json.Marshal(body.Checks)
 		var recorded bool
@@ -359,11 +386,16 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.Action == "bind-checks" && deliveryChecksAlreadyBound(r.Context(), tx, id, body.PlanID, body.RequiredChecks) {
+		tx.Rollback(r.Context())
+		h.deliveryJSON(w, r, ws, issue)
+		return
+	}
 	if revision != body.Revision {
 		writeError(w, 409, "交付版本已变化，请刷新后重试")
 		return
 	}
-	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" {
+	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" || body.Action == "bind-checks" {
 		var valid bool
 		err = tx.QueryRow(r.Context(), deliveryPlanValidSQL, id).Scan(&valid)
 		if err != nil || !valid {
@@ -372,6 +404,12 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	switch body.Action {
+	case "bind-checks":
+		if err = bindDeliveryRequiredChecks(r.Context(), tx, id, body.PlanID, body.RequiredChecks); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET revision=revision+1,updated_at=now() WHERE id=$1`, id)
 	case "accept":
 		batchCandidate := ""
 		if phase == "approved" {
@@ -396,13 +434,17 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		evidence, _ := json.Marshal(body.Checks)
-		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,workspace_id,issue_id,id,candidate_id,COALESCE(plan_snapshot->>'candidate_commit',source_commit),COALESCE(plan_snapshot->'candidate_identity','{}'),$3 FROM issue_delivery WHERE id=$2 ON CONFLICT(delivery_id,candidate_id) DO NOTHING`, dbid.NewV7(), id, evidence)
+		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,workspace_id,issue_id,id,candidate_id,COALESCE(plan_snapshot->>'candidate_commit',source_commit),COALESCE(plan_snapshot->'candidate_identity','{}'),$3 FROM issue_delivery WHERE id=$2 ON CONFLICT(delivery_id,candidate_id) DO UPDATE SET evidence=EXCLUDED.evidence`, dbid.NewV7(), id, evidence)
 		if err != nil {
 			writeError(w, 500, "保存验收历史失败")
 			return
 		}
 		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=true,evidence=$4,error='',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND id=$3`, ws, issue, id, evidence)
 	case "approve":
+		if err = requireStoredDeliveryChecks(r.Context(), tx, id, "verification"); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
 		if phase != "awaiting_review" {
 			writeError(w, 409, "该交付尚未完成联调审核")
 			return
