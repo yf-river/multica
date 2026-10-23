@@ -57,7 +57,7 @@ python3 scripts/verification-seed.py status
 
 ## 需求与开发
 
-ida-developer、multica-developer 的沟通约定保存在各自 Agent 指令中：先查项目事实，澄清目标和边界，输出编号行动摘要及完整计划，用户确认一次后执行已授权动作。Multica 新任务从 `origin/personal-studio-upstream` 创建任务分支；已有任务续接原分支。保留其他任务的未提交内容。
+开发 Agent 依据当前指令与项目技能沟通：先查项目事实，澄清目标和边界，输出编号行动摘要及完整计划，用户确认一次后执行已授权动作。Multica 新任务从 `origin/personal-studio-upstream` 创建任务分支；已有任务续接原分支。保留其他任务的未提交内容。
 
 续接已有任务先读取交付记录并复用当前方案；代码与方案没有变化时，不重发方案来引导确认。联调由 submit 后的平台队列准备，不先手动构建再补交付记录。
 
