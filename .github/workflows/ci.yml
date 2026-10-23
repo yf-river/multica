@@ -473,6 +473,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://multica:multica@localhost:5432/multica?sslmode=disable
+      MULTICA_TEST_DATABASE_URL: postgres://multica:multica@localhost:5432/multica?sslmode=disable
       # Wires up the RedisLocalSkill*_test.go suite. Distinct from REDIS_URL
       # (which would flip the server binary itself onto the Redis-backed
       # realtime relay + request stores); the tests talk to this Redis
