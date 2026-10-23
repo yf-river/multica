@@ -4701,9 +4701,9 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to verify stored traces")
 			return
 		}
-		byKey := make(map[string]string, len(stored))
+		byKey := make(map[string]db.TaskProviderTrace, len(stored))
 		for _, row := range stored {
-			byKey[row.Provider+"|"+row.ProviderTraceID] = row.Correlation
+			byKey[row.Provider+"|"+row.ProviderTraceID] = row
 		}
 		for _, p := range planned {
 			got, ok := byKey[p.Provider+"|"+p.TraceID]
@@ -4712,8 +4712,12 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// exact 请求被推断覆盖、或写成了未知强度，都说明落账不符预期。
-			if p.Correlation == "exact" && got != "exact" {
+			if p.Correlation == "exact" && got.Correlation != "exact" {
 				writeError(w, http.StatusInternalServerError, "trace correlation downgraded: "+p.TraceID)
+				return
+			}
+			if p.Correlation == "exact" && p.SessionID != "" && got.SessionID != p.SessionID {
+				writeError(w, http.StatusConflict, "trace session conflicts with existing exact association: "+p.TraceID)
 				return
 			}
 		}

@@ -93,8 +93,8 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 	rec = post(map[string]any{"traces": []map[string]any{
 		{"provider": "codebuddy", "session_id": "sess-1-renamed", "provider_trace_id": "trace-a", "observation_space": "codebuddy-model-request-prod"},
 	}})
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("re-report: got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("conflicting exact report must return 409: got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if total, _ := countRows(); total != 2 {
 		t.Fatalf("re-report must not duplicate rows, got %d", total)
@@ -139,7 +139,7 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 
 	// 反过来可以升级：先落一条 inferred_window，再用 exact 覆盖成精确关联。
 	rec = post(map[string]any{"traces": []map[string]any{
-		{"provider": "codebuddy", "session_id": "sess-2", "provider_trace_id": "trace-b", "correlation": "exact", "source": "stream_json"},
+		{"provider": "codebuddy", "session_id": "sess-exact-2", "provider_trace_id": "trace-b", "correlation": "exact", "source": "stream_json"},
 	}})
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("upgrade attempt: got %d body=%s", rec.Code, rec.Body.String())
@@ -150,8 +150,25 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 	`, taskID).Scan(&session, &correlation, &space); err != nil {
 		t.Fatalf("reload trace-b: %v", err)
 	}
-	if correlation != "exact" || space != "stream_json" || session != "sess-2" {
+	if correlation != "exact" || space != "stream_json" || session != "sess-exact-2" {
 		t.Fatalf("exact must upgrade inferred_window: correlation=%q source=%q session=%q", correlation, space, session)
+	}
+
+	// 精确来源没自报 session 时，升级不得把历史猜测当成精确 session。
+	for _, item := range []map[string]any{
+		{"provider": "codebuddy", "provider_trace_id": "trace-c", "session_id": "guessed-session", "correlation": "inferred_window", "source": "agentlens_query"},
+		{"provider": "codebuddy", "provider_trace_id": "trace-c", "correlation": "exact", "source": "stream_json"},
+	} {
+		if rec := post(map[string]any{"traces": []map[string]any{item}}); rec.Code != http.StatusNoContent {
+			t.Fatalf("unknown exact session: got %d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	if err := testPool.QueryRow(ctx, `SELECT session_id, correlation FROM task_provider_trace
+		WHERE task_id=$1 AND provider_trace_id='trace-c'`, taskID).Scan(&session, &correlation); err != nil {
+		t.Fatal(err)
+	}
+	if session != "" || correlation != "exact" {
+		t.Fatalf("unknown exact session must stay unknown: session=%q correlation=%q", session, correlation)
 	}
 
 	// 整批校验：一条非法 correlation 让整个请求 400，同一批里的合法条目也不能先落库。
@@ -170,8 +187,8 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 	// 执行日志端点把链路挂回任务行，0..N 条都要能读出来。
 	taskList := []AgentTaskResponse{{ID: taskID}}
 	testHandler.hydrateTaskTraces(ctx, parseUUID(issueID), taskList)
-	if len(taskList[0].Traces) != 2 {
-		t.Fatalf("expected 2 hydrated traces, got %#v", taskList[0].Traces)
+	if len(taskList[0].Traces) != 3 {
+		t.Fatalf("expected 3 hydrated traces, got %#v", taskList[0].Traces)
 	}
 	for _, tr := range taskList[0].Traces {
 		if tr.ProviderTraceID == "" || tr.Provider != "codebuddy" {
