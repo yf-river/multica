@@ -608,3 +608,111 @@ func TestDeliveryBatchMembersSharePublicationAuthorization(t *testing.T) {
 	}
 	publication("release", lease.Generation)
 }
+
+func TestDeliveryBatchRepeatedNoticesPreserveUserCommentsVersion(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	delivery, token := batchFixture(t)
+	dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='single-before-notices' WHERE id=$1`, delivery)
+	var issue, version string
+	dbfx.QueryRow(t, `SELECT issue_id::text FROM issue_delivery WHERE id=$1`, delivery).Scan(&issue)
+	dbfx.QueryRow(t, deliveryCommentsVersionSQL, testWorkspaceID, issue).Scan(&version)
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=jsonb_build_object('authorization_review',jsonb_build_object('authorization_id','button','comments_version',$2::text,'source_commit',source_commit,'candidate_id',candidate_id)) WHERE id=$1`, delivery, version)
+	var previousNotice string
+	for round := 0; round < 2; round++ {
+		batch, _ := openBatch(t, 60)
+		batch, _ = freezeBatch(t, batch.ID)
+		batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("b", 40)}).Want(200)
+		batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "repeat-notice-" + string(rune('a'+round)), "candidate_commit": strings.Repeat("c", 40)}).Want(200)
+		for range 2 {
+			testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": 0, "worker_token": token, "action": "notify-result", "stage": "batch_ready"})).Want(200)
+		}
+		var currentVersion, notice string
+		dbfx.QueryRow(t, deliveryCommentsVersionSQL, testWorkspaceID, issue).Scan(&currentVersion)
+		if currentVersion != version {
+			t.Fatalf("round %d platform notice changed user version: %s != %s", round, currentVersion, version)
+		}
+		var deliveryContext map[string]any
+		testutil.Call(t, testHandler.GetIssueDeliveries, withURLParam(newRequest("GET", "/api/issues/"+issue+"/delivery", nil), "id", issue)).Want(200).JSON(&deliveryContext)
+		if deliveryContext["user_comments_version"] != version {
+			t.Fatalf("delivery context version: %v", deliveryContext["user_comments_version"])
+		}
+		tx, err := testPool.Begin(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready, err := deliveryAuthorizationReady(context.Background(), tx, testWorkspaceID, issue, delivery)
+		tx.Rollback(context.Background())
+		if err != nil || !ready {
+			t.Fatalf("round %d authorization ready=%v err=%v", round, ready, err)
+		}
+		var snapshot string
+		dbfx.QueryRow(t, `SELECT plan_snapshot::text FROM issue_delivery WHERE id=$1`, delivery).Scan(&snapshot)
+		dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_review' WHERE id=$1`, delivery)
+		tx, err = testPool.Begin(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready, err = deliveryAuthorizationReady(context.Background(), tx, testWorkspaceID, issue, delivery)
+		tx.Rollback(context.Background())
+		if err != nil || !ready {
+			t.Fatalf("round %d legacy approval invalidated by platform notices: %v %v", round, ready, err)
+		}
+		dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=$2::jsonb WHERE id=$1`, delivery, snapshot)
+		dbfx.QueryRow(t, `SELECT comment_id::text FROM delivery_notice WHERE delivery_id=$1 AND stage='batch_ready'`, delivery).Scan(&notice)
+		if round == 1 {
+			if notice == previousNotice {
+				t.Fatal("new batch reused previous notice")
+			}
+			var archived bool
+			dbfx.QueryRow(t, `SELECT EXISTS(SELECT 1 FROM delivery_notice WHERE delivery_id=$1 AND stage='batch_ready_history:'||$2::text AND comment_id=$2::uuid AND delivered_at IS NOT NULL)`, delivery, previousNotice).Scan(&archived)
+			if !archived {
+				t.Fatal("original exact notice provenance lost")
+			}
+		}
+		previousNotice = notice
+		batchAction(t, map[string]any{"action": "abort", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "error": "受控正常换批验证"}).Want(200)
+	}
+	var count int
+	dbfx.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1 AND author_type='member'`, issue).Scan(&count)
+	// fixture 中的方案评论也是真实用户评论。
+	if count < 2 {
+		t.Fatalf("expected two actual platform comments, got %d", count)
+	}
+	testutil.Call(t, testHandler.CreateComment, withURLParam(newRequest("POST", "/api/issues/"+issue+"/comments", map[string]any{"content": "交付 已进入组合候选：这是真实用户新要求，不能按文案排除"}), "id", issue)).Want(201)
+	var changed string
+	dbfx.QueryRow(t, deliveryCommentsVersionSQL, testWorkspaceID, issue).Scan(&changed)
+	if changed == version {
+		t.Fatal("actual user comment was excluded")
+	}
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := deliveryAuthorizationReady(context.Background(), tx, testWorkspaceID, issue, delivery)
+	tx.Rollback(context.Background())
+	if err != nil || ready {
+		t.Fatalf("actual user comment failed to invalidate review: ready=%v err=%v", ready, err)
+	}
+}
+
+func TestDeliveryBatchArchivedNoticeDoesNotQueueOrDispatch(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	delivery, token := batchFixture(t)
+	id := dbid.NewV7().String()
+	stage := "batch_ready_history:" + id
+	dbfx.Exec(t, `UPDATE issue_delivery SET phase='cancelled' WHERE id=$1`, delivery)
+	dbfx.Exec(t, `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,$2,$3)`, delivery, stage, id)
+	var queue []map[string]any
+	testutil.Call(t, testHandler.ListDeliveryQueue, newRequest("GET", "/api/delivery-queue", nil)).Want(200).JSON(&queue)
+	for _, row := range queue {
+		if row["id"] == delivery {
+			t.Fatal("archived undelivered notice kept queue alive")
+		}
+	}
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": 0, "worker_token": token, "action": "notify-result", "stage": stage})).Want(409)
+}

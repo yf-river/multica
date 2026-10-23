@@ -415,6 +415,10 @@ func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, c
 	}
 	rows.Close()
 	for _, delivery := range notice {
+		// 保存每轮平台通知的真实来源，后续批次替换当前通知号时历史评论仍可准确识别。
+		if _, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id,delivered_at,created_at) SELECT delivery_id,'batch_ready_history:'||comment_id::text,comment_id,delivered_at,created_at FROM delivery_notice WHERE delivery_id=$1 AND stage='batch_ready' ON CONFLICT(delivery_id,stage) DO NOTHING`, delivery); err != nil {
+			return err
+		}
 		if _, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,'batch_ready',$2) ON CONFLICT(delivery_id,stage) DO UPDATE SET comment_id=EXCLUDED.comment_id,delivered_at=NULL`, delivery, dbid.NewV7()); err != nil {
 			return err
 		}

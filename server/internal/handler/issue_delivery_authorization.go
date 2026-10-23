@@ -15,7 +15,7 @@ import (
 )
 
 // 用户评论摘要用于核对 Agent 审查之后是否又有新决定，不解释评论语义。
-const deliveryCommentsVersionSQL = `SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND n.stage='batch_ready')`
+const deliveryCommentsVersionSQL = `SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text))`
 
 type deliveryAuthorizationInput struct {
 	CommentID              string `json:"comment_id"`
@@ -135,7 +135,7 @@ func deliveryAuthorizationReady(ctx context.Context, tx pgx.Tx, ws, issue, id st
 	}
 	if len(saved) == 0 {
 		var changed bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM comment c JOIN issue_delivery d ON d.issue_id=c.issue_id AND d.workspace_id=c.workspace_id WHERE d.id=$1 AND c.author_type='member' AND GREATEST(c.created_at,c.updated_at)>d.approved_at AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND n.stage='batch_ready'))`, id).Scan(&changed)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM comment c JOIN issue_delivery d ON d.issue_id=c.issue_id AND d.workspace_id=c.workspace_id WHERE d.id=$1 AND c.author_type='member' AND GREATEST(c.created_at,c.updated_at)>d.approved_at AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text)))`, id).Scan(&changed)
 		return approved && !changed, err
 	}
 	version, err := deliveryCommentsVersion(ctx, tx, ws, issue)
