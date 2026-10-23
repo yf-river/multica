@@ -12,7 +12,7 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ### Default Development Delivery
 
-Ordinary feature requests proceed through confirmed plan, isolated task branch, focused checks, fixed **int** acceptance and **in_review**. Production deployment requires separate user confirmation for the delivery. Unapproved changes remain on task branches. Read `CLAUDE.md` and `docs/operations/environment-releases.md` for the authoritative workflow.
+Ordinary feature requests proceed through confirmed plan, isolated task branch, focused checks, fixed **int** acceptance and **in_review**. Production deployment requires separate user confirmation for the delivery; once the production release passes browser acceptance, the task is marked **done** directly, without a further user confirmation. Unapproved changes remain on task branches. Read `CLAUDE.md` and `docs/operations/environment-releases.md` for the authoritative workflow.
 
 Use persisted delivery records and the existing external publisher for queueing, recovery, integration and production updates. Build from pinned commits rather than ephemeral task directories. Only explicit user requests allow independent environments with `MULTICA_LOCAL_DEV=1`. Explicit local-only or no-deployment boundaries take precedence.
 
