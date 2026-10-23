@@ -216,7 +216,7 @@ func deliveryPublicationAuthorization(ctx context.Context, tx pgx.Tx, ws, id str
 	var generation int64
 	var leased bool
 	var batch string
-	err := tx.QueryRow(ctx, `SELECT b.id::text FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE b.workspace_id=$1 AND m.delivery_id=$2 AND m.result='pending' AND b.status IN `+activeBatchStatuses, ws, id).Scan(&batch)
+	err := tx.QueryRow(ctx, `SELECT b.id::text FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE b.workspace_id=$1 AND m.delivery_id=$2 AND m.result='pending' AND b.status IN ('collecting','frozen','preparing','validating','publishing')`, ws, id).Scan(&batch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `SELECT generation,state='active' AND expires_at>now() FROM delivery_publication WHERE resource='int-prod' AND workspace_id=$1 AND delivery_id=$2`, ws, id).Scan(&generation, &leased)
 	} else if err == nil {
