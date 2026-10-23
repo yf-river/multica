@@ -33,24 +33,36 @@ func deliveryNoticeText(stage, delivery, candidate, detail string) string {
 // notifyDeliveryResult 用持久化通知号续接任务，服务重启或响应丢失不重复派发。
 // 修改 5. 组合候选通知要指向批次固定的候选：成员单任务阶段保存的 candidate_id 不是组合产物，
 // 混用会让 Agent 去验收另一份候选。
-func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, stage string) error {
+func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, stage string) (bool, error) {
 	var id, kind, assignee, candidate, detail string
 	var done bool
 	err := h.DB.QueryRow(r.Context(), `SELECT n.comment_id::text,n.delivered_at IS NOT NULL,COALESCE(i.assignee_type,''),COALESCE(i.assignee_id::text,''),COALESCE(NULLIF((SELECT b.candidate_id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE m.delivery_id=n.delivery_id AND b.status IN ('validating','publishing') AND b.candidate_id<>'' ORDER BY b.created_at DESC LIMIT 1),''),d.candidate_id),d.error FROM delivery_notice n JOIN issue_delivery d ON d.id=n.delivery_id JOIN issue i ON i.id=d.issue_id WHERE n.delivery_id=$1 AND n.stage=$2 AND d.workspace_id=$3`, delivery, stage, ws).Scan(&id, &done, &kind, &assignee, &candidate, &detail)
 	if err != nil || done {
-		return err
+		return false, err
+	}
+	var completedAudit bool
+	if stage == "published" {
+		pending, completed, checkErr := h.resumedPublishedCloseout(r.Context(), ws, issue, delivery, candidate)
+		if checkErr != nil {
+			return false, checkErr
+		}
+		if pending {
+			// 恢复任务还在执行，通知保持未投递，由既有持久队列重试。
+			return true, nil
+		}
+		completedAudit = completed
 	}
 	if stage == "batch_ready" {
 		var representative string
 		err = h.DB.QueryRow(r.Context(), `SELECT m.delivery_id::text FROM delivery_batch_member m JOIN delivery_batch b ON b.id=m.batch_id WHERE b.id=(SELECT b.id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE m.delivery_id=$1 AND b.status='validating' ORDER BY b.created_at DESC LIMIT 1) AND m.result='pending' ORDER BY m.created_at,m.delivery_id LIMIT 1`, delivery).Scan(&representative)
 		if err != nil {
-			return err
+			return false, err
 		}
 		detail = fmt.Sprintf("本批代表交付为 %s；由代表汇总全部成员及集成冒烟证据，使用 multica issue delivery accept --delivery <代表交付> --file <JSON> 提交。JSON 必须包含当前 revision、candidate_id=%s 和实际 evidence。其他成员协助验收，不重复登记候选或单独发布。", representative, candidate)
 	}
 	var exists bool
 	if err = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment WHERE id=$1 AND issue_id=$2)`, id, issue).Scan(&exists); err != nil {
-		return err
+		return false, err
 	}
 	if !exists {
 		mention := ""
@@ -58,6 +70,11 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 			mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
 		}
 		text := deliveryNoticeText(stage, delivery, candidate, detail)
+		if completedAudit {
+			// 便签在创建、完成补派和评论重放路径都持久免触发。
+			mention = ""
+			text = fmt.Sprintf("/note 交付 %s 的候选 %s 已发布；本次发布恢复执行已完成生产验收，任务已完成。", delivery, candidate)
+		}
 		payload, _ := json.Marshal(map[string]any{"id": id, "content": mention + text})
 		rr := r.Clone(r.Context())
 		rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(id)))
@@ -68,9 +85,9 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 		response := &supervisionFeedbackResponse{header: make(http.Header)}
 		h.CreateComment(response, rr)
 		if response.status >= 400 {
-			return fmt.Errorf("结果评论失败：%d", response.status)
+			return false, fmt.Errorf("结果评论失败：%d", response.status)
 		}
 	}
 	_, err = h.DB.Exec(r.Context(), `UPDATE delivery_notice SET delivered_at=now() WHERE delivery_id=$1 AND stage=$2`, delivery, stage)
-	return err
+	return false, err
 }

@@ -113,11 +113,12 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "读取通知状态失败")
 			return
 		}
-		if err = h.notifyDeliveryResult(r, ws, issue, body.ID, ternaryStage(batchReady, "batch_ready", phase)); err != nil {
+		deferred, noticeErr := h.notifyDeliveryResult(r, ws, issue, body.ID, ternaryStage(batchReady, "batch_ready", phase))
+		if noticeErr != nil {
 			writeError(w, 500, "结果通知失败，后台将重试")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token})
+		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token, "notification_deferred": deferred})
 		return
 	}
 	if (body.Action == "validated" || body.Action == "publishing") && (phase != "preparing_release" || token == "" || token != body.Token) {
