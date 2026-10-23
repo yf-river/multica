@@ -42,7 +42,7 @@ class SeedManifestTests(unittest.TestCase):
 
     def test_scrub_identity_tracks_rules_file(self):
         identity = s.scrub_identity()
-        self.assertEqual(identity['version'], 2)
+        self.assertEqual(identity['version'], json.loads(s.SCRUB.read_text())['version'])
         self.assertEqual(len(identity['sha256']), 64)
 
 
