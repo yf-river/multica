@@ -1510,6 +1510,80 @@ func TestWatchTaskCancellation_RunningTaskNotInterrupted(t *testing.T) {
 	}
 }
 
+// TestAppendTraceID 固定"一次执行 0..N 条链路"的收集规则：空值丢弃、重复 trace 去重、
+// 顺序保留，并且每条都带着产生它的那个子进程的 session。
+func TestAppendTraceID(t *testing.T) {
+	t.Parallel()
+
+	var traces []ProviderTrace
+	traces = appendTraceID(traces, "", "s1")
+	if len(traces) != 0 {
+		t.Fatalf("empty id must be dropped, got %#v", traces)
+	}
+	traces = appendTraceID(traces, "trace-a", "s1")
+	traces = appendTraceID(traces, "trace-b", "s2")
+	traces = appendTraceID(traces, "trace-a", "s2")
+	if len(traces) != 2 {
+		t.Fatalf("unexpected traces: %#v", traces)
+	}
+	if traces[0] != (ProviderTrace{SessionID: "s1", TraceID: "trace-a"}) ||
+		traces[1] != (ProviderTrace{SessionID: "s2", TraceID: "trace-b"}) {
+		t.Fatalf("each trace must keep its own session, got %#v", traces)
+	}
+}
+
+// TestBuildTaskTraceEntries 覆盖上报条目的形状：每条链路用自己那条记录的 session，
+// correlation/来源默认标成精确记录，空 id 不产生条目。
+func TestBuildTaskTraceEntries(t *testing.T) {
+	t.Parallel()
+
+	if got := buildTaskTraceEntries("codebuddy", nil); got != nil {
+		t.Fatalf("no ids must mean no entries, got %#v", got)
+	}
+	entries := buildTaskTraceEntries("codebuddy", []ProviderTrace{
+		{SessionID: "sess-1", TraceID: "trace-a"},
+		{SessionID: "", TraceID: "trace-unknown"},
+		{SessionID: "sess-2", TraceID: ""},
+	})
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %#v", entries)
+	}
+	if entries[0].SessionID != "sess-1" || entries[0].ProviderTraceID != "trace-a" {
+		t.Fatalf("unexpected first entry: %#v", entries[0])
+	}
+	// 子进程没自报 session 时保持空，不能借用别的进程的 session。
+	if entries[1].SessionID != "" || entries[1].ProviderTraceID != "trace-unknown" {
+		t.Fatalf("unknown session must stay empty: %#v", entries[1])
+	}
+	for _, e := range entries {
+		if e.Provider != "codebuddy" || e.Correlation != "exact" || e.Source != "stream_json" {
+			t.Fatalf("daemon-reported traces must be exact/stream_json, got %#v", e)
+		}
+	}
+}
+
+// TestRetryTraceKeepsPerProcessSession 复现"换新会话重试"的绑定：首进程 S1/T1、
+// 重试进程 S2/T2，两条链路必须各自保留自己的 session，不能被最终 result.SessionID
+// 统一改写（那会把 T1 记到 S2 上还标成精确关联）。
+func TestRetryTraceKeepsPerProcessSession(t *testing.T) {
+	t.Parallel()
+
+	first := ProviderTrace{SessionID: "S1", TraceID: "T1"}
+	retry := ProviderTrace{SessionID: "S2", TraceID: "T2"}
+
+	traces := appendTraceID(nil, first.TraceID, first.SessionID)
+	traces = appendTraceID(traces, retry.TraceID, retry.SessionID)
+
+	entries := buildTaskTraceEntries("codebuddy", traces)
+	got := map[string]string{}
+	for _, e := range entries {
+		got[e.ProviderTraceID] = e.SessionID
+	}
+	if got["T1"] != "S1" || got["T2"] != "S2" {
+		t.Fatalf("retry must not rebind the first process trace: %#v", got)
+	}
+}
+
 func TestMergeUsage(t *testing.T) {
 	t.Parallel()
 

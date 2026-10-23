@@ -12,6 +12,7 @@ import {
   estimateCost,
   estimateCostBreakdown,
   formatTokens,
+  hasKnownCost,
   isModelPriced,
   isSelfHealingRuntime,
   sliceWindow,
@@ -1649,5 +1650,54 @@ describe("formatTokens", () => {
     expect(formatTokens(999_949)).toBe("999.9K");
     expect(formatTokens(999_950)).toBe("1M");
     expect(formatTokens(999_999_999)).toBe("1B");
+  });
+});
+
+describe("hasKnownCost", () => {
+  it("treats a model with no rate and no vendor cost as unknown, not free", () => {
+    // deepseek 系在这份费率表里没有条目：estimateCost 会返回 0，但那是"不知道"。
+    expect(
+      hasKnownCost([
+        {
+          model: "deepseek-v4.1-flash",
+          provider: "codebuddy",
+          input_tokens: 0,
+          output_tokens: 6742,
+          cache_read_tokens: 440192,
+          cache_write_tokens: 70082,
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  it("accepts a vendor-reported cost even without a local rate", () => {
+    expect(
+      hasKnownCost([
+        {
+          model: "unknown-model-x",
+          provider: "grok",
+          input_tokens: 10,
+          output_tokens: 1,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          cost_usd_ticks: 42,
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("accepts a locally priced model", () => {
+    expect(
+      hasKnownCost([
+        {
+          model: "claude-sonnet-4-20250514",
+          provider: "claude",
+          input_tokens: 10,
+          output_tokens: 1,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+        },
+      ]),
+    ).toBe(true);
   });
 });

@@ -197,6 +197,7 @@ var concurrentIndexCleanups = map[string]string{
 	"629_verification_slot_maintenance_index":  "verification_slot_maintenance_name_created",
 	"630_delivery_batch_active_index":          "delivery_batch_active",
 	"631_delivery_batch_member_delivery_index": "delivery_batch_member_delivery",
+	"633_task_provider_trace_unique":           "task_provider_trace_task_trace_unique",
 	"520_repository_id":                        "repository_id_idx",
 	"521_repository_identity":                  "repository_identity_idx",
 	"522_repository_location_id":               "repository_location_id_idx",

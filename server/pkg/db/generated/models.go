@@ -1887,6 +1887,23 @@ type TaskMessage struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type TaskProviderTrace struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	Provider         string             `json:"provider"`
+	ObservationSpace string             `json:"observation_space"`
+	SessionID        string             `json:"session_id"`
+	ProviderTraceID  string             `json:"provider_trace_id"`
+	Correlation      string             `json:"correlation"`
+	Source           string             `json:"source"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type TaskToken struct {
 	ID          pgtype.UUID        `json:"id"`
 	TokenHash   string             `json:"token_hash"`

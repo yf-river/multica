@@ -57,20 +57,94 @@ func TaskUsageHourlyJob(pool *pgxpool.Pool) JobSpec {
 	}
 }
 
-// makeTaskUsageHourlyHandler 在调用 SQL 函数前后各读一次水位线，好让审计行记录「业务
-// 状态是否推进了」。函数调用本身在 SQL 内部获取 advisory lock 4246——若别的写入者正
-// 持有该锁，函数立刻返回 0，本次尝试以 rows_affected=0 的 SUCCESS 收场，这正是
-// 「内层竞争没赢、没有活可干」的正确结局。
+// taskUsageCatchUpTicks 限制单次 tick 最多连续调用多少次汇总函数。每次调用最多推进
+// 一天（函数内部的一天窗口上限），60 次即 60 天；更大的积压留给下一次 tick，避免
+// 一次 tick 长时间占着 advisory lock 4246。
+const taskUsageCatchUpTicks = 60
+
+// ensureTaskUsageRollupState 在调用汇总函数前补齐状态行，并把"纪元水位"当作从未
+// 汇总来处理。
+//
+// 这两件事原本写在 620/634 的 SQL 函数体里，但那是函数体替换（非新增结构），发布器
+// 要求单独的数据库兼容方案，旧站无法继续运行。改成应用层 DML 后语义不变、不需要迁移：
+//   - 状态行缺失时按最早一条 task_usage 播种，函数不再因为 UPDATE 匹配 0 行而静默空转；
+//   - 101 迁移种下的 1970-01-01 只是"从未汇总"，跳到真实最早数据而不是逐天爬 20k 次。
+func ensureTaskUsageRollupState(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_usage_hourly_rollup_state (id, watermark_at)
+		SELECT 1, COALESCE(date_trunc('hour', MIN(created_at)), now() - INTERVAL '5 minutes')
+		  FROM task_usage
+		ON CONFLICT (id) DO NOTHING
+	`); err != nil {
+		return fmt.Errorf("seed rollup state: %w", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE task_usage_hourly_rollup_state
+		   SET watermark_at = COALESCE((SELECT date_trunc('hour', MIN(created_at)) FROM task_usage),
+		                               now() - INTERVAL '5 minutes')
+		 WHERE id = 1
+		   AND watermark_at <= TIMESTAMPTZ '1970-01-02 00:00:00+00'
+	`); err != nil {
+		return fmt.Errorf("heal epoch watermark: %w", err)
+	}
+	return nil
+}
+
+// makeTaskUsageHourlyHandler 在补齐状态行后连续调用 SQL 汇总函数，直到水位不再推进
+// （追平、或别的写入者持有 advisory lock 4246）或达到本次 tick 的上限。
+//
+// 函数内部一天一窗口、并且自带 advisory lock 4246：本 handler 不抢锁，只在锁内做一天
+// 的活；追上历史靠连续调用，而不是靠一条语句重算很久，所以超时取消时锁仍会释放。
 func makeTaskUsageHourlyHandler(pool *pgxpool.Pool) Handler {
 	return func(ctx context.Context, in HandlerInput) (HandlerResult, error) {
+		if err := ensureTaskUsageRollupState(ctx, pool); err != nil {
+			return HandlerResult{}, err
+		}
+
 		watermarkBefore, err := readTaskUsageWatermark(ctx, pool)
 		if err != nil {
 			return HandlerResult{}, fmt.Errorf("read watermark before: %w", err)
 		}
 
+		// 整轮都跑在一条固定连接上：函数用的是会话级 advisory lock 4246，一旦语句被
+		// statement_timeout 或取消打断，锁会留在那个会话里（plpgsql 的 WHEN OTHERS
+		// 不接 query_canceled）。固定连接后我们能在归还连接池之前显式解锁，不会让它
+		// 带着锁回到池里，后续 tick 与 DeleteWorkspace 的 xact 锁都不被卡住。
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			return HandlerResult{}, fmt.Errorf("acquire rollup connection: %w", err)
+		}
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = conn.Exec(cleanupCtx, `SELECT pg_advisory_unlock(4246)`)
+			conn.Release()
+		}()
+
 		var rows int64
-		if err := pool.QueryRow(ctx, `SELECT rollup_task_usage_hourly()`).Scan(&rows); err != nil {
-			return HandlerResult{}, fmt.Errorf("rollup_task_usage_hourly: %w", err)
+		ticks := 0
+		previous := watermarkBefore
+		for ticks < taskUsageCatchUpTicks {
+			ticks++
+			var tickRows int64
+			if err := conn.QueryRow(ctx, `SELECT rollup_task_usage_hourly()`).Scan(&tickRows); err != nil {
+				return HandlerResult{}, fmt.Errorf("rollup_task_usage_hourly: %w", err)
+			}
+			rows += tickRows
+
+			// 水位不动就停：已追平，或这一轮没拿到锁。继续调用只会空转。
+			after, err := readTaskUsageWatermark(ctx, pool)
+			if err != nil {
+				return HandlerResult{}, fmt.Errorf("read watermark after tick: %w", err)
+			}
+			if !after.After(previous) {
+				break
+			}
+			previous = after
+
+			if in.Heartbeat != nil {
+				_ = in.Heartbeat(ctx)
+			}
 		}
 
 		watermarkAfter, err := readTaskUsageWatermark(ctx, pool)
@@ -86,6 +160,7 @@ func makeTaskUsageHourlyHandler(pool *pgxpool.Pool) Handler {
 
 		result := map[string]any{
 			"advisory_lock_id": taskusagebackfill.AdvisoryLockKey,
+			"rollup_ticks":     ticks,
 		}
 		if !watermarkBefore.IsZero() {
 			result["watermark_before"] = watermarkBefore.UTC().Format(time.RFC3339)

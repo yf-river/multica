@@ -411,4 +411,24 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
+    def test_task_provider_trace_migrations_follow_index_and_fk_rules(self):
+        # 硬规则：不新增外键/级联；新增索引一律并发建、独立单语句迁移。
+        import re
+        from pathlib import Path as P
+        migrations=P(__file__).parent.parent/'server/migrations'
+        table_sql=(migrations/'632_task_provider_trace.up.sql').read_text()
+        stripped=re.sub(r'--[^\n]*','',table_sql)
+        statements=[part.strip() for part in stripped.split(';') if part.strip()]
+        self.assertEqual(len(statements),1)
+        self.assertTrue(re.match(r'^CREATE\s+TABLE\b',statements[0],re.I))
+        self.assertNotIn('REFERENCES',statements[0].upper())
+        self.assertNotIn('CASCADE',statements[0].upper())
+        self.assertNotIn('UNIQUE (',statements[0].upper())
+
+        index_sql=(migrations/'633_task_provider_trace_unique.up.sql').read_text()
+        stripped=re.sub(r'--[^\n]*','',index_sql)
+        statements=[part.strip() for part in stripped.split(';') if part.strip()]
+        self.assertEqual(len(statements),1)
+        self.assertTrue(re.match(r'^CREATE\s+UNIQUE\s+INDEX\s+CONCURRENTLY\b',statements[0],re.I))
+
 if __name__=='__main__':unittest.main()

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS task_provider_trace_task_trace_unique;

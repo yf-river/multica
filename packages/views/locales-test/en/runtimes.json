@@ -460,7 +460,8 @@
     "no_data": "No usage data yet",
     "unmapped_notice_one": "{{count}} model has no maintained price — its tokens are excluded from cost totals.",
     "cost_by_caption_agent_one": "{{count}} agent on this runtime",
-    "cost_by_caption_model_one": "{{count}} model used"
+    "cost_by_caption_model_one": "{{count}} model used",
+    "kpi_cost_unknown": "Price unknown (no rate for this model)"
   },
   "running_one": "{{count}} running",
   "queued_one": "{{count}} queued"

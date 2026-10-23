@@ -667,8 +667,8 @@ func (q *Queries) ListIssueTaskUsage(ctx context.Context, issueID pgtype.UUID) (
 }
 
 const upsertTaskUsage = `-- name: UpsertTaskUsage :exec
-INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd_ticks, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd_ticks, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, now()), now())
 ON CONFLICT (task_id, provider, model)
 DO UPDATE SET
     input_tokens = EXCLUDED.input_tokens,
@@ -680,14 +680,15 @@ DO UPDATE SET
 `
 
 type UpsertTaskUsageParams struct {
-	TaskID           pgtype.UUID `json:"task_id"`
-	Provider         string      `json:"provider"`
-	Model            string      `json:"model"`
-	InputTokens      int64       `json:"input_tokens"`
-	OutputTokens     int64       `json:"output_tokens"`
-	CacheReadTokens  int64       `json:"cache_read_tokens"`
-	CacheWriteTokens int64       `json:"cache_write_tokens"`
-	CostUsdTicks     pgtype.Int8 `json:"cost_usd_ticks"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	Provider         string             `json:"provider"`
+	Model            string             `json:"model"`
+	InputTokens      int64              `json:"input_tokens"`
+	OutputTokens     int64              `json:"output_tokens"`
+	CacheReadTokens  int64              `json:"cache_read_tokens"`
+	CacheWriteTokens int64              `json:"cache_write_tokens"`
+	CostUsdTicks     pgtype.Int8        `json:"cost_usd_ticks"`
+	ExecutedAt       pgtype.Timestamptz `json:"executed_at"`
 }
 
 // Bumps `updated_at` on INSERT and on conflict so the hourly-rollup worker
@@ -697,6 +698,9 @@ type UpsertTaskUsageParams struct {
 // cost_usd_ticks is the provider's own price for this usage (1e-10 USD), NULL
 // when it reports none. It is overwritten like the token counters so a
 // corrected report replaces the previous figure rather than accumulating.
+// executed_at 只用于受控的历史补齐：把这条用量记到它真实发生的时刻，而不是补齐当天。
+// 普通 daemon 上报不传（NULL → now()）。冲突时**不改** created_at——已有行的原始时间
+// 是既有事实，更正只更新数值与 updated_at。
 func (q *Queries) UpsertTaskUsage(ctx context.Context, arg UpsertTaskUsageParams) error {
 	_, err := q.db.Exec(ctx, upsertTaskUsage,
 		arg.TaskID,
@@ -707,6 +711,7 @@ func (q *Queries) UpsertTaskUsage(ctx context.Context, arg UpsertTaskUsageParams
 		arg.CacheReadTokens,
 		arg.CacheWriteTokens,
 		arg.CostUsdTicks,
+		arg.ExecutedAt,
 	)
 	return err
 }

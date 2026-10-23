@@ -219,6 +219,22 @@ describe("UsageSection — custom-pricing entry point", () => {
     pricingState.pricings = {};
   });
 
+  it("reports the cost KPI as unknown instead of $0 while every row is unpriced", () => {
+    // 回归：没有任何一行能定价时，$0.00 会被读成"这次运行免费"。实际是价格未知，
+    // 必须显示破折号并说明原因。
+    usageOverride.rows = unpricedRows;
+
+    render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
+
+    // 费用与"缓存节省"两张卡都依赖价格：两项都必须显示未知，而不是 $0.00。
+    const unknown = screen.getAllByLabelText(
+      "Price unknown (no rate for this model)",
+    );
+    expect(unknown).toHaveLength(2);
+    for (const node of unknown) expect(node).toHaveTextContent("—");
+    expect(document.body.textContent).not.toContain("$0.00");
+  });
+
   it("stays hidden when every model resolves and nothing is overridden", () => {
     render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
 

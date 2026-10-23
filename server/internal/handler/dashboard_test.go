@@ -1188,70 +1188,45 @@ func TestPruneTaskUsageHourlyDirty(t *testing.T) {
 	}
 }
 
-// TestRollupTaskUsageHourlyCapsWindowAtOneDay covers the catch-up cap
-// in rollup_task_usage_hourly(): when the watermark has
-// fallen far behind (worker paused for an incident or a migration freeze),
-// a single tick must advance it by at most one day, so a multi-week backlog
-// drains in bounded steps instead of one giant statement holding advisory
-// lock 4246. The existing watermark test only parks the watermark one hour
-// back, so the cap itself is never exercised there.
-func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
+// TestRollupTaskUsageHourlyAdvancesOneDayPerCall pins the contract the scheduler
+// relies on: the SQL function advances at most one day per call, so catch-up is
+// driven by calling it repeatedly from the handler (see the scheduler tests),
+// not by a multi-day statement holding advisory lock 4246.
+func TestRollupTaskUsageHourlyAdvancesOneDayPerCall(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	// Serialise against any other package's rollup test (MUL-3980). Acquire
-	// the guard BEFORE registering the watermark-restore cleanup below so
-	// that cleanup (LIFO) runs while the guard is still held, and the guard
-	// is released last.
 	lockRollupSingleton(t)
 	ctx := context.Background()
 
-	// Other tests drive rollup_task_usage_hourly_window directly and never
-	// read the watermark; the idempotency test parks it itself. Restore to
-	// now() so nothing downstream observes a stale value.
 	t.Cleanup(func() {
 		testPool.Exec(ctx,
 			`UPDATE task_usage_hourly_rollup_state SET watermark_at = now(), last_error = NULL WHERE id = 1`)
 	})
-
-	park := func(behind string) {
-		dbfx.Exec(t, `
-			UPDATE task_usage_hourly_rollup_state
-			   SET watermark_at = now() - $1::interval, last_error = NULL
-			 WHERE id = 1
-		`, behind)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE task_usage_hourly_rollup_state
+		   SET watermark_at = now() - INTERVAL '3 days', last_error = NULL
+		 WHERE id = 1`); err != nil {
+		t.Fatalf("park watermark: %v", err)
 	}
+
 	ageDays := func() float64 {
 		var sec float64
-		dbfx.QueryRow(t, `
+		if err := testPool.QueryRow(ctx, `
 			SELECT EXTRACT(EPOCH FROM (now() - watermark_at))
-			  FROM task_usage_hourly_rollup_state WHERE id = 1
-		`).Scan(&sec)
+			  FROM task_usage_hourly_rollup_state WHERE id = 1`).Scan(&sec); err != nil {
+			t.Fatalf("read watermark age: %v", err)
+		}
 		return sec / 86400
 	}
-	tick := func(label string) {
-		dbfx.Exec(t, `SELECT rollup_task_usage_hourly()`)
-	}
 
-	// Park 3 days back. One tick advances by exactly one day (v_from + 1d,
-	// well short of now()-5min), leaving the watermark ~2 days behind.
-	park("3 days")
-	tick("tick 1")
+	dbfx.Exec(t, `SELECT rollup_task_usage_hourly()`)
 	if age := ageDays(); age < 1.9 || age > 2.1 {
-		t.Fatalf("after one tick: expected watermark ~2 days behind, got %.3f days", age)
+		t.Fatalf("one call must advance exactly one day, got %.3f days behind", age)
 	}
-
-	// A second tick advances another bounded day → ~1 day behind.
-	tick("tick 2")
+	dbfx.Exec(t, `SELECT rollup_task_usage_hourly()`)
 	if age := ageDays(); age < 0.9 || age > 1.1 {
-		t.Fatalf("after two ticks: expected watermark ~1 day behind, got %.3f days", age)
-	}
-
-	// Once within a day of now, the tick snaps the watermark to now()-5min
-	// (LEAST picks the now bound) rather than taking a further fixed day.
-	tick("tick 3")
-	if age := ageDays(); age > 0.02 {
-		t.Fatalf("after catch-up: expected watermark within minutes of now, got %.3f days", age)
+		t.Fatalf("a second call must advance another day, got %.3f days behind", age)
 	}
 }
 
