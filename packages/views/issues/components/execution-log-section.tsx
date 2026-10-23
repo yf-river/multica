@@ -23,6 +23,7 @@ import { useT } from "../../i18n";
 import {
   formatTokens,
   formatUsd,
+  hasKnownCost,
   summarizeTaskUsage,
   summarizeTaskUsageAcross,
 } from "../../runtimes/utils";
@@ -243,6 +244,12 @@ export function IssueUsageTotal({
     () => summarizeTaskUsageAcross(tasks.map((task) => task.usage)),
     [tasks, pricings],
   );
+  // 所有运行都没有可定价来源时，合计费用是未知，不是 0。之前这里直接渲染
+  // $0.00，把"查不到价格"说成了"免费"。
+  const costKnown = useMemo(
+    () => hasKnownCost(tasks.flatMap((task) => task.usage ?? [])),
+    [tasks, pricings],
+  );
   if (!total) return null;
 
   // 两个阈值是因为头部有两种形态，而分层只该在行真正挤爆的那一档让读者
@@ -266,7 +273,9 @@ export function IssueUsageTotal({
           {formatTokens(total.tokens)}
         </span>
         <span className={`text-faint-foreground ${narrowTier}`}>·</span>
-        <span className="text-muted-foreground">{formatUsd(total.cost)}</span>
+        <span className="text-muted-foreground">
+          {costKnown ? formatUsd(total.cost) : "—"}
+        </span>
       </TooltipTrigger>
       <TooltipContent>{t(($) => $.execution_log.usage_total_tooltip)}</TooltipContent>
     </Tooltip>

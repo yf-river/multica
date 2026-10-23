@@ -66,6 +66,11 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 
 ## 3. 价格：未知不等于 0
 
+统计页费用 KPI、智能体排行的费用列、执行日志合计与按次用量弹窗都走同一条判断
+（`hasKnownCost`）：整批没有任何可定价来源（`cost_usd_ticks=0` 且 `uncosted_*` 等于全部
+token，费率表也不认识这些模型）时显示 `—`，不再把"没有价格"渲染成 `$0.00`。只要有一行
+可定价，仍按现口径求和显示金额。
+
 `task_usage.cost_usd_ticks` 是可空列：NULL 表示厂商没有报价，0（正数才写入）才是
 真实成本。聚合查询用 `uncosted_*_tokens` 字段带出"这部分没有价格"。
 

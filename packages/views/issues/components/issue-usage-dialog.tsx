@@ -18,6 +18,7 @@ import {
   collectUnmappedModels,
   formatTokens,
   formatUsd,
+  hasKnownCost,
   summarizeTaskUsage,
   summarizeTaskUsageAcross,
   type TaskUsageSummary,
@@ -68,6 +69,11 @@ export function IssueUsageDialog({
 
   const total = useMemo(
     () => summarizeTaskUsageAcross(priced.map((task) => task.usage)),
+    [priced, pricings],
+  );
+  // 与统计页、执行日志同一个口径：整批没有可定价来源时显示未知，而不是 $0.00。
+  const costKnown = useMemo(
+    () => hasKnownCost(priced.flatMap((task) => task.usage ?? [])),
     [priced, pricings],
   );
 
@@ -123,7 +129,7 @@ export function IssueUsageDialog({
             <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_cost)}
-                value={formatUsd(total.cost)}
+                value={costKnown ? formatUsd(total.cost) : "—"}
                 hint={<CostConcentrationHint tasks={priced} total={total} />}
               />
               <KpiCard
@@ -146,10 +152,15 @@ export function IssueUsageDialog({
             </div>
 
             {agentIds.length > 1 && (
-              <CostByAgent tasks={priced} agentIds={agentIds} total={total} />
+              <CostByAgent
+                tasks={priced}
+                agentIds={agentIds}
+                total={total}
+                costKnown={costKnown}
+              />
             )}
 
-            <RunTable tasks={priced} total={total} />
+            <RunTable tasks={priced} total={total} costKnown={costKnown} />
 
             <div className="space-y-1 text-micro text-muted-foreground">
               {unpricedCount > 0 && (
@@ -206,10 +217,12 @@ function CostByAgent({
   tasks,
   agentIds,
   total,
+  costKnown,
 }: {
   tasks: AgentTask[];
   agentIds: string[];
   total: TaskUsageSummary;
+  costKnown: boolean;
 }) {
   const { t } = useT("issues");
   const { getActorName } = useActorName();
@@ -254,13 +267,15 @@ function CostByAgent({
               {formatTokens(row.tokens)}
             </div>
             <div className="text-right text-caption font-medium tabular-nums">
-              {formatUsd(row.cost)}
+              {costKnown ? formatUsd(row.cost) : "—"}
             </div>
           </div>
         ))}
       </div>
       <div className="sr-only">
-        {t(($) => $.usage_detail.by_agent_total, { cost: formatUsd(total.cost) })}
+        {t(($) => $.usage_detail.by_agent_total, {
+          cost: costKnown ? formatUsd(total.cost) : "—",
+        })}
       </div>
     </div>
   );
@@ -269,7 +284,15 @@ function CostByAgent({
 /**
  * 按次运行明细表。
  */
-function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummary }) {
+function RunTable({
+  tasks,
+  total,
+  costKnown,
+}: {
+  tasks: AgentTask[];
+  total: TaskUsageSummary;
+  costKnown: boolean;
+}) {
   const { t } = useT("issues");
   const maxTokens = tasks.reduce(
     (m, task) => Math.max(m, summarizeTaskUsage(task.usage)?.tokens ?? 0),
@@ -300,7 +323,12 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
         </thead>
         <tbody>
           {tasks.map((task) => (
-            <RunRow key={task.id} task={task} maxTokens={maxTokens} />
+            <RunRow
+              key={task.id}
+              task={task}
+              maxTokens={maxTokens}
+              costKnown={costKnown}
+            />
           ))}
         </tbody>
         <tfoot>
@@ -312,7 +340,7 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
             <td>{formatTokens(total.cacheRead)}</td>
             <td>{formatTokens(total.cacheWrite)}</td>
             <td className="!pr-16">{formatTokens(total.tokens)}</td>
-            <td className="!pr-0">{formatUsd(total.cost)}</td>
+            <td className="!pr-0">{costKnown ? formatUsd(total.cost) : "—"}</td>
           </tr>
         </tfoot>
       </table>
@@ -323,7 +351,15 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
 /**
  * 明细表的一行（一条运行）。
  */
-function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
+function RunRow({
+  task,
+  maxTokens,
+  costKnown,
+}: {
+  task: AgentTask;
+  maxTokens: number;
+  costKnown: boolean;
+}) {
   const { t } = useT("issues");
   const trigger = useTriggerText(task);
   const statusLabel = useStatusLabel(task.status, task.failure_reason);
@@ -383,7 +419,9 @@ function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
           </span>
         </div>
       </td>
-      <td className="!pr-0 font-medium">{formatUsd(summary.cost)}</td>
+      <td className="!pr-0 font-medium">
+        {costKnown ? formatUsd(summary.cost) : "—"}
+      </td>
     </tr>
   );
 }

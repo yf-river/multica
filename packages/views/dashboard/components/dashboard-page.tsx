@@ -35,6 +35,7 @@ import {
   addDaysIso,
   aggregateByWeek,
   formatTokens,
+  hasKnownCost,
   todayIso,
 } from "../../runtimes/utils";
 import { useT } from "../../i18n";
@@ -294,6 +295,12 @@ export function DashboardPage() {
     () => computeDailyTotals(dailyUsageInWindow),
     [dailyUsageInWindow],
   );
+  // 整段窗口内没有任何一行能定价时，费用是"未知"而不是 0——直接渲染 $0.00
+  // 等于断言"这次一分钱没花"，而我们并没有这个依据。
+  const costKnown = useMemo(
+    () => hasKnownCost(dailyUsageInWindow),
+    [dailyUsageInWindow],
+  );
   const dailyCost = useMemo(
     () => aggregateDailyCost(dailyUsageInWindow),
     [dailyUsageInWindow],
@@ -504,7 +511,13 @@ export function DashboardPage() {
                 <div className="grid grid-cols-1 divide-y rounded-lg border bg-card sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
                   <KpiCard
                     label={t(($) => $.kpi.cost_label, { days })}
-                    value={<CurrencyNumberFlow value={totals.cost} locales={locales} />}
+                    value={
+                      costKnown ? (
+                        <CurrencyNumberFlow value={totals.cost} locales={locales} />
+                      ) : (
+                        <span>—</span>
+                      )
+                    }
                   />
                   <KpiCard
                     label={t(($) => $.kpi.tokens_label, { days })}
@@ -575,6 +588,7 @@ export function DashboardPage() {
                   agents={agents}
                   deletedAgentCount={deletedAgentCount}
                   lessThanMinuteLabel={lessThanMinuteLabel}
+                  costKnown={costKnown}
                 />
               </>
             )}
