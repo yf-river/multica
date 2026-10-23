@@ -182,6 +182,9 @@ func (h *Handler) ReleaseWindow(w http.ResponseWriter, r *http.Request) {
 					_, err = tx.Exec(r.Context(), `INSERT INTO agent_task_queue SELECT (jsonb_populate_record(NULL::agent_task_queue,to_jsonb(q)||jsonb_build_object('id',$2::text,'status',CASE WHEN EXISTS(SELECT 1 FROM agent_task_queue n WHERE n.id<>q.id AND n.issue_id=q.issue_id AND n.agent_id=q.agent_id AND n.status='queued') THEN 'deferred' ELSE 'queued' END,'created_at',now(),'dispatched_at',NULL,'started_at',NULL,'completed_at',NULL,'result',NULL,'error',NULL,'failure_reason',NULL,'fire_at',now(),'wait_reason',NULL,'prepare_lease_expires_at',NULL,'rerun_of_task_id',q.id,'force_fresh_session',false,'handoff_note','本次执行因发布暂停后续接。先核对最后操作结果、Git 和交付记录；已完成的提交、部署或外部写入不得重复。继续原任务剩余工作。'))).* FROM agent_task_queue q WHERE q.id=$1`, id, next)
 				}
 				if err == nil {
+					err = bindPublishedResume(r.Context(), tx, b.ID, id, next)
+				}
+				if err == nil {
 					_, err = tx.Exec(r.Context(), `UPDATE release_paused_task SET state='queued',resume_task_id=$3,updated_at=now() WHERE window_id=$1 AND task_id=$2`, b.ID, id, next)
 				}
 				if err != nil {

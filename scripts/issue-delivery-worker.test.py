@@ -5,6 +5,13 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    def test_deferred_published_notice_does_not_starve_other_work(self):
+        worker=w.Worker.__new__(w.Worker);worker.env='prod'
+        rows=[dict(id='deferred',phase='published'),dict(id='next',phase='needs_changes')]
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'recover_release_windows'),patch.object(r,'lock'),patch.object(r,'candidate_path',return_value=Path(folder)/'missing'),patch.object(worker,'api',return_value=rows),patch.object(worker,'recover_finished_publications'),patch.object(worker,'pool_enabled',return_value=False),patch.object(worker,'pool_dispatch',return_value=set()),patch.object(worker,'batch_config',return_value=False),patch.object(worker,'pin'),patch.object(worker,'advance',side_effect=[{'notification_deferred':True},{}]) as advance:
+            worker.tick()
+            self.assertEqual([call.args[0]['id'] for call in advance.call_args_list],['deferred','next'])
+
     def test_install_bundles_exact_database_checker(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);units=root/'units';units.mkdir()
