@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS verification_slot_maintenance_name_created;

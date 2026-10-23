@@ -81,7 +81,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunks, readErr := svc.materials(ctx, tx, f.WorkspaceID, issues[0])
+	chunks, readErr := svc.materials(ctx, tx, f.WorkspaceID, issues[0], noCutoff)
 	_ = tx.Rollback(ctx)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -172,7 +172,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	f.Insert(t, "supervision_action", dbfx.Cols{"workspace_id": f.WorkspaceID, "finding_id": finding.ID, "actor_id": f.UserID, "operation_id": util.UUIDToString(dbid.NewV7()), "action": "ignored", "reason": "用户确认本轮只检查接口调用计划，不要求发起网络请求"})
 	f.Exec(t, "UPDATE supervision_finding SET status='ignored' WHERE id=$1", finding.ID)
 	var decisionSnapshot []byte
-	f.QueryRow(t, currentIssueSnapshotSQL, issues[0], f.WorkspaceID).Scan(&decisionSnapshot)
+	f.QueryRow(t, currentIssueSnapshotSQL, issues[0], f.WorkspaceID, noCutoff).Scan(&decisionSnapshot)
 	var decisions struct {
 		Findings []struct {
 			ID     string `json:"id"`
@@ -206,7 +206,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if n := f.Count(t, "SELECT count(*) FROM supervision_finding WHERE workspace_id=$1 AND status='resolved'", f.WorkspaceID); n != 1 {
 		t.Fatal("resolution did not close finding")
 	}
-	f.QueryRow(t, currentIssueSnapshotSQL, issues[0], f.WorkspaceID).Scan(&decisionSnapshot)
+	f.QueryRow(t, currentIssueSnapshotSQL, issues[0], f.WorkspaceID, noCutoff).Scan(&decisionSnapshot)
 	if err = json.Unmarshal(decisionSnapshot, &decisions); err != nil || len(decisions.Findings) != 1 || decisions.Findings[0].ID != finding.ID || decisions.Findings[0].Status != "resolved" || decisions.Findings[0].Reason != "新证据已核对" {
 		t.Fatalf("resolved finding identity lost before regression review: %+v %v", decisions, err)
 	}
@@ -226,7 +226,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0])
+	resumed, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0], noCutoff)
 	_ = tx.Rollback(ctx)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -274,7 +274,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withLate, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0])
+	withLate, readErr := restarted.materials(ctx, tx, f.WorkspaceID, issues[0], noCutoff)
 	_ = tx.Rollback(ctx)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -298,6 +298,11 @@ func TestIntPersistenceAndResume(t *testing.T) {
 
 	// 持续新增日志不能让运行中任务无限等待安静窗口。
 	f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issues[0], "status": "running", "started_at": dbfx.Raw("now()")})
+	// 自动监督只处理已完成任务的完成轮次，这两个任务先转入完成状态。
+	f.Exec(t, "UPDATE issue SET status='done' WHERE id IN($1,$2)", issues[0], issues[1])
+	if err = svc.reconcileRounds(ctx, f.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
 	f.Exec(t, "UPDATE supervision_config SET agent_id=$2,interval_seconds=60 WHERE workspace_id=$1", f.WorkspaceID, agent)
 	f.Exec(t, "UPDATE supervision_subject SET last_checked_at=now()-interval '10 minutes',changed_at=now(),desired_version=reviewed_version+1,force_review=false WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[0])
 	svc.Tasks = service.NewTaskService(db.New(pool), pool, nil, nil)
@@ -330,7 +335,7 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	}
 	var snapshot []byte
 	f.Exec(t, "UPDATE supervision_subject SET error='覆盖引用未知或重复' WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[99])
-	f.QueryRow(t, currentIssueSnapshotSQL, issues[99], f.WorkspaceID).Scan(&snapshot)
+	f.QueryRow(t, currentIssueSnapshotSQL, issues[99], f.WorkspaceID, noCutoff).Scan(&snapshot)
 	if err := json.Unmarshal(snapshot, &current); err != nil {
 		t.Fatal(err)
 	}

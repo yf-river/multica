@@ -40,6 +40,10 @@ def write(path, data, private=False):
 
 def meta_path(env): return RUN / 'deployments' / f'goal-test-{env}.json'
 def config_path(env): return RUN / 'env' / f'{env}-services.json'
+def current_seed():
+    """1. 当前已验证种子指针：只由种子验收写入，缺失表示尚未启用种子生命周期。"""
+    path = RUN / 'verification-seed.json'
+    return read(path) if path.exists() else None
 def process_env(pid):
     return dict(x.split('=', 1) for x in Path(f'/proc/{pid}/environ').read_text().split('\0') if '=' in x)
 def process_identity(pid):
@@ -85,7 +89,7 @@ def source_digest(root):
         h.update(name.encode() + b'\0'); h.update(p.read_bytes()); files.append(name)
     return h.hexdigest(), files
 
-def validation_identity(source):
+def validation_identity(source, env='int'):
     """业务输入和验收程序独立于版本戳；缺少可靠映射时选择完整验收。"""
     _, names = source_digest(Path(source))
     runtime = hashlib.sha256(); schema = hashlib.sha256(); suite = hashlib.sha256()
@@ -96,8 +100,13 @@ def validation_identity(source):
         runtime.update(name.encode()+b'\0'+data)
         if name.startswith('server/migrations/'):schema.update(name.encode()+b'\0'+data)
         if name.startswith('scripts/') or 'test' in Path(name).name:suite.update(name.encode()+b'\0'+data)
-    return dict(runtime_inputs=runtime.hexdigest(), schema=schema.hexdigest(), suite=suite.hexdigest(),
-                configuration=hashlib.sha256(config_path('int').read_bytes()).hexdigest())
+    identity = dict(runtime_inputs=runtime.hexdigest(), schema=schema.hexdigest(), suite=suite.hexdigest(),
+                    configuration=hashlib.sha256(config_path(env).read_bytes()).hexdigest())
+    # 2. 槽位候选的数量身份还要绑定测试数据：同一程序在不同种子上的结果不能算同一份证据。
+    if env != 'int':
+        seed = current_seed() or {}
+        identity.update(environment=env, seed=seed.get('seed_id', ''), seed_sha256=seed.get('dump_sha256', ''))
+    return identity
 
 def validation_plan(source, previous):
     identity=validation_identity(source)
@@ -243,9 +252,9 @@ def build(source, target):
             run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs'):
         script=source/'scripts'/name
-        if script.exists():(operations/name).write_bytes(script.read_bytes())
+        if script.exists():(operations/name).parent.mkdir(parents=True,exist_ok=True);(operations/name).write_bytes(script.read_bytes())
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
         destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
         destination.write_bytes((source/'scripts'/name).read_bytes())
@@ -543,6 +552,11 @@ def reviewed_supervision_settings_change(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def additive_statement(statement):
+    # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
+    return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
+
+
 def prepare_database(release, cfg, previous):
     old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
     for migration in sorted((Path(release)/'server/migrations').glob('*.up.sql')):
@@ -551,9 +565,10 @@ def prepare_database(release, cfg, previous):
         sql=re.sub(r'--[^\n]*','',sql)
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
-            additive=bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
-            if not additive and not reviewed_snapshot_column_change(migration) and not reviewed_supervision_index_change(release,migration,statements) and not reviewed_supervision_settings_change(migration):
-                raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
+            if additive_statement(statement): continue
+            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration):
+                continue
+            raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)
     check_database(previous,cfg)
@@ -595,6 +610,16 @@ def check_live_environment(env, metadata, cfg):
             raise RuntimeError(f'{env} {role} 运行配置与目标环境不一致，拒绝停止服务')
     if http(metadata['frontend_url']+'/api/config').get('environment_id') != env:
         raise RuntimeError('Web/API 环境身份不一致，拒绝停止服务')
+
+
+def update_release_metadata(env, metadata, release, previous):
+    manifest=read(Path(release)/'release.json');release_id=manifest['id']
+    metadata.update(release_id=release_id,release_dir=str(release),
+        previous_release_id=previous.get('release_id') if previous.get('release_id')!=release_id else previous.get('previous_release_id'),
+        commit=manifest['source_commit'],source_digest=manifest['source_digest'],deployed_at=time.strftime('%FT%TZ',time.gmtime()),
+        build_version=release_id,frontend_mode='standalone',runtime_config_file=str(config_path(env)),
+        binary_versions={'multica':output([Path(release)/'server/bin/multica','version'])})
+    metadata.pop('role_release_dirs',None)
 
 
 def deploy(env, release, timeout=900):
@@ -653,10 +678,8 @@ def deploy(env, release, timeout=900):
             isolation_check()
             print('发布失败，已恢复切换前版本；配置与数据未重置。',file=sys.stderr)
             raise
-        m.update(release_id=release_id,release_dir=str(release),previous_release_id=prior.get('release_id') if prior.get('release_id')!=release_id else prior.get('previous_release_id'),commit=manifest['source_commit'],source_digest=manifest['source_digest'],deployed_at=time.strftime('%FT%TZ',time.gmtime()))
-        m.update(build_version=release_id,frontend_mode='standalone',runtime_config_file=str(config_path(env)),binary_versions={'multica':output([release/'server/bin/multica','version'])})
+        update_release_metadata(env,m,release,prior)
         m['log_offsets']={role: min(offsets[role],16*1024*1024) if offsets[role]>64*1024*1024 and role in ('server','web') else offsets[role] for role in offsets}
-        m.pop('role_release_dirs', None)
         write(RUN/'deployments'/f'{env}-previous.json',prior)
         write(meta_path(env),m)
         for role,pid in m['pids'].items(): (RUN/f'{env}-{role}.pid').write_text(str(pid)+'\n')
@@ -878,7 +901,9 @@ def prepare_verification(source, artifact, lease):
             target = idle_slot(env)
             copy_tree(artifact, target)
             publish(env, target)
-            record.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],deployed_at=read(meta_path(env))['deployed_at'])
+            # 3. 候选登记时带上含种子的身份，证据才能区分同一程序在不同测试数据上的结果。
+            record.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],
+                          validation_identity=validation_identity(source, env),deployed_at=read(meta_path(env))['deployed_at'])
         except Exception as error:
             record.update(status='recovery_required',error=str(error))
             raise
@@ -941,6 +966,26 @@ def request_path(request_id):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+',request_id): raise RuntimeError('非法请求编号')
     return RUN/'publish-requests'/f'{request_id}.json'
 
+def batch_approval_records(record, records, meta, profile):
+    """1. 组合发布逐个成员核对：每个成员都要有自己的有效授权、固定提交和同一候选。"""
+    members=record.get('batch_members') or []
+    backend=meta['backend_url'].rstrip('/')
+    for member in members:
+        delivery=next((d for d in records if d['id']==member['delivery_id']),None)
+        url=backend+'/api/delivery-queue/'+member['delivery_id']+'/authorization'
+        request=urllib.request.Request(url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request,timeout=15) as response:authorization=json.load(response)
+        if authorization.get('publication_generation')!=record.get('publication_lease',{}).get('generation'):
+            raise RuntimeError('最终发布占用代次不匹配')
+        if not authorization.get('ready'):
+            raise RuntimeError('成员 %s 的发布授权或用户要求已变化，需要负责人重新核对'%member['delivery_id'])
+        if (not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by')
+                or not delivery.get('release_validated') or delivery['source_commit']!=member['source_commit']
+                or delivery['candidate_id']!=record['id']):
+            raise RuntimeError('成员 %s 的生产批准或组合复核已失效'%member['delivery_id'])
+        if subprocess.run(['git','--git-dir',record['git_common'],'merge-base','--is-ancestor',member['source_commit'],record['commit']]).returncode:
+            raise RuntimeError('发布候选未包含成员 %s 的批准提交'%member['delivery_id'])
+
 def check_delivery_approval(record):
     if record.get('environment', 'int') != 'int':
         raise RuntimeError('任务验收候选不能直接发布生产，必须完成 int 集成验收')
@@ -949,6 +994,8 @@ def check_delivery_approval(record):
     meta=read(meta_path('prod'));profile=read(meta['daemon_profile_path'])
     req=urllib.request.Request(meta['backend_url'].rstrip('/')+'/api/delivery-queue',headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=15) as response: records=json.load(response)
+    if record.get('batch_members'):
+        return batch_approval_records(record, records, meta, profile)
     delivery=next((d for d in records if d['id']==record['delivery_id']),None)
     authorization_url=meta['backend_url'].rstrip('/')+'/api/delivery-queue/'+record['delivery_id']+'/authorization'
     authorization_request=urllib.request.Request(authorization_url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})

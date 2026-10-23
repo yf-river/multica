@@ -3620,6 +3620,8 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
 		// 任务进入审核中时交给审查 Agent 接手；只在类别变化时派发。
 		h.afterIssueStatusChangeForReview(r.Context(), prevIssue, issue)
+		// 3. 完成与重开同时开关质量监督的完成轮次。
+		h.afterIssueStatusChangeForSupervision(r.Context(), prevIssue, issue)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -4341,6 +4343,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// 批量改状态与单选更新走同一入口：任务进入审核中时交给审查 Agent 接手。
 		if statusChanged {
 			h.afterIssueStatusChangeForReview(r.Context(), prevIssue, issue)
+			h.afterIssueStatusChangeForSupervision(r.Context(), prevIssue, issue)
 		}
 
 		updated++

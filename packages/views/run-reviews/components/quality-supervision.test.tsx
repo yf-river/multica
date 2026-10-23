@@ -41,7 +41,7 @@ describe("quality supervision", () => {
     mocks.snapshot.mockResolvedValue({ ...EMPTY_SUPERVISION, config: { ...EMPTY_SUPERVISION.config, enabled: true, agent_id: "a1", inventory_complete: true }, summary: { ...EMPTY_SUPERVISION.summary, total: 100, covered: 10, no_runs: 90 } });
     renderPage();
     expect(await screen.findByText("共 100 个任务")).toBeInTheDocument();
-    expect(screen.getByText("10 已覆盖当前内容")).toBeInTheDocument();
+    expect(screen.getByText("10 材料已覆盖")).toBeInTheDocument();
     expect(screen.getByText("90 暂无执行记录")).toBeInTheDocument();
   });
   it("surfaces repeated failures and offers a failed filter", async () => {
@@ -53,8 +53,8 @@ describe("quality supervision", () => {
     });
     mocks.list.mockResolvedValue({
       items: [
-        { issue_id: "broken", identifier: "AIS-9", title: "重试失败的任务", business_status: "todo", project_id: null, desired_version: 1, reviewed_version: 1, summary: "", efficiency: "uncertain", correctness: "uncertain", run_count: 1, gaps: [], last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 3, stopped: false, running: false, open_findings: 0 },
-        { issue_id: "ok", identifier: "AIS-10", title: "正常覆盖的任务", business_status: "todo", project_id: null, desired_version: 1, reviewed_version: 1, summary: "", efficiency: "clear", correctness: "clear", run_count: 1, gaps: [], last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 0, stopped: false, running: false, open_findings: 0 },
+        { issue_id: "broken", identifier: "AIS-9", title: "重试失败的任务", business_status: "done", status_category: "done", project_id: null, desired_version: 1, reviewed_version: 1, summary: "", efficiency: "uncertain", correctness: "uncertain", run_count: 1, gaps: [], last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 3, stopped: false, running: false, open_findings: 0, round_sequence: 1, pending_materials: 2 },
+        { issue_id: "ok", identifier: "AIS-10", title: "正常覆盖的任务", business_status: "done", status_category: "done", project_id: null, desired_version: 1, reviewed_version: 1, summary: "", efficiency: "clear", correctness: "clear", run_count: 1, gaps: [], last_checked_at: "2026-10-20T03:00:00Z", error: "", failures: 0, stopped: false, running: false, open_findings: 0, round_sequence: 1, pending_materials: 0 },
       ],
       has_more: false,
       offset: 0,
@@ -67,6 +67,30 @@ describe("quality supervision", () => {
     fireEvent.click(screen.getByRole("button", { name: "恢复失败任务" }));
     await waitFor(() => expect(mocks.check).toHaveBeenCalledWith({ retry_failed: true }));
     expect(screen.getByRole("button", { name: /AIS-10/ })).toHaveTextContent("未发现问题");
+  });
+  it("keeps unfinished tasks waiting and separates coverage from findings", async () => {
+    mocks.snapshot.mockResolvedValue({
+      ...EMPTY_SUPERVISION,
+      config: { ...EMPTY_SUPERVISION.config, enabled: true, agent_id: "a1", inventory_complete: true, interval_seconds: 300 },
+      can_manage: true,
+      summary: { ...EMPTY_SUPERVISION.summary, total: 3, covered: 1, pending: 1, waiting: 1 },
+    });
+    const base = { business_status: "done", status_category: "done", project_id: null, desired_version: 1, reviewed_version: 1, summary: "", efficiency: "uncertain", correctness: "uncertain", gaps: [], last_checked_at: null, error: "", failures: 0, stopped: false, running: false, open_findings: 0, pending_materials: 0 };
+    mocks.list.mockResolvedValue({
+      items: [
+        { ...base, issue_id: "dev", identifier: "AIS-1", title: "开发中的任务", business_status: "in_progress", status_category: "in_progress", run_count: 2, round_sequence: null },
+        { ...base, issue_id: "wait", identifier: "AIS-2", title: "刚完成的任务", run_count: 1, round_sequence: 1, pending_materials: 24 },
+        { ...base, issue_id: "covered", identifier: "AIS-3", title: "已审查的任务", run_count: 1, round_sequence: 1, last_checked_at: "2026-10-20T03:00:00Z" },
+      ],
+      has_more: false,
+      offset: 0,
+    });
+    renderPage();
+    expect(await screen.findByRole("button", { name: /AIS-1/ })).toHaveTextContent("等待任务完成");
+    expect(screen.getByRole("button", { name: /AIS-2/ })).toHaveTextContent("待监督");
+    expect(screen.getByRole("button", { name: /AIS-3/ })).toHaveTextContent("已监督");
+    expect(screen.getByRole("button", { name: /AIS-3/ })).toHaveTextContent("材料已覆盖，未发现问题");
+    expect(screen.queryByRole("button", { name: /AIS-1/ })).not.toHaveTextContent("未发现问题");
   });
   it("opens cited evidence inside the detail without leaving the page", async () => {
     mocks.params = new URLSearchParams({ selected: "issue" });
