@@ -754,6 +754,8 @@ func main() {
 	// 重试，因此短暂故障不会让服务器崩掉。
 	h.Supervision = supervision.New(pool, h.TaskService)
 	h.Upstream = upstream.New(pool)
+	// 修改 1. 任务进入终态时关闭它名下的上游同步批次，取消/失败不再让活动批次挂到租约过期。
+	taskSvc.UpstreamRuns = h.Upstream
 	h.Supervision.Authorize = h.CanUseSupervisionAgent
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{TickInterval: supervision.PollInterval})
 	if err := schedulerMgr.Register(scheduler.QualitySupervisionJob(h.Supervision)); err != nil {

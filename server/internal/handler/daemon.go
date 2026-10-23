@@ -1004,6 +1004,10 @@ type DaemonHeartbeatRequest struct {
 // to claim, so we never start a claim we might have to abort.
 const heartbeatHasPendingTimeout = 1 * time.Second
 
+// 修改 1. 心跳里的上游批次续租最多占 1 秒：续租失败只记日志，不能让 daemon 心跳
+// 因为同步台账变慢或报错而失败。
+const heartbeatUpstreamLeaseTimeout = 1 * time.Second
+
 // maxLocalSkillImportBatch is how many pending import requests the heartbeat
 // handler pops per cycle. Higher values let the daemon process more imports
 // in parallel but increase per-heartbeat latency.
@@ -1275,6 +1279,16 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 	m.UpdateMs = time.Since(updateStart).Milliseconds()
 
 	slog.Debug("daemon heartbeat", "runtime_id", runtimeID)
+
+	// 修改 2. 上游同步批次的租约由平台心跳续租，而不是靠模型记得调用 CLI heartbeat：
+	// 这里只处理本机正在执行的任务，所以长时间分析、模型忙不过来都不会丢掉有效执行。
+	if h.Upstream != nil {
+		renewCtx, cancelRenew := context.WithTimeout(ctx, heartbeatUpstreamLeaseTimeout)
+		if _, renewErr := h.Upstream.RenewLeasesForRuntime(renewCtx, runtimeID); renewErr != nil {
+			slog.Warn("upstream lease renew failed", "runtime_id", runtimeID, "error", renewErr)
+		}
+		cancelRenew()
+	}
 
 	ack := &protocol.DaemonHeartbeatAckPayload{
 		RuntimeID:          runtimeID,

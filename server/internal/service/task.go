@@ -95,6 +95,16 @@ type TaskService struct {
 	analyticsContextCache map[string]analytics.TaskContext
 	// analyticsContextOrder 记录缓存键插入顺序，用于超出上限时淘汰最旧条目。
 	analyticsContextOrder []string
+
+	// 修改 1. UpstreamRuns 在任务进入终态时关闭它名下的上游同步批次。可选：nil 表示不收敛
+	// （直连 service 的测试夹具），生产由 main 注入 upstream.Service。
+	UpstreamRuns UpstreamRunCloser
+}
+
+// UpstreamRunCloser 关闭某个任务名下仍在进行的上游同步批次。status 只取 failed（任务失败）
+// 或 interrupted（任务结束但批次没走完）。
+type UpstreamRunCloser interface {
+	CloseTaskRuns(ctx context.Context, taskID, status, message string) (int, error)
 }
 
 // SourceContextObjectStore 抽象对象存储：仅用于清理终态 quick-create 任务关联的 source-context 对象。
@@ -2761,6 +2771,8 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 
 	slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCancelled(ctx, task)
+	// 修改 6. 取消链原来只翻任务状态，批次会继续占着唯一的活动批次索引直到租约过期。
+	s.closeUpstreamRuns(ctx, task, "interrupted", "任务已取消，批次已关闭")
 	if !opts.QueuedOnly {
 		cancelledChatMessage = s.finalizeCancelledChatMessage(ctx, task, opts)
 	}
@@ -4316,6 +4328,8 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	// 修改 4. 同步任务结束时批次没走完成流程，就不能继续挂成活动批次。
+	s.closeUpstreamRuns(ctx, task, "interrupted", "任务结束时批次未推进")
 
 	if len(issueReplyEvents) > 0 {
 		s.CancelDeferredEscalationsForIssueAgent(ctx, task.IssueID, task.AgentID)
@@ -4843,6 +4857,8 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+	// 修改 5. 失败任务名下的同步批次立刻收敛，不然新任务 start 会一直撞 ErrBusy。
+	s.closeUpstreamRuns(ctx, task, "failed", "任务失败，批次已关闭")
 
 	// 自动重试子任务（若有）已在上方事务内创建，因此
 	// 此时不会再有更新的 chat 任务插队。立即对外宣告：先广播 queued、再通知 daemon——顺序理由见
@@ -5539,6 +5555,21 @@ func (s *TaskService) CancelTasksForArchivedAgent(ctx context.Context, agentID p
 	})
 }
 
+// closeUpstreamRuns 在任务终态后关闭它名下的上游同步批次。
+//
+// 修改 2. 任务被取消或失败后，批次如果还挂着，唯一的活动批次索引会让下一次同步一直撞
+// ErrBusy 直到租约自然过期。这里只记日志不返回错误：任务终态已经提交，而批次也能在下次
+// start 时被回收，同步台账的问题不能反过来影响任务终态。
+func (s *TaskService) closeUpstreamRuns(ctx context.Context, task db.AgentTaskQueue, status, message string) {
+	if s.UpstreamRuns == nil || !task.ID.Valid {
+		return
+	}
+	if _, err := s.UpstreamRuns.CloseTaskRuns(ctx, util.UUIDToString(task.ID), status, message); err != nil {
+		slog.Warn("close upstream sync run failed",
+			"task_id", util.UUIDToString(task.ID), "run_status", status, "error", err)
+	}
+}
+
 func (s *TaskService) terminateTasksInTx(ctx context.Context, eventType string, fail func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
 	var failed []db.AgentTaskQueue
 	var persisted []events.Event
@@ -5566,6 +5597,14 @@ func (s *TaskService) terminateTasksInTx(ctx context.Context, eventType string, 
 		for _, event := range persisted {
 			publishCommittedEvent(s.Bus, event)
 		}
+	}
+	// 修改 3. 清扫器、归档取消和离线回收都从这里落终态，统一收敛它们名下的上游同步批次。
+	runStatus, runMessage := "failed", "任务失败，批次已关闭"
+	if eventType == protocol.EventTaskCancelled {
+		runStatus, runMessage = "interrupted", "任务已取消，批次已关闭"
+	}
+	for _, task := range failed {
+		s.closeUpstreamRuns(ctx, task, runStatus, runMessage)
 	}
 	return failed, nil
 }

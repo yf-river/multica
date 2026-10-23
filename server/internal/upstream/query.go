@@ -158,8 +158,10 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
  FROM upstream_sync_item`).Scan(&out.Pending, &out.Adopted, &out.Ignored); err != nil {
 		return nil, err
 	}
+	// 修改 1. 活动批次的口径与写入一致：租约未过期且领取它的任务仍在执行，任务结束后
+	// 页面不再显示一个已经回写不了的批次，也不会因此继续 5 秒轮询。
 	err := s.Pool.QueryRow(ctx, `SELECT id::text FROM upstream_sync_run
- WHERE status IN ('preparing','running') AND lease_expires_at>now() LIMIT 1`).Scan(&out.ActiveRunID)
+ WHERE status IN ('preparing','running') AND `+runAlive+` LIMIT 1`).Scan(&out.ActiveRunID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
