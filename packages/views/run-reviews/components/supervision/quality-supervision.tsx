@@ -129,6 +129,7 @@ export function QualitySupervision() {
               variant="outline"
               disabled={!config.enabled || check.isPending}
               aria-describedby={paused ? "supervision-paused-hint" : undefined}
+              title={t(($) => $.supervision.check_new_hint)}
               onClick={() => check.mutate({})}
             >
               {check.isPending && <Spinner className="size-4" />}

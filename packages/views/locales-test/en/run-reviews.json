@@ -120,6 +120,7 @@
     "paused_hint": "Supervision is paused; new content is not checked automatically.",
     "checking_now": "Checking {{count}} tasks",
     "check_new": "检查新增",
+    "check_new_hint": "Schedules new-material checks for completed tasks only; check unfinished tasks from the task detail.",
     "settings": "监督设置",
     "welcome": "持续检查任务执行质量",
     "welcome_description": "任务完成后按完成快照自动审查它的执行与交付；开发中、审查中和已取消的任务不会被自动追踪。关闭页面后仍会继续。",

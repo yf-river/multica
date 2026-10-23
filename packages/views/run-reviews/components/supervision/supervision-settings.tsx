@@ -20,7 +20,7 @@ import { errorText, moment } from "./supervision-shared";
 
 type Props = { open: boolean; close: () => void; config: SupervisionConfig };
 
-/** 监督设置：运行时、型号、提示词、周期。监督员由系统托管，不再选择 Agent。 */
+/** 监督设置：运行时、型号、提示词与调查开关。监督员由系统托管，不再选择 Agent；自动派发由完成轮次触发，不再按检查间隔。 */
 export function SupervisionSettings({ open, close, config }: Props) {
   const { t } = useT("run-reviews");
   const wsId = useWorkspaceId();
