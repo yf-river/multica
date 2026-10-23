@@ -51,3 +51,12 @@ SELECT project_id, count(*)::bigint AS resource_count
 FROM project_resource
 WHERE project_id = ANY(sqlc.arg('project_ids')::uuid[])
 GROUP BY project_id;
+
+-- name: ListLocalDirectoryResourcesInWorkspace :many
+-- Workspace-wide local directories, used by the daemon to find worktrees an
+-- agent created outside its own task directory. Bounded: a capture is not a
+-- workspace survey.
+SELECT * FROM project_resource
+WHERE workspace_id = $1 AND resource_type = 'local_directory'
+ORDER BY created_at ASC
+LIMIT 20;

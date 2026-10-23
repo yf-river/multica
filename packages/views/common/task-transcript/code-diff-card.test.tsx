@@ -56,3 +56,49 @@ describe("comment file attachment", () => {
     expect(card).not.toHaveTextContent("−0");
   });
 });
+
+describe("platform text and outside worktrees", () => {
+  const textResult = {
+    text_changes: [{ target_kind: "skill", target_id: "s1", target_name: "发布流程", field: "content", before: "old line\n", after: "new line\n", added: 1, deleted: 1 }],
+  };
+
+  it("renders a prompt-only run without any changed files", () => {
+    render(<CodeDiffCard result={textResult} />);
+    fireEvent.click(screen.getByRole("button", { name: /查看本次代码修改/ }));
+    expect(screen.getByText("平台文本改动")).toBeTruthy();
+    expect(screen.getByText("发布流程")).toBeTruthy();
+    expect(screen.getByText("-old line")).toBeTruthy();
+    expect(screen.getByText("+new line")).toBeTruthy();
+  });
+
+  it("groups the task directory and a worktree outside it", () => {
+    render(<CodeDiffCard result={{ code_diff: {
+      version: 2, before: "", after: "", truncated: false, unavailable: false,
+      roots: [
+        { path: "/work", kind: "workdir", label: "任务目录", attribution: "task", files: [{ path: "a.ts", added: 1, deleted: 0, binary: false, truncated: false, patch: "+a" }] },
+        { path: "/elsewhere", kind: "external", label: "任务目录外的工作树", branch: "fix/x", base_source: "reflog", commits: 2, attribution: "task", files: [{ path: "b.ts", added: 2, deleted: 1, binary: false, truncated: false, patch: "+b" }] },
+      ],
+      files: [],
+    } }} />);
+    fireEvent.click(screen.getByRole("button", { name: /查看本次代码修改/ }));
+    fireEvent.click(screen.getByRole("button", { name: /任务目录外的工作树/ }));
+    expect(screen.getByText(/从分支创建点算起/)).toBeTruthy();
+  });
+
+  it("keeps an unprovable worktree behind an explicit reveal", () => {
+    render(<CodeDiffCard result={{ code_diff: {
+      version: 2, before: "", after: "", truncated: false, unavailable: false,
+      roots: [
+        { path: "/work", kind: "workdir", label: "任务目录", attribution: "task", files: [] },
+        { path: "/elsewhere", kind: "external", label: "任务目录外的工作树", attribution: "unassigned", reason: "无法确定归属", files: [{ path: "c.ts", added: 1, deleted: 0, binary: false, truncated: false, patch: "+c" }] },
+      ],
+      files: [],
+    } }} />);
+    fireEvent.click(screen.getByRole("button", { name: /查看本次代码修改/ }));
+    expect(screen.queryByRole("button", { name: /任务目录外的工作树 · 未归属/ })).toBeNull();
+    const reveal = screen.getByRole("button", { name: /查看未归属改动/ });
+    expect(reveal).toHaveTextContent("1 个工作树");
+    fireEvent.click(reveal);
+    expect(screen.getByRole("button", { name: /任务目录外的工作树 · 未归属/ })).toBeTruthy();
+  });
+});

@@ -310,6 +310,16 @@ type ProjectResourceData struct {
 	Label        string          `json:"label,omitempty"`
 }
 
+// WorkspaceRepoData is one local directory in the workspace, independent of the
+// task's project. The daemon needs it to find worktrees an agent created
+// outside its own task directory: a task can belong to no project at all (that
+// is exactly the GONG-57 case) while the repository it touched is registered on
+// another project in the same workspace.
+type WorkspaceRepoData struct {
+	Path  string `json:"path"`
+	Label string `json:"label,omitempty"`
+}
+
 // ConnectedAppData 把 daemon-claim 的线字段类型限定在 handler 包内，
 // 同时与 runtime app 元数据包共享同一份规范 JSON 形状。
 type ConnectedAppData = runtimeapps.ConnectedApp
@@ -410,9 +420,12 @@ type AgentTaskResponse struct {
 	ProjectTitle       string                `json:"project_title,omitempty"`       // 用于在 agent 上下文中展示
 	ProjectDescription string                `json:"project_description,omitempty"` // 注入 brief 的持久项目级上下文
 	ProjectResources   []ProjectResourceData `json:"project_resources,omitempty"`   // 项目上挂载的资源
-	CreatedAt          string                `json:"created_at"`
-	PriorSessionID     string                `json:"prior_session_id,omitempty"` // 同一 issue 上一任务留下的会话 ID
-	PriorWorkDir       string                `json:"prior_work_dir,omitempty"`   // 同一 issue 上一任务留下的工作目录
+	// 1. Workspace 级本地目录清单，供 daemon 在运行结束时发现任务目录之外新建的
+	//    worktree。任务没有项目时这是唯一来源，GONG-57 就是这种情况。
+	WorkspaceRepos []WorkspaceRepoData `json:"workspace_repos,omitempty"`
+	CreatedAt      string              `json:"created_at"`
+	PriorSessionID string              `json:"prior_session_id,omitempty"` // 同一 issue 上一任务留下的会话 ID
+	PriorWorkDir   string              `json:"prior_work_dir,omitempty"`   // 同一 issue 上一任务留下的工作目录
 	// PriorSessionResumeUnavailable 在较新的 Codex 会话因缺失回滚被扣下时置位
 	// （MUL-5305）；PriorSessionID（如有）为较旧的兜底。即使旧会话正常恢复，
 	// daemon 也会在 brief 中点明这段连续性缺口。omitempty 让常见（无缺口）场景
@@ -2033,6 +2046,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update agent: "+err.Error())
 		return
 	}
+
+	// 1. 记录本次运行对提示词的改动：agent.instructions / description 存在库里，
+	//    文件 diff 看不到它们，审核时需要单独一条文本差异。
+	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "instructions", existing.Instructions, updated.Instructions)
+	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "description", existing.Description, updated.Description)
 
 	// 可空 runtime 覆盖项：请求里 null/空表示显式清空字段。UpdateAgent 的
 	// COALESCE 无法把列设为 NULL，因此 mcp_config、thinking_level、service_tier

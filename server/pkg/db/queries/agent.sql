@@ -2690,3 +2690,11 @@ INSERT INTO agent (
     @owner_id, @instructions, '{}'::jsonb, '[]'::jsonb, 'user', @system_key
 )
 RETURNING *;
+
+-- name: SetAgentTaskResult :exec
+-- The fail path records a terminal row without touching result (auto-retry and
+-- resume pointers are read there). A failed run still has a diff worth seeing,
+-- so it is attached right after the failure transaction commits.
+UPDATE agent_task_queue
+SET result = $2
+WHERE id = $1 AND result IS NULL;

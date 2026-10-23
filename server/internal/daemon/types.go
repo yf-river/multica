@@ -44,6 +44,13 @@ type RepoData struct {
 
 // ProjectResourceData 镜像 handler.ProjectResourceData——单个传给 daemon 的项目
 // 资源。resource_ref 是随类型而异的 JSON。
+// WorkspaceRepoData 是 workspace 里登记的本地目录，供运行结束时的 diff 采集
+// 在任务目录之外寻找 agent 新建的 worktree。
+type WorkspaceRepoData struct {
+	Path  string `json:"path"`
+	Label string `json:"label,omitempty"`
+}
+
 type ProjectResourceData struct {
 	ID           string          `json:"id"`
 	ResourceType string          `json:"resource_type"`
@@ -117,7 +124,10 @@ type Task struct {
 	ProjectTitle         string                 `json:"project_title,omitempty"`       // 人类可读的项目标题，用于注入上下文
 	ProjectDescription   string                 `json:"project_description,omitempty"` // 持久化的项目级上下文，注入 brief
 	ProjectResources     []ProjectResourceData  `json:"project_resources,omitempty"`   // 需要暴露给 agent 的项目级资源
-	IsLeaderTask         bool                   `json:"is_leader_task,omitempty"`      // 为 true 表示本次在“小队队长”协调角色下执行
+	// WorkspaceRepos 是 workspace 级本地目录（与项目无关），用于在运行结束后发现
+	// agent 在任务目录之外新建的 worktree。镜像 handler.WorkspaceRepoData。
+	WorkspaceRepos []WorkspaceRepoData `json:"workspace_repos,omitempty"`
+	IsLeaderTask   bool                `json:"is_leader_task,omitempty"` // 为 true 表示本次在“小队队长”协调角色下执行
 	// LeaderRoleResolved 是服务器能力位：IsLeaderTask/SquadID 权威地回答了“这次是不是队长运行”。
 	// 早于该能力的服务器不保证这一点——#4951 之前的服务器从不发 is_leader_task，之后的虽然会发
 	// 但没有这个保证——因此 taskIsSquadLeader 对这两种情况都回退到 brief 里的标记（MUL-5811）。
