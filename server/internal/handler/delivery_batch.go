@@ -444,7 +444,7 @@ func (h *Handler) stopStaleBatch(r *http.Request, tx pgx.Tx, batch, reason strin
 
 // 候选作废后恢复成员原批准候选；新批次重新领取，不复用旧组合验收。
 func (h *Handler) resetPendingBatchMembers(r *http.Request, tx pgx.Tx, batch, reason string) error {
-	_, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='approved',release_validated=false,acceptance_submitted=false,candidate_url='',candidate_id=COALESCE(NULLIF(d.plan_snapshot->>'batch_previous_candidate',''),d.candidate_id),plan_snapshot=CASE WHEN d.plan_snapshot ? 'batch_previous_review' THEN jsonb_set(d.plan_snapshot,'{authorization_review}',d.plan_snapshot->'batch_previous_review') ELSE d.plan_snapshot END,error=$2::text,revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending'`, batch, reason)
+	_, err := tx.Exec(r.Context(), `UPDATE issue_delivery d SET phase='approved',release_validated=false,acceptance_submitted=false,candidate_url='',candidate_id=COALESCE(NULLIF(d.plan_snapshot->>'batch_previous_candidate',''),d.candidate_id),plan_snapshot=CASE WHEN d.plan_snapshot ? 'batch_previous_review' THEN jsonb_set(d.plan_snapshot,'{authorization_review}',d.plan_snapshot->'batch_previous_review') ELSE d.plan_snapshot END,error=$2::text,revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase NOT IN ('cancelled','published')`, batch, reason)
 	return err
 }
 
@@ -491,7 +491,7 @@ func (h *Handler) withdrawMember(r *http.Request, tx pgx.Tx, ws, batch, delivery
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='awaiting_review',approved_by=NULL,approved_at=NULL,release_validated=false,error=$3::text,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, delivery, reason)
+	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='awaiting_review',approved_by=NULL,approved_at=NULL,release_validated=false,error=$3::text,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND phase NOT IN ('cancelled','published')`, ws, delivery, reason)
 	return err
 }
 

@@ -448,6 +448,34 @@ func TestDeliveryBatchAbortRestoresRemainingApprovedCandidate(t *testing.T) {
 	}
 }
 
+func TestDeliveryBatchAbortAndWithdrawPreserveTerminalMembers(t *testing.T) {
+	for _, action := range []string{"abort", "withdraw"} {
+		for _, phase := range []string{"cancelled", "published"} {
+			t.Run(action+"/"+phase, func(t *testing.T) {
+				batchCleanup(t)
+				terminal, _ := batchFixture(t)
+				pending, _ := batchFixture(t)
+				dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='original-approved' WHERE id IN($1,$2)`, terminal, pending)
+				batch, _ := openBatch(t, 60)
+				batch, _ = freezeBatch(t, batch.ID)
+				batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("c", 40)}).Want(200)
+				batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "stale-combination", "candidate_commit": strings.Repeat("d", 40)}).Want(200)
+				dbfx.Exec(t, `UPDATE issue_delivery SET phase=$2 WHERE id=$1`, terminal, phase)
+				body := map[string]any{"action": action, "batch_id": batch.ID, "worker_token": batch.WorkerToken, "error": "旧成员已终态，结束失效批次", "delivery_id": terminal}
+				batchAction(t, body).Want(200)
+				if got := deliveryPhase(t, terminal); got != phase {
+					t.Fatalf("%s 将终态 %s 改成了 %s", action, phase, got)
+				}
+				var state, candidate string
+				dbfx.QueryRow(t, `SELECT phase,candidate_id FROM issue_delivery WHERE id=$1`, pending).Scan(&state, &candidate)
+				if state != "approved" || candidate != "original-approved" {
+					t.Fatalf("有效成员没有恢复原批准候选: %s %s", state, candidate)
+				}
+			})
+		}
+	}
+}
+
 // 真正组合失败保留授权和证据，后续自动收集排除失败成员，显式重试才恢复。
 func TestDeliveryBatchFailureWaitsForExplicitRetry(t *testing.T) {
 	if testHandler == nil {
