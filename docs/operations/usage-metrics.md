@@ -148,6 +148,6 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 链路关联的补齐走正式接口 `POST /api/daemon/tasks/{id}/traces`。`correlation` 只能是
 `exact`（子进程自报）或 `inferred_window`（事后按会话+时间窗检索的候选）。写库规则：
 弱来源不能覆盖强来源，exact 的 session/source 不会被后来的 inferred_window 改写，只有
-exact 能把 inferred_window 升级；同强度下 session 不一致不静默覆盖，两个值记进
+exact 能把 inferred_window 升级，升级时 session 使用精确来源自报值，未自报则留空，历史猜测不能变成精确事实。同强度下 session 不一致不静默覆盖，两个值记进
 `metadata.session_conflict`。整批请求先校验再写，任何一条非法都整批 400，不留下半成品；
-写入后逐条回读，缺行或强度被降级返回 500。
+写入后逐条回读，缺行或强度被降级返回 500；非空 exact session 与已有精确关联冲突时返回 409，并保留原值与冲突记录。

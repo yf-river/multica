@@ -29,6 +29,16 @@ func TestDeliveryReviewNoticeExplainsContinuation(t *testing.T) {
 	if strings.Contains(deliveryReviewNotice, "标记任务完成") || strings.Contains(deliveryReviewNotice, "已上线") {
 		t.Errorf("复核通知不能让负责人把未发布交付当作完成: %s", deliveryReviewNotice)
 	}
+	// 1. 同一通知既用于独立验收（verify-N）后的唤醒，也用于组合候选在 int 通过后的唤醒，
+	// 因此只能把验收环境指向该候选的验收记录，不能写死成已完成的 int 功能验收。
+	for _, want := range []string{"验收环境以该候选的验收记录为准", "独立验收不等同于最终 int"} {
+		if !strings.Contains(deliveryReviewNotice, want) {
+			t.Errorf("授权复核通知缺少准确的验收环境说明 %q: %s", want, deliveryReviewNotice)
+		}
+	}
+	if strings.Contains(deliveryReviewNotice, "已在 int") {
+		t.Errorf("授权复核通知不能声称已完成最终 int 功能验收: %s", deliveryReviewNotice)
+	}
 }
 
 // deliveryReviewFixture 造一份 int 验收完成、等待发布复核的交付，并按需挂上有效发布授权。
@@ -335,6 +345,33 @@ func TestCandidateChangeReissuesAuthorizationReview(t *testing.T) {
 	}
 	if got := deliveryReviewNoticeCount(t, delivery); got != 2 {
 		t.Fatalf("新旧候选各一条通知，实际 %d", got)
+	}
+}
+
+// 6. 历史记录：早于本次部署进入 awaiting_review、已有有效授权的交付没有待复核意图，
+// 队列要先纳入并补登记通知，页面在此之前显示“待负责人核对”而不是“已通知未接续”。
+func TestLegacyAwaitingReviewDeliveryResumesReview(t *testing.T) {
+	issue, delivery, token, _ := deliveryReviewFixture(t, true)
+	advanceAccepted(t, delivery, token)
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_notice'-'authorization_pending',error='' WHERE id=$1`, delivery)
+	dbfx.Exec(t, `DELETE FROM comment WHERE issue_id=$1 AND content LIKE '%尚未复核当前候选%'`, issue)
+	phase, pending, _, state := deliveryReviewRow(t, issue, delivery)
+	if phase != "awaiting_review" || pending != "" || state != "owner_review" {
+		t.Fatalf("未登记通知的历史记录应显示待负责人核对: %s %s %s", phase, pending, state)
+	}
+	if queue := deliveryQueueIDs(t); !queue[delivery] {
+		t.Fatal("历史记录应被队列纳入接续")
+	}
+	advanceNotifyAuthorization(t, delivery, 200)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("历史记录应补发一次通知，实际 %d", got)
+	}
+	if _, _, _, state = deliveryReviewRow(t, issue, delivery); state != "review_incomplete" {
+		t.Fatalf("通知发出后应显示已通知未接续，实际 %s", state)
+	}
+	advanceNotifyAuthorization(t, delivery, 200)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("补登记后进入冷却，不应再发通知，实际 %d", got)
 	}
 }
 
