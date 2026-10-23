@@ -37,7 +37,9 @@ def verify():
         checks.append('竞争会话无法领取同一任务')
         plan=api('PUT',route+'/delivery-plan',dict(comment_id=comment['id'],revision=comment['revision']),headers)['plan']
         api('POST',route+'/delivery-plan/confirm',dict(plan_id=plan['id'],revision=plan['comment_revision']))
-        payload=dict(source_commit=meta['commit'],base_commit=meta['commit'],source_branch='feature/delivery-coordination',evidence=[dict(name='API fixture',status='passed',evidence='实际固定测试环境 API 请求')])
+        # 业务清单随方案快照登记：verification 项由本次接口验收覆盖，integration 项留给组合验收。
+        required_checks=[dict(name='交付登记幂等与候选绑定',stage='verification'),dict(name='组合候选集成验收',stage='integration')]
+        payload=dict(source_commit=meta['commit'],base_commit=meta['commit'],source_branch='feature/delivery-coordination',evidence=[dict(name='交付登记幂等与候选绑定',status='passed',evidence='实际固定测试环境 API 请求')],required_checks=required_checks)
         def submit(_):return api('POST',route+'/deliveries',dict(payload,operation_id=str(uuid.uuid4())),headers)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:responses=list(executor.map(submit,range(2)))
         ids={value['deliveries'][0]['id'] for value in responses}
@@ -50,7 +52,7 @@ def verify():
         d.update(claim)
         prepared=api('POST','delivery-queue/advance',dict(id=d['id'],revision=d['revision'],action='prepared',worker_token=d['worker_token'],candidate_id='api-fixture-'+identity,candidate_url=meta['frontend_url'],candidate_identity={'runtime_inputs':meta['commit']},candidate_commit=meta['commit']))
         d.update(prepared)
-        api('POST',route+'/deliveries/'+d['id']+'/action',dict(action='accept',revision=d['revision'],evidence=payload['evidence']),headers)
+        api('POST',route+'/deliveries/'+d['id']+'/action',dict(action='accept',revision=d['revision'],candidate_id='api-fixture-'+identity,evidence=payload['evidence']),headers)
         state=api('GET',route+'/deliveries')
         if len(state['acceptances'])!=1 or state['acceptances'][0]['source_commit']!=meta['commit']:raise RuntimeError('验收历史没有绑定实际提交')
         checks.append('验收证据绑定实际候选并持久保存')

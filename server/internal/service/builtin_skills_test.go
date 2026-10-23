@@ -583,6 +583,31 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 	}
 }
 
+// TestWorkingOnIssuesSkillStatesReviewSweepBoundaries keeps the shipped skill in
+// step with the review dispatcher: the body has to say that every in_review
+// entry dispatches, that a sweep fills the missed round, and which states are
+// deliberately left alone. If the dispatcher's boundaries change, this breaks
+// and the skill has to be re-checked instead of quietly telling agents to
+// re-trigger a review the server will refuse to duplicate.
+func TestWorkingOnIssuesSkillStatesReviewSweepBoundaries(t *testing.T) {
+	skill, ok := findSkill(t, "multica-working-on-issues")
+	if !ok {
+		return
+	}
+	for _, want := range []string{
+		"交付验收通过",
+		"服务端补扫",
+		"已有活动的审查执行",
+		"上一轮打回后没有新提交",
+		"没有提交结论",
+		"人工处理",
+	} {
+		if !strings.Contains(skill.Content, want) {
+			t.Errorf("托管代码审查 段落缺少 %q：技能与实际审查派发边界脱节", want)
+		}
+	}
+}
+
 func findSkill(t *testing.T, name string) (AgentSkillData, bool) {
 	t.Helper()
 	for _, s := range loadBuiltinSkills() {

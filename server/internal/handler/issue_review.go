@@ -496,7 +496,9 @@ func buildReviewHandoff(round int, headSHA, previousState, previousFindings stri
 	} else {
 		b.WriteString("- 上一轮问题：无，这是第一轮审查\n")
 	}
-	b.WriteString("\n审查通过时不要改任务状态；打回或停滞必须用 `multica issue review submit` 提交结论。\n")
+	// 修改 1. 通过、打回、停滞三种结论都要提交：旧写法把「不改任务状态」和「打回或停滞必须
+	// submit」写在一起，审查员据此认定通过不用提交，轮次停在派发态、绿勾永远不会落。
+	b.WriteString("\n通过、打回、停滞都要用 `multica issue review submit` 提交结论；提交本身会写状态，不要自行改任务状态、受理人或元数据。\n")
 	return b.String()
 }
 

@@ -21,21 +21,22 @@ import (
 
 // upstreamScope 是人类侧入口：成员可读，owner/admin 可写。
 // 台账是平台级的，这里的成员校验只用来回答"这个人能不能改全平台的配置"。
-func (h *Handler) upstreamScope(w http.ResponseWriter, r *http.Request, write bool) (string, bool) {
+func (h *Handler) upstreamScope(w http.ResponseWriter, r *http.Request, write bool) (string, bool, bool) {
 	if r.Header.Get("X-Actor-Source") == "task_token" {
 		writeError(w, 403, "上游同步配置与标记需要成员身份")
-		return "", false
+		return "", false, false
 	}
 	ws := middleware.WorkspaceIDFromContext(r.Context())
 	member, ok := h.requireWorkspaceMember(w, r, ws, "工作区不存在")
 	if !ok {
-		return "", false
+		return "", false, false
 	}
-	if write && member.Role != "owner" && member.Role != "admin" {
+	canWrite := member.Role == "owner" || member.Role == "admin"
+	if write && !canWrite {
 		writeError(w, 403, "需要工作区管理员权限")
-		return "", false
+		return "", false, false
 	}
-	return requestUserID(r), true
+	return requestUserID(r), canWrite, true
 }
 
 // upstreamTaskScope 校验 Agent 身份。批次 id 从任务反查，不接受客户端传入，
@@ -89,7 +90,8 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 }
 
 func (h *Handler) GetUpstream(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.upstreamScope(w, r, false); !ok {
+	_, canWrite, ok := h.upstreamScope(w, r, false)
+	if !ok {
 		return
 	}
 	snap, err := h.Upstream.Snapshot(r.Context())
@@ -97,26 +99,39 @@ func (h *Handler) GetUpstream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "读取上游同步状态失败")
 		return
 	}
-	snap.Instructions = service.UpstreamSyncInstructions()
+	snap.CanWrite = canWrite
 	writeJSON(w, 200, snap)
 }
 
-// UpdateUpstreamConfig 保存配置；带上 runtime_id 时顺带确保隐藏执行体与每日自动化，
-// 用户不需要点"创建智能体"。
+// GetUpstreamInstructions 单独返回内置提示词，供设置页展示与「恢复默认」。
+// 成员也能读到，只读成员打开设置时看到的是同一份文本；不在每次轮询里重复传输。
+func (h *Handler) GetUpstreamInstructions(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.upstreamScope(w, r, false); !ok {
+		return
+	}
+	writeJSON(w, 200, map[string]any{"instructions": service.UpstreamSyncInstructions()})
+}
+
+// UpdateUpstreamConfig 保存同步范围、执行体与计划。没有运行时时也能保存暂停、
+// 批量和提示词；带 runtime_id 时才绑定或切换执行体。
 func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
-	user, ok := h.upstreamScope(w, r, true)
+	user, _, ok := h.upstreamScope(w, r, true)
 	if !ok {
 		return
 	}
 	var body struct {
-		UpstreamURL    string `json:"upstream_url"`
-		UpstreamBranch string `json:"upstream_branch"`
-		LocalRef       string `json:"local_ref"`
-		RuntimeID      string `json:"runtime_id"`
-		Enabled        *bool  `json:"enabled"`
-		BatchSize      int    `json:"batch_size"`
+		UpstreamURL    string  `json:"upstream_url"`
+		UpstreamBranch string  `json:"upstream_branch"`
+		LocalRef       string  `json:"local_ref"`
+		RuntimeID      string  `json:"runtime_id"`
+		Model          string  `json:"model"`
+		ThinkingLevel  string  `json:"thinking_level"`
+		Instructions   *string `json:"instructions"`
+		Enabled        *bool   `json:"enabled"`
+		BatchSize      int     `json:"batch_size"`
+		ScheduleHour   *int    `json:"schedule_hour"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512*1024)).Decode(&body); err != nil {
 		writeError(w, 400, "请求体格式错误")
 		return
 	}
@@ -132,19 +147,33 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 	if body.BatchSize == 0 {
 		body.BatchSize = 200
 	}
+	scheduleHour := upstream.DefaultScheduleHour
+	if body.ScheduleHour != nil {
+		scheduleHour = *body.ScheduleHour
+	} else if err := h.DB.QueryRow(r.Context(), `SELECT schedule_hour FROM upstream_sync_settings WHERE singleton=1`).Scan(&scheduleHour); err != nil {
+		scheduleHour = upstream.DefaultScheduleHour
+	}
 
 	if body.RuntimeID != "" {
-		var runtimeWorkspace, runtimeStatus string
-		if err := h.DB.QueryRow(r.Context(), `SELECT workspace_id::text,status FROM agent_runtime WHERE id=$1 AND provider IN ('codex','codebuddy') AND (visibility='workspace' OR owner_id=$2 OR owner_id IS NULL)`, body.RuntimeID, user).Scan(&runtimeWorkspace, &runtimeStatus); err != nil || runtimeWorkspace != middleware.WorkspaceIDFromContext(r.Context()) {
+		var runtimeWorkspace string
+		if err := h.DB.QueryRow(r.Context(), `SELECT workspace_id::text FROM agent_runtime WHERE id=$1 AND provider IN ('codex','codebuddy') AND (visibility='workspace' OR owner_id=$2 OR owner_id IS NULL)`, body.RuntimeID, user).Scan(&runtimeWorkspace); err != nil || runtimeWorkspace != middleware.WorkspaceIDFromContext(r.Context()) {
 			writeError(w, 403, "只能绑定当前有管理权限工作区的运行时")
 			return
 		}
-		if (body.Enabled == nil || *body.Enabled) && runtimeStatus != "online" {
-			writeError(w, 400, "运行时离线，可暂停同步或选择其他在线运行时")
-			return
-		}
 	}
-	agentID, autopilotID, err := h.Upstream.SetupExecutor(r.Context(), upstream.Config{UpstreamURL: body.UpstreamURL, UpstreamBranch: body.UpstreamBranch, LocalRef: body.LocalRef, RuntimeID: body.RuntimeID, BatchSize: body.BatchSize}, user, service.UpstreamSyncInstructions(), body.Enabled == nil || *body.Enabled)
+	agentID, autopilotID, err := h.Upstream.SaveSettings(r.Context(), upstream.Settings{
+		UpstreamURL:         body.UpstreamURL,
+		UpstreamBranch:      body.UpstreamBranch,
+		LocalRef:            body.LocalRef,
+		BatchSize:           body.BatchSize,
+		ScheduleHour:        scheduleHour,
+		Enabled:             body.Enabled == nil || *body.Enabled,
+		Instructions:        body.Instructions,
+		DefaultInstructions: service.UpstreamSyncInstructions(),
+		RuntimeID:           body.RuntimeID,
+		Model:               strings.TrimSpace(body.Model),
+		ThinkingLevel:       strings.TrimSpace(body.ThinkingLevel),
+	}, user)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -154,26 +183,34 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListUpstreamItems(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.upstreamScope(w, r, false); !ok {
+	if _, _, ok := h.upstreamScope(w, r, false); !ok {
 		return
 	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
-	items, err := h.Upstream.ListItems(r.Context(), upstream.ItemFilter{
-		Status: q.Get("status"), Verdict: q.Get("verdict"),
-		Presence: q.Get("presence"), Query: q.Get("q"),
+	status := q.Get("status")
+	if status == "" {
+		status = "open"
+	}
+	presence := q.Get("presence")
+	if presence == "" {
+		presence = "all"
+	}
+	items, total, err := h.Upstream.ListItems(r.Context(), upstream.ItemFilter{
+		Status: status, Verdict: q.Get("verdict"),
+		Presence: presence, Query: q.Get("q"),
 		Limit: limit, Offset: offset,
 	})
 	if err != nil {
 		writeError(w, 500, "读取待吸收清单失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, 200, map[string]any{"items": items, "total": total})
 }
 
 func (h *Handler) MarkUpstreamItems(w http.ResponseWriter, r *http.Request) {
-	user, ok := h.upstreamScope(w, r, true)
+	user, _, ok := h.upstreamScope(w, r, true)
 	if !ok {
 		return
 	}
@@ -196,7 +233,7 @@ func (h *Handler) MarkUpstreamItems(w http.ResponseWriter, r *http.Request) {
 // CreateUpstreamAbsorptionTask creates a normal issue for a human-selected suggestion.
 // It records the link atomically with issue creation; it never applies code or starts a release.
 func (h *Handler) CreateUpstreamAbsorptionTask(w http.ResponseWriter, r *http.Request) {
-	user, ok := h.upstreamScope(w, r, true)
+	user, _, ok := h.upstreamScope(w, r, true)
 	if !ok {
 		return
 	}
@@ -276,7 +313,7 @@ func (h *Handler) CreateUpstreamAbsorptionTask(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) ListUpstreamRuns(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.upstreamScope(w, r, false); !ok {
+	if _, _, ok := h.upstreamScope(w, r, false); !ok {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -285,12 +322,12 @@ func (h *Handler) ListUpstreamRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "分页位置不能为负数")
 		return
 	}
-	runs, err := h.Upstream.ListRuns(r.Context(), limit, offset)
+	runs, total, err := h.Upstream.ListRuns(r.Context(), limit, offset)
 	if err != nil {
 		writeError(w, 500, "读取同步记录失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"runs": runs})
+	writeJSON(w, 200, map[string]any{"runs": runs, "total": total})
 }
 
 func (h *Handler) StartUpstreamRun(w http.ResponseWriter, r *http.Request) {

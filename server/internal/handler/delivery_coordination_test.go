@@ -37,7 +37,7 @@ func deliveryRequest(issue string, body any, o coordinationOwner) *http.Request 
 	return r
 }
 func submitBody(commit string) map[string]any {
-	return map[string]any{"operation_id": dbid.NewV7(), "source_commit": commit, "source_branch": "feature/coordination", "base_commit": strings.Repeat("b", 40), "evidence": []deliveryCheck{{Name: "本地检查", Status: "passed", Evidence: "实际通过"}}}
+	return map[string]any{"required_checks": businessChecks(), "operation_id": dbid.NewV7(), "source_commit": commit, "source_branch": "feature/coordination", "base_commit": strings.Repeat("b", 40), "evidence": []deliveryCheck{{Name: "本地检查", Status: "passed", Evidence: "实际通过"}}}
 }
 
 func TestDeliveryCoordinationConcurrentOwnersAndDuplicateSubmissions(t *testing.T) {
@@ -143,6 +143,7 @@ func TestDeliveryCoordinationABCPublicationAndStaleRelease(t *testing.T) {
 func TestDeliveryCoordinationEvidenceSurvivesCandidateChanges(t *testing.T) {
 	issue, plan := coordinationFixture(t)
 	d, token := coordinationDelivery(t, issue, plan, "testing")
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot='{"required_checks":[{"name":"真实功能","stage":"verification"},{"name":"组合业务","stage":"integration"}]}'::jsonb WHERE id=$1`, d)
 	identity := `{"runtime_inputs":"code","schema":"schema","suite":"suite","configuration":"config"}`
 	dbfx.Insert(t, "delivery_evidence", testutil.Cols{"id": dbid.NewV7(), "workspace_id": testWorkspaceID, "issue_id": issue, "delivery_id": d, "candidate_id": "original", "source_commit": strings.Repeat("a", 40), "identity": testutil.Raw("'" + identity + "'::jsonb"), "evidence": testutil.Raw(`'[{"name":"真实功能","status":"passed","evidence":"已实际执行"}]'::jsonb`)})
 	prepare := func(candidate string, raw json.RawMessage, rev int64) {

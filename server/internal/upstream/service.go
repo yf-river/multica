@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,9 +23,51 @@ var (
 	ErrRunExpired = errors.New("本任务批次租约已过期，需要新任务重新领取")
 )
 
-type Service struct{ Pool *pgxpool.Pool }
+type Service struct {
+	Pool *pgxpool.Pool
+	// LeaseTTL 是批次租约的有效时长，零值用 DefaultLease。只有测试注入短 TTL，
+	// 生产不提供配置项：续租节奏由平台心跳决定，不需要运维调参。
+	LeaseTTL time.Duration
+}
 
 func New(pool *pgxpool.Pool) *Service { return &Service{Pool: pool} }
+
+func (s *Service) leaseTTL() time.Duration {
+	if s.LeaseTTL > 0 {
+		return s.LeaseTTL
+	}
+	return DefaultLease
+}
+
+// runAlive 是批次可写入的存活条件：租约未过期，且领取它的任务仍在执行。
+//
+// 修改 1. 第二个条件补齐了用任务生命周期约束租约的缺口：任务被取消或失败后，
+// 即使租约还没到期，旧批次也立刻拒绝回写，不再等 10 分钟自然过期。
+const runAlive = `lease_expires_at>now() AND task_id IS NOT NULL
+ AND EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.id=upstream_sync_run.task_id AND t.status='running')`
+
+// rowQuerier 让同一段判定既能跑在连接池上，也能跑在已开启的事务里。
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// unwritableRunError 说明一个批次为什么不能再写。
+//
+// 修改 5. 回写被拒有两种完全不同的处置：任务仍在执行、只是租约过期，Agent 要停下等下一次
+// 运行重新领取（410）；任务已经结束或被取消，批次就此作废（409）。原来两种都返回
+// ErrRunGone，Agent 会把租约过期读成"没有新工作"，然后正常结束，整批白跑。
+func unwritableRunError(ctx context.Context, q rowQuerier, runID string) error {
+	var expired, taskRunning bool
+	if err := q.QueryRow(ctx, `SELECT COALESCE(r.lease_expires_at<now(),true),
+ COALESCE((SELECT t.status='running' FROM agent_task_queue t WHERE t.id=r.task_id),false)
+ FROM upstream_sync_run r WHERE r.id=$1`, runID).Scan(&expired, &taskRunning); err != nil {
+		return ErrRunGone
+	}
+	if taskRunning && expired {
+		return ErrRunExpired
+	}
+	return ErrRunGone
+}
 
 type StartResult struct {
 	RunID       string            `json:"run_id"`
@@ -72,7 +115,14 @@ func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource stri
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	} else {
-		if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET status='interrupted',error='租约过期',completed_at=now(),updated_at=now() WHERE status IN ('preparing','running') AND lease_expires_at<now()`); err != nil {
+		// 修改 2. 回收不再有效的活动批次：除了租约过期，领取它的任务已经结束（取消、失败、
+		// 完成或已不存在）同样算失效。只看租约会让被取消任务的批次继续占着唯一的活动批次
+		// 索引，下一次同步只能撞 ErrBusy 等到租约到期。
+		if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET status='interrupted',
+ error=CASE WHEN lease_expires_at<now() THEN '租约过期' ELSE '任务已结束' END,completed_at=now(),updated_at=now()
+ WHERE status IN ('preparing','running')
+   AND (COALESCE(lease_expires_at<now(),true) OR task_id IS NULL
+        OR NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.id=upstream_sync_run.task_id AND t.status='running'))`); err != nil {
 			return nil, err
 		}
 		var active bool
@@ -87,7 +137,7 @@ func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource stri
 		if c.SyncState != "incremental" {
 			mode = "bootstrap"
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_run(id,mode,trigger_source,task_id,status,limit_commits,lease_expires_at,started_at) VALUES($1,$2,$3,$4,'preparing',$5,now()+interval '10 minutes',now())`, id, mode, triggerSource, taskID, c.BatchSize); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_run(id,mode,trigger_source,task_id,status,limit_commits,lease_expires_at,started_at) VALUES($1,$2,$3,$4,'preparing',$5,now()+make_interval(secs => $6::double precision),now())`, id, mode, triggerSource, taskID, c.BatchSize, s.leaseTTL().Seconds()); err != nil {
 			return nil, err
 		}
 	}
@@ -156,7 +206,7 @@ func (s *Service) Prepare(ctx context.Context, runID string, m BatchManifest) er
 	var status string
 	var limit int
 	var old []byte
-	if err = tx.QueryRow(ctx, `SELECT status,limit_commits,result FROM upstream_sync_run WHERE id=$1 AND lease_expires_at>now() FOR UPDATE`, runID).Scan(&status, &limit, &old); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT status,limit_commits,result FROM upstream_sync_run WHERE id=$1 AND `+runAlive+` FOR UPDATE`, runID).Scan(&status, &limit, &old); err != nil {
 		return ErrRunGone
 	}
 	if err = ValidateManifest(m, limit); err != nil {
@@ -177,7 +227,7 @@ func (s *Service) Prepare(ctx context.Context, runID string, m BatchManifest) er
 	if status != "preparing" {
 		return ErrRunGone
 	}
-	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET base_sha=$2,observed_head_sha=$3,result=$4,has_more=$5,status='running',lease_expires_at=now()+interval '10 minutes' WHERE id=$1`, runID, m.BaseSHA, m.HeadSHA, raw, m.HasMore); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET base_sha=$2,observed_head_sha=$3,result=$4,has_more=$5,status='running',lease_expires_at=now()+make_interval(secs => $6::double precision) WHERE id=$1`, runID, m.BaseSHA, m.HeadSHA, raw, m.HasMore, s.leaseTTL().Seconds()); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET bootstrap_base_sha=CASE WHEN bootstrap_base_sha='' THEN $1 ELSE bootstrap_base_sha END,head_sha=$2,updated_at=now() WHERE singleton=1`, m.BaseSHA, m.HeadSHA); err != nil {
@@ -186,12 +236,38 @@ func (s *Service) Prepare(ctx context.Context, runID string, m BatchManifest) er
 	return tx.Commit(ctx)
 }
 
+// Heartbeat 由 Agent 主动续租，保留为可选的自检手段：租约的可靠性由任务自己的生命周期
+// 轮询保证（见 RenewLeaseForPolledTask），这里不再是长批次唯一的续租来源。
 func (s *Service) Heartbeat(ctx context.Context, runID string) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at=now()+interval '10 minutes' WHERE id=$1 AND status IN ('preparing','running') AND lease_expires_at>now()`, runID)
+	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at=now()+make_interval(secs => $2::double precision) WHERE id=$1 AND status IN ('preparing','running') AND `+runAlive, runID, s.leaseTTL().Seconds())
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrRunGone
 	}
 	return err
+}
+
+// RenewLeaseForPolledTask 在任务自己的生命周期轮询到来时续租它名下的批次。
+//
+// 修改 3. 续租依据换成逐任务的存活证据：daemon 在 agent 运行期间每 5 秒用 daemon 令牌
+// 轮询 GET /api/daemon/tasks/{id}/status，runner 一退出就停止。runtime 在线、同机其它
+// 任务还在心跳都不能代替本任务活着——只看 runtime 会把子进程已消失、DB 任务行还没结算
+// 的旧批次无限续下去。三个条件同时满足才续租：调用方是托管该任务运行时的 daemon、
+// 任务行仍是 running、批次租约尚未过期。过期租约不复活，旧批次只能由新任务重新领取。
+func (s *Service) RenewLeaseForPolledTask(ctx context.Context, taskID, daemonID string) (bool, error) {
+	if daemonID == "" {
+		return false, nil
+	}
+	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_run r
+ SET lease_expires_at=now()+make_interval(secs => $2::double precision),updated_at=now()
+ WHERE r.task_id=$1::uuid AND r.status IN ('preparing','running') AND r.lease_expires_at>now()
+   AND EXISTS(SELECT 1 FROM agent_task_queue t
+              JOIN agent_runtime rt ON rt.id=t.runtime_id
+              WHERE t.id=r.task_id AND t.status='running' AND rt.daemon_id=$3)`,
+		taskID, s.leaseTTL().Seconds(), daemonID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // AppendReport 落一批回传。commit 台账是幂等的支点：同一 sha 重复提交只更新，
@@ -208,9 +284,9 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 	}
 	var status string
 	var raw []byte
-	if err = tx.QueryRow(ctx, `SELECT status,result FROM upstream_sync_run WHERE id=$1 AND lease_expires_at>now() FOR UPDATE`, runID).Scan(&status, &raw); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT status,result FROM upstream_sync_run WHERE id=$1 AND `+runAlive+` FOR UPDATE`, runID).Scan(&status, &raw); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrRunGone
+			return 0, unwritableRunError(ctx, tx, runID)
 		}
 		return 0, err
 	}
@@ -231,8 +307,8 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 			return 0, ValidationError{Field: "commits", Message: "回传与本轮冻结清单不符"}
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at = now() + $2::interval, updated_at = now()
- WHERE id=$1`, runID, DefaultLease.String()); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at = now() + make_interval(secs => $2::double precision), updated_at = now()
+ WHERE id=$1`, runID, s.leaseTTL().Seconds()); err != nil {
 		return 0, err
 	}
 
@@ -317,8 +393,11 @@ func (s *Service) Finish(ctx context.Context, runID, cursorSHA string, hasMore b
 
 	var raw []byte
 	var mode string
-	if err = tx.QueryRow(ctx, `SELECT result,mode FROM upstream_sync_run WHERE id=$1 AND status='running' AND lease_expires_at>now() FOR UPDATE`, runID).Scan(&raw, &mode); err != nil {
-		return ErrRunGone
+	if err = tx.QueryRow(ctx, `SELECT result,mode FROM upstream_sync_run WHERE id=$1 AND status='running' AND `+runAlive+` FOR UPDATE`, runID).Scan(&raw, &mode); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return unwritableRunError(ctx, tx, runID)
+		}
+		return err
 	}
 	var m BatchManifest
 	if err = json.Unmarshal(raw, &m); err != nil {
@@ -373,4 +452,48 @@ func (s *Service) Fail(ctx context.Context, runID, message string) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// CloseTaskRuns 在任务进入终态时关闭它名下的批次，让取消和失败立刻收敛。
+//
+// 修改 4. 平台的取消/失败链只翻 agent_task_queue，不碰上游批次。不收敛的话被取消的批次
+// 会继续占着唯一的活动批次索引，下一次同步只能等租约自然过期。status 只接受 failed 或
+// interrupted：正常走完的批次由 Finish 关闭，这里处理的是"任务结束了但批次没走完"。
+func (s *Service) CloseTaskRuns(ctx context.Context, taskID, status, message string) (int, error) {
+	if status != "failed" && status != "interrupted" {
+		return 0, ValidationError{Field: "status", Message: "只允许 failed 或 interrupted"}
+	}
+	// 绝大多数任务与上游同步无关：先按 task_id 判断有没有活动批次，避免每次任务终态都去锁配置行。
+	var active bool
+	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM upstream_sync_run WHERE task_id=$1::uuid AND status IN ('preparing','running'))`, taskID).Scan(&active); err != nil {
+		return 0, err
+	}
+	if !active {
+		return 0, nil
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	// 与 Start/Fail 相同的加锁顺序（先配置行、后批次行），避免任务终态和领取批次互相等待。
+	var singleton int
+	if err = tx.QueryRow(ctx, `SELECT singleton FROM upstream_sync_config WHERE singleton=1 FOR UPDATE`).Scan(&singleton); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE upstream_sync_run SET status=$2,error=$3,completed_at=now(),lease_expires_at=NULL,updated_at=now()
+ WHERE task_id=$1::uuid AND status IN ('preparing','running')`, taskID, status, message)
+	if err != nil {
+		return 0, err
+	}
+	n := int(tag.RowsAffected())
+	if n > 0 && status == "failed" {
+		if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET error=$1,updated_at=now() WHERE singleton=1`, message); err != nil {
+			return 0, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return n, nil
 }

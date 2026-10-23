@@ -1458,6 +1458,66 @@ func (q *Queries) LockAutopilotForUpdate(ctx context.Context, arg LockAutopilotF
 	return i, err
 }
 
+const pauseAutopilotsBySystemAgentsOfRuntime = `-- name: PauseAutopilotsBySystemAgentsOfRuntime :many
+UPDATE autopilot a
+SET status = 'paused',
+    pause_reason = 'agent_runtime_required',
+    updated_at = now()
+WHERE a.status = 'active'
+  AND a.assignee_type = 'agent'
+  AND EXISTS (
+    SELECT 1
+    FROM agent g
+    WHERE g.id = a.assignee_id
+      AND g.kind = 'system'
+      AND g.runtime_id = $1
+  )
+RETURNING a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason
+`
+
+// System agents (for example the upstream sync observer) have no unbind step:
+// teardown hard-deletes their rows via DeleteSystemAgentsByRuntime. Automations
+// they own must therefore be paused before that delete, or they stay active and
+// the scheduler keeps dispatching a daily run with no assignee. Same persistent
+// admission failure as an unbound user agent, so reuse the same pause reason.
+// Restrict to active so repeated teardown/retry is idempotent.
+func (q *Queries) PauseAutopilotsBySystemAgentsOfRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]Autopilot, error) {
+	rows, err := q.db.Query(ctx, pauseAutopilotsBySystemAgentsOfRuntime, runtimeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Autopilot{}
+	for rows.Next() {
+		var i Autopilot
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Title,
+			&i.Description,
+			&i.AssigneeID,
+			&i.Status,
+			&i.ExecutionMode,
+			&i.IssueTitleTemplate,
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.LastRunAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AssigneeType,
+			&i.ProjectID,
+			&i.PauseReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pauseAutopilotsByUnboundAgents = `-- name: PauseAutopilotsByUnboundAgents :many
 UPDATE autopilot a
 SET status = 'paused',

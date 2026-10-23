@@ -1004,6 +1004,10 @@ type DaemonHeartbeatRequest struct {
 // to claim, so we never start a claim we might have to abort.
 const heartbeatHasPendingTimeout = 1 * time.Second
 
+// 修改 1. 每次任务状态轮询里续租上游批次最多占 1 秒：续租失败只记日志，不能让 daemon
+// 的取消轮询因为同步台账变慢或报错而失败。
+const statusPollUpstreamLeaseTimeout = 1 * time.Second
+
 // maxLocalSkillImportBatch is how many pending import requests the heartbeat
 // handler pops per cycle. Higher values let the daemon process more imports
 // in parallel but increase per-heartbeat latency.
@@ -4897,16 +4901,59 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
+
+	// 修改 2. 这次轮询本身就是"该任务仍在执行"的逐任务证据，顺手续租它名下的上游批次。
+	h.renewUpstreamLeaseForPolledTask(r, task, workspaceID)
 
 	status := task.Status
 	if task.Status == "deferred" && task.FailureReason.String == "release_pause" {
 		status = "release_paused"
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": status})
+}
+
+// renewUpstreamLeaseForPolledTask 用任务自己的状态轮询续租它名下的上游批次。
+//
+// 修改 3. daemon 在 agent 执行期间每 5 秒轮询一次 /api/daemon/tasks/{id}/status，runner
+// 退出就停止，因此"本任务刚被轮询过"直接对应"本任务还在跑"。续租只认这个信号：runtime
+// 在线或同机其它任务的心跳都不能证明这个任务的子进程还活着，否则批次会在任务已经消失后
+// 被无限续租。身份和归属在 SQL 里一并核对（daemon_id == runtime.daemon_id、任务仍
+// running），失败只记日志，不影响状态查询本身。
+func (h *Handler) renewUpstreamLeaseForPolledTask(r *http.Request, task db.AgentTaskQueue, workspaceID string) {
+	if h.Upstream == nil || !task.ID.Valid || task.Status != "running" {
+		return
+	}
+	ctx := r.Context()
+	daemonID := middleware.DaemonIDFromContext(ctx)
+	if daemonID == "" {
+		// JWT/PAT 是现有 daemon 的合法登录方式。它们只提供成员身份，托管机器身份
+		// 从已授权任务绑定的 runtime 读取；客户端不能通过传 daemon ID 替别的任务续租。
+		userID := requestUserID(r)
+		if userID == "" || !task.RuntimeID.Valid {
+			return
+		}
+		runtime, err := h.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+		if err != nil || uuidToString(runtime.WorkspaceID) != workspaceID ||
+			(runtime.OwnerID.Valid && uuidToString(runtime.OwnerID) != userID && runtime.Visibility != "workspace") {
+			return
+		}
+		daemonID = runtime.DaemonID.String
+	}
+	renewCtx, cancelRenew := context.WithTimeout(ctx, statusPollUpstreamLeaseTimeout)
+	defer cancelRenew()
+	renewed, err := h.Upstream.RenewLeaseForPolledTask(renewCtx, uuidToString(task.ID), daemonID)
+	if err != nil {
+		slog.Warn("upstream lease renew from task status poll failed",
+			"task_id", uuidToString(task.ID), "daemon_id", daemonID, "error", err)
+		return
+	}
+	if renewed {
+		slog.Debug("upstream lease renewed from task status poll", "task_id", uuidToString(task.ID))
+	}
 }
 
 // FailTask marks a running task as failed.

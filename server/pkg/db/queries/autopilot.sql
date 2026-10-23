@@ -110,6 +110,28 @@ WHERE a.status = 'active'
   )
 RETURNING a.*;
 
+-- name: PauseAutopilotsBySystemAgentsOfRuntime :many
+-- System agents (for example the upstream sync observer) have no unbind step:
+-- teardown hard-deletes their rows via DeleteSystemAgentsByRuntime. Automations
+-- they own must therefore be paused before that delete, or they stay active and
+-- the scheduler keeps dispatching a daily run with no assignee. Same persistent
+-- admission failure as an unbound user agent, so reuse the same pause reason.
+-- Restrict to active so repeated teardown/retry is idempotent.
+UPDATE autopilot a
+SET status = 'paused',
+    pause_reason = 'agent_runtime_required',
+    updated_at = now()
+WHERE a.status = 'active'
+  AND a.assignee_type = 'agent'
+  AND EXISTS (
+    SELECT 1
+    FROM agent g
+    WHERE g.id = a.assignee_id
+      AND g.kind = 'system'
+      AND g.runtime_id = @runtime_id
+  )
+RETURNING a.*;
+
 -- name: PauseAutopilotsByUnrunnableSquad :many
 -- Rotating a squad to an already-unbound leader has the same persistent
 -- admission failure as Runtime teardown. Pause only automations assigned to

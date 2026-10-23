@@ -48,7 +48,7 @@ func (h *Handler) deliveryHuman(r *http.Request, ws string) bool {
 }
 func (h *Handler) deliveryJSON(w http.ResponseWriter, r *http.Request, ws, issue string) {
 	var data json.RawMessage
-	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('owner',(SELECT jsonb_build_object('execution_id',execution_id,'generation',generation,'expires_at',expires_at) FROM delivery_owner WHERE workspace_id=$1 AND issue_id=$2),'publication',(SELECT jsonb_build_object('delivery_id',delivery_id,'state',state,'generation',generation,'expires_at',expires_at) FROM delivery_publication WHERE resource='int-prod'),'acceptances',(SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY created_at),'[]') FROM delivery_evidence e WHERE workspace_id=$1 AND issue_id=$2),'plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'user_comments_version',(SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text))),'authorizations',(SELECT COALESCE(jsonb_agg(a ORDER BY a.created_at DESC),'[]') FROM issue_delivery_authorization a JOIN issue_delivery_plan p ON p.id=a.plan_id WHERE a.workspace_id=$1 AND a.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT (SELECT jsonb_build_object('stage',e.stage,'environment',e.environment,'generation',e.generation,'candidate_id',e.candidate_id,'at',e.created_at,'detail',e.detail) FROM verification_event e WHERE e.delivery_id=d.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1) AS execution,d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved','testing','preparing_release','publishing') AND q.created_at<d.created_at) AS queue_ahead,(CASE WHEN d.phase<>'awaiting_review' THEN '' WHEN d.plan_snapshot->>'authorization_pending'='true' THEN 'owner_review' WHEN d.plan_snapshot->'authorization_notice' IS NOT NULL AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'review_incomplete' WHEN EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'owner_review' ELSE 'user_authorization' END) AS authorization_state FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT jsonb_build_object('owner',(SELECT jsonb_build_object('execution_id',execution_id,'generation',generation,'expires_at',expires_at) FROM delivery_owner WHERE workspace_id=$1 AND issue_id=$2),'publication',(SELECT jsonb_build_object('delivery_id',delivery_id,'state',state,'generation',generation,'expires_at',expires_at) FROM delivery_publication WHERE resource='int-prod'),'acceptances',(SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY created_at),'[]') FROM delivery_evidence e WHERE workspace_id=$1 AND issue_id=$2),'plan',(SELECT to_jsonb(p)||jsonb_build_object('body',c.content,'stale',c.revision<>p.comment_revision) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.issue_id=p.issue_id WHERE p.workspace_id=$1 AND p.issue_id=$2),'user_comments_version',(SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text))),'authorizations',(SELECT COALESCE(jsonb_agg(a ORDER BY a.created_at DESC),'[]') FROM issue_delivery_authorization a JOIN issue_delivery_plan p ON p.id=a.plan_id WHERE a.workspace_id=$1 AND a.issue_id=$2),'deliveries',(SELECT COALESCE(jsonb_agg(x ORDER BY created_at DESC),'[]') FROM (SELECT (SELECT jsonb_build_object('stage',e.stage,'environment',e.environment,'generation',e.generation,'candidate_id',e.candidate_id,'at',e.created_at,'detail',e.detail) FROM verification_event e WHERE e.delivery_id=d.id AND e.stage NOT LIKE 'delivery.%' ORDER BY e.created_at DESC,e.id DESC LIMIT 1) AS execution,d.id,d.issue_id,d.plan_snapshot,d.source_commit,d.source_branch,d.base_commit,d.phase,d.evidence,d.candidate_id,d.candidate_url,d.approved_by,d.approved_at,d.error,d.revision,d.created_at,d.updated_at,(SELECT count(*) FROM issue_delivery q WHERE q.workspace_id=d.workspace_id AND q.phase IN ('waiting_int','approved','testing','preparing_release','publishing') AND q.created_at<d.created_at) AS queue_ahead,(CASE WHEN d.phase<>'awaiting_review' THEN '' WHEN d.plan_snapshot->>'authorization_pending'='true' THEN 'owner_review' WHEN d.plan_snapshot->'authorization_notice' IS NOT NULL AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'review_incomplete' WHEN EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member')) THEN 'owner_review' ELSE 'user_authorization' END) AS authorization_state FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$2 ORDER BY created_at DESC LIMIT 30)x),'can_confirm',$3::boolean)`, ws, issue, h.deliveryHuman(r, ws)).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付记录失败")
 		return
@@ -106,7 +106,7 @@ func (h *Handler) RegisterIssuePlan(w http.ResponseWriter, r *http.Request) {
 	if !unchanged {
 		_, err = tx.Exec(r.Context(), `INSERT INTO issue_delivery_plan(id,workspace_id,issue_id,comment_id,comment_revision,confirmation_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,issue_id) DO UPDATE SET id=EXCLUDED.id,comment_id=EXCLUDED.comment_id,comment_revision=EXCLUDED.comment_revision,confirmed_by=NULL,confirmed_at=NULL,confirmation_id=EXCLUDED.confirmation_id,updated_at=now()`, dbid.NewV7(), ws, issue, comment, revision, dbid.NewV7())
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='needs_changes',error='方案已更新，需要重新确认与验收',approved_by=NULL,approved_at=NULL,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing')`, ws, issue)
+			_, err = tx.Exec(r.Context(), `WITH changed AS (UPDATE issue_delivery SET phase='needs_changes',error='方案已更新，需要重新确认与验收',approved_by=NULL,approved_at=NULL,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing') RETURNING *) INSERT INTO verification_event(workspace_id,delivery_id,candidate_id,stage,detail) SELECT workspace_id,id,candidate_id,'delivery.plan_updated',jsonb_build_object('phase',phase,'revision',revision)::text FROM changed`, ws, issue)
 		}
 	}
 	if err == nil {
@@ -209,13 +209,14 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		OperationID     string          `json:"operation_id"`
-		Commit          string          `json:"source_commit"`
-		Branch          string          `json:"source_branch"`
-		Base            string          `json:"base_commit"`
-		Checks          []deliveryCheck `json:"evidence"`
-		ReplaceID       string          `json:"replace_delivery_id"`
-		ReplaceRevision int64           `json:"replace_revision"`
+		OperationID     string                  `json:"operation_id"`
+		Commit          string                  `json:"source_commit"`
+		Branch          string                  `json:"source_branch"`
+		Base            string                  `json:"base_commit"`
+		Checks          []deliveryCheck         `json:"evidence"`
+		ReplaceID       string                  `json:"replace_delivery_id"`
+		ReplaceRevision int64                   `json:"replace_revision"`
+		RequiredChecks  []requiredDeliveryCheck `json:"required_checks"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body) != nil || !deliveryCommit.MatchString(body.Commit) || !deliveryCommit.MatchString(body.Base) || !deliveryBranch.MatchString(body.Branch) || strings.Contains(body.Branch, "..") || !validDeliveryChecks(body.Checks) {
 		writeError(w, 400, "需要完整提交、任务分支、基线及通过的检查证据")
@@ -272,6 +273,9 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='needs_changes',error='负责人显式提交下一版本',revision=revision+1,updated_at=now() WHERE id=$1`, active)
+		if err == nil {
+			err = recordDeliveryProgress(r.Context(), tx, ws, active, "replaced", activePhase, 0)
+		}
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
@@ -279,8 +283,23 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "替换交付失败")
 		return
 	}
+	required, checkErr := normalizeRequiredDeliveryChecks(body.RequiredChecks)
+	if checkErr != nil {
+		writeError(w, 400, checkErr.Error())
+		return
+	}
+	var snapshot map[string]json.RawMessage
+	if json.Unmarshal(planSnapshot, &snapshot) != nil {
+		writeError(w, 500, "读取方案快照失败")
+		return
+	}
+	snapshot["required_checks"], _ = json.Marshal(required)
+	planSnapshot, _ = json.Marshal(snapshot)
 	evidence, _ := json.Marshal(body.Checks)
 	tag, err := tx.Exec(r.Context(), `INSERT INTO issue_delivery(id,workspace_id,issue_id,operation_id,plan_id,source_commit,source_branch,base_commit,evidence,verification_comment_id,release_comment_id,plan_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, dbid.NewV7(), ws, issue, op, plan, body.Commit, body.Branch, body.Base, evidence, dbid.NewV7(), dbid.NewV7(), planSnapshot)
+	if err == nil && tag.RowsAffected() == 1 {
+		_, err = tx.Exec(r.Context(), `INSERT INTO verification_event(workspace_id,delivery_id,stage,detail) SELECT workspace_id,id,'delivery.submitted',jsonb_build_object('phase',phase)::text FROM issue_delivery WHERE workspace_id=$1 AND operation_id=$2`, ws, op)
+	}
 	if err == nil && tag.RowsAffected() == 0 {
 		var same bool
 		err = tx.QueryRow(r.Context(), `SELECT issue_id=$3 AND source_commit=$4 AND source_branch=$5 AND base_commit=$6 AND evidence=$7::jsonb FROM issue_delivery WHERE workspace_id=$1 AND operation_id=$2`, ws, op, issue, body.Commit, body.Branch, body.Base, evidence).Scan(&same)
@@ -309,10 +328,12 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Action      string          `json:"action"`
-		Revision    int64           `json:"revision"`
-		Checks      []deliveryCheck `json:"evidence"`
-		CandidateID string          `json:"candidate_id"`
+		Action         string                  `json:"action"`
+		Revision       int64                   `json:"revision"`
+		Checks         []deliveryCheck         `json:"evidence"`
+		CandidateID    string                  `json:"candidate_id"`
+		PlanID         string                  `json:"plan_id"`
+		RequiredChecks []requiredDeliveryCheck `json:"required_checks"`
 		deliveryAuthorizationInput
 		AuthorizationID string `json:"authorization_id"`
 		ScopeReview     string `json:"scope_review"`
@@ -340,6 +361,16 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "交付记录不存在")
 		return
 	}
+	if body.Action == "accept" && phase != "published" {
+		stage := "verification"
+		if phase == "preparing_release" || phase == "approved" {
+			stage = "integration"
+		}
+		if err = requireDeliveryChecks(r.Context(), tx, id, body.CandidateID, stage, body.Checks); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
+	}
 	if body.Action == "accept" && body.CandidateID != "" && body.CandidateID == candidate && validDeliveryChecks(body.Checks) {
 		checks, _ := json.Marshal(body.Checks)
 		var recorded bool
@@ -353,11 +384,16 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.Action == "bind-checks" && deliveryChecksAlreadyBound(r.Context(), tx, id, body.PlanID, body.RequiredChecks) {
+		tx.Rollback(r.Context())
+		h.deliveryJSON(w, r, ws, issue)
+		return
+	}
 	if revision != body.Revision {
 		writeError(w, 409, "交付版本已变化，请刷新后重试")
 		return
 	}
-	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" {
+	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" || body.Action == "bind-checks" {
 		var valid bool
 		err = tx.QueryRow(r.Context(), deliveryPlanValidSQL, id).Scan(&valid)
 		if err != nil || !valid {
@@ -366,6 +402,12 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	switch body.Action {
+	case "bind-checks":
+		if err = bindDeliveryRequiredChecks(r.Context(), tx, id, body.PlanID, body.RequiredChecks); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET revision=revision+1,updated_at=now() WHERE id=$1`, id)
 	case "accept":
 		batchCandidate := ""
 		if phase == "approved" {
@@ -390,13 +432,17 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		evidence, _ := json.Marshal(body.Checks)
-		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,workspace_id,issue_id,id,candidate_id,COALESCE(plan_snapshot->>'candidate_commit',source_commit),COALESCE(plan_snapshot->'candidate_identity','{}'),$3 FROM issue_delivery WHERE id=$2 ON CONFLICT(delivery_id,candidate_id) DO NOTHING`, dbid.NewV7(), id, evidence)
+		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,workspace_id,issue_id,id,candidate_id,COALESCE(plan_snapshot->>'candidate_commit',source_commit),COALESCE(plan_snapshot->'candidate_identity','{}'),$3 FROM issue_delivery WHERE id=$2 ON CONFLICT(delivery_id,candidate_id) DO UPDATE SET evidence=EXCLUDED.evidence`, dbid.NewV7(), id, evidence)
 		if err != nil {
 			writeError(w, 500, "保存验收历史失败")
 			return
 		}
 		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=true,evidence=$4,error='',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND id=$3`, ws, issue, id, evidence)
 	case "approve":
+		if err = requireStoredDeliveryChecks(r.Context(), tx, id, "verification"); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
 		if phase != "awaiting_review" {
 			writeError(w, 409, "该交付尚未完成联调审核")
 			return
@@ -455,6 +501,9 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, 400, "未知交付操作")
 		return
+	}
+	if err == nil {
+		err = recordDeliveryProgress(r.Context(), tx, ws, id, body.Action, phase, 0)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

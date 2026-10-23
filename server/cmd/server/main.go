@@ -705,6 +705,9 @@ func main() {
 	// 单独的队列 TTL 要调：忙碌的 runtime 保住积压，离开的 runtime 一次性清退
 	// 它拥有的全部活。
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus, runtimeReconnectGrace)
+	// 1. 「审核中」的审查补扫独立成一条循环：它按数据库状态补派漏掉的审查，不能
+	// 与 runtime 存活检查共享节奏，否则一次慢巡检会推迟补派。
+	go runIssueReviewSweeper(sweepCtx, h)
 	// 7 天 runtime 保留清理不共享 30 秒存活 tick：它有界的小事务每小时独立跑
 	// 一次，一轮慢 GC 不会拖慢离线检测或任务恢复。
 	go runRuntimeGCSweeper(sweepCtx, pool, queries, taskSvc.Metrics, h)
@@ -714,6 +717,11 @@ func main() {
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotFailureMonitorDurable(autopilotCtx, queries, pool, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
+	if err := registerDurableDelegatedResultConsumers(eventDispatcher, h.TaskService); err != nil {
+		slog.Error("register delegated result consumer failed", "error", err)
+		os.Exit(1)
+	}
+
 	go eventDispatcher.Run(sweepCtx)
 	go runLifeExperimentSweeper(sweepCtx, queries)
 	go runLifeCognitionWorker(sweepCtx, queries, pool)
@@ -754,6 +762,8 @@ func main() {
 	// 重试，因此短暂故障不会让服务器崩掉。
 	h.Supervision = supervision.New(pool, h.TaskService)
 	h.Upstream = upstream.New(pool)
+	// 修改 1. 任务进入终态时关闭它名下的上游同步批次，取消/失败不再让活动批次挂到租约过期。
+	taskSvc.UpstreamRuns = h.Upstream
 	h.Supervision.Authorize = h.CanUseSupervisionAgent
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{TickInterval: supervision.PollInterval})
 	if err := schedulerMgr.Register(scheduler.QualitySupervisionJob(h.Supervision)); err != nil {

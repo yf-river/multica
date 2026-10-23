@@ -1612,10 +1612,11 @@ SET status = 'cancelled',
                   AND recovery.author_type = 'system'
                   AND recovery.type = 'progress_update'
                   AND recovery.source_task_id IS NOT NULL
-                  AND failed.status = 'failed'
+                  AND failed.status IN ('failed', 'completed', 'cancelled')
+  AND failed.failure_reason IS DISTINCT FROM 'release_pause'
                   AND failed.delegated_from_task_id IS NOT NULL
                   AND failed.autopilot_run_id IS NULL
-                  AND failed.trigger_evidence_kind IS DISTINCT FROM 'delegated_failure'
+                  AND COALESCE(failed.trigger_evidence_kind, '') NOT IN ('delegated_failure', 'delegated_result')
                   AND source.autopilot_run_id IS NULL
                   AND source.issue_id = task.issue_id
                   AND source.agent_id = task.agent_id
@@ -2010,7 +2011,7 @@ WHERE issue_id = @issue_id
 -- automatic attempt until they need a standalone successor.
 SELECT count(*)
 FROM agent_task_queue
-WHERE trigger_evidence_kind = 'delegated_failure'
+WHERE trigger_evidence_kind IN ('delegated_failure', 'delegated_result')
   AND trigger_evidence_ref_id = @failed_task_id;
 
 -- name: AcknowledgeExhaustedDelegatedFailureRecovery :one
@@ -2026,7 +2027,7 @@ SET delivered_comment_ids = (
 WHERE acknowledged.id = (
     SELECT attempt.id
     FROM agent_task_queue attempt
-    WHERE attempt.trigger_evidence_kind = 'delegated_failure'
+    WHERE attempt.trigger_evidence_kind IN ('delegated_failure', 'delegated_result')
       AND attempt.trigger_evidence_ref_id = @failed_task_id
     ORDER BY attempt.created_at DESC, attempt.id DESC
     LIMIT 1
@@ -2035,7 +2036,7 @@ WHERE acknowledged.id = (
   AND (
       SELECT count(*)
       FROM agent_task_queue attempt_count
-      WHERE attempt_count.trigger_evidence_kind = 'delegated_failure'
+      WHERE attempt_count.trigger_evidence_kind IN ('delegated_failure', 'delegated_result')
         AND attempt_count.trigger_evidence_ref_id = @failed_task_id
   ) >= @max_attempts::int
 RETURNING acknowledged.*;
@@ -2116,10 +2117,11 @@ WHERE recovery.author_type = 'system'
   AND recovery.recovery_settled_at IS NULL
   AND recovery.issue_id = source_issue.id
   AND recovery.workspace_id = source_issue.workspace_id
-  AND failed.status = 'failed'
+  AND failed.status IN ('failed', 'completed', 'cancelled')
+  AND failed.failure_reason IS DISTINCT FROM 'release_pause'
   AND failed.delegated_from_task_id IS NOT NULL
   AND failed.autopilot_run_id IS NULL
-  AND failed.trigger_evidence_kind IS DISTINCT FROM 'delegated_failure'
+  AND COALESCE(failed.trigger_evidence_kind, '') NOT IN ('delegated_failure', 'delegated_result')
   AND source.autopilot_run_id IS NULL
   AND source.issue_id IS NOT NULL
   AND source.agent_id <> failed.agent_id

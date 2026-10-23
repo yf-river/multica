@@ -371,13 +371,17 @@ outputs truncated before storage cannot be recovered through this command.
 
 For Multica code delivery, use `multica issue delivery` with the current task identity (`MULTICA_TASK_ID`, `CODEX_THREAD_ID`, or `--execution`). Reuse the existing delivery for the same plan and source commit. Inspect `owner` and delivery history before any recovery; another execution requires `recover-owner --recovery-evidence` and must not overwrite active work. Keep the existing source branch and acceptance evidence.
 
+Bind the confirmed plan’s business checklist as `required_checks` on delivery submission: each item has `name` and `stage` (`verification` or `integration`), with at least one item per stage. For an existing unpublished delivery missing this list, use `delivery bind-checks` with its `plan_id`, `revision` and checklist; do not request the same user authorization again or weaken already bound checks. Platform coordination checks are not business acceptance. Submit evidence for the exact candidate covering every required item at that stage; a batch representative covers every member’s integration items. Missing checks require real testing, not renaming HTTP or settings checks as completed business flows. See `docs/operations/environment-releases.md` for JSON examples.
+
 Submit actual acceptance evidence, then finish this execution. The external publisher advances the release and posts the next-stage result; do not poll synchronously for the restart of your own daemon. A publication pause is not user cancellation: preserve the original task and work directory. On automatic continuation, inspect Git refs, delivery state, deployment identity, and the last external operation before resuming; never repeat an operation with an unknown result blindly. Report a precise task-level blocker if its outcome cannot be established.
 
 When the review notification says an existing release authorization has not been reviewed for the current candidate, read the latest user comments and the delivery's `authorizations`, `user_comments_version` and `authorization_state`, then bind that authorization to the candidate with `approve` (`authorization_id`, `scope_review`, `user_comments_version`). Do not ask the user to repeat an authorization they already gave, and do not approve on their behalf: stop and explain the reason when the scope changed, the candidate changed materially, or the authorization was revoked. A missing review, a queue notification that has not been delivered, and a review run that failed are different states — report the one you actually observe instead of calling the delivery automatically continuing.
 
 ## 托管代码审查
 
-工作区管理员在审核中列的“审查设置”选择运行时、模型与提示词。启用后，任务进入 `in_review` 会自动派发托管审查员；开发者完成修改后提交审核，不手动调用或指派该隐藏 Agent。
+工作区管理员在审核中列的“审查设置”选择运行时、模型与提示词。启用后，任何进入 `in_review` 的路径（手动或批量改状态、交付验收通过）都会派发托管审查员；开发者完成修改后提交审核，不手动调用或指派该隐藏 Agent。派发失败或进程重启丢掉的那一轮由服务端补扫补齐，不需要也不应该手工补派。
+
+补扫不会重复审查的情形：已有活动的审查执行、审查已通过且被审提交没有变化、上一轮打回后没有新提交、审查已因停滞或轮次上限停止等待人工处理、本轮审查已经执行但没有提交结论（没有关联 PR 时无法证明有改动，不重跑同一轮）。这几种情况下任务停在审核中不是漏派，改状态或重复触发只会打断已有结论。
 
 审查员只接受系统派发的审查轮次，普通评论和 @ 都不会启动它。工作区成员在审查结论线程里回复时，服务端把这条回复交给任务的**当前负责人**（负责人已更换则给新负责人），用户不需要再 @ 一次；回复仍留在原线程，讨论关系不变。Agent 自己 @ 审查员不会转给负责人，会被按不可调用拦下；要负责人接手时直接 @ 负责人，或请用户在该线程回复。
 

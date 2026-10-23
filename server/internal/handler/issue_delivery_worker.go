@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
@@ -155,6 +157,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase='awaiting_review',error=$2,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, reason)
 			}
 			if err == nil {
+				err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, "authorization_wait", phase, body.Generation)
+			}
+			if err == nil {
 				err = tx.Commit(r.Context())
 			}
 			if err != nil {
@@ -224,6 +229,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	next := phase
 	// 5. 待复核意图先随事务落库，提交后再定向通知；通知失败由队列重试，不影响状态真源。
 	notifyReview := false
+	automaticComplete := false
 	switch body.Action {
 	case "claim":
 
@@ -231,7 +237,14 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		if tx.QueryRow(r.Context(), deliveryPlanValidSQL, body.ID).Scan(&valid) != nil || !valid {
 			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='needs_changes',error='方案已变化，需要重新确认',revision=revision+1 WHERE id=$1`, body.ID)
 			if err == nil {
+				err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, "plan_invalid", phase, body.Generation)
+			}
+			if err == nil {
 				err = tx.Commit(r.Context())
+			}
+			if err != nil {
+				writeError(w, 500, "记录方案失效失败")
+				return
 			}
 			writeError(w, 409, "方案已变化，需要重新确认")
 			return
@@ -285,16 +298,39 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 409, "当前候选缺少实际自动验收证据")
 				return
 			}
+			stage := "verification"
+			if phase != "testing" {
+				stage = "integration"
+			}
+			var actualCandidate string
+			if err = tx.QueryRow(r.Context(), `SELECT candidate_id FROM issue_delivery WHERE id=$1`, body.ID).Scan(&actualCandidate); err != nil {
+				writeError(w, 500, "读取当前候选失败")
+				return
+			}
+			checkErr := requireDeliveryChecks(r.Context(), tx, body.ID, actualCandidate, stage, body.Checks)
+			var gap *deliveryChecksGap
+			if checkErr != nil && !errors.As(checkErr, &gap) {
+				writeError(w, 500, checkErr.Error())
+				return
+			}
+			automaticComplete = checkErr == nil
 			checks, _ := json.Marshal(body.Checks)
-			_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,workspace_id,issue_id,id,candidate_id,COALESCE(plan_snapshot->>'candidate_commit',source_commit),COALESCE(plan_snapshot->'candidate_identity','{}'),$3 FROM issue_delivery WHERE id=$2 AND candidate_id<>'' ON CONFLICT(delivery_id,candidate_id) DO NOTHING`, dbid.NewV7(), body.ID, checks)
+			if automaticComplete {
+				_, err = tx.Exec(r.Context(), `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) SELECT $1,workspace_id,issue_id,id,candidate_id,COALESCE(plan_snapshot->>'candidate_commit',source_commit),COALESCE(plan_snapshot->'candidate_identity','{}'),$3 FROM issue_delivery WHERE id=$2 AND candidate_id<>'' ON CONFLICT(delivery_id,candidate_id) DO UPDATE SET evidence=EXCLUDED.evidence`, dbid.NewV7(), body.ID, checks)
+			}
 			if err == nil {
-				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=true,evidence=$2 WHERE id=$1 AND candidate_id<>''`, body.ID, checks)
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=$3,evidence=$2 WHERE id=$1 AND candidate_id<>''`, body.ID, checks, automaticComplete)
 			}
 			if err != nil {
 				writeError(w, 500, "记录自动验收证据失败")
 				return
 			}
+
 		case "accepted":
+			if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "verification"); err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
 			if phase != "testing" {
 				writeError(w, 409, "当前阶段不能完成联调")
 				return
@@ -337,6 +373,10 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case "validated":
+			if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "integration"); err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
 			var submitted bool
 			if tx.QueryRow(r.Context(), `SELECT acceptance_submitted FROM issue_delivery WHERE id=$1`, body.ID).Scan(&submitted) != nil || !submitted {
 				writeError(w, 409, "缺少当前候选的功能验收证据")
@@ -352,6 +392,10 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case "publishing":
+			if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "integration"); err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
 			var validated bool
 			if tx.QueryRow(r.Context(), `SELECT release_validated AND acceptance_submitted FROM issue_delivery WHERE id=$1`, body.ID).Scan(&validated) != nil || !validated {
 				writeError(w, 409, "发布候选尚未完成复核")
@@ -407,6 +451,23 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET evidence=e.evidence FROM delivery_evidence e WHERE e.delivery_id=d.id AND e.candidate_id=d.candidate_id AND d.id=$1 AND d.acceptance_submitted`, body.ID)
 		}
 	}
+	if err == nil && body.Action == "prepared" {
+		err = tx.QueryRow(r.Context(), `SELECT acceptance_submitted FROM issue_delivery WHERE id=$1`, body.ID).Scan(&automaticComplete)
+		if err == nil && automaticComplete {
+			stage := "verification"
+			if phase == "preparing_release" {
+				stage = "integration"
+			}
+			checkErr := requireStoredDeliveryChecks(r.Context(), tx, body.ID, stage)
+			var gap *deliveryChecksGap
+			if checkErr != nil && !errors.As(checkErr, &gap) {
+				err = checkErr
+			} else if checkErr != nil {
+				automaticComplete = false
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET acceptance_submitted=false WHERE id=$1`, body.ID)
+			}
+		}
+	}
 	if err == nil && body.Action == "prepared" && len(body.ValidationPlan) > 0 {
 		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{validation_plan}',$2::jsonb) WHERE id=$1`, body.ID, body.ValidationPlan)
 	}
@@ -421,16 +482,17 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,$2,$3) ON CONFLICT(delivery_id,stage) DO NOTHING`, body.ID, next, dbid.NewV7())
 	}
 	var issueEvent *events.Event
+	// 1. 交付验收通过也把任务推进到审核中；把前后两版任务行留到事务外，提交后
+	// 与手动改状态共用同一个后处理入口，避免这条写入路径单独漏掉审查派发和清绿勾。
+	var previous, updated db.Issue
 	if err == nil && (next == "awaiting_review" || body.Action == "accepted") {
 		q := h.Queries.WithTx(tx)
-		previous, readErr := q.GetIssue(r.Context(), parseUUID(issue))
-		err = readErr
+		previous, err = q.GetIssue(r.Context(), parseUUID(issue))
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE issue SET status='in_review',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, issue)
 		}
 		if err == nil {
-			updated, readErr := q.GetIssue(r.Context(), parseUUID(issue))
-			err = readErr
+			updated, err = q.GetIssue(r.Context(), parseUUID(issue))
 			if err == nil {
 				status := "in_review"
 				event, recordErr := service.RecordDurableEventTx(r.Context(), q, buildIssueUpdatedEvent(r.Context(), h, updated, previous, UpdateIssueRequest{Status: &status}, nil, "member", requestUserID(r)))
@@ -438,6 +500,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				issueEvent = &event
 			}
 		}
+	}
+	if err == nil && body.Action != "notify" {
+		err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, body.Action, phase, body.Generation)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -448,6 +513,11 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if issueEvent != nil {
 		h.publishEvent(*issueEvent)
+	}
+	// 2. 与 PUT /issues、批量改状态同一条后处理：进入审核中即派发审查并清掉上一轮
+	// 绿勾。事务已提交，这里的失败不影响交付结果，由周期补扫兜底重派。
+	if updated.ID.Valid {
+		h.afterIssueStatusChangeForReview(r.Context(), previous, updated)
 	}
 	if notifyReview {
 		// 6. 通知失败不回滚已保存的待复核状态；待复核意图保留，下一次队列轮询会补发。
@@ -494,12 +564,16 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, 200, map[string]any{"id": body.ID, "phase": next, "revision": func() int64 {
+	receipt := map[string]any{"id": body.ID, "phase": next, "revision": func() int64 {
 		if body.Action == "notify" {
 			return rev
 		}
 		return rev + 1
-	}(), "worker_token": token, "issue_id": issue})
+	}(), "worker_token": token, "issue_id": issue}
+	if body.Action == "tested" || body.Action == "prepared" {
+		receipt["acceptance_submitted"] = automaticComplete
+	}
+	writeJSON(w, 200, receipt)
 }
 
 func identityOrEmpty(raw json.RawMessage) json.RawMessage {
