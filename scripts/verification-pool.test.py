@@ -165,6 +165,21 @@ class SeedGateTests(unittest.TestCase):
                 worker.ensure_seed()
 
 
+
+class PoolServiceLifetimeTests(unittest.TestCase):
+    def test_dispatch_keeps_persistent_slot_services_after_worker_exit(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        identity='00000000-0000-0000-0000-000000000002'
+        delivery=dict(id=identity,phase='waiting_int',created_at='2026-10-23T00:00:00Z')
+        inactive=type('R',(),{'returncode':1})()
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(w.subprocess,'run',return_value=inactive),patch.object(r,'run') as launch:
+            self.assertEqual(worker.pool_dispatch([delivery],None),{identity})
+            command=launch.call_args.args[0]
+            self.assertIn('--property=Type=exec',command)
+            self.assertIn('--property=KillMode=process',command)
+            self.assertNotIn('--property=KillMode=control-group',command)
+            self.assertEqual(command[-2:],['--pool-delivery',identity])
+
 class MigrationGateTests(unittest.TestCase):
     """通用迁移路径只接受新建表和并发索引；普通 CREATE INDEX 不做新表豁免。"""
 

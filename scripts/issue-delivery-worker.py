@@ -316,8 +316,9 @@ class Worker:
             unit='multica-verify-'+d['id']
             if subprocess.run(['systemctl','is-active','--quiet',unit]).returncode==0:continue
             if active>=4:break
+            # 槽位服务跨交付存活，由canonical PID/profile管理停启；短命接力单元退出不能杀服务。
             r.run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec',
-                   '--property=KillMode=control-group','--working-directory',r.ROOT,
+                   '--property=KillMode=process','--working-directory',r.ROOT,
                    '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),sys.executable,Path(__file__).resolve(),
                    '--env',self.env,'--pool-delivery',d['id']])
             active+=1
