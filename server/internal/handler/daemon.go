@@ -4698,6 +4698,14 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// 多关联请求按同一顺序锁行，避免并发批次逆序写入时互相等待。
+	sort.SliceStable(planned, func(i, j int) bool {
+		if planned[i].Provider != planned[j].Provider {
+			return planned[i].Provider < planned[j].Provider
+		}
+		return planned[i].TraceID < planned[j].TraceID
+	})
+
 	// 存储失败必须让调用方看见：204 只代表"整批已确认落账"。补齐流程靠这个状态判断
 	// 要不要重试，把 Warn 吞掉会让一次失败的补齐被记成成功。
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -4739,14 +4747,9 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit trace transaction")
-		return
-	}
-
 	// 回读核对：说"已落账"之前先证明这些行真的在，且关联强度没有被弱来源覆盖。
 	if len(planned) > 0 {
-		stored, err := h.Queries.ListTaskProviderTraces(r.Context(), parseUUID(taskID))
+		stored, err := qtx.ListTaskProviderTraces(r.Context(), parseUUID(taskID))
 		if err != nil {
 			slog.Error("read back task provider traces failed", "task_id", taskID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to verify stored traces")
@@ -4776,10 +4779,26 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if p.Correlation == "exact" && p.SessionID != "" && got.SessionID != p.SessionID {
+				// 409不保留同批新增关联；审计只记录已存在的精确行，不改其身份或来源。
+				if err := tx.Rollback(r.Context()); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to roll back conflicting traces")
+					return
+				}
+				if err := h.Queries.RecordTaskProviderSessionConflict(r.Context(), db.RecordTaskProviderSessionConflictParams{
+					TaskID: parseUUID(taskID), Provider: p.Provider, ProviderTraceID: p.TraceID, SessionID: p.SessionID, ExpectedSessionID: got.SessionID,
+				}); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to record trace session conflict")
+					return
+				}
 				writeError(w, http.StatusConflict, "trace session conflicts with existing exact association: "+p.TraceID)
 				return
 			}
 		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit trace transaction")
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)

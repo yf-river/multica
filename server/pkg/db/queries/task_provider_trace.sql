@@ -44,6 +44,18 @@ DO UPDATE SET
     finished_at       = COALESCE(EXCLUDED.finished_at, task_provider_trace.finished_at),
     updated_at        = now();
 
+-- name: RecordTaskProviderSessionConflict :exec
+-- 被拒请求的会话冲突审计独立于业务关联事务，只记录已有精确行。
+UPDATE task_provider_trace
+SET metadata = metadata || jsonb_build_object(
+    'session_conflict', jsonb_build_array(session_id, sqlc.arg(session_id)::text),
+    'session_conflict_at', now())
+WHERE task_id = sqlc.arg(task_id) AND provider = sqlc.arg(provider)
+  AND provider_trace_id = sqlc.arg(provider_trace_id) AND correlation = 'exact'
+  AND session_id = sqlc.arg(expected_session_id)
+  AND session_id <> '' AND sqlc.arg(session_id)::text <> ''
+  AND session_id <> sqlc.arg(session_id)::text;
+
 -- name: SetTaskProviderSDKTrace :execrows
 -- SDK自身trace标识与精确文件来源只补空或幂等重放，冲突保留先前证据。
 UPDATE task_provider_trace

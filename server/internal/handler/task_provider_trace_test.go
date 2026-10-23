@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,7 +111,7 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 	`, taskID).Scan(&session, &space, &correlation); err != nil {
 		t.Fatalf("load trace-a: %v", err)
 	}
-	if session != "sess-1" || space != "codebuddy-model-request-prod" || correlation != "exact" {
+	if session != "sess-1" || space != "" || correlation != "exact" {
 		t.Fatalf("exact session must not be rewritten by a conflicting report: session=%q space=%q correlation=%q", session, space, correlation)
 	}
 	var conflict string
@@ -285,12 +286,35 @@ func TestTaskProviderSDKTraceProvenance(t *testing.T) {
 	if r := post(wrongSession); r.Code != 409 {
 		t.Fatalf("wrong SDK session: %d %s", r.Code, r.Body.String())
 	}
+	newSDK := copyPayload()
+	newSDK["provider_trace_id"] = "mixed-new-cid"
+	oldWrongSession := map[string]any{"provider": "codebuddy", "provider_trace_id": "actual-cid", "session_id": "wrong-session"}
+	if r := post(newSDK, oldWrongSession); r.Code != 409 {
+		t.Fatalf("mixed session conflict: %d %s", r.Code, r.Body.String())
+	}
+	var mixedRows int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM task_provider_trace WHERE task_id=$1 AND provider_trace_id='mixed-new-cid'`, task).Scan(&mixedRows); err != nil || mixedRows != 0 {
+		t.Fatalf("mixed conflict persisted new SDK association: %d %v", mixedRows, err)
+	}
+	if load()["session_conflict"] == nil || load()["sdk_trace_id"] != base["sdk_trace_id"] {
+		t.Fatalf("mixed rollback lost existing evidence: %+v", load())
+	}
 	legacy["session_id"] = "conflicting-session"
 	if r := post(legacy); r.Code != 409 {
 		t.Fatalf("session conflict: %d %s", r.Code, r.Body.String())
 	}
 	if load()["session_conflict"] == nil || load()["sdk_trace_id"] != base["sdk_trace_id"] {
 		t.Fatalf("lost independent conflict audit: %+v", load())
+	}
+	beforeAudit, _ := json.Marshal(load())
+	if err := testHandler.Queries.RecordTaskProviderSessionConflict(ctx, db.RecordTaskProviderSessionConflictParams{
+		TaskID: parseUUID(task), Provider: "codebuddy", ProviderTraceID: "actual-cid", SessionID: "incoming-stale", ExpectedSessionID: "superseded-root",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	afterAudit, _ := json.Marshal(load())
+	if string(beforeAudit) != string(afterAudit) {
+		t.Fatal("stale original session rewrote conflict audit")
 	}
 	// 同一CID同时补不同SDK身份：一个成功，一个明确409，不能相互覆盖。
 	codes := make(chan int, 2)

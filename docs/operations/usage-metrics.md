@@ -180,7 +180,8 @@ CodeBuddy 的 assistant 流携带单次模型调用的用量快照；实际 `_re
 提供，要求 `provider=codebuddy`、`correlation=exact`、`source=local_session_jsonl` 和实际
 session；SDK ID 为32位十六进制，文件来源为 SHA256。它们保存在原行 metadata 并随执行
 记录读回，`provider_trace_id` 继续保存实际 conversationRequestId。相同来源重放幂等；
-SDK ID、文件hash或session冲突返回409并保留原证据，旧daemon不传这些字段仍可上报。
+SDK ID、文件hash或session冲突返回409，整批关联变更回滚；已有精确行的会话冲突仅追加
+`session_conflict`审计，原身份、来源与SDK证据保留。旧daemon不传这些字段仍可上报。
 SDK自报的 traceId 与外部 AgentLens 的解析/权限/逐span对照是不同证据，后者仍需单独验证。
 
 取消立即终止backend，最多5秒收取末Result，期间继续消费已在途消息。已观测的 Usage、
