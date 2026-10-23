@@ -338,6 +338,33 @@ func TestCandidateChangeReissuesAuthorizationReview(t *testing.T) {
 	}
 }
 
+// 6. 历史记录：早于本次部署进入 awaiting_review、已有有效授权的交付没有待复核意图，
+// 队列要先纳入并补登记通知，页面在此之前显示“待负责人核对”而不是“已通知未接续”。
+func TestLegacyAwaitingReviewDeliveryResumesReview(t *testing.T) {
+	issue, delivery, token, _ := deliveryReviewFixture(t, true)
+	advanceAccepted(t, delivery, token)
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_notice'-'authorization_pending',error='' WHERE id=$1`, delivery)
+	dbfx.Exec(t, `DELETE FROM comment WHERE issue_id=$1 AND content LIKE '%尚未复核当前候选%'`, issue)
+	phase, pending, _, state := deliveryReviewRow(t, issue, delivery)
+	if phase != "awaiting_review" || pending != "" || state != "owner_review" {
+		t.Fatalf("未登记通知的历史记录应显示待负责人核对: %s %s %s", phase, pending, state)
+	}
+	if queue := deliveryQueueIDs(t); !queue[delivery] {
+		t.Fatal("历史记录应被队列纳入接续")
+	}
+	advanceNotifyAuthorization(t, delivery, 200)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("历史记录应补发一次通知，实际 %d", got)
+	}
+	if _, _, _, state = deliveryReviewRow(t, issue, delivery); state != "review_incomplete" {
+		t.Fatalf("通知发出后应显示已通知未接续，实际 %s", state)
+	}
+	advanceNotifyAuthorization(t, delivery, 200)
+	if got := deliveryReviewNoticeCount(t, delivery); got != 1 {
+		t.Fatalf("补登记后进入冷却，不应再发通知，实际 %d", got)
+	}
+}
+
 func claimReviewOwner(t *testing.T, issue string) (string, int64) {
 	t.Helper()
 	var owner coordinationOwner

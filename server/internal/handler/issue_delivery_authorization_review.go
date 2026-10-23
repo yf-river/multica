@@ -230,7 +230,7 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 	if phase != "awaiting_review" {
 		return fmt.Errorf("当前无需授权核对")
 	}
-	state, _, err := deliveryReleaseState(r.Context(), tx, ws, issue, id)
+	state, authorization, err := deliveryReleaseState(r.Context(), tx, ws, issue, id)
 	if err != nil {
 		return err
 	}
@@ -244,8 +244,20 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 		return fmt.Errorf("当前没有等待负责人复核的有效授权")
 	}
 	notice := deliveryAuthorizationNoticeOf(snapshot)
+	// 5. 历史记录：早于本次部署进入 awaiting_review、已有有效授权但从未登记待复核意图的交付，
+	// 先补登记再走同一条通知路径，避免这类记录永久停在待审核。
 	if notice.CommentID == "" {
-		return fmt.Errorf("待复核意图尚未生成，等待队列重新登记")
+		raw, genErr := deliveryAuthorizationNoticeFor(r.Context(), tx, ws, issue, id, authorization)
+		if genErr != nil {
+			return genErr
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,error=$3 WHERE id=$1`, id, raw, "已有发布授权，等待负责人复核当前候选"); err != nil {
+			return err
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			return err
+		}
+		return h.deliverDeliveryAuthorizationReview(r, ws, issue, id)
 	}
 	var delivered bool
 	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment WHERE id=$1 AND issue_id=$2)`, notice.CommentID, issue).Scan(&delivered); err != nil {
