@@ -226,7 +226,10 @@ close intent writes the literal `done` key.
   is open and awaiting review; moving to it is an explicit mutation.
 - **`done`** on a child issue posts a system comment on its parent. If a PR
   carries close intent (`Closes MUL-XXXX`), it advances the issue to `done`
-  itself on merge — you do not also need to flip it manually.
+  itself on merge — you do not also need to flip it manually. In workspaces with
+  quality supervision enabled, `done` also opens one review round over the
+  completion snapshot (materials registered before that moment); it does not
+  start new work on the issue, and reopening stops the round.
 - **`cancelled`** is a terminal, user-driven decision to close the issue. Like
   `done` it enqueues no new agent work, but it does **not** stop tasks already in
   flight — a run in progress keeps going (MUL-4465). To stop a running task,
