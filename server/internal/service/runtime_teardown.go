@@ -114,7 +114,14 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 	if err != nil {
 		return out, fmt.Errorf("pause autopilots: %w", err)
 	}
-	out.PausedAutopilots = paused
+	// 1. 系统执行体没有解绑这一步（下面 DeleteSystemAgentsByRuntime 会整行删掉），
+	//    它们名下的自动化必须在删除前停掉：调度只认 autopilot.status='active'，
+	//    留着 active 就会每天派发一条没有执行体的空跑。
+	pausedSystem, err := qtx.PauseAutopilotsBySystemAgentsOfRuntime(ctx, runtimeID)
+	if err != nil {
+		return out, fmt.Errorf("pause system agent autopilots: %w", err)
+	}
+	out.PausedAutopilots = append(paused, pausedSystem...)
 
 	if _, err := qtx.UnbindTasksFromRuntime(ctx, runtimeID); err != nil {
 		return out, fmt.Errorf("unbind task history: %w", err)
