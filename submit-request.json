@@ -1,0 +1,28 @@
+{
+  "operation_id": "6656b65c-633f-4c18-bf4a-b628fbab33ec",
+  "source_commit": "fedda94671d2bf8b6af734d7281d2274c7d6b270",
+  "source_branch": "feature/ida-developer/gong-62",
+  "base_commit": "c10c15439ef767308a78146ebdbb89001239e2c4",
+  "evidence": [
+    {
+      "name": "Go 编译",
+      "status": "passed",
+      "evidence": "cd server && go build ./... 通过"
+    },
+    {
+      "name": "审查与交付测试",
+      "status": "passed",
+      "evidence": "隔离库下 go test ./internal/handler -run 'TestReview|TestDeliveryAcceptance|TestDeliveryCoordination' 全部通过"
+    },
+    {
+      "name": "交付集成测试",
+      "status": "passed",
+      "evidence": "go test ./internal/delivery 通过"
+    },
+    {
+      "name": "内置技能加载",
+      "status": "passed",
+      "evidence": "go test ./internal/service -run 'TestBuiltinSkills|TestWorkingOnIssuesSkill' 通过，技能正文随 embed 打包"
+    }
+  ]
+}

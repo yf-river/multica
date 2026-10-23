@@ -82,6 +82,10 @@ func TestDeliveryAcceptanceDispatchesReview(t *testing.T) {
 	if got := reviewTasksFor(t, issue, reviewer); got != 1 {
 		t.Fatalf("交付验收后审查任务数 = %d, want 1", got)
 	}
+	// 新入口派出的任务要和手动入口一样带上轮次与临时说明，否则审查员拿不到本轮上下文。
+	if handoff := reviewTaskHandoff(t, issue, reviewer); !strings.Contains(handoff, "第 1 轮") {
+		t.Fatalf("交付验收派出的审查缺少本轮说明: %s", handoff)
+	}
 	var round int
 	var state string
 	if err := testPool.QueryRow(context.Background(), `SELECT round, state FROM issue_review
