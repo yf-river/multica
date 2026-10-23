@@ -273,6 +273,19 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		if err = upsertSchedule(ctx, tx, pilot, in.ScheduleHour, in.Enabled, reschedule); err != nil {
 			return "", "", err
 		}
+	} else if currentPilot != "" {
+		// 修改 2. 执行体可能已随运行时删除，配置里记着的自动化还在。这时保存（例如点「暂停」）
+		//    也要能停掉它，否则 autopilot_id 被写成 NULL，这条自动化在页面上再也找不到，
+		//    触发器却继续按天计时；保留 id 让重新绑定运行时后仍能复用它。
+		pilot = currentPilot
+		if !in.Enabled {
+			if _, err = tx.Exec(ctx, `UPDATE autopilot SET status='paused',updated_at=now() WHERE id=$1 AND status='active'`, pilot); err != nil {
+				return "", "", err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE autopilot_trigger SET enabled=false,updated_at=now() WHERE autopilot_id=$1 AND kind='schedule'`, pilot); err != nil {
+				return "", "", err
+			}
+		}
 	}
 
 	// 设置页新增的两项单独落表，配置表保持升级前的列，旧程序读写同一行不受影响。

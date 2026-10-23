@@ -390,16 +390,16 @@ func TestRunHistoryPaginationKeepsOlderBatches(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	first, err := s.ListRuns(ctx, 30, 0)
+	first, total, err := s.ListRuns(ctx, 30, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	older, err := s.ListRuns(ctx, 30, 30)
+	older, _, err := s.ListRuns(ctx, 30, 30)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 30 || len(older) != 1 {
-		t.Fatalf("history pages=%d/%d", len(first), len(older))
+	if len(first) != 30 || len(older) != 1 || total != 31 {
+		t.Fatalf("history pages=%d/%d total=%d", len(first), len(older), total)
 	}
 	seen := map[string]bool{}
 	for _, run := range append(first, older...) {
@@ -431,5 +431,48 @@ func TestListItemsIncludesAbsorptionTaskWithoutAmbiguousColumns(t *testing.T) {
 	items, total, err = s.ListItems(ctx, ItemFilter{})
 	if err != nil || len(items) != 1 || total != 1 || items[0].AbsorptionIssueID != issue || items[0].AbsorptionStatus != "task_created" {
 		t.Fatalf("linked list: %+v %v", items, err)
+	}
+}
+
+// 运行时被删除后执行体整行消失，但配置里记着的自动化还在。此时从设置页点「暂停」
+// 必须能停掉它，并且不能把 autopilot_id 写成 NULL——否则这条自动化在页面上再也
+// 找不到，触发器却继续按天计时。
+func TestPauseReachesAutopilotWithoutExecutor(t *testing.T) {
+	s := isolatedService(t)
+	ctx := context.Background()
+	ws, creator, runtime := newID(), newID(), newID()
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO agent_runtime(id,workspace_id,name,runtime_mode,provider) VALUES($1,$2,'r','local','codex')`, runtime, ws); err != nil {
+		t.Fatal(err)
+	}
+	base := Settings{UpstreamURL: "https://example.invalid/up.git", UpstreamBranch: "main", LocalRef: "origin/personal-studio-upstream",
+		BatchSize: 200, ScheduleHour: 9, Enabled: true, RuntimeID: runtime, DefaultInstructions: "默认提示词"}
+	agentID, pilot, err := s.SaveSettings(ctx, base, creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟运行时拆除：系统执行体被整行删掉，自动化和配置留在库里。
+	if _, err := s.Pool.Exec(ctx, `DELETE FROM agent WHERE id=$1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	pause := base
+	pause.RuntimeID = ""
+	pause.Enabled = false
+	savedAgent, savedPilot, err := s.SaveSettings(ctx, pause, creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if savedAgent != "" || savedPilot != pilot {
+		t.Fatalf("executor/pilot after pause: %q %q", savedAgent, savedPilot)
+	}
+	var status, configured string
+	var enabled bool
+	if err := s.Pool.QueryRow(ctx, `SELECT status FROM autopilot WHERE id=$1`, pilot).Scan(&status); err != nil || status != "paused" {
+		t.Fatalf("orphan autopilot still active: %s %v", status, err)
+	}
+	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(autopilot_id::text,'') FROM upstream_sync_config WHERE singleton=1`).Scan(&configured); err != nil || configured != pilot {
+		t.Fatalf("autopilot reference dropped: %q %v", configured, err)
+	}
+	if err := s.Pool.QueryRow(ctx, `SELECT enabled FROM autopilot_trigger WHERE autopilot_id=$1`, pilot).Scan(&enabled); err != nil || enabled {
+		t.Fatalf("orphan trigger still enabled: %v %v", enabled, err)
 	}
 }

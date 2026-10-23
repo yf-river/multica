@@ -3258,7 +3258,7 @@ export const UpstreamItemSchema = z.object({
   has_new_commits: z.boolean().default(false),
 });
 export const UpstreamItemsSchema = z.object({ items: z.array(UpstreamItemSchema), total: z.number().default(0) });
-export const UpstreamRunsSchema = z.object({ runs: z.array(UpstreamRunSchema) });
+export const UpstreamRunsSchema = z.object({ runs: z.array(UpstreamRunSchema), total: z.number().default(0) });
 export type UpstreamSnapshot = z.output<typeof UpstreamSnapshotSchema>;
 export type UpstreamItem = z.output<typeof UpstreamItemSchema>;
 export type UpstreamRun = z.output<typeof UpstreamRunSchema>;

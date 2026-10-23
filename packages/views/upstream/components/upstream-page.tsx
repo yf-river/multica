@@ -179,7 +179,9 @@ export function UpstreamPage() {
           <TabsList variant="line" className="justify-start gap-1">
             <TabsTrigger value="pending">
               {t(($) => $.page.tabs.pending)}
-              {data?.pending ? <span className="text-faint-foreground">{data.pending}</span> : null}
+              {/* 修改 3. 这个数字只数「待定」条目，切到全部/已采纳/已忽略后会和列表条数不同；
+                  写成「N 条待定」，避免被当成列表漏了数据。 */}
+              {data?.pending ? <span className="text-faint-foreground">{t(($) => $.page.tabs.pending_count, { count: data.pending })}</span> : null}
             </TabsTrigger>
             <TabsTrigger value="runs">{t(($) => $.page.tabs.runs)}</TabsTrigger>
           </TabsList>

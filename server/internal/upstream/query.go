@@ -170,7 +170,7 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 			return nil, err
 		}
 	}
-	runs, err := s.ListRuns(ctx, 1, 0)
+	runs, _, err := s.ListRuns(ctx, 1, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -273,16 +273,22 @@ func (s *Service) MarkItems(ctx context.Context, ids []string, status, actorID s
 	return int(tag.RowsAffected()), nil
 }
 
-func (s *Service) ListRuns(ctx context.Context, limit, offset int) ([]Run, error) {
+// ListRuns 返回一页同步记录与总条数，页尾判断用 total 而不是"这页是否满 30 条"。
+// 总数与条目清单用的是同一套分页语义，最后一页刚好满页时也不会多一次空请求。
+func (s *Service) ListRuns(ctx context.Context, limit, offset int) ([]Run, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
+	}
+	var total int
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM upstream_sync_run`).Scan(&total); err != nil {
+		return nil, 0, err
 	}
 	rows, err := s.Pool.Query(ctx, `SELECT id::text, mode, trigger_source, status, base_sha,
  observed_head_sha, cursor_sha, scanned_commits, absorbed_commits, item_count,
  has_more, error, started_at, completed_at, created_at
  FROM upstream_sync_run ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -292,9 +298,9 @@ func (s *Service) ListRuns(ctx context.Context, limit, offset int) ([]Run, error
 		if err := rows.Scan(&r.ID, &r.Mode, &r.TriggerSource, &r.Status, &r.BaseSHA,
 			&r.ObservedHeadSHA, &r.CursorSHA, &r.ScannedCommits, &r.AbsorbedCommits,
 			&r.ItemCount, &r.HasMore, &r.Error, &r.StartedAt, &r.CompletedAt, &r.CreatedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }

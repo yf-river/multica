@@ -16,6 +16,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { SegmentedToggle } from "../../common/segmented-toggle";
 import { AppLink } from "../../navigation/app-link";
+import { useNavigation } from "../../navigation/context";
 import { useT } from "../../i18n";
 
 const STATUS_FILTERS = ["open", "adopted", "ignored", "all"] as const;
@@ -41,6 +42,7 @@ export function PendingTab({
 }) {
   const { t } = useT("upstream");
   const paths = useWorkspacePaths();
+  const navigation = useNavigation();
   const [status, setStatus] = useState<(typeof STATUS_FILTERS)[number]>("open");
   // 修改 1. 下拉选「全部结论」时用 any 占位，空串会被 Select 当成未选择、显示成占位灰字。
   const [verdict, setVerdict] = useState<(typeof VERDICT_FILTERS)[number]>(ANY);
@@ -80,6 +82,15 @@ export function PendingTab({
   const apply = (next: "adopted" | "ignored" | "open") => {
     if (selected.length === 0) return;
     mark.mutate({ ids: selected, status: next }, { onSuccess: () => setSelected([]) });
+  };
+
+  // 修改 5. 每行都有一个「创建吸收任务」，点一下就在当前工作区真建一个任务；先确认，
+  //    成功后直接打开这个任务，省掉回列表再找一遍。
+  const createTaskFor = (itemId: string) => {
+    if (!window.confirm(t(($) => $.page.bulk.create_task_confirm))) return;
+    createTask.mutate(itemId, {
+      onSuccess: (result) => navigation.push(paths.issueDetail(result.issue_id)),
+    });
   };
 
   const verdictLabel = (v: string) => {
@@ -239,11 +250,12 @@ export function PendingTab({
               checked={selected.includes(item.id)}
               expanded={expanded === item.id}
               canWrite={canWrite}
+              creatingTask={createTask.isPending}
               issueHref={item.absorption_issue_id ? paths.issueDetail(item.absorption_issue_id) : ""}
               onToggle={() => toggle(item.id)}
               onExpand={() => setExpanded(expanded === item.id ? null : item.id)}
               onRestore={() => mark.mutate({ ids: [item.id], status: "open" })}
-              onCreateTask={() => createTask.mutate(item.id)}
+              onCreateTask={() => createTaskFor(item.id)}
             />
           ))}
         </ul>
@@ -277,6 +289,7 @@ function ItemRow({
   checked,
   expanded,
   canWrite,
+  creatingTask,
   issueHref,
   onToggle,
   onExpand,
@@ -287,6 +300,7 @@ function ItemRow({
   checked: boolean;
   expanded: boolean;
   canWrite: boolean;
+  creatingTask: boolean;
   issueHref: string;
   onToggle: () => void;
   onExpand: () => void;
@@ -388,7 +402,7 @@ function ItemRow({
             <ArrowUpRight aria-hidden="true" className="size-3" />
           </AppLink>
         ) : canWrite ? (
-          <Button size="sm" variant="ghost" className="h-7 px-2 text-caption" onClick={onCreateTask}>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-caption" disabled={creatingTask} onClick={onCreateTask}>
             {t(($) => $.page.bulk.create_task)}
           </Button>
         ) : null}

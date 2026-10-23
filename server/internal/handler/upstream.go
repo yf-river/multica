@@ -322,12 +322,12 @@ func (h *Handler) ListUpstreamRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "分页位置不能为负数")
 		return
 	}
-	runs, err := h.Upstream.ListRuns(r.Context(), limit, offset)
+	runs, total, err := h.Upstream.ListRuns(r.Context(), limit, offset)
 	if err != nil {
 		writeError(w, 500, "读取同步记录失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"runs": runs})
+	writeJSON(w, 200, map[string]any{"runs": runs, "total": total})
 }
 
 func (h *Handler) StartUpstreamRun(w http.ResponseWriter, r *http.Request) {

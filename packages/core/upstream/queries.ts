@@ -53,7 +53,11 @@ export function upstreamRunsOptions(wsId: string) {
     queryKey: upstreamKeys.runs(wsId),
     initialPageParam: 0,
     queryFn: ({ pageParam }) => api.listUpstreamRuns(30, pageParam),
-    getNextPageParam: (lastPage, pages) => lastPage.runs.length === 30 ? pages.length * 30 : undefined,
+    // 和条目一样用服务端总数判断页尾，最后一页刚好满 30 条时不再多发一次空请求。
+    getNextPageParam: (lastPage, pages) => {
+      const loaded = pages.reduce((sum, page) => sum + page.runs.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
+    },
     refetchInterval: (query) => query.state.data?.pages[0]?.runs.some((run) => run.status === "preparing" || run.status === "running") ? 5000 : false,
   });
 }

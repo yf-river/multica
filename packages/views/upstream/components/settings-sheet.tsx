@@ -49,6 +49,10 @@ export function UpstreamSettingsSheet({
   const [model, setModel] = useState("");
   const [thinking, setThinking] = useState("");
   const [instructions, setInstructions] = useState("");
+  // 修改 1. 「用户动过提示词」单独记一个标记：动过就按输入框原值渲染（清空就是空的），
+  //    没动过才跟随内置默认。不能用"值是否为空"反推，否则全选删除后立刻回填默认文本，
+  //    再粘贴就接在默认后面，存成「内置默认 + 我的提示词」。
+  const [instructionsTouched, setInstructionsTouched] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [scheduleHour, setScheduleHour] = useState(9);
 
@@ -67,6 +71,7 @@ export function UpstreamSettingsSheet({
     setModel(config.model);
     setThinking(config.thinking_level);
     setInstructions(config.instructions);
+    setInstructionsTouched(Boolean(config.instructions.trim()));
     setEnabled(config.sync_state !== "paused");
     setScheduleHour(config.schedule_hour);
     setSynced(true);
@@ -82,8 +87,9 @@ export function UpstreamSettingsSheet({
   const capability = model && selected ? findModelCapabilityEntry(models, model, selected.provider) : undefined;
   const levels = capability?.thinking?.supported_levels ?? [];
   const defaultText = defaults.data?.instructions ?? "";
-  const customized = instructions.trim() !== "" && instructions.trim() !== defaultText.trim();
-  const effectiveText = customized ? instructions : defaultText;
+  // 修改 2. 已自定义＝动过且不是空、也不等同于内置默认；空值保存后仍等价于跟随默认。
+  const customized = instructionsTouched && instructions.trim() !== "" && instructions.trim() !== defaultText.trim();
+  const displayText = instructionsTouched ? instructions : defaultText;
   // 有同步历史后，换仓库或比较基线会让游标和冻结清单失去意义。
   const repositoryLocked = Boolean(config?.bootstrap_base_sha);
   const canWrite = snapshot?.can_write ?? false;
@@ -237,8 +243,11 @@ export function UpstreamSettingsSheet({
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={!canWrite || !customized}
-                  onClick={() => setInstructions("")}
+                  disabled={!canWrite || !instructionsTouched}
+                  onClick={() => {
+                    setInstructions("");
+                    setInstructionsTouched(false);
+                  }}
                 >
                   {t(($) => $.page.setup.restore_default)}
                 </Button>
@@ -246,14 +255,21 @@ export function UpstreamSettingsSheet({
               <textarea
                 id="upstream-instructions"
                 className="min-h-56 w-full rounded-md border border-input bg-background p-3 font-mono text-caption leading-relaxed"
-                value={effectiveText}
+                value={displayText}
                 disabled={!canWrite || !defaults.isSuccess}
-                onChange={(event) => setInstructions(event.target.value)}
+                onChange={(event) => {
+                  setInstructions(event.target.value);
+                  setInstructionsTouched(true);
+                }}
               />
               <p className="text-caption text-muted-foreground">
-                {customized ? t(($) => $.page.setup.instructions_custom) : t(($) => $.page.setup.instructions_default)}
+                {customized
+                  ? t(($) => $.page.setup.instructions_custom)
+                  : instructionsTouched
+                    ? t(($) => $.page.setup.instructions_cleared)
+                    : t(($) => $.page.setup.instructions_default)}
                 {" · "}
-                {t(($) => $.page.setup.instructions_count, { count: effectiveText.length })}
+                {t(($) => $.page.setup.instructions_count, { count: displayText.length })}
               </p>
             </div>
           </section>
