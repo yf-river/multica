@@ -110,4 +110,20 @@ class SeedGateTests(unittest.TestCase):
             with self.assertRaises(r.RecoveryRequired):
                 worker.ensure_seed()
 
+
+class MigrationGateTests(unittest.TestCase):
+    """新表索引只加新对象；对已有表建普通索引仍然拒绝。"""
+
+    def test_index_on_table_created_in_same_migration(self):
+        statements=['CREATE TABLE IF NOT EXISTS seed_a (name text primary key)','CREATE UNIQUE INDEX IF NOT EXISTS seed_a_key ON seed_a(name)']
+        self.assertTrue(r.reviewed_new_table_index(Path('/m/623_seed.up.sql'),statements))
+
+    def test_index_on_existing_table_is_rejected(self):
+        statements=['CREATE INDEX IF NOT EXISTS issue_idx ON issue(workspace_id)']
+        self.assertFalse(r.reviewed_new_table_index(Path('/m/624_issue.up.sql'),statements))
+
+    def test_index_on_another_table_is_rejected(self):
+        statements=['CREATE TABLE seed_b (id uuid)','CREATE INDEX IF NOT EXISTS issue_idx ON issue(workspace_id)']
+        self.assertFalse(r.reviewed_new_table_index(Path('/m/625_mix.up.sql'),statements))
+
 if __name__=='__main__':unittest.main()
