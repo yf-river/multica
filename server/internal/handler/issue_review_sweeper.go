@@ -39,6 +39,7 @@ type reviewSweepCandidate struct {
 	CurrentHead  string
 	Passed       bool
 	ActiveRun    bool
+	RanThisRound bool
 	ReviewAge    time.Duration
 	StatusAge    time.Duration
 }
@@ -58,6 +59,10 @@ func (c reviewSweepCandidate) skipReason() string {
 		return "已通过当前候选"
 	case c.HasRow && c.State == review.StateRejected && c.ReviewedHead != "" && c.ReviewedHead == c.CurrentHead:
 		return "打回后没有新提交"
+	case c.HasRow && c.State == review.StateDispatched && c.RanThisRound:
+		// 修改 1. 这一轮审查确实执行过（有审查运行）但没交结论就结束了。没有 PR 时拿不到新
+		// 提交，重派只会把同一轮再跑一次，轮次还不增长，等于无限重审；交给人判断。
+		return "本轮审查已执行但未提交结论，等待人工处理"
 	case c.HasRow && c.State == review.StateDispatched && c.ReviewAge < reviewSweepGrace:
 		return "刚派发，等待运行"
 	}
@@ -180,6 +185,13 @@ func (h *Handler) reviewSweepSkipReason(ctx context.Context, issue db.Issue, cfg
 	if err == nil {
 		candidate.HasRow = true
 		candidate.ReviewAge = time.Since(reviewedAt.Time)
+		if candidate.State == review.StateDispatched {
+			ran, runErr := h.hasReviewRunSince(ctx, issue.ID, cfg.AgentID, reviewedAt)
+			if runErr != nil {
+				return "", runErr
+			}
+			candidate.RanThisRound = ran
+		}
 	}
 	return candidate.skipReason(), nil
 }
@@ -191,4 +203,13 @@ func (h *Handler) hasActiveReviewTask(ctx context.Context, issueID, agentID pgty
 	err := h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_task_queue
 		WHERE issue_id=$1 AND agent_id=$2 AND status IN `+reviewActiveStatuses+`)`, issueID, agentID).Scan(&active)
 	return active, err
+}
+
+// 修改 2. hasReviewRunSince 判断本轮派发之后是否已经建过审查运行：已经跑过却没有结论的
+// 那一轮不再补派，避免同一轮在无 PR 时反复重跑。
+func (h *Handler) hasReviewRunSince(ctx context.Context, issueID, agentID pgtype.UUID, since pgtype.Timestamptz) (bool, error) {
+	var ran bool
+	err := h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_task_queue
+		WHERE issue_id=$1 AND agent_id=$2 AND created_at >= $3::timestamptz - interval '1 millisecond')`, issueID, agentID, since).Scan(&ran)
+	return ran, err
 }

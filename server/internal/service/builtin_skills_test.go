@@ -599,6 +599,7 @@ func TestWorkingOnIssuesSkillStatesReviewSweepBoundaries(t *testing.T) {
 		"服务端补扫",
 		"已有活动的审查执行",
 		"上一轮打回后没有新提交",
+		"没有提交结论",
 		"人工处理",
 	} {
 		if !strings.Contains(skill.Content, want) {

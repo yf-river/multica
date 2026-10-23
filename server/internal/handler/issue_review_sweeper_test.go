@@ -128,12 +128,20 @@ func TestReviewSweeperOnlyFillsMissedRounds(t *testing.T) {
 	freshIssue := dbfx.Issue(t, "sweep just changed", testutil.Cols{
 		"status": "in_review", "assignee_type": "agent", "assignee_id": devAgent,
 	})
-	cleanupIssueTasks(t, missed, passedIssue, stoppedIssue, activeIssue, freshIssue)
+	ranIssue := dbfx.Issue(t, "sweep round ran without verdict", testutil.Cols{
+		"status": "in_review", "assignee_type": "agent", "assignee_id": devAgent, "updated_at": old,
+	})
+	cleanupIssueTasks(t, missed, passedIssue, stoppedIssue, activeIssue, freshIssue, ranIssue)
 
 	seedReviewState(t, passedIssue, reviewer, review.StatePassed, 2, "")
 	seedReviewState(t, stoppedIssue, reviewer, review.StateStopped, 2, "")
 	seedReviewState(t, activeIssue, reviewer, review.StateDispatched, 1, "")
 	dbfx.Task(t, reviewer, testutil.Cols{"issue_id": activeIssue, "runtime_id": handlerTestRuntimeID(t), "status": "running"})
+	// 这一轮审查已经跑完但没有提交结论：没有 PR 时无法证明有改动，补扫不能把同一轮再
+	// 跑一次，否则轮次不增长会变成无限重审。
+	seedReviewState(t, ranIssue, reviewer, review.StateDispatched, 2, "")
+	dbfx.Task(t, reviewer, testutil.Cols{"issue_id": ranIssue, "runtime_id": handlerTestRuntimeID(t), "status": "completed"})
+	dbfx.Exec(t, `UPDATE agent_task_queue SET created_at=now() WHERE issue_id=$1 AND agent_id=$2`, ranIssue, reviewer)
 
 	stats := testHandler.SweepIssueReviews(context.Background())
 	if stats.Dispatched < 1 {
@@ -154,6 +162,26 @@ func TestReviewSweeperOnlyFillsMissedRounds(t *testing.T) {
 	}
 	if got := reviewTasksFor(t, freshIssue, reviewer); got != 0 {
 		t.Fatalf("刚进入审核中的任务被补扫抢先派发 %d 次", got)
+	}
+	if got := reviewTasksFor(t, ranIssue, reviewer); got != 1 {
+		t.Fatalf("没交结论的那一轮被补扫重跑了，审查任务数变成 %d", got)
+	}
+	// 直接核对判定本身：读不出运行记录时补扫会按「跳过」处理，只看任务数无法区分
+	// 「正确地跳过」和「查询出错后跳过」。
+	cfg, configured, err := testHandler.loadReviewConfig(context.Background(), parseUUID(testWorkspaceID))
+	if err != nil || !configured {
+		t.Fatalf("load review config: configured=%v err=%v", configured, err)
+	}
+	ranRow, err := testHandler.Queries.GetIssue(context.Background(), parseUUID(ranIssue))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	reason, err := testHandler.reviewSweepSkipReason(context.Background(), ranRow, cfg)
+	if err != nil {
+		t.Fatalf("检查已跑未交结论的任务出错: %v", err)
+	}
+	if reason != "本轮审查已执行但未提交结论，等待人工处理" {
+		t.Fatalf("已跑未交结论的跳过原因 = %q", reason)
 	}
 
 	var passedState string
@@ -210,6 +238,13 @@ func TestReviewSweepSkipReasonBoundaries(t *testing.T) {
 			c.State = review.StateDispatched
 			c.ReviewAge = 5 * time.Second
 		}, want: "刚派发，等待运行"},
+		{name: "派发丢失，从来没有审查运行", edit: func(c *reviewSweepCandidate) {
+			c.State = review.StateDispatched
+		}, want: ""},
+		{name: "本轮审查执行过但没交结论", edit: func(c *reviewSweepCandidate) {
+			c.State = review.StateDispatched
+			c.RanThisRound = true
+		}, want: "本轮审查已执行但未提交结论，等待人工处理"},
 		{name: "任务刚变化", edit: func(c *reviewSweepCandidate) { c.StatusAge = 5 * time.Second }, want: "任务刚变化"},
 	}
 	for _, tc := range cases {
