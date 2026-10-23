@@ -1,6 +1,6 @@
 // 解析评论中的 @提及 结果：判断哪些提及触发了 Agent 运行、哪些被拦截，供评论发送后提示使用。
 import { CommentTriggerOutcomeSchema } from "../api/schemas";
-import type { CommentTriggerOutcome } from "../types/comment";
+import type { CommentReviewReply, CommentTriggerOutcome } from "../types/comment";
 
 // 评论 markdown 里渲染出的“提及”的来源，捕获用户选的标签、目标类型和目标 id：
 // `[@Go](mention://agent/UUID)`。用字符串保存，是为了让每次解析都构造自己的
@@ -66,6 +66,24 @@ export function parseCommentTriggerOutcomes(raw: unknown): CommentTriggerOutcome
     }
   }
   return out;
+}
+
+// 校验创建/编辑评论响应里的 `review_reply`（GONG-63）：回复审查员时实际接收人与派发
+// 结果。响应没有完整 schema 校验，所以这里单独收窄：缺 status 视为没有该信息，其余字段
+// 只保留字符串，避免把任意 JSON 带进 UI 分支。
+export function parseReviewReply(raw: unknown): CommentReviewReply | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const status = typeof obj.status === "string" ? obj.status : "";
+  if (!status) return null;
+  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+  return {
+    status,
+    recipient_type: str(obj.recipient_type),
+    recipient_id: str(obj.recipient_id),
+    recipient_name: str(obj.recipient_name),
+    reason_code: str(obj.reason_code),
+  };
 }
 
 // 唯一算“成功”的结果状态：这个提及确实被处理了（一次运行被排队、合并进已有运行、

@@ -6,7 +6,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
 import { parseMentions } from "@multica/core/issues/comment-trigger-outcomes";
-import type { CommentTriggerPreviewAgent, CommentTriggerOutcome } from "@multica/core/types";
+import type { CommentReviewReply, CommentTriggerPreviewAgent, CommentTriggerOutcome } from "@multica/core/types";
 
 const COMMENT_TRIGGER_PREVIEW_DEBOUNCE_MS = 300;
 const NOTE_COMMAND_RE = /^\/note(?:$|\s)/i;
@@ -18,6 +18,8 @@ export interface UseCommentTriggerPreviewResult {
   // 照原样发出去却「不会」被触发的显式 @agent / @squad 提及（MUL-4525 §2），
   // 让输入框能在发送前发出警告。
   blocked: CommentTriggerOutcome[];
+  // 回复审查员时这条草稿会通知谁（GONG-63）。普通评论/线程为 null。
+  reviewReply: CommentReviewReply | null;
 }
 
 /**
@@ -134,11 +136,12 @@ export function useCommentTriggerPreview({
   // 加载中和错误都故意表现为「没有智能体」：预览只是增强功能，
   // 输入框对空列表什么都不渲染。
   if (signature === "empty" || debouncedSignature === "empty") {
-    return { agents: [], blocked: [] };
+    return { agents: [], blocked: [], reviewReply: null };
   }
 
   return {
     agents: previewQuery.data?.agents ?? [],
     blocked: previewQuery.data?.blocked ?? [],
+    reviewReply: previewQuery.data?.review_reply ?? null,
   };
 }
