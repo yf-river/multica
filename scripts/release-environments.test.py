@@ -12,6 +12,31 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_unready_backend_does_not_start_web_or_daemon(self):
+        metadata={'backend_url':'http://api','log_paths':{'server':'server.log'}}
+        def check(url,**kwargs):
+            if url.endswith('/healthz'): raise RuntimeError('migrations out_of_date')
+            return {'status':'ok'}
+        with patch.object(r,'start',return_value=123) as start, patch.object(r,'ready',side_effect=check), patch.object(r,'stop_maintenance') as maintenance, patch.object(r,'run') as run:
+            with self.assertRaisesRegex(RuntimeError,'migrations out_of_date'):
+                r.launch('int',Path('/release'),{'server':{}},metadata)
+            start.assert_called_once()
+            maintenance.assert_not_called()
+            run.assert_not_called()
+
+    def test_unready_backend_prevents_browser_acceptance(self):
+        with patch.object(r,'read',return_value={'backend_url':'http://api'}), patch.object(r,'ready',side_effect=RuntimeError('migrations out_of_date')) as ready, patch.object(r,'run') as run:
+            with self.assertRaisesRegex(RuntimeError,'migrations out_of_date'):
+                r.verify_browser('int')
+            ready.assert_called_once_with('http://api/healthz',timeout=10)
+            run.assert_not_called()
+
+    def test_ready_backend_continues_to_real_browser_check(self):
+        with patch.object(r,'read',return_value={'backend_url':'http://api'}), patch.object(r,'ready',return_value={'status':'ok'}), patch.object(r,'run') as run:
+            r.verify_browser('int')
+            self.assertEqual(run.call_args.kwargs['env']['GOAL_TEST_ENV'],'int')
+            self.assertEqual(run.call_args.args[0][0],'node')
+
     def test_external_publish_bundle_contains_matching_browser_dependencies(self):
         with tempfile.TemporaryDirectory() as tmp:
             r.copy_browser_operations(Path(tmp))

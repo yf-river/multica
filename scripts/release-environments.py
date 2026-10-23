@@ -564,6 +564,7 @@ def launch(env, release, cfg, m):
     m['pids']=result
     result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
     ready(m['backend_url']+'/health',pid=result['server'])
+    ready(m['backend_url']+'/healthz',timeout=30)
     stop_maintenance(env)
     webcmd=['node',release/'apps/web/server.js'] if (release/'apps/web/server.js').exists() else ['node',release/'apps/web/node_modules/next/dist/bin/next','start','-p',str(m['frontend_port']),'-H','0.0.0.0']
     result['web']=start(webcmd,release/'apps/web',{**cfg['web'], 'MULTICA_RELEASE_MANIFEST': str(release/'release.json')},m['log_paths']['web'])
@@ -692,6 +693,7 @@ def copy_browser_operations(destination):
         target.write_bytes((source/name).read_bytes())
 
 def verify_browser(env='prod'):
+    ready(read(meta_path(env))['backend_url']+'/healthz',timeout=10)
     child_env=os.environ.copy(); child_env['GOAL_TEST_ENV']=env
     run(['node',Path(__file__).with_name('verify-release-browser.mjs')],cwd=ROOT,env=child_env)
 
