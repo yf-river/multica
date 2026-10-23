@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
  "rules": [
   {
@@ -105,6 +105,14 @@
   {
    "table": "supervision_config",
    "sql": "UPDATE public.\"supervision_config\" SET enabled=false"
+  },
+  {
+   "table": "supervision_batch_round",
+   "sql": "DELETE FROM public.\"supervision_batch_round\""
+  },
+  {
+   "table": "supervision_round",
+   "sql": "DELETE FROM public.\"supervision_round\""
   },
   {
    "table": "supervision_batch",
