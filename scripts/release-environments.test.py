@@ -12,6 +12,24 @@ class ReleaseTests(unittest.TestCase):
         # 每个用例显式设置任务身份，避免继承执行它的 Agent 上下文。
         self.enterContext(patch.dict(r.os.environ, {"MULTICA_TASK_ID": ""}))
 
+    def test_build_supplies_execution_user_home_and_preserves_custom_paths(self):
+        class ReachedGoBuild(Exception): pass
+        for home in (None,'','/custom/home'):
+            with self.subTest(home=home),tempfile.TemporaryDirectory() as folder:
+                base=Path(folder);source=base/'source';source.mkdir();commands=[]
+                inherited={'GOPATH':'/custom/go','GOMODCACHE':'/custom/modcache'}
+                if home is not None: inherited['HOME']=home
+                def command(args,**kwargs):
+                    commands.append((args,kwargs['env'].copy()))
+                    if args[0]=='go': raise ReachedGoBuild()
+                with patch.dict(r.os.environ,inherited,clear=True),patch.object(r,'checked_source',return_value=(source,'a'*40)),patch.object(r,'build_version',return_value='v-fixture'),patch.object(r,'source_digest',return_value=('digest',[])),patch.object(r,'read',return_value={'release_dir':str(base/'previous')}),patch.object(r,'copy_tree'),patch.object(r,'run',side_effect=command):
+                    with self.assertRaises(ReachedGoBuild): r.build(source,base/'target')
+                self.assertEqual([args[0] for args,env in commands],['pnpm','pnpm','go'])
+                for args,env in commands:
+                    self.assertEqual(env['HOME'],home or r.pwd.getpwuid(r.os.getuid()).pw_dir)
+                    self.assertEqual(env['GOPATH'],'/custom/go')
+                    self.assertEqual(env['GOMODCACHE'],'/custom/modcache')
+
     def test_database_check_uses_same_pinned_controller_bundle(self):
         with tempfile.TemporaryDirectory() as tmp:
             pinned=Path(tmp)/'pinned/release.py'
