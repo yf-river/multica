@@ -107,7 +107,7 @@ func init() {
 			cmd.Flags().Int("limit", 50, "Event count, 1–200; latest window unless --since")
 		}
 		cmd.Flags().String("output", "json", "Output format")
-		cmd.Flags().String("execution", "", "Stable execution identity (defaults to MULTICA_TASK_ID or CODEX_THREAD_ID)")
+		cmd.Flags().String("execution", "", "Verified task ID for Agent calls; stable session ID for external member calls (defaults to MULTICA_TASK_ID or CODEX_THREAD_ID)")
 		cmd.Flags().String("recovery-evidence", "", "Observed old execution and environment state for explicit handoff")
 		group.AddCommand(cmd)
 	}
