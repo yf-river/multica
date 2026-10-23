@@ -90,6 +90,8 @@ export function UpstreamSettingsSheet({
   // 修改 2. 已自定义＝动过且不是空、也不等同于内置默认；空值保存后仍等价于跟随默认。
   const customized = instructionsTouched && instructions.trim() !== "" && instructions.trim() !== defaultText.trim();
   const displayText = instructionsTouched ? instructions : defaultText;
+  // 清空后保存等价于跟随默认，这里要把这层关系说出来，而不是留着空框不解释。
+  const instructionsCleared = instructionsTouched && instructions.trim() === "";
   // 有同步历史后，换仓库或比较基线会让游标和冻结清单失去意义。
   const repositoryLocked = Boolean(config?.bootstrap_base_sha);
   const canWrite = snapshot?.can_write ?? false;
@@ -265,7 +267,7 @@ export function UpstreamSettingsSheet({
               <p className="text-caption text-muted-foreground">
                 {customized
                   ? t(($) => $.page.setup.instructions_custom)
-                  : instructionsTouched
+                  : instructionsCleared
                     ? t(($) => $.page.setup.instructions_cleared)
                     : t(($) => $.page.setup.instructions_default)}
                 {" · "}
