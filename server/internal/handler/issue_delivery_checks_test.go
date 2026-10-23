@@ -202,3 +202,24 @@ func TestRequiredBusinessChecksBatchNeedsEveryMemberIntegration(t *testing.T) {
 		{Name: "组合业务", Status: "passed", Evidence: "共同候选第一功能"}, {Name: "第二成员业务", Status: "passed", Evidence: "共同候选第二功能"}}}).Want(200)
 	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
 }
+
+func TestRequiredBusinessChecksNewSubmissionNeedsExplicitBusinessList(t *testing.T) {
+	issue, _ := coordinationFixture(t)
+	var owner coordinationOwner
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "new-business-list", owner, "")).Want(200).JSON(&owner)
+	body := submitBody(strings.Repeat("a", 40))
+	delete(body, "required_checks")
+	result := testutil.Call(t, testHandler.SubmitIssueDelivery, deliveryRequest(issue, body, owner)).Want(400)
+	if !strings.Contains(result.Body.String(), "业务验收清单") {
+		t.Fatalf("错误必须指向业务清单: %s", result.Body.String())
+	}
+	var count int
+	dbfx.QueryRow(t, `SELECT count(*) FROM issue_delivery WHERE issue_id=$1`, issue).Scan(&count)
+	if count != 0 {
+		t.Fatal("缺清单请求生成了交付")
+	}
+	body["required_checks"] = businessChecks()
+	testutil.Call(t, testHandler.SubmitIssueDelivery, deliveryRequest(issue, body, owner)).Want(200)
+	delete(body, "required_checks")
+	testutil.Call(t, testHandler.SubmitIssueDelivery, deliveryRequest(issue, body, owner)).Want(200)
+}
