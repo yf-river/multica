@@ -8,7 +8,33 @@ Multica 程序改动从确认计划、独立分支开发、固定 int 验证进�
 
 需要并行验收时使用专属 `verify-1`、`verify-2`、`verify-3` 三套环境；固定 `int` 仍是最终集成入口，`prod` 只接受经过 int 和用户发布授权的候选。验收槽位默认关闭，启用、排空和占用由现有交付记录及槽位接口驱动，候选历史按环境保留，verify 候选不能直接晋级生产。
 
-槽位安装、重启核对和种子维护入口位于发布制品的 `operations/`，源码入口为 `scripts/verification-environments.py`、`scripts/verification-seed.py` 和 `scripts/verification-seed-copy.mjs`。种子从 int 只读采集，导入时使用当前版本迁移建表，再复制公共样本；个人访问令牌、任务/Daemon 令牌、外部凭据、VCS 凭据、渠道安装密钥和租约字段会清理，槽位登录密码按本槽位安装记录重新生成。只允许重置专属验收数据库，禁止触碰 int、prod 和事故留证库。
+槽位安装、重启核对和种子维护入口位于发布制品的 `operations/`，源码入口为 `scripts/verification-environments.py`、`scripts/verification-seed.py` 和 `scripts/verification-seed-copy.mjs`。只允许重置专属验收数据库，禁止触碰 int、prod 和事故留证库。
+
+### 种子生命周期
+
+种子目录 `/data/cbs/multica-verification/seeds/<seed-id>/` 只增不改，`seed.dump` 与 `seed.json` 一一对应。`seed.json` 记录来源环境与采集提交、结构指纹（已应用迁移与实际表列摘要）、夹具版本与关键样本量、清理规则版本与校验和、构建与恢复验收的检查结果。种子编号发布后不可覆盖，失败版本不替换当前版本，旧版本保留可回退。
+
+当前版本由 `.run/verification-seed.json` 指定，只由恢复验收通过的动作写入。未配置该指针时保持原有行为，不强制槽位恢复。
+
+```bash
+python3 scripts/verification-seed.py build  --id seed-<日期>-vN --from <已有种子目录> --release <候选产物目录> --postgres-config .run/verification-postgres.json
+python3 scripts/verification-seed.py verify --environment verify-1 --seed <seed-id> --postgres-config .run/verification-postgres.json --accept
+python3 scripts/verification-seed.py ensure --environment verify-1 --postgres-config .run/verification-postgres.json
+python3 scripts/verification-seed.py status
+```
+
+`build` 在本轮新建的隔离构建库中按目标候选迁移建表，导入来源样本、执行清理、核对必需样本、序列、外键与结构指纹后写出新种子；构建库和导入库随后删除，不写 int 或 prod。`verify` 把种子装进指定槽位，在真实服务上核对登录、工作区、任务列表、Agent 列表及清理结果，全部通过后写入当前指针并把种子标记为已验证；任一项失败时槽位保持维护，当前版本不变。`ensure` 是发布器换任务前的门禁：槽位种子与当前版本不一致（或未标记已验证）时先按单槽位维护恢复，成功后才允许领取新候选。
+
+清理规则集中在 `scripts/verification-scrub.json`，导入完成后在真实外键约束下执行，同时清空认证凭据、外部连接、租约、执行队列、自动化、监督、审查和上游同步状态。恢复流程按命名范围枚举执行型表并做覆盖自检：新增执行型表没有规则或显式豁免时直接失败并打印表名，不把新功能的自动执行状态带进下一个任务。
+
+### 单槽位维护与换任务恢复
+
+维护只调整目标槽位的接单开关，不移除环境池配置，不影响另外两个槽位和正在进行的验收。进入维护和退出维护都要求槽位空闲：维护结束后没有确认释放、或槽位已被领取时直接拒绝，避免把正在验收的槽位当成干净数据重置。
+
+换任务时由发布器在领取槽位前按 `ensure` 核对数据版本，领取后再核对一次，不一致就隔离该槽位并等待外部恢复。同一候选的暂停续接、失败重试和正常重试不重置数据。恢复后使用本槽位账号、认证密钥和 Daemon，种子中的历史交付标记为不再执行。
+
+验收记录通过候选身份绑定种子：`validation_identity` 在 verify 环境包含环境、种子编号与校验和，因此同一程序在不同种子上的结果不算同一份证据；程序、结构或种子变化时按声明的覆盖映射补测或完整验收，未变化时复用原证据。
+
 
 ## 需求与开发
 

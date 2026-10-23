@@ -213,6 +213,34 @@ class Worker:
         path=r.RUN/'verification-pool.json'
         return path.exists() and r.read(path).get('enabled') is True and r.read(path).get('controller_environment')==self.env
 
+    def current_seed(self):
+        return r.current_seed()
+
+    def seed_matches(self,name):
+        current=self.current_seed()
+        if not current:return True
+        try:record=self.api('delivery-queue/slots/seed?name='+name)
+        except urllib.error.HTTPError as e:
+            if e.code!=404:raise
+            return False
+        return record.get('seed_id')==current.get('seed_id') and record.get('seed_sha256')==current.get('dump_sha256') and record.get('seed_verified') is True
+
+    def ensure_seed(self):
+        # 修改 1. 换任务前先核对槽位数据版本：与当前种子不一致就按单槽位维护恢复，
+        # 复用上一任务的残留数据比多等一次恢复更容易给出错误结论。
+        current=self.current_seed()
+        if not current:return
+        for item in sorted(self.api('delivery-queue/slots'),key=lambda slot:slot['name']):
+            if not item['enabled'] or item['state']!='idle':continue
+            if item.get('seed_id')==current.get('seed_id') and item.get('seed_sha256')==current.get('dump_sha256') and item.get('seed_verified') is True:return
+            script=Path(__file__).with_name('verification-seed.py')
+            completed=subprocess.run([sys.executable,str(script),'ensure','--environment',item['name'],
+                '--postgres-config',str(r.RUN/'verification-postgres.json')],capture_output=True,text=True)
+            if completed.returncode:
+                raise r.RecoveryRequired('种子恢复失败，槽位保持维护：'+(completed.stderr or completed.stdout).strip()[-1200:])
+            return
+        raise Busy('没有可用的干净验收槽位，等待其他验收结束')
+
     def pool_job_path(self,delivery):
         # 编号来自服务端交付记录，不接收用户指定的文件路径。
         import uuid
@@ -310,6 +338,7 @@ class Worker:
                         artifact=r.build_verification(source,delivery)
                         save('waiting_slot',artifact=str(artifact),source_commit=d['source_commit'])
                     # 2. 等槽位必须有上限：槽位被隔离时无限等待会让这个单元长期占住并发名额。
+                    self.ensure_seed()
                     deadline=time.monotonic()+600
                     while lease is None:
                         d=refresh()
@@ -325,6 +354,10 @@ class Worker:
                                 except Exception:pass
                                 raise SlotWaitTimeout('等待验收槽位超过 10 分钟，交给下一轮续接')
                             time.sleep(5)
+                    # 修改 2. 恢复与领取之间有并发，领到之后还要核对一次数据版本，不能只在领取前判断。
+                    if not self.seed_matches(lease['name']):
+                        slot(lease,'quarantine','槽位数据版本不是当前种子')
+                        raise r.RecoveryRequired('槽位种子与当前版本不一致，已隔离并等待外部恢复')
                     save('preparing',lease=lease,artifact=str(artifact))
                 def heartbeat():
                     while not stopped.wait(20):
@@ -340,7 +373,7 @@ class Worker:
                 d=refresh()
                 if d['phase']=='testing':
                     if d['candidate_id']!=c['id']:
-                        self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'])
+                        self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
                     self.advance(d,'notify')
                 while True:
                     d=refresh()
@@ -444,7 +477,9 @@ class Worker:
 
 def install(env):
     r.require_control_directory()
-    names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py') + r.BROWSER_OPERATIONS
+    # 修改 3. 种子恢复由接力器调用，操作脚本必须与接力器同版本安装；沿用主工作区的旧脚本会让恢复和清理规则不同步。
+    names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py','verification-environments.py',
+           'verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs') + r.BROWSER_OPERATIONS
     digest=r.hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in names)).hexdigest()[:16]
     directory=r.RUN/'publisher'/('delivery-'+env+'-'+digest)
     directory.mkdir(parents=True,exist_ok=True)
