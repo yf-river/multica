@@ -62,32 +62,43 @@ func TaskUsageHourlyJob(pool *pgxpool.Pool) JobSpec {
 // 一次 tick 长时间占着 advisory lock 4246。
 const taskUsageCatchUpTicks = 60
 
-// ensureTaskUsageRollupState 在调用汇总函数前补齐状态行，并把"纪元水位"当作从未
-// 汇总来处理。
-//
-// 这两件事原本写在 620/634 的 SQL 函数体里，但那是函数体替换（非新增结构），发布器
-// 要求单独的数据库兼容方案，旧站无法继续运行。改成应用层 DML 后语义不变、不需要迁移：
-//   - 状态行缺失时按最早一条 task_usage 播种，函数不再因为 UPDATE 匹配 0 行而静默空转；
-//   - 101 迁移种下的 1970-01-01 只是"从未汇总"，跳到真实最早数据而不是逐天爬 20k 次。
-func ensureTaskUsageRollupState(ctx context.Context, pool *pgxpool.Pool) error {
-	if _, err := pool.Exec(ctx, `
+// ensureTaskUsageRollupState 在既有汇总锁内补齐状态，并跳过没有原始变更或脏键的空区间。
+// 水位按 updated_at（旧行回落 created_at）筛选变更，桶日期仍来自 created_at。
+func ensureTaskUsageRollupState(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanupCtx)
+	}()
+	var locked bool
+	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(4246)`).Scan(&locked); err != nil {
+		return false, err
+	}
+	if !locked {
+		return false, nil
+	}
+	// 原始变更从当前水位起查；旧dirty键仍需消费，不能按水位过滤。三个MIN复用既有索引。
+	if _, err := tx.Exec(ctx, `
+		WITH progress AS (SELECT watermark_at FROM task_usage_hourly_rollup_state WHERE id = 1)
 		INSERT INTO task_usage_hourly_rollup_state (id, watermark_at)
-		SELECT 1, COALESCE(date_trunc('hour', MIN(created_at)), now() - INTERVAL '5 minutes')
-		  FROM task_usage
-		ON CONFLICT (id) DO NOTHING
+		SELECT 1, LEAST(now() - INTERVAL '5 minutes', COALESCE(date_trunc('hour', LEAST(
+			(SELECT MIN(updated_at) FROM task_usage WHERE updated_at >= COALESCE((SELECT watermark_at FROM progress), '-infinity'::timestamptz)),
+			(SELECT MIN(created_at) FROM task_usage WHERE updated_at IS NULL AND created_at >= COALESCE((SELECT watermark_at FROM progress), '-infinity'::timestamptz)),
+			(SELECT MIN(enqueued_at) FROM task_usage_hourly_dirty)
+		)), now() - INTERVAL '5 minutes'))
+		ON CONFLICT (id) DO UPDATE SET watermark_at = EXCLUDED.watermark_at
+		WHERE task_usage_hourly_rollup_state.watermark_at < EXCLUDED.watermark_at
 	`); err != nil {
-		return fmt.Errorf("seed rollup state: %w", err)
+		return false, fmt.Errorf("heal empty rollup interval: %w", err)
 	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE task_usage_hourly_rollup_state
-		   SET watermark_at = COALESCE((SELECT date_trunc('hour', MIN(created_at)) FROM task_usage),
-		                               now() - INTERVAL '5 minutes')
-		 WHERE id = 1
-		   AND watermark_at <= TIMESTAMPTZ '1970-01-02 00:00:00+00'
-	`); err != nil {
-		return fmt.Errorf("heal epoch watermark: %w", err)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 // makeTaskUsageHourlyHandler 在补齐状态行后连续调用 SQL 汇总函数，直到水位不再推进
@@ -97,8 +108,12 @@ func ensureTaskUsageRollupState(ctx context.Context, pool *pgxpool.Pool) error {
 // 的活；追上历史靠连续调用，而不是靠一条语句重算很久，所以超时取消时锁仍会释放。
 func makeTaskUsageHourlyHandler(pool *pgxpool.Pool) Handler {
 	return func(ctx context.Context, in HandlerInput) (HandlerResult, error) {
-		if err := ensureTaskUsageRollupState(ctx, pool); err != nil {
+		ready, err := ensureTaskUsageRollupState(ctx, pool)
+		if err != nil {
 			return HandlerResult{}, err
+		}
+		if !ready {
+			return HandlerResult{Result: map[string]any{"advisory_lock_id": taskusagebackfill.AdvisoryLockKey, "rollup_ticks": 1, "skipped_lock": true}}, nil
 		}
 
 		watermarkBefore, err := readTaskUsageWatermark(ctx, pool)
