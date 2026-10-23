@@ -481,3 +481,47 @@ func TestDeliveryBatchFailureWaitsForExplicitRetry(t *testing.T) {
 	}
 	batchCleanup(t)
 }
+
+// 冻结批次的原批准代表可以先领取占用，再按原批次协议准备及验收；其他批准任务不能扩权。
+func TestDeliveryBatchRepresentativeClaimsPublicationBeforePrepare(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	dbfx.Cleanup(t, `DELETE FROM delivery_publication WHERE resource='int-prod'`)
+	first, firstToken := batchFixture(t)
+	second, secondToken := batchFixture(t)
+	call := func(action, id, token string, generation int64, evidence string) *testutil.Response {
+		return testutil.Call(t, testHandler.PublicationLease, newRequest("POST", "/api/delivery-queue/publication", map[string]any{"action": action, "delivery_id": id, "worker_token": token, "generation": generation, "recovery_evidence": evidence}))
+	}
+	call("claim", first, firstToken, 0, "").Want(409)
+	batch, _ := openBatch(t, 60)
+	call("claim", first, firstToken, 0, "").Want(409)
+	batch, members := freezeBatch(t, batch.ID)
+	representative, token, other, otherToken := first, firstToken, second, secondToken
+	if members[0].DeliveryID != first {
+		representative, token, other, otherToken = second, secondToken, first, firstToken
+	}
+	call("claim", other, otherToken, 0, "").Want(409)
+	call("claim", representative, dbid.NewV7().String(), 0, "").Want(409)
+	dbfx.Exec(t, `UPDATE issue_delivery SET source_commit=$2 WHERE id=$1`, representative, strings.Repeat("f", 40))
+	call("claim", representative, token, 0, "").Want(409)
+	dbfx.Exec(t, `UPDATE issue_delivery SET source_commit=$2 WHERE id=$1`, representative, strings.Repeat("a", 40))
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL WHERE id=$1`, representative)
+	call("claim", representative, token, 0, "").Want(409)
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=$2 WHERE id=$1`, representative, testUserID)
+	var lease coordinationOwner
+	call("claim", representative, token, 0, "").Want(200).JSON(&lease)
+	batchAction(t, map[string]any{"action": "preparing", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("b", 40)}).Want(200)
+	call("heartbeat", representative, token, lease.Generation, "").Want(200)
+	batchAction(t, map[string]any{"action": "validating", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "candidate_id": "combined-claim-test", "candidate_commit": strings.Repeat("c", 40), "candidate_url": "http://int.example"}).Want(200)
+	call("check", representative, token, lease.Generation, "").Want(200)
+	dbfx.Exec(t, `UPDATE delivery_publication SET expires_at=now()-interval '1 second' WHERE resource='int-prod'`)
+	call("resume", representative, token, lease.Generation, "受控用例已确认原执行退出及候选身份").Want(200).JSON(&lease)
+	call("check", representative, token, lease.Generation, "").Want(200)
+	acceptBatchFixture(t, batch.ID)
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": batch.ID, "worker_token": batch.WorkerToken}).Want(200)
+	call("heartbeat", representative, token, lease.Generation, "").Want(200)
+	call("release", representative, token, lease.Generation, "").Want(200)
+	batchCleanup(t)
+}
