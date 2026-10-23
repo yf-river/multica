@@ -59,6 +59,11 @@ class Worker:
         r.run(['git','-C',r.ROOT,'cat-file','-e',d['source_commit']+'^{commit}'])
         r.run(['git','-C',r.ROOT,'update-ref','refs/multica/deliveries/'+d['id'],d['source_commit']])
     def source(self,d,integrate=False):
+        if integrate:
+            # 合并前检查实际服务进程的身份，避免构建结束才暴露 Git 配置问题。
+            for identity in ('GIT_AUTHOR_IDENT','GIT_COMMITTER_IDENT'):
+                if subprocess.run(['git','-C',r.ROOT,'var',identity],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+                    raise RuntimeError('发布预检失败：实际执行器缺少 Git 合并身份')
         self.pin(d)
         path=r.RUN/'delivery-sources'/d['id']; branch='feature/delivery/'+d['id']
         if not path.exists():
@@ -222,7 +227,7 @@ class Worker:
                 acceptance=importlib.util.module_from_spec(spec);spec.loader.exec_module(acceptance)
                 evidence=acceptance.execute(c['id'],'int')
                 if evidence:
-                    self.advance(d,'tested',evidence=evidence['checks']);d['acceptance_submitted']=True
+                    self.advance(d,'tested',evidence=evidence['checks'])
             if not d.get('acceptance_submitted'):self.advance(d,'notify')
     def accept(self,d,release=False):
         c=self.own_candidate(d)

@@ -73,6 +73,7 @@ multica issue delivery confirm-plan GONG-24 --file /absolute/confirmation.json
 multica issue delivery revoke-release GONG-24 --file /absolute/revocation.json
 multica issue delivery submit GONG-24 --file /absolute/delivery.json
 multica issue delivery status GONG-24
+multica issue delivery bind-checks GONG-24 --delivery <UUID> --file /absolute/required-checks.json
 multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidence.json
 ```
 
@@ -81,7 +82,19 @@ multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidenc
 - revoke-release：同样引用当前方案和用户撤销评论及 revision、`scope`；保留原授权及撤销依据，不删除历史。
 - status：返回 `authorizations`（用户原话、类型、范围、登记者和撤销状态）、`user_comments_version`（当前用户评论版本摘要）及原交付记录。每条交付带 `authorization_state`：`user_authorization` 表示等待用户授权，`owner_review` 表示已落库待通知/待负责人核对，`review_incomplete` 表示通知已发出但复核尚未接续；其他阶段为空。
 - delivery：固定 `operation_id`、完整 `source_commit`、`source_branch`、`base_commit` 和本地 `evidence`。证据是非空数组，每项含 `name`、`status: passed`、实际 `evidence`。重试保持操作号与内容一致。
-- accept：当前交付 `revision` 和真实 int 业务验证的 `evidence`。存在发布授权时，同时提交 `authorization_id`、`scope_review`、`user_comments_version`，说明准确候选仍在授权范围内；缺少范围复核时只完成联调，不能自动发布。由按钮批准的候选复验使用 `authorization_id: "button"`，仅既有真实按钮批准允许复用。
+- required_checks：新交付提交时必填，按已确认方案列出业务检查，保存到交付的 `plan_snapshot`，每项包含 `name` 与 `stage`（`verification` 独立功能验收、`integration` 最终组合验收），两个阶段各至少一项。六个协调检查名称不能充当业务检查。清单一经绑定不能删减或替换；范围变化使用新方案和交付。
+- bind-checks：已有未发布交付缺清单时，负责人引用原 `plan_id`、当前 `revision` 和 `required_checks` 显式绑定，相同清单可幂等重试，无需用户重复授权。已发布历史不重开，失败交付不会因此自动重试。
+
+```json
+{"revision":3,"plan_id":"<当前方案UUID>","required_checks":[
+  {"name":"真实模型与用量归属","stage":"verification"},
+  {"name":"集成用量对账与页面","stage":"integration"}
+]}
+```
+
+自动协调结果可以保留，但缺业务清单或必要项时 `acceptance_submitted` 为 false，平台通知负责人补验；不能靠六项协调结果晋级。`accept`、`approve`、发布器晋级和批次发布都核对业务项；组合代表的同一候选证据覆盖每个成员的集成清单。返回缺项时补真实检查，禁止把未执行事项改名标成通过。最终发布授权核对在 publishing 或已复核阶段也会拒绝缺项，并返回独立的 `business_error`，不把业务缺口解释成用户撤权。证据记录中保留每项实际来源，接口校验覆盖关系不能代替真实性审查。
+
+- accept：当前交付 `revision`、准确 `candidate_id` 和实际业务验证的 `evidence`。存在发布授权时，同时提交 `authorization_id`、`scope_review`、`user_comments_version`，说明准确候选仍在授权范围内；缺少范围复核时只完成联调，不能自动发布。由按钮批准的候选复验使用 `authorization_id: "button"`，仅既有真实按钮批准允许复用。
 - approve：验收后可引用新用户评论，提供 `comment_id`、`comment_revision`、`scope`、`scope_review`、`user_comments_version`；也可直接引用已有 `authorization_id` 并提供范围复核。任务身份不能无依据自批。
 
 ## 排队与源码恢复
@@ -178,7 +191,7 @@ Git 仓库只用来说明哪些文件本来就在：`multica repo checkout` 与 
 
 测试数据库使用本次明确创建的隔离实例和库，记录目标、命令、提交、退出码及跳过项。生产及固定 int 的账号、Token、上传文件、工作目录不作测试夹具。每批同步的提交清单、报告覆盖及用户选择状态属于验收内容，不能只检查页面能打开。
 
-`make test` 在执行迁移之前运行 `scripts/check-test-database.sh`，读取同一份 ENV_FILE，要求显式的 MULTICA_TEST_DATABASE_URL 与其指向同一目标，拒绝固定环境所在实例和本机冻结实例。测试目标须预先创建；该入口不会调用共享 Compose 准备脚本。检查同时核对 Make 实际导出的连接和 ENV_FILE 的连接，防止二者分歧。该检查不更改角色权限，也不能拦截绕过入口的任意 SQL 或直接 Go 命令；后者仍须按规则显式指定隔离数据库。
+`make test` 在执行迁移之前运行 `scripts/check-test-database.sh`，读取同一份 ENV_FILE，要求显式的 MULTICA_TEST_DATABASE_URL 与其指向同一目标，拒绝固定环境所在实例和本机冻结实例。测试目标须预先创建；该入口不会调用共享 Compose 准备脚本。检查同时核对 Make 实际导出的连接和 ENV_FILE 的连接，防止二者分歧。该检查不更改角色权限，也不能拦截任意 SQL。`cmd/server` 与 `internal/handler` 的 `TestMain` 在连接及清理 fixture 前复用同一检查器，缺少显式双变量、目标不一致或命中受保护实例时直接失败，不能回落到 localhost:5432。直接运行这两个包的 Go 测试同样需要两个变量；纯编译使用 `go test -c`，`-run` 过滤不跳过 `TestMain`。
 
 ## 交付归属与自动验收
 
@@ -209,3 +222,18 @@ GONG-67 把自动监督从“持续追踪所有任务的材料变化”改为“
 联调时核对：迁移在隔离实例完整执行，`done` 任务建立轮次并派发真实模型批次，未完成任务不派发，重开后迟到结果只归档，完成后的评论不进入本轮范围，页面显示轮次序号、截止时间和本轮覆盖。
 
 组合候选就绪时，所有成员通过持久 `batch_ready` 通知获得同一候选和代表交付编号；代表按全部成员影响与集成冒烟汇总真实证据，通过 `multica issue delivery accept <issue> --delivery <代表交付> --file <JSON>` 提交。JSON 包含当前 `revision`、准确 `candidate_id` 与 `evidence`；同候选、同证据重放不重复记账，旧候选和非代表提交被拒绝。单项历史证据与平台通用检查不能替代本次组合业务验收。成员撤权时旧组合整体丢弃，剩余有效成员由新批次重新领取并构建；未批准任务不进入候选。
+
+### 交付耗时与阻塞诊断
+
+按需运行 `multica issue delivery diagnose GONG-80 --limit 50`，或增加 `--delivery <UUID>` 固定一条交付。该命令只 GET 当前任务的交付诊断，不领取负责人、不延长租约、不唤醒 Agent，也不启动轮询。HTTP 入口为 `GET /api/issues/{id}/deliveries/diagnostics`，沿用任务可见性校验；返回内容不含发布令牌、轨迹正文或环境凭据。
+
+- `summary`：当前阶段、确证的共享发布占用或验收槽位等待、负责人复核；同一批次的代表租约属于本批工作，不判成另一项阻塞。
+- `events`：复用 `verification_event` 的槽位事件与 `delivery.*` 交付动作，包含事件间隔。交付动作与状态更新同事务提交，独立命名空间不参与槽位 FIFO 或原有执行状态展示。
+- `phase_started_at/phase_elapsed_ms`：仅在有真实阶段变更事件时计算；旧记录缺证据时返回空。心跳、重复检查、同阶段动作不能重置阶段起点。批次内部直接回填的阶段与旧历史不保证有完整计时，不用 `updated_at` 冒充起点。
+- `recent_issue_runs`：最近 10 次任务执行、实际重试血缘、等待原因、轨迹摘要与既有 usage。执行属于看板任务，不据此认定都运行了当前候选；用量字段分开列出，缺上报标记 `available=false`，缓存 token 不重复合计。
+
+默认读取最新 1–200 个事件，并明确 `truncated_older_events`。后续按返回的 `next_cursor.since/after` 传入 `--since/--after` 增量读取；`has_more_newer_events=true` 时继续取页，正向分页不会跳过中间事件。`observed_retry_or_resume_events` 只统计本窗口已观察到的重试/续接，不是历史总次数。诊断没有确定阻塞时明确提示查看最近事件，不把等待直接判为故障。
+
+构建在安装依赖或编译之前检查实际执行用户 HOME、Git/Go/Node/pnpm、Go 缓存写权限、锁文件与完整发布脚本依赖。整合源码前检查实际 Git 作者/提交者身份。结构化构建日志中的 `build_stage` 包括预检、安装依赖、Web、三个 Go 程序，分别记录完成或失败的 `elapsed_ms`；复用产物不会伪报一次新的编译耗时。
+
+固定控制端还可运行 `pnpm --dir /data/ida/multica release preflight --source <checkout> --env int`。它只读输出当前执行器 UID/PID、Python、实际控制器/worker 文件摘要、与源码是否一致、工具路径/版本及当前运行源 `/healthz`。就绪为 503 时退出非零并标记 `blocked`，不写迁移台账。构建预检不强依赖另一个验收槽或正在切换的固定 int；候选迁移、真实运行身份、隔离和上线就绪仍由原生发布门禁验证。控制器与源码摘要不同只用于说明升级边界，不能据此跳过正式控制器更新或伪报同源。

@@ -174,6 +174,13 @@ func (h *Handler) DeliveryBatch(w http.ResponseWriter, r *http.Request) {
 				if err == nil && pending > 0 && !verified {
 					err = fmt.Errorf("组合候选缺少成员实际验收证据")
 				}
+				if err == nil && pending > 0 {
+					var representative string
+					err = tx.QueryRow(r.Context(), `SELECT delivery_id::text FROM delivery_batch_member WHERE batch_id=$1 AND result='pending' ORDER BY created_at,delivery_id LIMIT 1`, current.ID).Scan(&representative)
+					if err == nil {
+						err = requireStoredDeliveryChecks(r.Context(), tx, representative, "integration")
+					}
+				}
 				if err == nil && pending == 0 {
 					_, err = tx.Exec(r.Context(), `UPDATE delivery_batch SET status='cancelled',error='没有有效授权的成员',updated_at=now() WHERE id=$1`, current.ID)
 				} else if err == nil {

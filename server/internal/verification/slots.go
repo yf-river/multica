@@ -56,7 +56,7 @@ func (s Store) Claim(ctx context.Context, workspace, delivery, token, source str
 		return Lease{}, err
 	}
 	var first string
-	err = tx.QueryRow(ctx, `SELECT d.id::text FROM issue_delivery d JOIN LATERAL (SELECT stage,created_at FROM verification_event e WHERE e.delivery_id=d.id ORDER BY created_at DESC LIMIT 1) e ON true WHERE d.phase='testing' AND e.stage='waiting_slot' AND NOT EXISTS(SELECT 1 FROM verification_slot s WHERE s.delivery_id=d.id) ORDER BY e.created_at,d.created_at LIMIT 1`).Scan(&first)
+	err = tx.QueryRow(ctx, `SELECT d.id::text FROM issue_delivery d JOIN LATERAL (SELECT stage,created_at FROM verification_event e WHERE e.delivery_id=d.id AND e.stage NOT LIKE 'delivery.%' ORDER BY created_at DESC LIMIT 1) e ON true WHERE d.phase='testing' AND e.stage='waiting_slot' AND NOT EXISTS(SELECT 1 FROM verification_slot s WHERE s.delivery_id=d.id) ORDER BY e.created_at,d.created_at LIMIT 1`).Scan(&first)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, err
 	}

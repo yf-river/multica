@@ -146,7 +146,7 @@ class ReleaseTest(unittest.TestCase):
         current=self.base/'previous';current.mkdir()
         r.write(r.meta_path('int'),{'release_dir':str(current)})
         self.advance_production()
-        with patch.object(r,'run'),patch.object(r,'copy_tree'),patch.object(r,'checked_source',wraps=r.checked_source) as check:
+        with patch.object(r,'executor_preflight',return_value={'fixture':'compiler mocked'}),patch.object(r,'run'),patch.object(r,'copy_tree'),patch.object(r,'checked_source',wraps=r.checked_source) as check:
             artifact=r.build_verification(source,'delivery-a')
         self.assertEqual(check.call_count,3)
         self.assertTrue(all(c.kwargs=={'verification':True} for c in check.call_args_list))

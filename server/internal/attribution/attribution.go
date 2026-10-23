@@ -83,6 +83,8 @@ const (
 	EvidenceRerun           EvidenceKind = "rerun"
 	// EvidenceDelegatedFailure 指向「把控制权交还给来源协调器」的那个终态 worker 任务。
 	EvidenceDelegatedFailure EvidenceKind = "delegated_failure"
+	// EvidenceDelegatedResult 标记完成或取消后交还协调权的执行，避免回执再次唤醒其来源。
+	EvidenceDelegatedResult EvidenceKind = "delegated_result"
 	// EvidenceChat 让统一的证据对指向「触发运行的那个聊天会话」——它是
 	// autopilot_run / issue_assignment 的聊天对等物。专门的 chat_session_id 列仍为
 	// 自己的消费者保留；这里让归因 UI 的「跳到证据」路径保持统一（MUL-4302 §2）。

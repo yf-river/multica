@@ -5739,6 +5739,9 @@ func IsDelegatedFailureRecoveryComment(comment db.Comment) bool {
 }
 
 func delegatedFailureRecoveryContent(failed, source db.AgentTaskQueue) string {
+	if failed.Status == "completed" || failed.Status == "cancelled" {
+		return fmt.Sprintf("Delegated execution `%s` reached `%s`. Resume coordination on the original issue: inspect its actual result and remaining delivery requirements. Execution completion is not issue or production acceptance. Source coordinator task: `%s`.", util.UUIDToString(failed.ID), failed.Status, util.UUIDToString(source.ID))
+	}
 	reason := "agent_error"
 	if failed.FailureReason.Valid && failed.FailureReason.String != "" {
 		reason = truncateForSummary(redact.Text(failed.FailureReason.String), triggerSummaryMaxLen)
@@ -5757,12 +5760,13 @@ func delegatedFailureRecoveryContent(failed, source db.AgentTaskQueue) string {
 	return content
 }
 
-// loadDelegatedFailureRecoveryTarget 解析并校验“从失败委托任务到其源协调者”的反向边。返回 nil 是有意为之的
+// loadDelegatedFailureRecoveryTarget 校验委托终态到源协调者的反向边。返回 nil 是有意为之的
 // no-op：非终态行、重试 pending 行、autopilot 工作、恢复任务本身、已终态/积压的源 issue、源 agent 不可用以及
 // 自我委托，都绝不能启动恢复循环。
 func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, failed db.AgentTaskQueue) (*delegatedFailureRecoveryTarget, error) {
-	if failed.Status != "failed" || !failed.DelegatedFromTaskID.Valid || failed.AutopilotRunID.Valid ||
-		(failed.TriggerEvidenceKind.Valid && failed.TriggerEvidenceKind.String == string(attribution.EvidenceDelegatedFailure)) {
+	if (failed.Status != "failed" && failed.Status != "completed" && failed.Status != "cancelled") || !failed.DelegatedFromTaskID.Valid || failed.AutopilotRunID.Valid ||
+		failed.FailureReason.String == "release_pause" ||
+		(failed.TriggerEvidenceKind.Valid && (failed.TriggerEvidenceKind.String == string(attribution.EvidenceDelegatedFailure) || failed.TriggerEvidenceKind.String == string(attribution.EvidenceDelegatedResult))) {
 		return nil, nil
 	}
 	hasRetry, err := q.HasRetryTaskForParent(ctx, failed.ID)
@@ -5802,6 +5806,9 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 	}
 	if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid || agent.WorkspaceID != issue.WorkspaceID {
 		return nil, nil
+	}
+	if covered, err := delegatedIssueBarrierCoversResult(ctx, q, failed, issue, agent); err != nil || covered {
+		return nil, err
 	}
 	return &delegatedFailureRecoveryTarget{failed: failed, source: source, issue: issue, agent: agent}, nil
 }
@@ -6130,7 +6137,7 @@ func (s *TaskService) dispatchDelegatedFailureRecovery(ctx context.Context, targ
 				OriginatorSource:     pgtype.Text{String: string(source), Valid: true},
 				DelegatedFromTaskID:  target.failed.ID,
 				RuleVersionID:        ruleVersionID,
-				TriggerEvidenceKind:  pgtype.Text{String: string(attribution.EvidenceDelegatedFailure), Valid: true},
+				TriggerEvidenceKind:  pgtype.Text{String: string(delegatedRecoveryEvidenceKind(target.failed)), Valid: true},
 				TriggerEvidenceRefID: target.failed.ID,
 				HeadSha:              headShaText(s.ResolveIssueReviewSHA(ctx, target.issue.ID)),
 			})

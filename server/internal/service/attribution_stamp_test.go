@@ -56,7 +56,7 @@ func seedAttributionFixture(t *testing.T, pool *pgxpool.Pool) (workspaceID, user
 	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority)
-		VALUES ($1, 'attr issue', 'member', $2, 'agent', $3, 'medium')
+		VALUES ($1, 'attr issue', 'member', $2, 'agent', $3, 'not_important_not_urgent')
 		RETURNING id`, workspaceID, userID, agentID).Scan(&issueID); err != nil {
 		t.Fatalf("seed issue: %v", err)
 	}
