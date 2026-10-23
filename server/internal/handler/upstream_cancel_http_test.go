@@ -46,13 +46,22 @@ func TestCancelUpstreamSystemTaskHTTP(t *testing.T) {
 		member  bool
 		foreign bool
 		want    int
+		binding string
+		queued  bool
 	}{
-		{"上游管理员", "system", upstream.ExecutorSystemKeyPrefix, true, false, false, 200},
-		{"普通成员不能取消上游任务", "system", upstream.ExecutorSystemKeyPrefix, true, true, false, 403},
-		{"工作区不可跨越", "system", upstream.ExecutorSystemKeyPrefix, true, false, true, 404},
-		{"其它系统用途不开放", "system", "unrelated_system:", true, false, false, 404},
-		{"没有同步批次不开放", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 404},
-		{"普通开发任务兼容", "user", "", false, false, false, 200},
+		{"上游管理员", "system", upstream.ExecutorSystemKeyPrefix, true, false, false, 200, "", false},
+		{"普通成员不能取消上游任务", "system", upstream.ExecutorSystemKeyPrefix, true, true, false, 403, "", false},
+		{"工作区不可跨越", "system", upstream.ExecutorSystemKeyPrefix, true, false, true, 404, "", false},
+		{"其它系统用途不开放", "system", "unrelated_system:", true, false, false, 404, "", false},
+		{"没有同步批次不开放", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 404, "", false},
+		{"预启动任务管理员取消", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 200, "exact", false},
+		{"排队任务管理员取消", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 200, "exact", true},
+		{"预启动普通成员拒绝", "system", upstream.ExecutorSystemKeyPrefix, false, true, false, 403, "exact", false},
+		{"错误自动化绑定拒绝", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 404, "wrong_autopilot", false},
+		{"错误执行体绑定拒绝", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 404, "wrong_agent", false},
+		{"错误运行时绑定拒绝", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 404, "wrong_runtime", false},
+		{"错误派发回链拒绝", "system", upstream.ExecutorSystemKeyPrefix, false, false, false, 404, "wrong_task", false},
+		{"普通开发任务兼容", "user", "", false, false, false, 200, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,7 +71,45 @@ func TestCancelUpstreamSystemTaskHTTP(t *testing.T) {
 				cols["system_key"] = tc.key + dbid.NewV7().String()
 			}
 			agent := dbfx.Agent(t, "cancel HTTP", runtime, cols)
-			task := dbfx.Task(t, agent, testutil.Cols{"runtime_id": runtime, "status": "running"})
+			initialStatus := "running"
+			if tc.queued {
+				initialStatus = "queued"
+			}
+			task := dbfx.Task(t, agent, testutil.Cols{"runtime_id": runtime, "status": initialStatus})
+			if tc.binding != "" {
+				ap, ar := dbid.NewV7().String(), dbid.NewV7().String()
+				_, err := testPool.Exec(ctx, `INSERT INTO autopilot(id,workspace_id,title,assignee_id,execution_mode,created_by_type,created_by_id) VALUES($1,$2,'cancel test',$3,'run_only','member',$4)`, ap, testWorkspaceID, agent, testUserID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				dbfx.Cleanup(t, `DELETE FROM autopilot WHERE id=$1`, ap)
+				linkedTask := task
+				if tc.binding == "wrong_task" {
+					linkedTask = dbfx.Task(t, agent, testutil.Cols{"runtime_id": runtime, "status": "queued"})
+				}
+				_, err = testPool.Exec(ctx, `INSERT INTO autopilot_run(id,autopilot_id,source,status,task_id) VALUES($1,$2,'manual','running',$3)`, ar, ap, linkedTask)
+				if err != nil {
+					t.Fatal(err)
+				}
+				dbfx.Cleanup(t, `DELETE FROM autopilot_run WHERE id=$1`, ar)
+				if _, err = testPool.Exec(ctx, `UPDATE agent_task_queue SET autopilot_run_id=$2 WHERE id=$1`, task, ar); err != nil {
+					t.Fatal(err)
+				}
+				boundAP, boundAgent, boundRuntime := ap, agent, runtime
+				if tc.binding == "wrong_autopilot" {
+					boundAP = dbid.NewV7().String()
+				}
+				if tc.binding == "wrong_agent" {
+					boundAgent = dbid.NewV7().String()
+				}
+				if tc.binding == "wrong_runtime" {
+					boundRuntime = dbid.NewV7().String()
+				}
+				if _, err = testPool.Exec(ctx, `UPDATE upstream_sync_config SET autopilot_id=$1,agent_id=$2,runtime_id=$3 WHERE singleton=1`, boundAP, boundAgent, boundRuntime); err != nil {
+					t.Fatal(err)
+				}
+				dbfx.Cleanup(t, `UPDATE upstream_sync_config SET autopilot_id=NULL,agent_id=NULL,runtime_id=NULL WHERE singleton=1`)
+			}
 			run := ""
 			if tc.run {
 				run = dbid.NewV7().String()
@@ -104,7 +151,7 @@ func TestCancelUpstreamSystemTaskHTTP(t *testing.T) {
 			if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id=$1`, task).Scan(&status); err != nil {
 				t.Fatal(err)
 			}
-			if tc.want == 200 && status != "cancelled" || tc.want != 200 && status != "running" {
+			if tc.want == 200 && status != "cancelled" || tc.want != 200 && status != initialStatus {
 				t.Fatalf("任务状态与取消权限不符: %s", status)
 			}
 			if run != "" {
