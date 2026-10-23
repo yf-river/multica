@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
@@ -15,7 +18,7 @@ import (
 // 交付命令与页面使用同一套版本和确认接口。
 func init() {
 	group := &cobra.Command{Use: "delivery", Short: "Plan confirmation, integration queue and production review"}
-	for _, action := range []string{"status", "plan", "confirm-plan", "revoke-release", "submit", "accept", "approve", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
+	for _, action := range []string{"diagnose", "status", "plan", "confirm-plan", "revoke-release", "submit", "accept", "approve", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
 		action := action
 		cmd := &cobra.Command{Use: action + " <issue-id>", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newAPIClient(cmd)
@@ -36,7 +39,7 @@ func init() {
 				}
 				return cli.PrintJSON(os.Stdout, result)
 			}
-			if action != "status" && action != "confirm-plan" && action != "revoke-release" {
+			if action != "diagnose" && action != "status" && action != "confirm-plan" && action != "revoke-release" {
 				if err = deliveryCLIClaim(ctx, cmd, client, path, action); err != nil {
 					return err
 				}
@@ -45,7 +48,13 @@ func init() {
 				}
 			}
 			var result json.RawMessage
-			if action == "status" {
+			if action == "diagnose" {
+				query, queryErr := deliveryDiagnosticQuery(cmd)
+				if queryErr != nil {
+					return queryErr
+				}
+				err = client.GetJSON(ctx, path+"/deliveries/diagnostics?"+query.Encode(), &result)
+			} else if action == "status" {
 				err = client.GetJSON(ctx, path+"/deliveries", &result)
 			} else {
 				file, _ := cmd.Flags().GetString("file")
@@ -88,6 +97,12 @@ func init() {
 		}
 		cmd.Flags().String("file", "", "JSON request file (preserve operation_id on retries)")
 		cmd.Flags().String("delivery", "", "Delivery UUID")
+		if action == "diagnose" {
+			cmd.Short = "Read-only bounded delivery timing and blocker diagnostics"
+			cmd.Flags().String("since", "", "RFC3339 incremental cursor time")
+			cmd.Flags().String("after", "", "Event UUID from next_cursor (requires --since)")
+			cmd.Flags().Int("limit", 50, "Event count, 1–200; latest window unless --since")
+		}
 		cmd.Flags().String("output", "json", "Output format")
 		cmd.Flags().String("execution", "", "Stable execution identity (defaults to MULTICA_TASK_ID or CODEX_THREAD_ID)")
 		cmd.Flags().String("recovery-evidence", "", "Observed old execution and environment state for explicit handoff")
@@ -151,4 +166,33 @@ func deliveryCLIClaim(ctx context.Context, cmd *cobra.Command, client *cli.APICl
 	client.DeliveryToken = saved.Token
 	client.DeliveryGeneration = saved.Generation
 	return nil
+}
+
+// deliveryDiagnosticQuery 不领取负责人或发布租约；增量游标来自上一页的 next_cursor。
+func deliveryDiagnosticQuery(cmd *cobra.Command) (url.Values, error) {
+	q := url.Values{}
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit < 1 || limit > 200 {
+		return nil, fmt.Errorf("--limit requires 1–200")
+	}
+	q.Set("limit", strconv.Itoa(limit))
+	since, _ := cmd.Flags().GetString("since")
+	after, _ := cmd.Flags().GetString("after")
+	delivery, _ := cmd.Flags().GetString("delivery")
+	if since != "" {
+		if _, err := time.Parse(time.RFC3339Nano, since); err != nil {
+			return nil, fmt.Errorf("--since requires RFC3339 time")
+		}
+		q.Set("since", since)
+	}
+	if after != "" {
+		if since == "" {
+			return nil, fmt.Errorf("--after requires --since")
+		}
+		q.Set("after", after)
+	}
+	if delivery != "" {
+		q.Set("delivery_id", delivery)
+	}
+	return q, nil
 }

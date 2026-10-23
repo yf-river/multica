@@ -209,3 +209,18 @@ GONG-67 把自动监督从“持续追踪所有任务的材料变化”改为“
 联调时核对：迁移在隔离实例完整执行，`done` 任务建立轮次并派发真实模型批次，未完成任务不派发，重开后迟到结果只归档，完成后的评论不进入本轮范围，页面显示轮次序号、截止时间和本轮覆盖。
 
 组合候选就绪时，所有成员通过持久 `batch_ready` 通知获得同一候选和代表交付编号；代表按全部成员影响与集成冒烟汇总真实证据，通过 `multica issue delivery accept <issue> --delivery <代表交付> --file <JSON>` 提交。JSON 包含当前 `revision`、准确 `candidate_id` 与 `evidence`；同候选、同证据重放不重复记账，旧候选和非代表提交被拒绝。单项历史证据与平台通用检查不能替代本次组合业务验收。成员撤权时旧组合整体丢弃，剩余有效成员由新批次重新领取并构建；未批准任务不进入候选。
+
+### 交付耗时与阻塞诊断
+
+按需运行 `multica issue delivery diagnose GONG-80 --limit 50`，或增加 `--delivery <UUID>` 固定一条交付。该命令只 GET 当前任务的交付诊断，不领取负责人、不延长租约、不唤醒 Agent，也不启动轮询。HTTP 入口为 `GET /api/issues/{id}/deliveries/diagnostics`，沿用任务可见性校验；返回内容不含发布令牌、轨迹正文或环境凭据。
+
+- `summary`：当前阶段、确证的共享发布占用或验收槽位等待、负责人复核；同一批次的代表租约属于本批工作，不判成另一项阻塞。
+- `events`：复用 `verification_event` 的槽位事件与 `delivery.*` 交付动作，包含事件间隔。交付动作与状态更新同事务提交，独立命名空间不参与槽位 FIFO 或原有执行状态展示。
+- `phase_started_at/phase_elapsed_ms`：仅在有真实阶段变更事件时计算；旧记录缺证据时返回空。心跳、重复检查、同阶段动作不能重置阶段起点。批次内部直接回填的阶段与旧历史不保证有完整计时，不用 `updated_at` 冒充起点。
+- `recent_issue_runs`：最近 10 次任务执行、实际重试血缘、等待原因、轨迹摘要与既有 usage。执行属于看板任务，不据此认定都运行了当前候选；用量字段分开列出，缺上报标记 `available=false`，缓存 token 不重复合计。
+
+默认读取最新 1–200 个事件，并明确 `truncated_older_events`。后续按返回的 `next_cursor.since/after` 传入 `--since/--after` 增量读取；`has_more_newer_events=true` 时继续取页，正向分页不会跳过中间事件。`observed_retry_or_resume_events` 只统计本窗口已观察到的重试/续接，不是历史总次数。诊断没有确定阻塞时明确提示查看最近事件，不把等待直接判为故障。
+
+构建在安装依赖或编译之前检查实际执行用户 HOME、Git/Go/Node/pnpm、Go 缓存写权限、锁文件与完整发布脚本依赖。整合源码前检查实际 Git 作者/提交者身份。结构化构建日志中的 `build_stage` 包括预检、安装依赖、Web、三个 Go 程序，分别记录完成或失败的 `elapsed_ms`；复用产物不会伪报一次新的编译耗时。
+
+固定控制端还可运行 `pnpm --dir /data/ida/multica release preflight --source <checkout> --env int`。它只读输出当前执行器 UID/PID、Python、实际控制器/worker 文件摘要、与源码是否一致、工具路径/版本及当前运行源 `/healthz`。就绪为 503 时退出非零并标记 `blocked`，不写迁移台账。构建预检不强依赖另一个验收槽或正在切换的固定 int；候选迁移、真实运行身份、隔离和上线就绪仍由原生发布门禁验证。控制器与源码摘要不同只用于说明升级边界，不能据此跳过正式控制器更新或伪报同源。

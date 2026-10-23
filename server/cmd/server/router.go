@@ -1660,6 +1660,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/delivery-owner", h.ManageDeliveryOwner)
 					r.Post("/delivery-owner", h.ManageDeliveryOwner)
 					r.Get("/deliveries", h.GetIssueDeliveries)
+					r.Get("/deliveries/diagnostics", h.GetDeliveryDiagnostics)
 					r.Post("/deliveries", h.SubmitIssueDelivery)
 					r.Put("/delivery-plan", h.RegisterIssuePlan)
 					r.Post("/delivery-plan/confirm", h.ConfirmIssuePlan)
