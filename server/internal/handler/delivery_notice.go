@@ -26,7 +26,8 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 		if assignee != "" && (kind == "agent" || kind == "squad") {
 			mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
 		}
-		text := "交付 " + delivery + " 生产发布已完成，候选 " + candidate + "。请核对实际生产版本、执行生产页面验证并上传截图；只有用户已授权关闭且生产验证通过后才能标记完成。"
+		// 1. 生产验证通过即收尾，通知不再要求用户另行授权关闭，避免 Agent 把已完成的发布拖成又一次确认。
+		text := "交付 " + delivery + " 生产发布已完成，候选 " + candidate + "。请核对实际生产版本、执行生产页面验证并上传截图；生产验证通过后直接标记任务完成，无需再次等待用户确认。"
 		if stage == "needs_changes" {
 			text = "交付 " + delivery + " 暂停，原因：" + detail + "。请核对实际环境和恢复资料，在既有授权内修复后接续；不要盲目重跑或覆盖其他任务占用。"
 		}
