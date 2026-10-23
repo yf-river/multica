@@ -289,7 +289,7 @@ class Worker:
         return r.RUN/'verification-jobs'/(str(uuid.UUID(delivery))+'.json')
 
     def start_pool_unit(self,delivery):
-        unit='multica-verify-'+delivery
+        unit='multica-verify-'+delivery+'.service'
         command=[sys.executable,str(Path(__file__).resolve()),'--env',self.env,'--pool-delivery',delivery]
         properties=dict(line.split('=',1) for line in r.output(['systemctl','show',unit,
             '--property=LoadState,ActiveState,WorkingDirectory,Type,KillMode','--no-pager']).splitlines() if '=' in line)

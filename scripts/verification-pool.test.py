@@ -175,6 +175,7 @@ class PoolServiceLifetimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(w.subprocess,'run',return_value=inactive),patch.object(r,'output',return_value='LoadState=not-found\nActiveState=inactive'),patch.object(r,'run') as launch:
             self.assertEqual(worker.pool_dispatch([delivery],None),{identity})
             command=launch.call_args.args[0]
+            self.assertEqual(command[command.index('--unit')+1],'multica-verify-'+identity+'.service')
             self.assertIn('--property=Type=exec',command)
             self.assertIn('--property=KillMode=process',command)
             self.assertNotIn('--property=KillMode=control-group',command)
@@ -190,9 +191,10 @@ class PoolServiceLifetimeTests(unittest.TestCase):
             properties='LoadState=loaded\nActiveState=inactive\nWorkingDirectory='+tmp+'\nType=exec\nKillMode=process'
             def outputs(command_override=None,environment_override=None):
                 return [properties,json.dumps({'data':['/test/unit']}),json.dumps({'data':[[w.sys.executable,command_override or command,False]]}),json.dumps({'data':environment_override or ['MULTICA_RELEASE_ROOT='+tmp]})]
-            with patch.object(r,'output',side_effect=outputs()),patch.object(r,'run') as launch:
+            with patch.object(r,'output',side_effect=outputs()) as reads,patch.object(r,'run') as launch:
                 worker.start_pool_unit(identity)
-                launch.assert_called_once_with(['systemctl','start','multica-verify-'+identity])
+                self.assertEqual(reads.call_args_list[1].args[0][-1],'multica-verify-'+identity+'.service')
+                launch.assert_called_once_with(['systemctl','start','multica-verify-'+identity+'.service'])
             for responses in [outputs(command_override=command[:-1]+['wrong-delivery']),outputs(environment_override=['MULTICA_RELEASE_ROOT=/wrong'])]:
                 with patch.object(r,'output',side_effect=responses),patch.object(r,'run') as launch:
                     with self.assertRaises(r.RecoveryRequired):worker.start_pool_unit(identity)
