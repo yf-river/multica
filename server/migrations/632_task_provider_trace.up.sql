@@ -17,7 +17,7 @@
 --     task_message 等既有清理并列，不依赖数据库级联。
 --   * workspace_id 只作查询维度，同样不做外键；工作区拆除按任务批次清理即可覆盖。
 --
--- 唯一约束不写在这里：新增索引一律用并发建索引的独立单语句迁移（628），
+-- 唯一约束不写在这里：新增索引一律用并发建索引的独立单语句迁移（633），
 -- 重复上报的幂等由该唯一索引 + ON CONFLICT 保证。
 CREATE TABLE IF NOT EXISTS task_provider_trace (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),

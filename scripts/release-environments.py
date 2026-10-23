@@ -550,7 +550,7 @@ def reviewed_usage_rollup_selfheal(migration):
     汇总状态行（外加调用既有的窗口重算与脏队列清理原语）：不能删改业务数据、
     不能改表结构、不能换名字或签名。任何一条不满足即拒绝，交人工评审。
     """
-    if migration.name != '629_task_usage_hourly_rollup_selfheal.up.sql':
+    if migration.name != '634_task_usage_hourly_rollup_selfheal.up.sql':
         return False
     body = re.sub(r'--[^\n]*', '', migration.read_text()).strip()
     upper = body.upper()

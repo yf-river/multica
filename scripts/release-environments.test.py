@@ -290,7 +290,7 @@ class ReleaseTests(unittest.TestCase):
         # 审查：只能重定义那个函数，写入目标只能是汇总状态行，不能删改业务数据。
         from tempfile import TemporaryDirectory
         source=Path(__file__).parent.parent/'server/migrations'
-        name='629_task_usage_hourly_rollup_selfheal.up.sql'
+        name='634_task_usage_hourly_rollup_selfheal.up.sql'
         with TemporaryDirectory() as folder:
             target=Path(folder)/name;target.write_bytes((source/name).read_bytes())
             self.assertTrue(r.reviewed_usage_rollup_selfheal(target))
@@ -320,7 +320,7 @@ class ReleaseTests(unittest.TestCase):
         import re
         from pathlib import Path as P
         migrations=P(__file__).parent.parent/'server/migrations'
-        table_sql=(migrations/'627_task_provider_trace.up.sql').read_text()
+        table_sql=(migrations/'632_task_provider_trace.up.sql').read_text()
         stripped=re.sub(r'--[^\n]*','',table_sql)
         statements=[part.strip() for part in stripped.split(';') if part.strip()]
         self.assertEqual(len(statements),1)
@@ -329,7 +329,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn('CASCADE',statements[0].upper())
         self.assertNotIn('UNIQUE (',statements[0].upper())
 
-        index_sql=(migrations/'628_task_provider_trace_unique.up.sql').read_text()
+        index_sql=(migrations/'633_task_provider_trace_unique.up.sql').read_text()
         stripped=re.sub(r'--[^\n]*','',index_sql)
         statements=[part.strip() for part in stripped.split(';') if part.strip()]
         self.assertEqual(len(statements),1)

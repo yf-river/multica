@@ -192,7 +192,7 @@ var concurrentIndexCleanups = map[string]string{
 	"623_supervision_round_open":        "supervision_round_open",
 	"625_supervision_batch_round_key":   "supervision_batch_round_key",
 	"626_supervision_batch_round_round": "supervision_batch_round_round",
-	"628_task_provider_trace_unique":    "task_provider_trace_task_trace_unique",
+	"633_task_provider_trace_unique":    "task_provider_trace_task_trace_unique",
 	"520_repository_id":                 "repository_id_idx",
 	"521_repository_identity":           "repository_identity_idx",
 	"522_repository_location_id":        "repository_location_id_idx",

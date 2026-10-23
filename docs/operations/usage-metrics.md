@@ -93,7 +93,7 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 
 `rollup_task_usage_hourly()` 是单例水位（`task_usage_hourly_rollup_state.id = 1`）。替换函数体属于
 非新增结构变更，发布器按 SQL 内容审查后放行（只允许重定义该函数、只允许写汇总状态行）。
-迁移 629 之后：
+迁移 634 之后：
 
 - 状态行缺失时按最早一条 `task_usage` 播种，不再永久空转；
 - `1970-01-01` 视为"从未汇总"，直接跳到真实最早数据；
