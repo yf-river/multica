@@ -5035,7 +5035,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// 链路关联与用量分开上报：即使一次模型请求都没发出去（usage 为空），或该
 	// backend 根本不上报用量，子进程自报的根请求 id 仍要落到任务上，否则"给定任务
 	// 号枚举全部执行与链路"永远做不到。失败只记日志——关联缺失不能阻断任务收尾。
-	if traceEntries := buildTaskTraceEntries(provider, result.SessionID, result.ProviderTraceIDs); len(traceEntries) > 0 {
+	if traceEntries := buildTaskTraceEntries(provider, result.ProviderTraceIDs); len(traceEntries) > 0 {
 		if traceErr := d.client.ReportTaskTraces(ctx, task.ID, traceEntries); traceErr != nil {
 			taskLog.Warn("report task traces failed", "error", traceErr)
 		}
@@ -7590,7 +7590,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Status:           "failed",
 			SessionID:        result.SessionID,
 			Usage:            buildTaskUsageEntries(provider, result.Usage),
-			ProviderTraceIDs: appendTraceID(nil, result.ProviderTraceID),
+			ProviderTraceIDs: appendTraceID(nil, result.ProviderTraceID, result.SessionID),
 		}, err
 	}
 
@@ -7601,10 +7601,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var retiredSessionID string
 	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
 
-	// providerTraceIDs 收集本次执行里每个真正跑过的子进程自报的根请求 id。换新会话
-	// 重试会起第二个进程，于是同一次执行对应两条链路；只有一条时是常态，子进程没
-	// 起来（或 backend 不暴露）时是零条。它与会话无关、与用量无关，因此单独上报。
-	providerTraceIDs := appendTraceID(nil, result.ProviderTraceID)
+	// providerTraceIDs 收集本次执行里每个真正跑过的子进程自报的根请求 id，并把每个
+	// id 与该子进程自己的 session 成对保留。换新会话重试会起第二个进程，于是同一次
+	// 执行对应两条链路、两个 session；只有一条时是常态，子进程没起来（或 backend 不
+	// 暴露）时是零条。不能只在最后用 result.SessionID 统一补齐——重试成功时那是第二个
+	// 进程的 session，会把首进程的 trace 记到别人的会话上。
+	providerTraceIDs := appendTraceID(nil, result.ProviderTraceID, result.SessionID)
 	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
 	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
@@ -7659,8 +7661,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// 让坏 session 保持被排除，而不是被一条看起来良性的二次错误重新贴回可恢复。
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 		// retryErr 非空时重试进程仍可能已经发出过请求，trace id 照样要留；空值会被
-		// appendTraceID 忽略，重复值不会重复记。
-		providerTraceIDs = appendTraceID(providerTraceIDs, retryResult.ProviderTraceID)
+		// appendTraceID 忽略，重复值不会重复记。session 用重试进程自己的，不是合并后的
+		// result.SessionID——两者相同只是因为重试成功了，逻辑上仍属于那个进程。
+		providerTraceIDs = appendTraceID(providerTraceIDs, retryResult.ProviderTraceID, retryResult.SessionID)
 	}
 
 	elapsed := time.Since(agentStartedAt).Round(time.Second)
@@ -8446,19 +8449,19 @@ func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow ti
 
 // buildTaskTraceEntries 把子进程自报的根请求 id 变成上报条目。会话 id 同源
 // （子进程输出），但只作辅助字段：重试可能换会话，链路归属以 trace id 为准。
-func buildTaskTraceEntries(provider, sessionID string, ids []string) []TaskTraceEntry {
-	if len(ids) == 0 {
+func buildTaskTraceEntries(provider string, traces []ProviderTrace) []TaskTraceEntry {
+	if len(traces) == 0 {
 		return nil
 	}
-	entries := make([]TaskTraceEntry, 0, len(ids))
-	for _, id := range ids {
-		if id == "" {
+	entries := make([]TaskTraceEntry, 0, len(traces))
+	for _, trace := range traces {
+		if trace.TraceID == "" {
 			continue
 		}
 		entries = append(entries, TaskTraceEntry{
 			Provider:        provider,
-			SessionID:       sessionID,
-			ProviderTraceID: id,
+			SessionID:       trace.SessionID,
+			ProviderTraceID: trace.TraceID,
 			Correlation:     "exact",
 			Source:          "stream_json",
 		})
@@ -8493,16 +8496,16 @@ func buildTaskUsageEntries(provider string, usage map[string]agent.TokenUsage) [
 // appendTraceID 把非空、未出现过的 provider 根请求 id 追加到列表。同一次执行可能
 // 因为换新会话重试起两个进程，也可能一个都没有；这里只去重，不做任何"必须有一条"
 // 的假设。
-func appendTraceID(ids []string, id string) []string {
-	if id == "" {
-		return ids
+func appendTraceID(list []ProviderTrace, traceID, sessionID string) []ProviderTrace {
+	if traceID == "" {
+		return list
 	}
-	for _, existing := range ids {
-		if existing == id {
-			return ids
+	for _, existing := range list {
+		if existing.TraceID == traceID {
+			return list
 		}
 	}
-	return append(ids, id)
+	return append(list, ProviderTrace{SessionID: sessionID, TraceID: traceID})
 }
 
 // mergeUsage 把两次尝试的 token 用量按模型合并（都为空时直接返回对方，避免分配）。

@@ -88,7 +88,8 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 		t.Fatalf("expected 2 stored traces and no empty id, got total=%d empty=%d", total, emptyID)
 	}
 
-	// 重复上报：行数不变，可变字段按最新值刷新。
+	// 重复上报：行数不变。已有 exact 的 session 不被后到的不同值改写——那是"冲突"，
+	// 不是"更新"；两个值都记进 metadata 供审计。
 	rec = post(map[string]any{"traces": []map[string]any{
 		{"provider": "codebuddy", "session_id": "sess-1-renamed", "provider_trace_id": "trace-a", "observation_space": "codebuddy-model-request-prod"},
 	}})
@@ -105,19 +106,65 @@ func TestReportTaskTracesPersistsAndIsIdempotent(t *testing.T) {
 	`, taskID).Scan(&session, &space, &correlation); err != nil {
 		t.Fatalf("load trace-a: %v", err)
 	}
-	if session != "sess-1-renamed" || space != "codebuddy-model-request-prod" || correlation != "exact" {
-		t.Fatalf("unexpected refresh: session=%q space=%q correlation=%q", session, space, correlation)
+	if session != "sess-1" || space != "codebuddy-model-request-prod" || correlation != "exact" {
+		t.Fatalf("exact session must not be rewritten by a conflicting report: session=%q space=%q correlation=%q", session, space, correlation)
+	}
+	var conflict string
+	if err := testPool.QueryRow(ctx, `
+		SELECT metadata->>'session_conflict' FROM task_provider_trace
+		 WHERE task_id = $1 AND provider_trace_id = 'trace-a'
+	`, taskID).Scan(&conflict); err != nil {
+		t.Fatalf("read conflict record: %v", err)
+	}
+	if conflict == "" {
+		t.Fatalf("conflicting session must be recorded, not silently dropped")
 	}
 
-	// 非法 correlation 必须拒绝，不能落成"看起来精确"的关联。
+	// 弱来源不能把已有 exact 降级：correlation/source/session 都保持原样。
 	rec = post(map[string]any{"traces": []map[string]any{
-		{"provider": "codebuddy", "provider_trace_id": "trace-c", "correlation": "guessed"},
+		{"provider": "codebuddy", "session_id": "sess-9", "provider_trace_id": "trace-a", "correlation": "inferred_window", "source": "agentlens_query"},
+	}})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("downgrade attempt: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT session_id, correlation, source FROM task_provider_trace
+		 WHERE task_id = $1 AND provider_trace_id = 'trace-a'
+	`, taskID).Scan(&session, &correlation, &space); err != nil {
+		t.Fatalf("reload trace-a: %v", err)
+	}
+	if correlation != "exact" || space != "stream_json" || session != "sess-1" {
+		t.Fatalf("inferred_window must not downgrade exact: correlation=%q source=%q session=%q", correlation, space, session)
+	}
+
+	// 反过来可以升级：先落一条 inferred_window，再用 exact 覆盖成精确关联。
+	rec = post(map[string]any{"traces": []map[string]any{
+		{"provider": "codebuddy", "session_id": "sess-2", "provider_trace_id": "trace-b", "correlation": "exact", "source": "stream_json"},
+	}})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("upgrade attempt: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT session_id, correlation, source FROM task_provider_trace
+		 WHERE task_id = $1 AND provider_trace_id = 'trace-b'
+	`, taskID).Scan(&session, &correlation, &space); err != nil {
+		t.Fatalf("reload trace-b: %v", err)
+	}
+	if correlation != "exact" || space != "stream_json" || session != "sess-2" {
+		t.Fatalf("exact must upgrade inferred_window: correlation=%q source=%q session=%q", correlation, space, session)
+	}
+
+	// 整批校验：一条非法 correlation 让整个请求 400，同一批里的合法条目也不能先落库。
+	before, _ := countRows()
+	rec = post(map[string]any{"traces": []map[string]any{
+		{"provider": "codebuddy", "provider_trace_id": "trace-d"},
+		{"provider": "codebuddy", "provider_trace_id": "trace-e", "correlation": "guessed"},
 	}})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid correlation: got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if total, _ := countRows(); total != 2 {
-		t.Fatalf("invalid correlation must not write, got %d rows", total)
+	if after, _ := countRows(); after != before {
+		t.Fatalf("a rejected batch must not persist any of its rows: before=%d after=%d", before, after)
 	}
 
 	// 执行日志端点把链路挂回任务行，0..N 条都要能读出来。

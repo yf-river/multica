@@ -13,8 +13,12 @@ CodeBuddy CLI (子进程)
   ├─ POST /api/daemon/tasks/{id}/usage    → task_usage            （按 provider+model 一行）
   └─ POST /api/daemon/tasks/{id}/traces   → task_provider_trace   （0..N 行，外部链路）
        ↓  定时任务 rollup_task_usage_hourly()
-     task_usage_hourly  ← 页面/看板唯一的读源（runtime usage、按日、按 agent）
+     task_usage_hourly  ← runtime 的按日/按周视图读这里
 ```
+
+读源不是唯一的：runtime 的日期/周图表读 `task_usage_hourly`；按 agent、按模型以及单次
+执行的明细读 `task_usage` 原始行。两边都按 `task_usage.created_at` 分桶，所以补齐时
+写进去的时间决定它落在哪一天（见第 7 节）。
 
 两条上报互相独立：一次执行没有 token 用量并不代表没有链路，反过来 backend 不上报
 链路也不影响用量。任何一端缺失都不应成为另一端的写入前提。
@@ -126,8 +130,18 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 ## 7. 历史补齐
 
 `cmd/backfill_task_usage_hourly` 按月切片重算桶并盖水位，幂等可续跑；它**不会**
-创建状态行——缺少状态行时只告警并返回，需要迁移 620 的函数来补。因此
-"先跑补齐、再发布"只在状态行已存在的库上成立。
+创建状态行——缺少状态行时只告警并返回，需要调度器 handler 的补种逻辑先把行补上
+（第 6 节）。因此"先跑补齐、再发布"只在状态行已存在的库上成立。
 
-链路关联的补齐走正式接口 `POST /api/daemon/tasks/{id}/traces`（`correlation` 标
-`inferred_window`），旧版本没有该接口，必须在带该接口的版本上线后执行。
+**入账时间**：`POST /api/daemon/tasks/{id}/usage` 现在接受可选 `executed_at`（RFC3339）。
+受控的历史补齐用它把用量记到真实执行时刻，而不是补齐当天；口径是任务创建之后、当前
+时间之前。普通 daemon 上报不带该字段，按 now() 入账。已有行的更正只更新数值与
+`updated_at`，原始 `created_at` 保留。写入后接口会回读核对，数值不符返回 500 而不是
+成功——补齐流程靠这个状态决定是否重试。
+
+链路关联的补齐走正式接口 `POST /api/daemon/tasks/{id}/traces`。`correlation` 只能是
+`exact`（子进程自报）或 `inferred_window`（事后按会话+时间窗检索的候选）。写库规则：
+弱来源不能覆盖强来源，exact 的 session/source 不会被后来的 inferred_window 改写，只有
+exact 能把 inferred_window 升级；同强度下 session 不一致不静默覆盖，两个值记进
+`metadata.session_conflict`。整批请求先校验再写，任何一条非法都整批 400，不留下半成品；
+写入后逐条回读，缺行或强度被降级返回 500。

@@ -1188,75 +1188,45 @@ func TestPruneTaskUsageHourlyDirty(t *testing.T) {
 	}
 }
 
-// TestRollupTaskUsageHourlyCatchUpIsBoundedAndConverges covers the catch-up
-// contract of rollup_task_usage_hourly() after migration 620:
-//
-//   - a backlog inside the per-tick budget converges in ONE tick instead of
-//     one day of lag per tick (the old behaviour left date stats days stale);
-//   - the budget itself still caps how far one tick may advance, so a very
-//     old watermark drains over several ticks rather than recomputing months
-//     of history inside a single statement holding advisory lock 4246.
-//
-// The second assertion is what keeps the first honest: without a cap, "one
-// tick converges" would be untestably true for any backlog size.
-func TestRollupTaskUsageHourlyCatchUpIsBoundedAndConverges(t *testing.T) {
+// TestRollupTaskUsageHourlyAdvancesOneDayPerCall pins the contract the scheduler
+// relies on: the SQL function advances at most one day per call, so catch-up is
+// driven by calling it repeatedly from the handler (see the scheduler tests),
+// not by a multi-day statement holding advisory lock 4246.
+func TestRollupTaskUsageHourlyAdvancesOneDayPerCall(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	// Serialise against any other package's rollup test (MUL-3980). Acquire
-	// the guard BEFORE registering the watermark-restore cleanup below so
-	// that cleanup (LIFO) runs while the guard is still held, and the guard
-	// is released last.
 	lockRollupSingleton(t)
 	ctx := context.Background()
 
-	// Other tests drive rollup_task_usage_hourly_window directly and never
-	// read the watermark; the idempotency test parks it itself. Restore to
-	// now() so nothing downstream observes a stale value.
 	t.Cleanup(func() {
 		testPool.Exec(ctx,
 			`UPDATE task_usage_hourly_rollup_state SET watermark_at = now(), last_error = NULL WHERE id = 1`)
 	})
-
-	park := func(behind string) {
-		dbfx.Exec(t, `
-			UPDATE task_usage_hourly_rollup_state
-			   SET watermark_at = now() - $1::interval, last_error = NULL
-			 WHERE id = 1
-		`, behind)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE task_usage_hourly_rollup_state
+		   SET watermark_at = now() - INTERVAL '3 days', last_error = NULL
+		 WHERE id = 1`); err != nil {
+		t.Fatalf("park watermark: %v", err)
 	}
+
 	ageDays := func() float64 {
 		var sec float64
-		dbfx.QueryRow(t, `
+		if err := testPool.QueryRow(ctx, `
 			SELECT EXTRACT(EPOCH FROM (now() - watermark_at))
-			  FROM task_usage_hourly_rollup_state WHERE id = 1
-		`).Scan(&sec)
+			  FROM task_usage_hourly_rollup_state WHERE id = 1`).Scan(&sec); err != nil {
+			t.Fatalf("read watermark age: %v", err)
+		}
 		return sec / 86400
 	}
-	tick := func() {
-		dbfx.Exec(t, `SELECT rollup_task_usage_hourly()`)
-	}
 
-	// Inside the per-tick budget: 3 days back converges in one call.
-	park("3 days")
-	tick()
-	if age := ageDays(); age > 0.02 {
-		t.Fatalf("one tick from 3 days back: expected convergence to now()-5min, got %.3f days behind", age)
+	dbfx.Exec(t, `SELECT rollup_task_usage_hourly()`)
+	if age := ageDays(); age < 1.9 || age > 2.1 {
+		t.Fatalf("one call must advance exactly one day, got %.3f days behind", age)
 	}
-
-	// Beyond the budget (60 one-day windows per tick): 90 days back must
-	// advance by about 60 days, not all the way. This is the cap the old
-	// implementation had per tick, preserved here as bounded work.
-	park("90 days")
-	tick()
-	if age := ageDays(); age < 29 || age > 31 {
-		t.Fatalf("one tick from 90 days back: expected ~30 days still behind (60-day cap), got %.3f days behind", age)
-	}
-
-	// And the remainder finishes on a second tick — no permanent stall.
-	tick()
-	if age := ageDays(); age > 0.02 {
-		t.Fatalf("second tick: expected convergence, got %.3f days behind", age)
+	dbfx.Exec(t, `SELECT rollup_task_usage_hourly()`)
+	if age := ageDays(); age < 0.9 || age > 1.1 {
+		t.Fatalf("a second call must advance another day, got %.3f days behind", age)
 	}
 }
 

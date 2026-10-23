@@ -4547,6 +4547,17 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 先把整批校验完再动库：逐条边写边校验会出现"前几条已经落库、后面一条被 400 拒绝"
+	// 的半成品批次，调用方既不能当成功也不能当全失败。请求要么整批合法、要么整批拒绝。
+	type plannedTrace struct {
+		Provider        string
+		ObservationStar string
+		SessionID       string
+		TraceID         string
+		Correlation     string
+		Source          string
+	}
+	planned := make([]plannedTrace, 0, len(req.Traces))
 	for _, t := range req.Traces {
 		traceID := strings.TrimSpace(t.ProviderTraceID)
 		if traceID == "" {
@@ -4567,19 +4578,59 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 		if source == "" {
 			source = "stream_json"
 		}
+		planned = append(planned, plannedTrace{
+			Provider:        normalizeProvider(t.Provider),
+			ObservationStar: strings.TrimSpace(t.ObservationSpace),
+			SessionID:       strings.TrimSpace(t.SessionID),
+			TraceID:         traceID,
+			Correlation:     correlation,
+			Source:          source,
+		})
+	}
+
+	// 存储失败必须让调用方看见：204 只代表"整批已确认落账"。补齐流程靠这个状态判断
+	// 要不要重试，把 Warn 吞掉会让一次失败的补齐被记成成功。
+	for _, p := range planned {
 		if err := h.Queries.UpsertTaskProviderTrace(r.Context(), db.UpsertTaskProviderTraceParams{
 			WorkspaceID:      parseUUID(workspaceID),
 			TaskID:           parseUUID(taskID),
-			Provider:         normalizeProvider(t.Provider),
-			ObservationSpace: strings.TrimSpace(t.ObservationSpace),
-			SessionID:        strings.TrimSpace(t.SessionID),
-			ProviderTraceID:  traceID,
-			Correlation:      correlation,
-			Source:           source,
+			Provider:         p.Provider,
+			ObservationSpace: p.ObservationStar,
+			SessionID:        p.SessionID,
+			ProviderTraceID:  p.TraceID,
+			Correlation:      p.Correlation,
+			Source:           p.Source,
 		}); err != nil {
-			slog.Warn("upsert task provider trace failed",
-				"task_id", taskID, "trace_id", traceID, "error", err)
-			continue
+			slog.Error("upsert task provider trace failed",
+				"task_id", taskID, "trace_id", p.TraceID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to store trace "+p.TraceID)
+			return
+		}
+	}
+
+	// 回读核对：说"已落账"之前先证明这些行真的在，且关联强度没有被弱来源覆盖。
+	if len(planned) > 0 {
+		stored, err := h.Queries.ListTaskProviderTraces(r.Context(), parseUUID(taskID))
+		if err != nil {
+			slog.Error("read back task provider traces failed", "task_id", taskID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to verify stored traces")
+			return
+		}
+		byKey := make(map[string]string, len(stored))
+		for _, row := range stored {
+			byKey[row.Provider+"|"+row.ProviderTraceID] = row.Correlation
+		}
+		for _, p := range planned {
+			got, ok := byKey[p.Provider+"|"+p.TraceID]
+			if !ok {
+				writeError(w, http.StatusInternalServerError, "trace not persisted: "+p.TraceID)
+				return
+			}
+			// exact 请求被推断覆盖、或写成了未知强度，都说明落账不符预期。
+			if p.Correlation == "exact" && got != "exact" {
+				writeError(w, http.StatusInternalServerError, "trace correlation downgraded: "+p.TraceID)
+				return
+			}
 		}
 	}
 
@@ -4600,6 +4651,10 @@ type TaskUsagePayload struct {
 	// every provider except Grok today) — stored as NULL so the reader knows
 	// to fall back to rate-table estimation rather than reading a real $0.
 	CostUSDTicks int64 `json:"cost_usd_ticks"`
+	// ExecutedAt 只供受控的历史补齐使用：把它写成这条用量真实发生的时刻，而不是补齐
+	// 当天。普通 daemon 上报留空（入账时间取 now()）。冲突时不会改写已有行的
+	// created_at——原始时间是既有事实。
+	ExecutedAt string `json:"executed_at,omitempty"`
 }
 
 // authoritativeCostTicks converts a reported cost into the nullable column.
@@ -4630,13 +4685,37 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 先整批校验 executed_at，再动库：半成品批次对补齐全集对账是灾难。
+	executedAt := make([]pgtype.Timestamptz, len(req.Usage))
+	for i, u := range req.Usage {
+		if strings.TrimSpace(u.ExecutedAt) == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(u.ExecutedAt))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid executed_at: "+u.ExecutedAt)
+			return
+		}
+		// 不能是将来时间（那会把用量记到还没发生的桶里），也不能早于任务本身：
+		// 早于任务创建说明来源不是这次执行，宁可拒绝也不写一条无法解释的行。
+		if parsed.After(time.Now().Add(time.Minute)) {
+			writeError(w, http.StatusBadRequest, "executed_at is in the future")
+			return
+		}
+		if parsed.Before(task.CreatedAt.Time.Add(-time.Minute)) {
+			writeError(w, http.StatusBadRequest, "executed_at predates the task")
+			return
+		}
+		executedAt[i] = pgtype.Timestamptz{Time: parsed.UTC(), Valid: true}
+	}
+
 	// Provider is lowercased on write so client-side pricing lookups tolerate
 	// case drift. An empty provider (an older daemon that omits the field) is
 	// stamped from the task's runtime, so generic model ids like `auto` still
 	// resolve to a provider instead of landing as '' and pricing $0.
 	var runtimeProvider string
 	runtimeProviderLoaded := false
-	for _, u := range req.Usage {
+	for i, u := range req.Usage {
 		provider := normalizeProvider(u.Provider)
 		if provider == "" {
 			if !runtimeProviderLoaded {
@@ -4659,9 +4738,11 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			CacheReadTokens:  u.CacheReadTokens,
 			CacheWriteTokens: u.CacheWriteTokens,
 			CostUsdTicks:     authoritativeCostTicks(u.CostUSDTicks),
+			ExecutedAt:       executedAt[i],
 		}); err != nil {
-			slog.Warn("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
-			continue
+			slog.Error("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to store usage for model "+u.Model)
+			return
 		}
 		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.CostUSDTicks)
 
@@ -4681,6 +4762,39 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 				"cache_write_tokens", u.CacheWriteTokens,
 				"cache_read_ratio", float64(u.CacheReadTokens)/float64(totalInput),
 			)
+		}
+	}
+
+	// 回读核对：补齐流程靠这个状态决定要不要重试，所以"OK"必须先证明这些行真的在、
+	// 数值与本次请求一致。被更早的权威值覆盖（例如已有行只更正数值）时数值应相等；
+	// 入账时间只在首次插入时采用，已有行保留原 created_at，因此不比较它。
+	if len(req.Usage) > 0 {
+		stored, err := h.Queries.GetTaskUsage(r.Context(), parseUUID(taskID))
+		if err != nil {
+			slog.Error("read back task usage failed", "task_id", taskID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to verify stored usage")
+			return
+		}
+		type usageKey struct{ provider, model string }
+		byKey := make(map[usageKey]db.TaskUsage, len(stored))
+		for _, row := range stored {
+			byKey[usageKey{row.Provider, row.Model}] = row
+		}
+		for _, u := range req.Usage {
+			provider := normalizeProvider(u.Provider)
+			if provider == "" {
+				provider = runtimeProvider
+			}
+			row, ok := byKey[usageKey{provider, u.Model}]
+			if !ok {
+				writeError(w, http.StatusInternalServerError, "usage not persisted for model "+u.Model)
+				return
+			}
+			if row.InputTokens != u.InputTokens || row.OutputTokens != u.OutputTokens ||
+				row.CacheReadTokens != u.CacheReadTokens || row.CacheWriteTokens != u.CacheWriteTokens {
+				writeError(w, http.StatusInternalServerError, "usage mismatch after write for model "+u.Model)
+				return
+			}
 		}
 	}
 
