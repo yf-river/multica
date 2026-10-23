@@ -91,6 +91,22 @@
         "./internal/codediff",
         "-count=1"
       ]
+    },
+    {
+      "name": "run-text-migration",
+      "paths": [
+        "server/migrations/",
+        "server/cmd/migrate/"
+      ],
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "./cmd/migrate",
+        "./internal/migrations",
+        "-count=1"
+      ]
     }
   ]
 }
