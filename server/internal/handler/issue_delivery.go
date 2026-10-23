@@ -280,20 +280,18 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "替换交付失败")
 		return
 	}
-	if len(body.RequiredChecks) > 0 {
-		required, checkErr := normalizeRequiredDeliveryChecks(body.RequiredChecks)
-		if checkErr != nil {
-			writeError(w, 400, checkErr.Error())
-			return
-		}
-		var snapshot map[string]json.RawMessage
-		if json.Unmarshal(planSnapshot, &snapshot) != nil {
-			writeError(w, 500, "读取方案快照失败")
-			return
-		}
-		snapshot["required_checks"], _ = json.Marshal(required)
-		planSnapshot, _ = json.Marshal(snapshot)
+	required, checkErr := normalizeRequiredDeliveryChecks(body.RequiredChecks)
+	if checkErr != nil {
+		writeError(w, 400, checkErr.Error())
+		return
 	}
+	var snapshot map[string]json.RawMessage
+	if json.Unmarshal(planSnapshot, &snapshot) != nil {
+		writeError(w, 500, "读取方案快照失败")
+		return
+	}
+	snapshot["required_checks"], _ = json.Marshal(required)
+	planSnapshot, _ = json.Marshal(snapshot)
 	evidence, _ := json.Marshal(body.Checks)
 	tag, err := tx.Exec(r.Context(), `INSERT INTO issue_delivery(id,workspace_id,issue_id,operation_id,plan_id,source_commit,source_branch,base_commit,evidence,verification_comment_id,release_comment_id,plan_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, dbid.NewV7(), ws, issue, op, plan, body.Commit, body.Branch, body.Base, evidence, dbid.NewV7(), dbid.NewV7(), planSnapshot)
 	if err == nil && tag.RowsAffected() == 0 {

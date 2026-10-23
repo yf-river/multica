@@ -37,7 +37,7 @@ func deliveryRequest(issue string, body any, o coordinationOwner) *http.Request 
 	return r
 }
 func submitBody(commit string) map[string]any {
-	return map[string]any{"operation_id": dbid.NewV7(), "source_commit": commit, "source_branch": "feature/coordination", "base_commit": strings.Repeat("b", 40), "evidence": []deliveryCheck{{Name: "本地检查", Status: "passed", Evidence: "实际通过"}}}
+	return map[string]any{"required_checks": businessChecks(), "operation_id": dbid.NewV7(), "source_commit": commit, "source_branch": "feature/coordination", "base_commit": strings.Repeat("b", 40), "evidence": []deliveryCheck{{Name: "本地检查", Status: "passed", Evidence: "实际通过"}}}
 }
 
 func TestDeliveryCoordinationConcurrentOwnersAndDuplicateSubmissions(t *testing.T) {

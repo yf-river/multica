@@ -82,7 +82,7 @@ multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidenc
 - revoke-release：同样引用当前方案和用户撤销评论及 revision、`scope`；保留原授权及撤销依据，不删除历史。
 - status：返回 `authorizations`（用户原话、类型、范围、登记者和撤销状态）、`user_comments_version`（当前用户评论版本摘要）及原交付记录。每条交付带 `authorization_state`：`user_authorization` 表示等待用户授权，`owner_review` 表示已落库待通知/待负责人核对，`review_incomplete` 表示通知已发出但复核尚未接续；其他阶段为空。
 - delivery：固定 `operation_id`、完整 `source_commit`、`source_branch`、`base_commit` 和本地 `evidence`。证据是非空数组，每项含 `name`、`status: passed`、实际 `evidence`。重试保持操作号与内容一致。
-- required_checks：提交时按已确认方案列出业务检查，保存到交付的 `plan_snapshot`，每项包含 `name` 与 `stage`（`verification` 独立功能验收、`integration` 最终组合验收），两个阶段各至少一项。六个协调检查名称不能充当业务检查。清单一经绑定不能删减或替换；范围变化使用新方案和交付。
+- required_checks：新交付提交时必填，按已确认方案列出业务检查，保存到交付的 `plan_snapshot`，每项包含 `name` 与 `stage`（`verification` 独立功能验收、`integration` 最终组合验收），两个阶段各至少一项。六个协调检查名称不能充当业务检查。清单一经绑定不能删减或替换；范围变化使用新方案和交付。
 - bind-checks：已有未发布交付缺清单时，负责人引用原 `plan_id`、当前 `revision` 和 `required_checks` 显式绑定，相同清单可幂等重试，无需用户重复授权。已发布历史不重开，失败交付不会因此自动重试。
 
 ```json
