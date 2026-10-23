@@ -1,0 +1,11 @@
+{
+  "operation_id": "01a16792-0000-7000-8000-000000000001",
+  "source_commit": "0cc4ef019c86b28815036348e23d2d2a0ff6ace5",
+  "source_branch": "feature/ida-developer/gong-68",
+  "base_commit": "4083bea317283f23ff7c0b64b5be279905cf9e6b",
+  "evidence": [
+    {"name": "delivery-handler-tests", "status": "passed", "evidence": "隔离库 multica_gong68_test（127.0.0.1/multica_gong68_test）执行 go test ./internal/handler -run 'Delivery|Revoked|Accepted'：新增 5 项授权复核用例通过"},
+    {"name": "delivery-worker-tests", "status": "passed", "evidence": "python3 scripts/issue-delivery-worker.test.py：16 项通过"},
+    {"name": "delivery-coordination-tests", "status": "passed", "evidence": "python3 scripts/delivery-coordination.test.py：5 项通过"}
+  ]
+}

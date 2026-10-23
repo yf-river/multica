@@ -419,7 +419,7 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 重新联调会换候选，旧的待复核意图随之失效。
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='waiting_int',candidate_id='',candidate_url='',acceptance_submitted=false,verification_comment_id=$2,worker_token=NULL,error='',`+clearAuthorizationPendingSQL+`,revision=revision+1,updated_at=now() WHERE id=$1`, id, dbid.NewV7())
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET phase='waiting_int',candidate_id='',candidate_url='',acceptance_submitted=false,verification_comment_id=$2,worker_token=NULL,error='',plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',revision=revision+1,updated_at=now() WHERE id=$1`, id, dbid.NewV7())
 	case "cancel":
 		if !h.deliveryHuman(r, ws) || phase == "publishing" || phase == "published" {
 			writeError(w, 409, "当前交付不能取消")

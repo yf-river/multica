@@ -41,9 +41,6 @@ type deliveryAuthorizationNotice struct {
 	Attempts        int    `json:"attempts"`
 }
 
-// 清空待复核意图用同一段表达式，避免各处漏掉其中一个键。
-const clearAuthorizationPendingSQL = `plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice'`
-
 func deliverySnapshotValue(snapshot json.RawMessage, key string) json.RawMessage {
 	var values map[string]json.RawMessage
 	if json.Unmarshal(snapshot, &values) != nil {
@@ -150,7 +147,7 @@ func (h *Handler) deliverDeliveryAuthorizationReview(r *http.Request, ws, issue,
 		return nil
 	}
 	if phase != "awaiting_review" {
-		_, err := h.DB.Exec(r.Context(), `UPDATE issue_delivery SET `+clearAuthorizationPendingSQL+` WHERE id=$1`, id)
+		_, err := h.DB.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice' WHERE id=$1`, id)
 		return err
 	}
 	var delivered bool
@@ -213,7 +210,7 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 		return err
 	}
 	if state != deliveryReleaseUnbound {
-		if _, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET `+clearAuthorizationPendingSQL+` WHERE id=$1`, id); err != nil {
+		if _, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice' WHERE id=$1`, id); err != nil {
 			return err
 		}
 		if err = tx.Commit(r.Context()); err != nil {
@@ -242,7 +239,7 @@ func (h *Handler) renotifyDeliveryAuthorizationReview(r *http.Request, ws, issue
 		return fmt.Errorf("上一次复核运行尚未结束，等待其完成再显式接续")
 	}
 	if notice.Attempts >= deliveryReviewRewakeLimit {
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET error=$2,`+clearAuthorizationPendingSQL+` WHERE id=$1`, id, fmt.Sprintf(deliveryReviewStalledNotice, notice.CandidateID))
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET error=$2,plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice' WHERE id=$1`, id, fmt.Sprintf(deliveryReviewStalledNotice, notice.CandidateID))
 		if err != nil {
 			return err
 		}

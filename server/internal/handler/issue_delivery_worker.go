@@ -147,7 +147,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				reason = "已有发布授权，等待负责人复核当前候选"
 				notify = true
 			} else {
-				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET `+clearAuthorizationPendingSQL+`,phase='awaiting_review',error=$2,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, reason)
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase='awaiting_review',error=$2,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, reason)
 			}
 			if err == nil {
 				err = tx.Commit(r.Context())
@@ -300,7 +300,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				var author string
 				err = tx.QueryRow(r.Context(), `SELECT COALESCE(a.comment_snapshot->>'author_id',d.approved_by::text) FROM issue_delivery d LEFT JOIN issue_delivery_authorization a ON a.id::text=d.plan_snapshot->'authorization_review'->>'authorization_id' AND a.kind='release' WHERE d.id=$1`, body.ID).Scan(&author)
 				if err == nil {
-					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=$2,approved_at=now(),`+clearAuthorizationPendingSQL+` WHERE id=$1`, body.ID, author)
+					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=$2,approved_at=now(),plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice' WHERE id=$1`, body.ID, author)
 					next = "approved"
 				}
 			case deliveryReleaseUnbound:
@@ -313,7 +313,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				}
 			default:
 				body.Error = "等待用户发布授权：当前候选没有有效发布授权"
-				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET `+clearAuthorizationPendingSQL+`,approved_by=NULL,approved_at=NULL WHERE id=$1`, body.ID)
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',approved_by=NULL,approved_at=NULL WHERE id=$1`, body.ID)
 			}
 			if err != nil {
 				writeError(w, 500, "保存授权复核状态失败")

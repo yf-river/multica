@@ -1,0 +1,8 @@
+{
+  "plan_id": "01a16791-1d96-7b07-ba16-0524af2de9b0",
+  "revision": 1,
+  "comment_id": "01a1677f-19d5-7e90-a590-9a2bb6802614",
+  "comment_revision": 1,
+  "scope": "按 River 2026-10-23 的续接评论，在本任务原范围内推进 GONG-68 修复、必要提交推送和 int 测试环境验收；不包含生产发布授权。",
+  "release_after_acceptance": false
+}

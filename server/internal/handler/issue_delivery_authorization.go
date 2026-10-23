@@ -195,7 +195,7 @@ func (h *Handler) RevokeIssueReleaseAuthorization(w http.ResponseWriter, r *http
 	}
 	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery_authorization SET revoked=true WHERE workspace_id=$1 AND issue_id=$2 AND plan_id=$3 AND kind='release'`, ws, issue, body.PlanID)
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,release_validated=false,error='用户已撤销发布授权',`+clearAuthorizationPendingSQL+`,phase=CASE WHEN phase IN ('approved','preparing_release') THEN 'awaiting_review' ELSE phase END,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing')`, ws, issue)
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,release_validated=false,error='用户已撤销发布授权',plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase=CASE WHEN phase IN ('approved','preparing_release') THEN 'awaiting_review' ELSE phase END,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing')`, ws, issue)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
