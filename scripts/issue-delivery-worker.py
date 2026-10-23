@@ -222,7 +222,7 @@ class Worker:
                 acceptance=importlib.util.module_from_spec(spec);spec.loader.exec_module(acceptance)
                 evidence=acceptance.execute(c['id'],'int')
                 if evidence:
-                    self.advance(d,'tested',evidence=evidence['checks']);d['acceptance_submitted']=True
+                    self.advance(d,'tested',evidence=evidence['checks'])
             if not d.get('acceptance_submitted'):self.advance(d,'notify')
     def accept(self,d,release=False):
         c=self.own_candidate(d)

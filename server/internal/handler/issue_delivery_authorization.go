@@ -272,5 +272,27 @@ func (h *Handler) CheckDeliveryAuthorization(w http.ResponseWriter, r *http.Requ
 		writeError(w, 500, "核对发布占用失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ready": ready && planValid && leased, "publication_generation": generation})
+	businessError := ""
+	if ready && planValid && leased {
+		var final bool
+		var representative string
+		err = tx.QueryRow(r.Context(), `SELECT (d.phase='publishing' OR d.release_validated),COALESCE((
+ SELECT m.delivery_id::text FROM delivery_batch b JOIN delivery_batch_member own ON own.batch_id=b.id
+ JOIN delivery_batch_member m ON m.batch_id=b.id AND m.result='pending'
+ WHERE own.delivery_id=d.id AND own.result='pending' AND b.status IN ('validating','publishing')
+ AND b.candidate_id=d.candidate_id ORDER BY m.created_at,m.delivery_id LIMIT 1),d.id::text)
+ FROM issue_delivery d WHERE d.id=$1`, id).Scan(&final, &representative)
+		if err == nil && final {
+			err = requireStoredDeliveryChecks(r.Context(), tx, representative, "integration")
+		}
+		if err != nil {
+			var gap *deliveryChecksGap
+			if !errors.As(err, &gap) {
+				writeError(w, 500, "核对业务验收失败")
+				return
+			}
+			businessError = err.Error()
+		}
+	}
+	writeJSON(w, 200, map[string]any{"ready": ready && planValid && leased && businessError == "", "publication_generation": generation, "business_error": businessError})
 }

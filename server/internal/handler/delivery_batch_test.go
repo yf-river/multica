@@ -21,7 +21,7 @@ func batchFixture(t *testing.T) (string, string) {
 		"plan_id": plan, "source_commit": strings.Repeat("a", 40), "source_branch": "feature/batch",
 		"base_commit": strings.Repeat("b", 40), "phase": "approved", "approved_by": testUserID,
 		"approved_at": testutil.Raw("now()"), "verification_comment_id": dbid.NewV7(),
-		"release_comment_id": dbid.NewV7(), "worker_token": token, "plan_snapshot": testutil.Raw("'{}'::jsonb"),
+		"release_comment_id": dbid.NewV7(), "worker_token": token, "plan_snapshot": testutil.Raw(`'{"required_checks":[{"name":"组合业务","stage":"verification"},{"name":"组合业务","stage":"integration"}]}'::jsonb`),
 	})
 	dbfx.Cleanup(t, `DELETE FROM delivery_notice WHERE delivery_id=$1`, delivery)
 	return delivery, token

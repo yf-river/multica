@@ -1008,6 +1008,7 @@ def batch_approval_records(record, records, meta, profile):
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request,timeout=15) as response:authorization=json.load(response)
         if authorization.get('publication_generation')!=record.get('publication_lease',{}).get('generation'):
             raise RuntimeError('最终发布占用代次不匹配')
+        if authorization.get('business_error'):raise RuntimeError(authorization['business_error'])
         if not authorization.get('ready'):
             raise RuntimeError('成员 %s 的发布授权或用户要求已变化，需要负责人重新核对'%member['delivery_id'])
         if (not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by')
@@ -1032,6 +1033,7 @@ def check_delivery_approval(record):
     authorization_request=urllib.request.Request(authorization_url,headers={'Authorization':'Bearer '+profile['token'],'X-Workspace-ID':profile['workspace_id']})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(authorization_request,timeout=15) as response: authorization=json.load(response)
     if authorization.get('publication_generation') != record.get('publication_lease',{}).get('generation'):raise RuntimeError('最终发布占用代次不匹配')
+    if authorization.get('business_error'):raise RuntimeError(authorization['business_error'])
     if not authorization.get('ready'):raise RuntimeError('发布授权或用户要求已变化，需要负责人重新核对')
     if not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by') or not delivery.get('release_validated') or delivery['source_commit']!=record.get('approved_source') or delivery['candidate_id']!=record['id']:
         raise RuntimeError('生产批准或联调复核已失效')

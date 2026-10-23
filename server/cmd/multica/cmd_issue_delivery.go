@@ -15,7 +15,7 @@ import (
 // 交付命令与页面使用同一套版本和确认接口。
 func init() {
 	group := &cobra.Command{Use: "delivery", Short: "Plan confirmation, integration queue and production review"}
-	for _, action := range []string{"status", "plan", "confirm-plan", "revoke-release", "submit", "accept", "approve", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
+	for _, action := range []string{"status", "plan", "confirm-plan", "revoke-release", "submit", "bind-checks", "accept", "approve", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
 		action := action
 		cmd := &cobra.Command{Use: action + " <issue-id>", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newAPIClient(cmd)
@@ -83,8 +83,11 @@ func init() {
 			}
 			return cli.PrintJSON(os.Stdout, result)
 		}}
+		if action == "bind-checks" {
+			cmd.Long = "将原已确认方案的业务验收清单绑定到尚未发布的交付。JSON 包含 revision、plan_id、required_checks（name、stage）；verification 与 integration 各至少一项。相同清单可幂等重试，已绑定项不能删减或替换；不需要重新申请用户发布授权。"
+		}
 		if action == "accept" {
-			cmd.Long = "提交实际验收证据。组合验收由代表交付提交；JSON 包含 revision、candidate_id 和 evidence，候选编号必须与当前组合一致。相同候选和证据可幂等重试。"
+			cmd.Long = "提交实际验收证据。组合验收由代表交付提交；JSON 包含 revision、candidate_id 和 evidence，须覆盖当前方案 required_checks 的对应阶段；组合代表须覆盖全部成员的 integration 项，候选编号必须与当前组合一致。相同候选和证据可幂等重试。"
 		}
 		cmd.Flags().String("file", "", "JSON request file (preserve operation_id on retries)")
 		cmd.Flags().String("delivery", "", "Delivery UUID")
