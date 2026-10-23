@@ -61,4 +61,53 @@ class PoolFlowTests(unittest.TestCase):
         self.assertIn('resume',events)
         self.assertEqual(d['phase'],'awaiting_review')
 
+
+
+class SeedGateTests(unittest.TestCase):
+    def worker(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        return worker
+
+    def test_without_current_seed_keeps_previous_behaviour(self):
+        worker=self.worker()
+        with patch.object(r,'current_seed',return_value=None),patch.object(worker,'api') as api:
+            worker.ensure_seed()
+            api.assert_not_called()
+            self.assertTrue(worker.seed_matches('verify-1'))
+
+    def test_verified_current_seed_slot_is_reused(self):
+        worker=self.worker()
+        slot=dict(name='verify-1',enabled=True,state='idle',seed_id='seed-a',seed_sha256='a'*64,seed_verified=True)
+        def api(path,*a,**k):return dict(slot) if path.startswith('delivery-queue/slots/seed?') else [slot]
+        with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',side_effect=api),patch.object(w.subprocess,'run') as run:
+            worker.ensure_seed()
+            run.assert_not_called()
+            self.assertTrue(worker.seed_matches('verify-1'))
+
+    def test_stale_slot_is_restored_before_claim(self):
+        worker=self.worker()
+        slots=[dict(name='verify-1',enabled=True,state='idle',seed_id='seed-old',seed_sha256='b'*64,seed_verified=True)]
+        done=type('R',(),{'returncode':0,'stdout':'{}','stderr':''})()
+        with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',side_effect=lambda path,*a,**k: slots if path=='delivery-queue/slots' else (_ for _ in ()).throw(AssertionError(path))),patch.object(w.subprocess,'run',return_value=done) as run:
+            worker.ensure_seed()
+            self.assertEqual(run.call_count,1)
+            self.assertIn('ensure',run.call_args[0][0])
+
+    def test_busy_or_disabled_slots_are_not_used(self):
+        worker=self.worker()
+        slots=[dict(name='verify-1',enabled=False,state='idle',seed_id='seed-old',seed_sha256='b'*64,seed_verified=False),
+               dict(name='verify-2',enabled=True,state='verifying',seed_id='seed-old',seed_sha256='b'*64,seed_verified=False)]
+        with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',return_value=slots),patch.object(w.subprocess,'run') as run:
+            with self.assertRaises(w.Busy):
+                worker.ensure_seed()
+            run.assert_not_called()
+
+    def test_restore_failure_raises_recovery_required(self):
+        worker=self.worker()
+        slots=[dict(name='verify-1',enabled=True,state='idle',seed_id='',seed_sha256='',seed_verified=False)]
+        failed=type('R',(),{'returncode':1,'stdout':'','stderr':'种子校验失败'})()
+        with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',return_value=slots),patch.object(w.subprocess,'run',return_value=failed):
+            with self.assertRaises(r.RecoveryRequired):
+                worker.ensure_seed()
+
 if __name__=='__main__':unittest.main()

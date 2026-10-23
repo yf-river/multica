@@ -2,18 +2,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-const [environment, staging, postgresConfig] = process.argv.slice(2);
-if (!['verify-1', 'verify-2', 'verify-3'].includes(environment) || !/^verification_seed_import_[a-f0-9]{16}$/.test(staging || '')) throw Error('未知验收环境或种子副本');
+import { loadRules, uncoveredTables, staleExemptions } from './lib/verification-scrub.mjs';
+const args = process.argv.slice(2);
+const targetIndex = args.indexOf('--target-database');
+const [environment, staging, postgresConfig] = args.slice(0, 3);
+const scratch = targetIndex > 0 ? { database: args[targetIndex+1], host: args[targetIndex+2], port: Number(args[targetIndex+3]) } : null;
+if (!['verify-1', 'verify-2', 'verify-3', 'build'].includes(environment) || !/^verification_seed_import_[a-f0-9]{16}$/.test(staging || '')) throw Error('未知验收环境或种子副本');
+if ((environment === 'build') !== Boolean(scratch)) throw Error('构建库与验收槽位身份不匹配');
+if (scratch && (!/^multica_seed_build_[a-z0-9_]+$/.test(scratch.database || '') || !scratch.host || !Number.isInteger(scratch.port) || scratch.port < 1)) throw Error('非法构建库目标');
 const root = process.env.MULTICA_RELEASE_ROOT;
 if (!root) throw Error('缺少固定控制目录');
-const cfg = JSON.parse(fs.readFileSync(path.join(root, '.run/env', environment+'-services.json')));
 const record = JSON.parse(fs.readFileSync(postgresConfig));
 const secret = fs.readFileSync(record.credentials_file, 'utf8').trim();
 if (!secret.startsWith('POSTGRES_PASSWORD=')) throw Error('验收实例管理凭据格式错误');
-const url = new URL(cfg.server.DATABASE_URL);
-if (cfg.server.MULTICA_ENV_ID !== environment || url.pathname !== '/multica_'+environment.replace('-', '_') || url.username !== environment.replace('-', '_')) throw Error('槽位身份不匹配');
-const target = new pg.Client({host:url.hostname,port:Number(url.port),database:url.pathname.slice(1),user:'postgres',password:secret.slice('POSTGRES_PASSWORD='.length)});
-const source = new pg.Client({host:url.hostname,port:Number(url.port),database:staging,user:'postgres',password:secret.slice('POSTGRES_PASSWORD='.length)});
+const password = secret.slice('POSTGRES_PASSWORD='.length);
+// 1. 构建种子时目标是本轮新建的隔离库；槽位恢复时目标由槽位安装记录决定，两者都不接受任意连接。
+const cfg = scratch ? null : JSON.parse(fs.readFileSync(path.join(root, '.run/env', environment+'-services.json')));
+const url = scratch ? null : new URL(cfg.server.DATABASE_URL);
+if (!scratch && (cfg.server.MULTICA_ENV_ID !== environment || url.pathname !== '/multica_'+environment.replace('-', '_') || url.username !== environment.replace('-', '_'))) throw Error('槽位身份不匹配');
+const host = scratch ? scratch.host : url.hostname;
+const port = scratch ? scratch.port : Number(url.port);
+const target = new pg.Client({host,port,database:scratch ? scratch.database : url.pathname.slice(1),user:'postgres',password});
+const source = new pg.Client({host,port,database:staging,user:'postgres',password});
 const quote = value => '"'+value.replaceAll('"','""')+'"';
 const result = [];
 await source.connect();await target.connect();
@@ -45,43 +55,38 @@ try {
     result.push({table,rows:rows.length});
 
   }
-  // 验收种子只带业务样本，不携带联调环境的认证、外部集成或租约。
-  // 这些表即使源库为空也按存在性执行，保证以后新增凭据表时不会把旧凭据带入验收环境。
-  const scrub = async (table, statement) => {
-    if ((await target.query('SELECT to_regclass($1) AS name', ['public.'+table])).rows[0].name) {
-      await target.query(statement);
-    }
-  };
-  for (const table of [
-    'personal_access_token', 'daemon_token', 'task_token', 'channel_binding_token',
-    'lark_binding_token', 'external_credential_profile', 'vcs_connection',
-    'daemon_connection', 'sys_cron_executions', 'channel_inbound_message_dedup',
-    'lark_inbound_message_dedup'
-  ]) await scrub(table, `DELETE FROM public.${quote(table)}`);
-  await scrub('autopilot_trigger', 'UPDATE public."autopilot_trigger" SET signing_secret=NULL, webhook_token=NULL');
-  await scrub('channel_installation', 'UPDATE public."channel_installation" SET ws_lease_token=NULL');
-  await scrub('plugin_installation', 'UPDATE public."plugin_installation" SET token_hash=NULL');
-  await scrub('issue_delivery', 'UPDATE public."issue_delivery" SET worker_token=NULL');
-  await scrub('webhook_delivery', 'UPDATE public."webhook_delivery" SET lease_token=NULL');
-  await scrub('life_cognition_job', 'UPDATE public."life_cognition_job" SET claim_token=NULL');
-  await scrub('issue_source_context_object_intent', 'UPDATE public."issue_source_context_object_intent" SET lease_token=NULL');
-  // lark_installation 的应用密钥为非空字段，直接丢弃安装记录比写入占位密钥安全。
-  await scrub('lark_installation', 'DELETE FROM public."lark_installation"');
-  // vcs_connection 的两个密文字段为非空约束，记录已在上面删除；历史 webhook/租约可以清空。
+  // 2. 导入阶段需要关闭外键顺序检查；清理前恢复真实约束，删除被引用时立即失败而不是留下悬空记录。
   await target.query('SET LOCAL session_replication_role=origin');
+  // 验收种子只带业务样本，不携带联调环境的认证、外部集成或租约。
+  // 3. 清理规则集中在 scripts/verification-scrub.json：新增执行型表却没有规则或显式豁免时，
+  // 恢复在这里直接失败并打印表名，不把新功能留下的自动执行状态带进下一个任务。
+  const scrub = loadRules(path.join(import.meta.dirname, 'verification-scrub.json'));
+  const present = new Set((await target.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")).rows.map(x=>x.table_name));
+  const applied = [];
+  for (const rule of scrub.rules) {
+    if (!present.has(rule.table)) {
+      applied.push({table: rule.table, skipped: 'missing'});
+      continue;
+    }
+    await target.query(rule.sql);
+    applied.push({table: rule.table});
+  }
+  const uncovered = uncoveredTables([...present], scrub);
+  if (uncovered.length) throw Error('清理清单未覆盖执行型表: '+uncovered.join(', ')+'；请在 scripts/verification-scrub.json 增加规则或豁免');
+  const stale = staleExemptions([...present], scrub);
   const constraints = (await target.query(`SELECT c.conname, c.conrelid::regclass::text AS child, c.confrelid::regclass::text AS parent, c.confmatchtype AS match,
     ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.num ORDER BY k.pos) AS child_keys,
     ARRAY(SELECT a.attname::text FROM unnest(c.confkey) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=c.confrelid AND a.attnum=k.num ORDER BY k.pos) AS parent_keys
     FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE c.contype='f' AND n.nspname='public'`)).rows;
   for (const fk of constraints) {
-    const present = fk.child_keys.map(k=>'c.'+quote(k)+' IS NOT NULL').join(' AND ');
+    const nonNull = fk.child_keys.map(k=>'c.'+quote(k)+' IS NOT NULL').join(' AND ');
     const matches = fk.child_keys.map((k,n)=>'c.'+quote(k)+'=p.'+quote(fk.parent_keys[n])).join(' AND ');
     const partial = fk.match==='f' ? ' OR (('+fk.child_keys.map(k=>'c.'+quote(k)+' IS NULL').join(' OR ')+') AND ('+fk.child_keys.map(k=>'c.'+quote(k)+' IS NOT NULL').join(' OR ')+'))' : '';
-    const invalid = (await target.query(`SELECT EXISTS(SELECT 1 FROM ${fk.child} c WHERE ((${present}) AND NOT EXISTS(SELECT 1 FROM ${fk.parent} p WHERE ${matches})) ${partial}) AS invalid`)).rows[0].invalid;
+    const invalid = (await target.query(`SELECT EXISTS(SELECT 1 FROM ${fk.child} c WHERE ((${nonNull}) AND NOT EXISTS(SELECT 1 FROM ${fk.parent} p WHERE ${matches})) ${partial}) AS invalid`)).rows[0].invalid;
     if (invalid) throw Error('种子关联校验失败: '+fk.conname);
   }
   await target.query('COMMIT');
-  console.log(JSON.stringify({environment,status:'copied',tables:result}));
+  console.log(JSON.stringify({environment,status:'copied',tables:result,scrub:applied,stale_exemptions:stale}));
 } catch (error) {
   await target.query('ROLLBACK');throw error;
 } finally {await source.query('ROLLBACK');await source.end();await target.end();}

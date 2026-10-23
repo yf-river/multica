@@ -40,6 +40,10 @@ def write(path, data, private=False):
 
 def meta_path(env): return RUN / 'deployments' / f'goal-test-{env}.json'
 def config_path(env): return RUN / 'env' / f'{env}-services.json'
+def current_seed():
+    """1. 当前已验证种子指针：只由种子验收写入，缺失表示尚未启用种子生命周期。"""
+    path = RUN / 'verification-seed.json'
+    return read(path) if path.exists() else None
 def process_env(pid):
     return dict(x.split('=', 1) for x in Path(f'/proc/{pid}/environ').read_text().split('\0') if '=' in x)
 def process_identity(pid):
@@ -85,7 +89,7 @@ def source_digest(root):
         h.update(name.encode() + b'\0'); h.update(p.read_bytes()); files.append(name)
     return h.hexdigest(), files
 
-def validation_identity(source):
+def validation_identity(source, env='int'):
     """业务输入和验收程序独立于版本戳；缺少可靠映射时选择完整验收。"""
     _, names = source_digest(Path(source))
     runtime = hashlib.sha256(); schema = hashlib.sha256(); suite = hashlib.sha256()
@@ -96,8 +100,13 @@ def validation_identity(source):
         runtime.update(name.encode()+b'\0'+data)
         if name.startswith('server/migrations/'):schema.update(name.encode()+b'\0'+data)
         if name.startswith('scripts/') or 'test' in Path(name).name:suite.update(name.encode()+b'\0'+data)
-    return dict(runtime_inputs=runtime.hexdigest(), schema=schema.hexdigest(), suite=suite.hexdigest(),
-                configuration=hashlib.sha256(config_path('int').read_bytes()).hexdigest())
+    identity = dict(runtime_inputs=runtime.hexdigest(), schema=schema.hexdigest(), suite=suite.hexdigest(),
+                    configuration=hashlib.sha256(config_path(env).read_bytes()).hexdigest())
+    # 2. 槽位候选的数量身份还要绑定测试数据：同一程序在不同种子上的结果不能算同一份证据。
+    if env != 'int':
+        seed = current_seed() or {}
+        identity.update(environment=env, seed=seed.get('seed_id', ''), seed_sha256=seed.get('dump_sha256', ''))
+    return identity
 
 def validation_plan(source, previous):
     identity=validation_identity(source)
@@ -243,9 +252,9 @@ def build(source, target):
             run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs'):
         script=source/'scripts'/name
-        if script.exists():(operations/name).write_bytes(script.read_bytes())
+        if script.exists():(operations/name).parent.mkdir(parents=True,exist_ok=True);(operations/name).write_bytes(script.read_bytes())
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
         destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
         destination.write_bytes((source/'scripts'/name).read_bytes())
@@ -876,7 +885,9 @@ def prepare_verification(source, artifact, lease):
             target = idle_slot(env)
             copy_tree(artifact, target)
             publish(env, target)
-            record.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],deployed_at=read(meta_path(env))['deployed_at'])
+            # 3. 候选登记时带上含种子的身份，证据才能区分同一程序在不同测试数据上的结果。
+            record.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],
+                          validation_identity=validation_identity(source, env),deployed_at=read(meta_path(env))['deployed_at'])
         except Exception as error:
             record.update(status='recovery_required',error=str(error))
             raise

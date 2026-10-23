@@ -1676,6 +1676,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/delivery-queue/advance", h.AdvanceDelivery)
 			r.Post("/api/delivery-queue/slots/advance", h.AdvanceVerificationSlot)
 			r.Post("/api/delivery-queue/slots/configure", h.ConfigureVerificationSlot)
+			r.Get("/api/delivery-queue/slots/seed", h.GetVerificationSlotSeed)
+			r.Post("/api/delivery-queue/slots/seed", h.RecordVerificationSlotSeed)
 			r.Get("/api/delivery-queue/slots", h.GetVerificationLease)
 			r.Get("/api/delivery-queue/{deliveryId}/authorization", h.CheckDeliveryAuthorization)
 
