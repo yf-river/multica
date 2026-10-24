@@ -39,12 +39,14 @@
 
 **判定顺序**（`taskDelegationAuthority`，任何一步不满足即失败关闭）：
 
-1. actor 是 agent、`run.agent_id == actor`、`run.status == running`——结束的运行不能因旧的系统反馈重新放权。
+1. actor 是 agent、`run.agent_id == actor`。**新请求**还要求 `run.status == running`——结束的运行不能为一条新请求放权；**重放**（`taskDelegationAuthorityForReplay`）不要求，理由见下面的「重放」段落。
 2. `run.issue_id` 有效，且 scope 任务是该运行所在任务本身或它的直接子任务——兄弟任务、父任务和更远血缘都不在范围内。
 3. scope 任务属于请求的工作区；`issuestatus.Effective` 不是 `done` / `cancelled`（授权随任务终止失效）。
 4. 上面那条查询取到人类 U。
 5. U 仍是该工作区成员。
 6. `canInvokeAgent(target, member, U)` 仍为真——私有 Agent 换了 owner 或从白名单移除都算撤回。
+
+**重放。** 目标 Agent 正忙时，创建评论那一刻受理的是「推迟」：调用方拿到成功形态 `deferred`，承诺由目标完成时的调和接手。重放是服务端对这条**内容未变的已存评论**再处理，不是一条新请求；评论的 `source_task_id` 只由作者运行在写入时打下，而协调者通常写完这一轮就结束，重放又必然发生在目标 Agent 完成 / 取消之后。所以重放形态只核身份（`run.agent_id == author`）与血缘，不要求该运行此刻仍在 `running`——否则上面那个 `deferred` 会静默落空。范围、任务活性、证据、授权者当下资格一条不减，已结束的运行仍然不能为任何**新请求**放权。
 
 **归因不变。** 继承来的 U 只作为 `canInvokeAgent` 的输入人类，绝不写进 `originator_user_id` / `accountable_user_id`。被唤醒的运行仍是系统来源，它派发的新任务保持原归因语义（`source` 不变、originator 仍为空）。这也是为什么不能改用 accountable 或 autopilot 创建者兜底：那等于给任何无法归因的运行开放 owner 的私有 Agent。
 
@@ -53,11 +55,12 @@
 - issue 创建 / 指派：`validateAssigneePair`（`scopeChildOf` / `scopeExistingIssue`）。
 - 评论预览：`PreviewCommentTriggers`。
 - 评论真实派发：`CreateComment` → `triggerTasksForComment`。
-- 评论编辑重发与完成调和：`UpdateComment`、`reconcileCommentsOnCompletion`（从 `comment.source_task_id` 解析）。
+- 评论编辑重发：`UpdateComment`（`source_task_id` 由本次编辑重打，所以按新请求判定）。
+- 重放（不要求作者运行仍在跑）：`reconcileCommentsOnCompletion`（目标完成时重放被推迟的提及）、`retriggerCancelledTaskSurvivors`（取消批次的幸存者重放），都从 `comment.source_task_id` 解析，走 `commentTaskDelegationReplayResolver`。
 - quick action 派发：`RunQuickAction`。
 - issue 触发预览：`issueTriggerPreviewProbe`（与写路径选同一条 issue 作 scope，更新时是写前的那条）。
 
-**拒绝原因码。** 只写结构化日志（`task delegation authority denied`），HTTP 文案保持既有通用措辞，不泄露目标 Agent 的权限模式：`not_agent_actor`、`no_run`、`run_agent_mismatch`、`run_not_running`、`run_unbound`、`scope_unbound`、`scope_mismatch`、`scope_workspace_mismatch`、`issue_inactive`、`no_authorization_evidence`、`authorization_lookup_failed`、`authorizer_not_member`、`authorizer_lacks_permission`、`target_unbound`。
+**拒绝原因码。** 只写结构化日志（`task delegation authority denied`），HTTP 文案保持既有通用措辞，不泄露目标 Agent 的权限模式：`not_agent_actor`、`no_run`、`run_agent_mismatch`、`run_not_running`（仅新请求）、`run_unbound`、`scope_unbound`、`scope_mismatch`、`scope_workspace_mismatch`、`issue_inactive`、`no_authorization_evidence`、`authorization_lookup_failed`、`authorizer_not_member`、`authorizer_lacks_permission`、`target_unbound`。
 
 **生命周期。** 授权随任务终止失效：scope 任务完成后不再续接。要恢复，必须重新有一条真实人类发起的委托，或用户对新任务重新授权。
 
@@ -72,4 +75,4 @@
 
 - `server/internal/handler/agent_access.go`（门禁与三种授权来源）
 - `server/internal/handler/comment.go`（`commentTriggerComputeOptions.effectiveInvokerFor`）
-- `server/internal/handler/task_delegation_authority_test.go`（原故障回归与拒绝矩阵）
+- `server/internal/handler/task_delegation_authority_test.go`（原故障回归、拒绝矩阵、重放时序回归）

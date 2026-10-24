@@ -3567,8 +3567,8 @@ func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.
 			OriginatorUserID:                   originatorUserID,
 			AutopilotDelegationAuthorityUserID: delegationAuthority,
 			// 修改 8. 推迟到完成时才重放的评论，同样靠这条评论自己的存储血缘续接
-			// 任务范围内的既定委托授权。
-			TaskDelegationAuthority: h.commentTaskDelegationResolver(ctx, issue, comment),
+			// 任务范围内的既定委托授权。幸存者重放的作者运行早已结束，所以走重放形态。
+			TaskDelegationAuthority: h.commentTaskDelegationReplayResolver(ctx, issue, comment),
 		})
 		targets := targetsByComment[uuidToString(comment.ID)]
 		scoped := make([]commentAgentTrigger, 0, len(targets))
