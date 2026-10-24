@@ -248,6 +248,8 @@ def scrub_checks(container, database):
     """清理结果检查：任何残留都说明规则没有覆盖新功能。"""
     checks = []
     rules = [
+        ('测试 Agent 使用 Flash', 'agent', "SELECT count(*) FROM public.agent WHERE model IS DISTINCT FROM 'deepseek-v4.1-flash'", 0),
+        ('测试模型无命令行覆盖', 'agent', "SELECT count(*) FROM public.agent WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(custom_args,'[]'::jsonb)) a(value) WHERE value IN ('-m','--model','-c','--config') OR value LIKE '--model=%' OR value LIKE '--config=%')", 0),
         ('MCP 检查已清空', 'workspace_mcp_check', 'SELECT count(*) FROM public.workspace_mcp_check', 0),
         ('MCP OAuth 状态已清空', 'plugin_remote_mcp_oauth_state', 'SELECT count(*) FROM public.plugin_remote_mcp_oauth_state', 0),
         ('MCP 绑定已清空', 'agent_mcp_server', 'SELECT count(*) FROM public.agent_mcp_server', 0),
@@ -450,6 +452,8 @@ def restore(env, seed, pgconfig):
             r.write(r.meta_path(env), meta, True)
             for service,pid in meta['pids'].items():(r.RUN/(env+'-'+service+'.pid')).write_text(str(pid)+'\n')
         i.verify_installed(env)
+        # 导入时清除来源 runtime 标识；本槽位 Daemon 注册后才绑定本地 CodeBuddy。
+        r.run(['node', str(Path(__file__).with_name('test-agent-models.mjs')), env, 'apply'], cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT':str(r.ROOT)})
     return dict(environment=env, seed_id=manifest.get('seed_id') or path.name, container=container, database=dbname)
 
 

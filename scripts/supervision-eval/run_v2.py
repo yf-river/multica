@@ -241,7 +241,7 @@ def main():
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--binary',type=Path,required=True)
     p.add_argument('--codebuddy-config',required=True)
-    p.add_argument('--models',nargs='+',choices=MODELS,default=MODELS)
+    p.add_argument('--models',nargs='+',choices=MODELS,default=['deepseek-v4.1-flash'])
     p.add_argument('--repeats',type=int,default=3)
     p.add_argument('--workers',type=int,default=3)
     args=p.parse_args()

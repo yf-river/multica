@@ -245,3 +245,13 @@ GONG-67 把自动监督从“持续追踪所有任务的材料变化”改为“
 构建在安装依赖或编译之前检查实际执行用户 HOME、Git/Go/Node/pnpm、Go 缓存写权限、锁文件与完整发布脚本依赖。整合源码前检查实际 Git 作者/提交者身份。结构化构建日志中的 `build_stage` 包括预检、安装依赖、Web、三个 Go 程序，分别记录完成或失败的 `elapsed_ms`；复用产物不会伪报一次新的编译耗时。
 
 固定控制端还可运行 `pnpm --dir /data/ida/multica release preflight --source <checkout> --env int`。它只读输出当前执行器 UID/PID、Python、实际控制器/worker 文件摘要、与源码是否一致、工具路径/版本及当前运行源 `/healthz`。就绪为 503 时退出非零并标记 `blocked`，不写迁移台账。构建预检不强依赖另一个验收槽或正在切换的固定 int；候选迁移、真实运行身份、隔离和上线就绪仍由原生发布门禁验证。控制器与源码摘要不同只用于说明升级边界，不能据此跳过正式控制器更新或伪报同源。
+
+## 测试 Agent 模型维护
+
+生产 Agent 配置由用户管理，本节仅用于 int、verify-1/2/3 与明确归属的临时测试环境。
+
+- 存量测试 Agent（含托管及归档）统一为 CodeBuddy `deepseek-v4.1-flash`，保留状态、权限和归档信息。人工初始化同样默认 Flash。固定槽位安装时写入显式 Flash 默认；种子清理将模型统一并解除来源 runtime 绑定，恢复启动后绑定本槽位在线 CodeBuddy。
+- 模型执行内创建测试 Agent，先运行 `python3 scripts/test-agent-policy.py --runtimes-file <目标环境runtimes响应.json> --daemon-id <目标Daemon标识>`。输出字段合入创建请求；它读取任务 TMPDIR 中由 Daemon 记录的本轮模型、推理强度及速度，不能使用 Agent 自述或当前配置猜测。找不到可信上下文、存在命令行覆盖歧义或目标 runtime 不唯一时停止创建，保留现场人工接入。
+- `MULTICA_RELEASE_ROOT=/data/ida/multica python3 scripts/test-agent-models.py --environment verify-1` 只读检查全量 Agent；追加 `--apply` 执行模型维护。入口锁定候选、核实实际服务身份，空闲时临时停止认领，事务检查队列并更新，随后恢复原认领状态；活动候选或任务会阻止维护，不取消任务、不重置数据库。输出逐项前后对照，保存到仓库外证据目录。
+- 更新种子使用既有 build → verify → accept 流程创建新版本，旧种子保留，不原地修改 dump 或校验值。对忙碌环境延期处理；临时环境须按其登记与实际服务连接核实后使用同一规则，不把未知库当测试库。
+- 模型不可用只采用已有有界重试，持续失败交人工，不实现跨 runtime 自动切换。原生 Codex 使用独立登录；可配置子 Agent/辅助调用沿用执行配置，不可观察的供应商内部调用不能宣称已限制。

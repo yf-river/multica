@@ -224,6 +224,14 @@ These rules apply when Mobile is explicitly reactivated or its own source is int
 
 ## Testing
 
+### 测试 Agent 的模型
+
+- 本规则只影响 int、verify 和明确登记的临时测试环境；生产 Agent 配置由用户管理。
+- 存量测试 Agent 与种子统一使用 CodeBuddy `deepseek-v4.1-flash`；种子导入清除来源 runtime 标识，启动本地 Daemon 后重新绑定。
+- 模型执行中创建测试 Agent，使用 `scripts/test-agent-policy.py` 从本轮执行上下文继承 runtime provider、模型、推理强度和速度，再绑定目标测试环境的同类 runtime。人工初始化默认 Flash，不能用模型自述或可变 Agent 配置代替实际执行参数。
+- 无可信上下文、模型或参数不支持、账号或网络持续失败时，保留现场并人工接入；不自动切换模型、账号或供应商。供应商内部不可观察的调用如实标明。
+- 维护入口、恢复与验收见 `docs/operations/environment-releases.md` 的“测试 Agent 模型维护”。不为更新模型重置已有测试库或中断活动执行。
+
 Tests follow the code:
 
 | What is tested | Location |

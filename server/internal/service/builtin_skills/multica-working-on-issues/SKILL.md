@@ -398,3 +398,7 @@ multica issue review submit <issue-id> --verdict stalled --findings-file /absolu
 文件格式为 `{ "summary": "结论", "items": [{ "level": "blocking", "file": "path", "detail": "实际问题" }], "unchanged_previous": [] }`。`pass` 写通过标记，任务留在审核中；`reject` 回到进行中并唤醒原开发者；`stalled` 或达到累计轮次上限会停止自动返工并请负责人处理。只有配置的审查 Agent 和有效的当前执行可提交，旧轮次不能覆盖新轮次。不要用直接修改状态代替提交审查结果，也不要将审查通过等同于生产发布完成。
 
 When a `batch_ready` notice names a combination candidate and representative delivery, validate that fixed candidate across all member impacts and integration smoke flows. The representative submits actual combined evidence with `multica issue delivery accept`, including the current `revision`, exact `candidate_id`, and `evidence` in its JSON request. Other members assist validation without creating duplicate deliveries or independent releases. Single-task history and platform coordination checks alone are not combined business acceptance.
+
+### Creating acceptance-test Agents
+
+Production Agent settings belong to the user. In Multica test environments, existing/seed Agents use CodeBuddy `deepseek-v4.1-flash`; Agents created by a model execution inherit that execution's provider, model, thinking level and service tier through `scripts/test-agent-policy.py`. Read `docs/operations/environment-releases.md` → 测试 Agent 模型维护 before creating one. Missing provenance or unavailable runtime/model means stop for human assistance, not provider fallback; preserve active work.

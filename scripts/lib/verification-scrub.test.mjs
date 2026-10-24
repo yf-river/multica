@@ -27,7 +27,7 @@ test('清理清单覆盖当前执行型表', () => {
     'plugin_hook_schedule', 'agent_task_queue', 'agent_runtime', 'agent', 'task_message', 'task_trace_event',
     'sys_cron_executions', 'domain_event_outbox', 'domain_event_delivery',
     'channel_inbound_message_dedup', 'lark_inbound_message_dedup', 'channel_inbound_audit', 'lark_inbound_audit',
-    'upstream_sync_config', 'upstream_sync_run', 'upstream_sync_item', 'upstream_sync_commit', 'upstream_sync_absorption_task',
+    'upstream_sync_settings', 'upstream_sync_config', 'upstream_sync_run', 'upstream_sync_item', 'upstream_sync_commit', 'upstream_sync_absorption_task',
     'issue_delivery', 'issue_delivery_plan', 'issue_delivery_authorization', 'delivery_owner', 'delivery_publication',
     'delivery_notice', 'delivery_evidence', 'webhook_delivery', 'channel_task_delivery',
     'release_paused_task', 'release_window', 'github_pull_request_check_run',
@@ -50,7 +50,7 @@ test('豁免表不重复要求规则，但改名后提示清理', () => {
   assert.deepEqual(uncoveredTables(['chat_session_v2'], rules), []);
   assert.deepEqual(staleExemptions(['chat_session_v2'], rules), [
     'autopilot_collaborator', 'autopilot_quota_period', 'autopilot_rule_version', 'autopilot_subscriber',
-    'chat_session', 'daemon_pairing_session', 'runtime_usage',
+    'chat_session', 'daemon_pairing_session', 'runtime_usage', 'upstream_sync_settings',
   ]);
 });
 

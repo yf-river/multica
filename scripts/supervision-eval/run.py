@@ -201,7 +201,7 @@ def main():
     parser.add_argument('--groups', type=int, default=4)
     parser.add_argument('--workers', type=int, default=3)
     parser.add_argument('--timeout', type=int, default=480)
-    parser.add_argument('--models', nargs='*')
+    parser.add_argument('--models', nargs='+', default=['codebuddy:deepseek-v4.1-flash'])
     parser.add_argument('--retry', action='store_true')
     parser.add_argument('--tool-mode', action='store_true')
     parser.add_argument('--codebuddy-config', default=os.environ.get('CODEBUDDY_CONFIG_DIR'))

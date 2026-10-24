@@ -258,6 +258,7 @@ def executor_preflight(source, *, env=None, integration=False):
     required=('pnpm-lock.yaml','pnpm-workspace.yaml','server/go.mod','server/go.sum',
               'scripts/release-environments.py','scripts/issue-delivery-worker.py','scripts/release-maintenance.py',
               'scripts/verification-environments.py','scripts/verification-seed.py','scripts/verification-seed-copy.mjs',
+              'scripts/test-agent-policy.py','scripts/test-agent-models.py','scripts/test-agent-models.mjs',
               'scripts/verification-scrub.json','scripts/lib/verification-scrub.mjs','scripts/check-release-database.mjs',
               'scripts/verify-release-browser.mjs','scripts/lib/goal-test-audit-env.mjs',
               'scripts/lib/goal-test-browser-audit.mjs','scripts/lib/acceptance-artifacts.mjs')
@@ -328,7 +329,7 @@ def build(source, target, *, verification=False):
                 run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','test-agent-policy.py','test-agent-models.py','test-agent-models.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
         script=source/'scripts'/name
         if script.exists():(operations/name).parent.mkdir(parents=True,exist_ok=True);(operations/name).write_bytes(script.read_bytes())
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
