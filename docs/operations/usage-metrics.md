@@ -275,22 +275,30 @@ stream 总量逐项相等才算完整。完整时才能说"这个 key 没被观�
 `2.125.5` 的旧结果是"父调用独有"，`2.174.0` 的实测则出现子调用同时进入 stream 的情况；两者分开
 看，不给旧版补一套兼容框架。
 
-### 缓存类别的来源与当前范围
+### 缓存类别的来源与版本差异
 
 同一份调用可能同时存在两个口径：CLI 的 stream 事件和 SDK 落盘的 `providerData.rawUsage`。
-已确认 CLI 2.125.5 在 `getCacheCreationTokens` 里会把 **cache miss** 回退当成 cache creation
+
+**CodeBuddy 2.125.5**：`getCacheCreationTokens` 会把 **cache miss** 回退当成 cache creation
 （顺序：`cache_creation_input_tokens` → `cacheCreationInputTokens` →
-`prompt_cache_write_tokens` → `prompt_cache_miss_tokens`）。因此：
+`prompt_cache_write_tokens` → `prompt_cache_miss_tokens`）。所以那一版的 stream 里，
+`cache_write` 可能包含本质上只是"未命中"的部分。
 
-- 子 Agent 采集直接读 `rawUsage`，写缓存取 `prompt_cache_write_tokens`（缺省
-  `cache_creation_input_tokens`），不参与 miss 回退；
-- 父调用的用量仍来自 stream，`cache_write` 里可能含这种回退结果。我们不把它更正成一个
-  "已核实的写入"，也不把它当 0：保留 CLI 上报值，并把这条差异记为**来源未验证**，
-  等真实 CLI（2.174.0）行为复测后再定；
-- 任何位置都不做"取最大值""别名合并"或按总数反推类别。
+**CodeBuddy 2.174.0**：从该版本 native binary 内嵌 JS 的 producer 实现看，回退已被删除，
+只依次取 `cache_creation_input_tokens`、`cacheCreationInputTokens`、
+`prompt_cache_write_tokens`；本轮的 Flash 父子样本与失败样本也确实没有出现 2.125 那种差异。
+同一份 producer 代码里，stream 的 `_requestId` 直接取自 `providerData.conversationRequestId`、
+`_messageId` 直接取自 `providerData.messageId`，这也是逐调用对账能用 (CID, messageId, model)
+做键的依据。
 
-**当前范围**：本轮所有验证都只在本地/验收环境，verify 候选仍是 CodeBuddy 2.125.5，
-生产是 2.174.0；本文描述的缓存口径与子调用采集尚未在生产版本上验证，也没有发布。
+结论与边界：
+
+- 2.125.5 的 write 值保留为 **CLI 上报值、来源未验证**，不改 0、不改写、不取最大值；
+- 2.174.0 不再有该回退，但仍**只对已实测的模型与样本成立**，不外推到其它模型或历史全量；
+- 子调用采集读 `rawUsage`，本身不参与任何回退。
+
+**当前范围**：以上验证都在本地/验收环境完成；verify 候选一侧使用 2.174.0，生产尚未发布，
+生产写入仍为 0，历史补写要等发布后再做并回读。
 
 ### CLI 退出后的越组后代
 
