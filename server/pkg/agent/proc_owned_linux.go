@@ -21,21 +21,41 @@ import (
 // 归属判定必须够硬，否则就是误杀：同 UID + 进程环境里 MULTICA_TASK_ID 正好是本
 // 任务 + 启动时刻不早于 CLI。环境变量只在内存里读这两个字段，不打印、不落盘；
 // 判不准的进程一律放过。
-func reapTaskEscapees(taskID string, cliPID int, logger *slog.Logger) int {
-	if taskID == "" || cliPID <= 0 {
-		return 0
-	}
-	// 归属下界用 CLI 自己的原始 startTicks，而不用墙钟时间：墙钟会被 NTP/时区/采样
-	// 误差影响，tick 是内核给的、和候选进程同一坐标系。
-	cliTicks, ok := processStartTicks(cliPID)
+// CLIIdentity 是 CLI 被回收后仍然可用的身份：pid 加上原始 startTicks。
+// Wait 之后 CLI 的 /proc 条目已经消失，必须提前保存，否则下界无从确定。
+type CLIIdentity struct {
+	PID        int
+	UID        int
+	StartTicks uint64
+	Valid      bool
+}
+
+// captureCLIIdentity 在 Start 成功后立刻调用；读不到就不回收（未知不放行）。
+func captureCLIIdentity(pid int) CLIIdentity {
+	ticks, ok := processStartTicks(pid)
 	if !ok {
+		return CLIIdentity{}
+	}
+	uid, ok := processUID(pid)
+	if !ok {
+		return CLIIdentity{}
+	}
+	return CLIIdentity{PID: pid, UID: uid, StartTicks: ticks, Valid: true}
+}
+
+func reapTaskEscapees(taskID string, cli CLIIdentity, logger *slog.Logger) int {
+	if taskID == "" || !cli.Valid {
 		return 0
 	}
-	targets := ownedTaskProcesses(taskID, cliTicks)
+	cliTicks := cli.StartTicks
+	targets := ownedTaskProcesses(taskID, cliTicks, cli.UID)
 	if len(targets) == 0 {
 		return 0
 	}
 	for _, pid := range targets {
+		if !stillOwned(pid, taskID, cli.UID) {
+			continue
+		}
 		_ = syscall.Kill(pid, syscall.SIGTERM)
 	}
 	// 有界等待：不拉长 Result/记账的总预算，最多 150ms 就升级到 KILL。
@@ -48,7 +68,7 @@ func reapTaskEscapees(taskID string, cliPID int, logger *slog.Logger) int {
 	}
 	killed := 0
 	for _, pid := range targets {
-		if ownedProcessAlive(pid) {
+		if ownedProcessAlive(pid) && stillOwned(pid, taskID, cli.UID) {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 			killed++
 		}
@@ -60,12 +80,20 @@ func reapTaskEscapees(taskID string, cliPID int, logger *slog.Logger) int {
 	return len(targets)
 }
 
-func ownedTaskProcesses(taskID string, cliTicks uint64) []int {
+// stillOwned 在每次发信号前复核：UID 与任务标识都没变才算我们的。
+func stillOwned(pid int, taskID string, uid int) bool {
+	if current, ok := processUID(pid); !ok || current != uid {
+		return false
+	}
+	return envHasTaskID(pid, taskID)
+}
+
+func ownedTaskProcesses(taskID string, cliTicks uint64, uid int) []int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
-	euid := os.Geteuid()
+	euid := uid
 	self := os.Getpid()
 	var out []int
 	for _, entry := range entries {

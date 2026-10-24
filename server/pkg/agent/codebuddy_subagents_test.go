@@ -128,3 +128,46 @@ func TestCodebuddyCollectSubagentUsageSkipsFIFO(t *testing.T) {
 		t.Fatal("collector blocked on a FIFO child file")
 	}
 }
+
+// 只有真正的 Agent/Task 工具结果能带出 child：assistant 正文提到旧 id、Bash 输出里
+// 出现同样字样、callId 没有对应 function_call，都不算。
+func TestAgentToolChildIDsRequiresRealToolResult(t *testing.T) {
+	base := `{"type":"%s","name":"%s","callId":"%s","sessionId":"s","cwd":"/w","providerData":{"conversationRequestId":"` + rootCID + `"},"output":{"type":"text","text":"%s"}}`
+	lines := []string{
+		// assistant 正文提到旧 id
+		`{"type":"assistant","providerData":{"conversationRequestId":"` + rootCID + `"},"message":{"content":[{"type":"text","text":"[Agent ID: agent-aaaaaaaa]"}]}}`,
+		// Bash 输出里恰好出现同样字样，且没有对应 function_call
+		fmt.Sprintf(base, "function_call_result", "Bash", "call-bash", "[Agent ID: agent-bbbbbbbb]"),
+		// Agent 结果但 callId 没有对应的 function_call
+		fmt.Sprintf(base, "function_call_result", "Agent", "call-orphan", "[Agent ID: agent-cccccccc]"),
+		// 真正成立的：先有 function_call，再有同名同 callId 的结果
+		`{"type":"function_call","name":"Agent","callId":"call-real","providerData":{"conversationRequestId":"` + rootCID + `"}}`,
+		fmt.Sprintf(base, "function_call_result", "Agent", "call-real", "done [Agent ID: agent-c4ec9986]"),
+	}
+	body := []byte{}
+	for _, line := range lines {
+		body = append(body, []byte(line+"\n")...)
+	}
+	got := agentToolChildIDs(body, rootCID)
+	if len(got) != 1 || got[0] != "agent-c4ec9986" {
+		t.Fatalf("only the real Agent tool result may contribute a child, got %v", got)
+	}
+}
+
+// child id 必须是安全文件名，路径穿越/怪字符一律不采。
+func TestAgentIDsInTextRejectsUnsafeNames(t *testing.T) {
+	cases := []string{
+		"[Agent ID: ../../etc/passwd]",
+		"[Agent ID: agent-../../x]",
+		"[Agent ID: agent-ABC$]",
+		"[Agent ID: ]",
+	}
+	for _, c := range cases {
+		if ids := agentIDsInText(c); len(ids) != 0 {
+			t.Fatalf("%q must not yield a child id, got %v", c, ids)
+		}
+	}
+	if ids := agentIDsInText("[Agent ID: agent-c4ec9986]"); len(ids) != 1 {
+		t.Fatalf("valid id rejected: %v", ids)
+	}
+}

@@ -223,6 +223,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	}
 
 	b.cfg.Logger.Info("codebuddy started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
+	// 进程一旦 Wait 完，/proc 条目就没了；CLI 身份必须在 Start 之后立刻记下来，
+	// 退出后的越组后代回收才有可信下界。
+	cliIdentity := captureCLIIdentity(cmd.Process.Pid)
 
 	// cmd.Start() 已成功——临时文件所有权转给下面的 goroutine。
 	mcpFileCleanup = nil
@@ -351,7 +354,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		releaseProcessGroup(cmd)
 		// CLI 已退出（正常/异常/被杀都一样）：把它派生出去、已经脱离进程组的
 		// 后代按本任务归属回收，避免孤儿继续占资源。有界、只杀能证明归属的。
-		reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], cmd.Process.Pid, b.cfg.Logger)
+		reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], cliIdentity, b.cfg.Logger)
 		duration := time.Since(startTime)
 		// writeDone 是有缓冲的（容量 1），且写端总会发送——到 cmd 退出时，prompt 写入
 		// 要么已成功、要么遇到 broken pipe、要么被结束 cmd 的 kill 解除阻塞。

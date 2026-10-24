@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // SubagentTrace 是一次子 Agent 调用自己的链路标识：它与父链路同属本次执行，
@@ -66,7 +67,9 @@ func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootC
 	if err != nil || len(parentFiles) != 1 {
 		return nil, nil
 	}
-	parentRaw, ok := readRegularFileBounded(parentFiles[0])
+	parentPath := parentFiles[0]
+	parentDir := filepath.Dir(parentPath)
+	parentRaw, ok := readRegularFileBounded(parentPath)
 	if !ok {
 		return nil, nil
 	}
@@ -78,11 +81,9 @@ func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootC
 	usage := map[string]TokenUsage{}
 	var traces []SubagentTrace
 	for _, childID := range childIDs {
-		files, err := filepath.Glob(filepath.Join(dir, "projects", "*", parentSessionID, "subagents", childID+".jsonl"))
-		if err != nil || len(files) != 1 {
-			return nil, nil
-		}
-		raw, ok := readRegularFileBounded(files[0])
+		// 只在父文件所在的同一个项目目录下找，不跨项目。
+		childPath := filepath.Join(parentDir, parentSessionID, "subagents", childID+".jsonl")
+		raw, ok := readRegularFileBounded(childPath)
 		if !ok {
 			return nil, nil
 		}
@@ -108,58 +109,138 @@ func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootC
 	return usage, traces
 }
 
-// agentToolChildIDs 只认本轮根 CID 记录里的 Agent 工具结果，返回其中写明的 child ID。
+// agentToolChildIDs 只认本轮根 CID 下、真正由 Agent/Task 工具返回的记录：
+// type=function_call_result、name 属于 Agent/Task、callId 在同一 CID 里有对应的
+// function_call，且 child id 出现在该记录的 output 文本里。assistant 正文提到旧 id、
+// 或 Bash 输出里出现同样字样，都不算。
 func agentToolChildIDs(parent []byte, rootCID string) []string {
-	seen := map[string]struct{}{}
-	order := []string{}
+	type call struct {
+		name string
+	}
+	calls := map[string]string{} // callId → tool name
+	results := []struct {
+		callID string
+		output string
+	}{}
+
 	scanner := bufio.NewScanner(bytes.NewReader(parent))
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
 		var record struct {
-			ProviderData struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+			Call struct {
+				CallID string `json:"callId"`
+			} `json:"call"`
+			CallID    string          `json:"callId"`
+			Output    json.RawMessage `json:"output"`
+			SessionID string          `json:"sessionId"`
+			Cwd       string          `json:"cwd"`
+			Provider  struct {
 				ConversationRequestID string `json:"conversationRequestId"`
 			} `json:"providerData"`
 		}
-		if json.Unmarshal(scanner.Bytes(), &record) != nil {
+		if json.Unmarshal(line, &record) != nil {
+			return nil
+		}
+		if record.Provider.ConversationRequestID != rootCID {
 			continue
 		}
-		if record.ProviderData.ConversationRequestID != rootCID {
+		switch record.Type {
+		case "function_call":
+			if record.CallID != "" {
+				calls[record.CallID] = record.Name
+			}
+		case "function_call_result":
+			text := outputText(record.Output)
+			results = append(results, struct {
+				callID string
+				output string
+			}{record.CallID, text})
+		}
+	}
+	if scanner.Err() != nil {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var order []string
+	for _, result := range results {
+		name, ok := calls[result.callID]
+		if !ok || (name != "Agent" && name != "Task") {
 			continue
 		}
-		for _, id := range extractAgentIDs(scanner.Bytes()) {
-			if _, ok := seen[id]; ok {
+		for _, id := range agentIDsInText(result.output) {
+			if _, dup := seen[id]; dup {
 				continue
 			}
 			seen[id] = struct{}{}
 			order = append(order, id)
 		}
 	}
-	if scanner.Err() != nil {
-		return nil
-	}
 	return order
 }
 
-// extractAgentIDs 从一条记录里找出所有 "[Agent ID: xxx]" 形式的子 Agent 标识。
-func extractAgentIDs(line []byte) []string {
+// outputText 取工具结果的文本部分；结构不对就返回空，不做字符串化兜底。
+func outputText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var asObject struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &asObject) == nil && asObject.Text != "" {
+		return asObject.Text
+	}
+	var asString string
+	if json.Unmarshal(raw, &asString) == nil {
+		return asString
+	}
+	return ""
+}
+
+// agentIDsInText 只接受 [Agent ID: agent-xxxxxxxx] 这种形态，且 id 必须是安全文件名。
+func agentIDsInText(text string) []string {
 	var out []string
-	rest := line
+	rest := text
 	for {
-		idx := bytes.Index(rest, []byte(agentToolResultPattern))
+		idx := strings.Index(rest, agentToolResultPattern)
 		if idx < 0 {
 			return out
 		}
 		rest = rest[idx+len(agentToolResultPattern):]
-		end := bytes.IndexByte(rest, ']')
+		end := strings.IndexByte(rest, ']')
 		if end <= 0 {
 			return out
 		}
-		id := string(bytes.TrimSpace(rest[:end]))
-		if id != "" {
+		id := strings.TrimSpace(rest[:end])
+		if validAgentID(id) {
 			out = append(out, id)
 		}
 		rest = rest[end:]
 	}
+}
+
+// validAgentID 限制成"可以直接拼进路径"的形态，杜绝 ../ 之类。
+func validAgentID(id string) bool {
+	if !strings.HasPrefix(id, "agent-") || len(id) > 40 {
+		return false
+	}
+	body := id[len("agent-"):]
+	if body == "" {
+		return false
+	}
+	for _, r := range body {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // parseSubagentFile 严格解析一个子会话文件：任何一行解析失败、字段不全、
