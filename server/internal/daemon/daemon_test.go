@@ -5781,10 +5781,13 @@ func TestBuildTaskTraceEntriesCarriesSDKProvenance(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("entries: %d", len(entries))
 	}
-	if entries[0].SDKTraceID != "sdk-1" || entries[0].SDKTraceSourceSHA256 != "sum-1" || entries[0].SDKTraceSourcePath != "/tmp/a.jsonl" {
+	// source_path 是对服务端契约的固定标记，不是本地文件路径：本地路径只留在
+	// Result 里给人复核，上报时按 providerData.traceId 这个既有契约走。
+	if entries[0].Source != "local_session_jsonl" || entries[0].SDKTraceID != "sdk-1" ||
+		entries[0].SDKTraceSourceSHA256 != "sum-1" || entries[0].SDKTraceSourcePath != "providerData.traceId" {
 		t.Fatalf("provenance dropped: %+v", entries[0])
 	}
-	if entries[1].SDKTraceID != "" {
+	if entries[1].SDKTraceID != "" || entries[1].Source != "stream_json" {
 		t.Fatalf("unknown must stay empty: %+v", entries[1])
 	}
 }
@@ -5797,5 +5800,15 @@ func TestAttachSDKProvenanceOnlyMatchesCID(t *testing.T) {
 	}
 	if out[1].SDKTraceID != "sdk-2" || out[1].SDKTraceSourcePath != "/tmp/b.jsonl" {
 		t.Fatalf("cid match must carry provenance: %+v", out[1])
+	}
+}
+
+// 只有 id 没有 hash 时不能发半套：服务端会整批 400，连这条准确关联都丢。
+func TestBuildTaskTraceEntriesSkipsHalfSDKProvenance(t *testing.T) {
+	entries := buildTaskTraceEntries("codebuddy", []ProviderTrace{
+		{SessionID: "sess-1", TraceID: "trace-1", SDKTraceID: "sdk-1"},
+	})
+	if len(entries) != 1 || entries[0].SDKTraceID != "" || entries[0].SDKTraceSourceSHA256 != "" || entries[0].Source != "stream_json" {
+		t.Fatalf("half provenance must fall back to CID-only: %+v", entries[0])
 	}
 }

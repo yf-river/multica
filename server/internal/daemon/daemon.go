@@ -8442,16 +8442,23 @@ func buildTaskTraceEntries(provider string, traces []ProviderTrace) []TaskTraceE
 		if trace.TraceID == "" {
 			continue
 		}
-		entries = append(entries, TaskTraceEntry{
-			Provider:             provider,
-			SessionID:            trace.SessionID,
-			ProviderTraceID:      trace.TraceID,
-			Correlation:          "exact",
-			Source:               "stream_json",
-			SDKTraceID:           trace.SDKTraceID,
-			SDKTraceSourceSHA256: trace.SDKTraceSourceSHA256,
-			SDKTraceSourcePath:   trace.SDKTraceSourcePath,
-		})
+		entry := TaskTraceEntry{
+			Provider:        provider,
+			SessionID:       trace.SessionID,
+			ProviderTraceID: trace.TraceID,
+			Correlation:     "exact",
+			Source:          "stream_json",
+		}
+		// 三件套必须一起给，且 source_path 是"id 在记录里的位置"这个固定标记，
+		// 不是本地文件路径——服务端就是按这个契约校验的（providerData.traceId）。
+		// 只带一部分会被整批 400，反而把这条准确关联也丢了。
+		if trace.SDKTraceID != "" && trace.SDKTraceSourceSHA256 != "" {
+			entry.Source = "local_session_jsonl"
+			entry.SDKTraceID = trace.SDKTraceID
+			entry.SDKTraceSourceSHA256 = trace.SDKTraceSourceSHA256
+			entry.SDKTraceSourcePath = "providerData.traceId"
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }
