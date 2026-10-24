@@ -285,3 +285,40 @@ func TestCodebuddySessionTranscriptUnknownOnSymlinkedProject(t *testing.T) {
 		t.Fatal("unverified symlinked project cannot prove absence")
 	}
 }
+
+// 子进程看到的 HOME 可能被 cfg.Env 覆盖；daemon 自己的 HOME 不能拿来判断子进程的
+// 默认配置目录，否则会把真实存在的 session 判成缺失。
+func TestResolveSDKConfigDirUsesChildHome(t *testing.T) {
+	daemonHome := t.TempDir()
+	childHome := t.TempDir()
+	t.Setenv("HOME", daemonHome)
+	got := resolveSDKConfigDir(map[string]string{"HOME": childHome})
+	if got != filepath.Join(childHome, ".codebuddy") {
+		t.Fatalf("must follow the child's HOME, got %q", got)
+	}
+	if got := resolveSDKConfigDir(nil); got != filepath.Join(daemonHome, ".codebuddy") {
+		t.Fatalf("no override means the process HOME, got %q", got)
+	}
+}
+
+// 只有 HOME、没有明确配置目录时，preflight 不能仅凭推导出的默认位置判定缺失。
+func TestCodebuddySessionTranscriptUnknownWithoutExplicitConfigDir(t *testing.T) {
+	childHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(childHome, ".codebuddy", "projects", "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if codebuddySessionTranscriptMissing(map[string]string{"HOME": childHome}, "sess") {
+		t.Fatal("a derived default directory cannot prove absence")
+	}
+}
+
+// 但 provenance 定位必须按子进程 HOME 去真实的树里取，否则元数据会指向错的目录。
+func TestCodebuddySDKProvenanceFollowsChildHome(t *testing.T) {
+	childHome := t.TempDir()
+	root := filepath.Join(childHome, ".codebuddy")
+	writeSDKSession(t, root, "work", "sess", `{"sessionId":"sess","providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
+	id, sum, src := codebuddySDKProvenance(map[string]string{"HOME": childHome}, "sess", "/work", "cid")
+	if id != traceA || sum == "" || src != "providerData.traceId" {
+		t.Fatalf("provenance must read the child's tree, got %q %q %q", id, sum, src)
+	}
+}

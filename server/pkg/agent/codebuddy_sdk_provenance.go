@@ -44,10 +44,31 @@ func resolveSDKConfigDir(env map[string]string) string {
 	if dir := strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR")); dir != "" {
 		return dir
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".codebuddy")
+	// 没有配置目录时 CLI 回落到 $HOME/.codebuddy，而 $HOME 同样是"子进程看到的值"：
+	// cfg.Env 覆盖了 HOME 就用覆盖后的，否则才是进程自己的 HOME。
+	home := strings.TrimSpace(env["HOME"])
+	if home == "" {
+		home = strings.TrimSpace(os.Getenv("HOME"))
 	}
-	return ""
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codebuddy")
+}
+
+// resolvePreflightConfigDir 是给"拒绝续接"这种否定判断用的解析：只有明确配置过的
+// 目录才算数，靠 $HOME 推出来的默认位置一律当作未证实，交给上层保持未知。
+func resolvePreflightConfigDir(env map[string]string) (string, bool) {
+	if dir, ok := env["CODEBUDDY_CONFIG_DIR"]; ok {
+		if dir = strings.TrimSpace(dir); dir == "" {
+			return "", false
+		}
+		return dir, true
+	}
+	if dir := strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR")); dir != "" {
+		return dir, true
+	}
+	return "", false
 }
 
 func codebuddySDKProvenance(env map[string]string, sessionID, cwd, cid string) (traceID, sum, source string) {
@@ -165,9 +186,9 @@ func codebuddySessionTranscriptMissing(env map[string]string, sessionID string) 
 	if sessionID == "" {
 		return false
 	}
-	dir := resolveSDKConfigDir(env)
-	if dir == "" {
-		// 解析不出（未设置且进程环境也没有，或显式置空）：我们对磁盘一无所知。
+	dir, ok := resolvePreflightConfigDir(env)
+	if !ok {
+		// 没有明确配置的目录：我们看到的可能不是子进程真正用的那棵树，保持未知。
 		return false
 	}
 	root := filepath.Join(dir, "projects")
