@@ -66,11 +66,18 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 
 ## 3. 价格：未知不等于 0
 
+统计页费用 KPI、智能体排行的费用列、执行日志合计与按次用量弹窗都走同一条判断
+（`hasKnownCost`）：整批没有任何可定价来源（`cost_usd_ticks=0` 且 `uncosted_*` 等于全部
+token，费率表也不认识这些模型）时显示 `—`，不再把"没有价格"渲染成 `$0.00`。判定粒度跟着消费者走：合计只看合计覆盖的数据；排行榜每一行看这个 agent 自己的用量分组；
+按次弹窗的按 agent 分项看该 agent 的任务用量、逐 run 看该次运行的用量。窗口里有一个可
+定价模型，不会让其它完全不可定价的行显示成 `$0.00`。只要这一行可定价，仍按现口径求和
+显示金额。
+
 `task_usage.cost_usd_ticks` 是可空列：NULL 表示厂商没有报价，0（正数才写入）才是
 真实成本。聚合查询用 `uncosted_*_tokens` 字段带出"这部分没有价格"。
 
 页面上，当一批用量里没有任何一行能定价（既无厂商成本、费率表也不认识该模型）时，
-费用与缓存节省显示 `—` 而不是 `$0.00` —— 后者等于断言"这次运行免费"。
+费用显示 `—` 而不是 `$0.00` —— 后者等于断言"这次运行免费"。
 补价入口仍在（自定义定价）。
 
 ## 4. 外部链路关联（`task_provider_trace`）
@@ -116,22 +123,26 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 把水位回填到"现在"之前前，确认历史行的 `updated_at` 不是入库时刻，否则它们会被
 水位跳过。
 
-## 6. 自愈为什么在应用层
+## 6. 小时汇总与空区间自愈
 
-小时汇总的自愈（补建状态行、把 1970 水位当作未汇总、按天连续追赶）最初写成
-`rollup_task_usage_hourly()` 的函数体替换，即一份非新增结构的迁移。发布器只自动应用
-新增表与并发索引，遇到函数体替换会要求"单独的数据库兼容方案，旧站继续运行"；把例外
-塞进发布脚本又只有等它先进主分支才生效，等于绕不过去的先后顺序。
+调度器 `internal/scheduler/jobs_task_usage.go` 复用既有SQL汇总函数与4246锁。状态播种、
+读取待处理起点和跳过空区间处于同一事务锁内；锁被占用时本轮正常退出，不修改水位。
 
-因此自愈改到调度器 handler（`internal/scheduler/jobs_task_usage.go`）：
+原始变更的筛选时间是 `updated_at`，只有旧行的该值为空时才看 `created_at`；展示的
+小时桶仍按 `created_at`。查找当前水位之后的最早待处理原始变更，同时纳入脏键的
+`enqueued_at`。已处理旧明细不会卡住中间空档；旧脏键不按水位过滤，因为原函数仍需用它
+清理旧小时桶。三个起点查询分别使用已有更新日期、旧行创建日期部分索引和脏键索引。
 
-- 调用汇总函数前先 `INSERT ... ON CONFLICT (id) DO NOTHING` 补齐状态行，水位按最早一条
-  `task_usage` 播种；再对 `watermark_at <= 1970-01-02` 的行做一次校正。
-- 之后连续调用既有的 `rollup_task_usage_hourly()`，每次仍是一天窗口；水位不再推进
-  （已追平，或没拿到 4246）就停，单次 tick 最多 60 次，即最多追赶 60 天。
+确定没有待处理数据的区间可以前跳，起点向下取整到小时且不超过当前时间减5分钟；
+空库也只前进到该安全边界，不回退有效水位。晚提交的正常历史上报使用真实当前
+`updated_at`，不会因为它的历史 `created_at` 早于新水位而被当成已处理。
+之后每次函数调用仍处理一天窗口；水位不再推进即停，单tick最多60次。90天处理上限
+回归使用90天实际变更数据，不能把无数据的空档当成必须逐日慢爬的工作。
 
-这样不需要任何迁移来改变函数，旧程序在迁移前后都能继续跑；锁、取消与幂等语义仍是
-函数原有的那套。代价是自愈依赖调度器在跑——生产与自托管的汇总本来就由它驱动。
+调度周期及调度延迟各为5分钟，未满安全窗口的新变更不会立刻出现在日期报表。
+验收应等待自然调度并核对水位、执行审计和实际小时桶；任务明细、按Agent、按日期必须
+使用同一冻结工作区/runtime、时间范围和模型集合，明确区分真实provider用量与受控费用
+测试数据。不得在共享验收或生产环境手工调用汇总函数、改水位或补台账来制造通过结果。
 
 ## 7. 历史补齐
 
@@ -151,3 +162,181 @@ AgentLens.inputTokens == Multica(input_tokens + cache_read_tokens + cache_write_
 exact 能把 inferred_window 升级，升级时 session 使用精确来源自报值，未自报则留空，历史猜测不能变成精确事实。同强度下 session 不一致不静默覆盖，两个值记进
 `metadata.session_conflict`。整批请求先校验再写，任何一条非法都整批 400，不留下半成品；
 写入后逐条回读，缺行或强度被降级返回 500；非空 exact session 与已有精确关联冲突时返回 409，并保留原值与冲突记录。
+
+
+### CodeBuddy 两份用量来源与实时监控
+
+CodeBuddy 的 assistant 流携带单次模型调用的用量快照；实际 `_requestId` 与 `_messageId`
+共同标识调用。同调用的重复工具消息只计一次，更新快照替换该调用原贡献；缺少稳定标识的
+旧协议仍按已有流式方式累计，不能视为已证明调用去重。缓存输入先归一为不含缓存的输入。
+
+结束 `result.modelUsage` 可能包含同一会话之前轮次的累计用量。存在本轮 assistant 流时，
+选择完整的流式来源，即使摘要模型键一致且数值更大；不拼接字段最大值、不猜模型别名、
+不把两图相加。摘要与流不同时，两图和 `chosen_source` 记录在带任务上下文的 daemon
+日志中，不是 API 可查询的 task_trace metadata。全新会话缺流时兼容已有摘要回退；续接
+会话缺流时保留用量缺口，不能把会话累计量算成本轮消费。流式来源只证明已观测调用，不能
+证明未落盘或未出现在流中的调用不存在。SDK 事件中已观测的实际 session ID 在结束包缺值
+时仍予保留。CodeBuddy 实际请求标识与外部 AgentLens trace/span 的对应仍须通过外部观测
+系统验证；平台精确关联落库不代表外部全链已验收。
+
+精确本地来源的 CodeBuddy 关联可通过既有 traces 上报入口补充 `sdk_trace_id`、
+`sdk_trace_source_sha256` 与固定 `sdk_trace_source_path=providerData.traceId`。这三项一起
+提供，要求 `provider=codebuddy`、`correlation=exact`、`source=local_session_jsonl` 和实际
+session；SDK ID 为32位十六进制，文件来源为 SHA256。它们保存在原行 metadata 并随执行
+记录读回，`provider_trace_id` 继续保存实际 conversationRequestId。相同来源重放幂等；
+SDK ID、文件hash或session冲突返回409，整批关联变更回滚；已有精确行的会话冲突仅追加
+`session_conflict`审计，原身份、来源与SDK证据保留。旧daemon不传这些字段仍可上报。
+SDK自报的 traceId 与外部 AgentLens 的解析/权限/逐span对照是不同证据，后者仍需单独验证。
+
+daemon 现在会自己带上这三项。一次运行结束后，先解析配置目录，规则与子进程看到的env一致
+（`buildEnv` 是 `os.Environ()` 叠加 `cfg.Env`），逐层按 **key 是否存在**判断，而不是看值是否为空：
+
+- `CODEBUDDY_CONFIG_DIR`：`cfg.Env` 有这个 key 就用它——**显式空值也照用**，表示子进程里这个变量
+  是空的，此时结论保持未知，不回读被它覆盖掉的进程变量；没有这个 key 才继承 daemon 进程环境。
+- 没有配置目录时 CLI 回落到 `$HOME/.codebuddy`，`HOME` 同样按 key 存在性处理：`cfg.Env` 覆盖了
+  HOME 就用覆盖后的（**显式空 HOME 也保持未知**），否则用进程 HOME。
+- 两者都解析不出就不找，元数据留空。
+
+在 Linux 上这等价于子进程的视角；HOME 未设置或未提供显式目录的平台一律返回未知——这是能力边界，
+不是"默认推导已支持"。
+然后按 `<配置目录>/projects/*/<session>.jsonl` 定位本 session 的日志，并且**只统计属于本轮
+请求的记录**：`providerData.conversationRequestId` 等于本轮 CID，记录自带的 `sessionId`、
+`cwd` 与本轮一致（有才比），`providerData.traceId` 为 32 位小写十六进制。
+
+因为筛选是按 CID 而不是按整份文件，同一 session 里旧一轮与新一轮可以各自取得自己的 trace id；
+文件里只有旧 CID 时本轮留空，绝不会把上一轮的 trace 挂到这次执行上。两条不同 trace、截断行、
+读取错误、非 32hex、session/cwd 不符、同一 session 出现在多个工作目录，一律留空——那条记录
+仍是只带 CID 的准确关联。换新会话重试会产生第二条链路，第二条带自己的 CID 与溯源，不继承
+第一条。
+
+这段读取跑在发送核心 Result 之前，所以有硬保护：只接受**普通文件**（FIFO/设备/符号链接直接
+当未知，避免阻塞），上限 **64 MiB**，并在 open 之后再用 limit reader 兜一次；读不到或超限就
+返回未知，不拖住已知的 usage/session/CID。本地绝对路径只进日志与私有证据，API 字段始终是
+`providerData.traceId` 这个标记。
+
+### 续接前的快速拒绝
+
+要 resume 的会话在本地已经不存在时，CLI 会起来但一个事件都不发，任务会一直停在 running 直到
+被取消。因此在启动 CLI 之前先做一次判定：只有**明确配置了 `CODEBUDDY_CONFIG_DIR`**、且该树
+可完整读完、确实没有 `<session>.jsonl` 时，才立即按"续跑被拒"返回（`ResumeRejected=true`，
+不带 session id），交给 daemon 已有的换新会话重试——只有一次 fresh 重试，首次尝试没有真正
+拉起 CLI、也没有模型请求，所以不产生 trace，也不会伪造一个 attempt ID。
+
+以下情形一律保持未知、走原来的续接：目录没配置（含只能从 HOME 推导出默认位置）、目录不可读、
+条目是符号链接无法核实、stat/枚举报错。缺文件与权限错误、网络错误分开处理，不会把所有失败
+都清掉会话，已观测的 usage/session/CID 始终保留。
+
+当前生产 daemon 的 `CODEBUDDY_CONFIG_DIR` 是显式设置的（`…/state/prod/codebuddy`，只读核对过），
+所以这条快速拒绝在本现场有效；"只能从 HOME 推导"的部署不在覆盖范围内，属已知边界。
+
+### 子 Agent 调用（0:N）
+
+父 session 目录下的 `subagents/*.jsonl` 是同一轮里子 Agent 的调用记录，和父链路属于**不同**的
+请求：它们有自己的 CID、session 与 SDK trace。采集时只读
+`<配置目录>/projects/<工作目录>/<父 session>/subagents/*.jsonl`，不碰别的轮次、不扫别的任务；
+同一调用按 (CID, messageId) 去重，同一 key 内容不一致、trace/CID 不唯一、读取中断，整份放弃。
+命中的每条子调用作为独立链路随 traces 上报（沿用 SDK 三字段与 409 保原契约），用量按模型并入
+本任务用量行。
+
+缓存类别取自 CLI 明确给出的字段：`cache_read_input_tokens`（缺省看 `prompt_cache_hit_tokens`）、
+`prompt_cache_write_tokens`（缺省看 `cache_creation_input_tokens`），`input` 取 prompt 去掉这两部分
+之后的余量。**这套类别语义没有对外部逐字段验证**：实测过同一条记录里 `prompt_cache_miss_tokens`
+与 `prompt_cache_write_tokens` 并存且互不相等，外部口径对"input 是否包含缓存"也有不一致的表现，
+因此不把某一侧的数值当作已验证结论，也不为对齐总数去改类别或取最大值。
+
+### 子调用标识的版本差异（2.174.0）
+
+外部 span 上的 `codebuddy.trace_id` 在 2.174.0 的子调用里**不等于**本地 SDK trace：
+
+| 项 | 值 |
+| --- | --- |
+| 外部子 span 属性 `codebuddy.trace_id` | `148b0cb292bd749c1a74864bf8fdd28c`（根 SDK） |
+| 本地 child SDK（`providerData.traceId`） | `ea9432f687b8b54352c92eab287e1b96` |
+
+两者仍能强对应，依据是 **CID + session + response.id（= 本地 messageId）** 三者一致，不是靠
+SDK id 相等。因此：
+
+- 落库保留**本地 SDK 源值**，不为了和外部属性相等去覆盖它；
+- 2.125.5 与 2.174.0 的对应关系不同，文档按版本分开写，不把"本地 child SDK = 外部 span 属性"
+  当成跨版本的通用结论；
+- 父子四类别的总量在 2.174.0 已确认精确进入 stream（父+child 一致），异常退出样本的
+  inclusive input 27962 / output 211 / read 23040 / write 0 也与平台 4922+23040 / 211 / 23040 / 0
+  一致，自有工具进程自动退出——该场景不受 child 采集改动影响，不再重复实测。
+
+### 子调用与 stream 的重叠
+
+CLI 也会把子 Agent 的 assistant 信封送进父 stream，所以同一调用可能被记录两次。合并时按
+stream 已观测的 **(CID, messageId, model)** 强标识逐条对账：命中的只补那条独立 trace，不加用量；
+未命中的才作为增量并入。**是否允许补增量，取决于 stream 的逐调用身份是否完整**：把已识别调用的用量按模型求和，必须与
+stream 总量逐项相等才算完整。完整时才能说"这个 key 没被观测过"并补；不完整（完全没有调用身份、
+或只认出其中一部分）时保留已知 stream 用量、把子增量记为未知，仍然附上已确证的 trace。不做盲加，
+也不按 aggregate 的最大值或差值倒推。
+
+`2.125.5` 的旧结果是"父调用独有"，`2.174.0` 的实测则出现子调用同时进入 stream 的情况；两者分开
+看，不给旧版补一套兼容框架。
+
+### 缓存类别的来源与版本差异
+
+同一份调用可能同时存在两个口径：CLI 的 stream 事件和 SDK 落盘的 `providerData.rawUsage`。
+
+**CodeBuddy 2.125.5**：`getCacheCreationTokens` 会把 **cache miss** 回退当成 cache creation
+（顺序：`cache_creation_input_tokens` → `cacheCreationInputTokens` →
+`prompt_cache_write_tokens` → `prompt_cache_miss_tokens`）。所以那一版的 stream 里，
+`cache_write` 可能包含本质上只是"未命中"的部分。
+
+**CodeBuddy 2.174.0**：从该版本 native binary 内嵌 JS 的 producer 实现看，回退已被删除，
+只依次取 `cache_creation_input_tokens`、`cacheCreationInputTokens`、
+`prompt_cache_write_tokens`；本轮的 Flash 父子样本与失败样本也确实没有出现 2.125 那种差异。
+同一份 producer 代码里，stream 的 `_requestId` 直接取自 `providerData.conversationRequestId`、
+`_messageId` 直接取自 `providerData.messageId`，这也是逐调用对账能用 (CID, messageId, model)
+做键的依据。
+
+结论与边界：
+
+- 2.125.5 的 write 值保留为 **CLI 上报值、来源未验证**，不改 0、不改写、不取最大值；
+- 2.174.0 不再有该回退，但仍**只对已实测的模型与样本成立**，不外推到其它模型或历史全量；
+- 子调用采集读 `rawUsage`，本身不参与任何回退。
+
+**当前范围**：以上验证都在本地/验收环境完成；verify 候选一侧使用 2.174.0，生产尚未发布，
+生产写入仍为 0，历史补写要等发布后再做并回读。
+
+### CLI 退出后的越组后代
+
+CLI 只是进程组的组首，工具可以 `setsid` 另起一组（实测 `sh`/`sleep` 的 pgid 与 CLI 不同）。
+CLI 异常死亡后，对负 pid 发组信号覆盖不到这些进程，它们会继续跑。因此 `cmd.Wait()` 之后会做
+一次有界回收，归属判定同时满足三条才动手：
+
+- 同 UID；
+- 进程环境里 `MULTICA_TASK_ID` 正好是本任务（只在内存里比这一个键，不打印、不落盘）；
+- 启动时刻不早于本次 CLI。
+
+先 TERM，最多等 150ms 再 KILL，不拉长 Result/记账的总预算。任一条判不准就不杀——包括非 Linux
+平台（没有 `/proc` 可枚举）保持原行为。僵尸进程不算"还活着"。
+
+人工清理不能记成自动释放：本条只覆盖"能被证明归属"的越组后代，其余仍需人工处理。
+
+### 外部对照（CodeBuddy 2.125.5，三个正常样本）
+
+- 外部链路根 trace id **等于本轮 CID**（`provider_trace_id`），span 属性里的
+  `codebuddy.trace_id` **等于本地 SDK trace id**，两层标识精确对应，不能互相替代；
+- 每次调用一个 LLM span，**input 归一后**与 output / cache_read / cache_write 与本地逐项一致；
+- 取消样本存在一处已解释的差异：取消瞬间仍在途的第四次调用没有落盘，外部多出的 output 814、
+  cache_write 262 正是它，本地记录的是**已观测**的三次调用。因此"已保留观测量"不等于
+  "最终 provider 消费量"，不能据此声称全部消费已还原。
+
+取消立即终止backend，最多5秒收取末Result，期间继续消费已在途消息。已观测的 Usage、
+session、provider 请求标识随结果保留，取消/超时/watchdog终态不变；末结果未返回时明确
+记录 accounting incomplete，不能当成零消费。记账沿原daemon凭据，使用不继承父取消的
+总5秒上下文上报usage和traces，session沿既有trace元组保存，不增加会话机制。
+
+缓存节省与已知总费用分开判断：厂商报价本身不能推算缓存输入/读取费率。存在缓存读取
+而缺少对应费率时，节省额显示未知；混合窗口不能把已知部分当完整节省。没有缓存读取时
+节省额才可确认为零。自定义价格保存/删除后，页面按同一价格来源即时重算。
+价格删除即时生效；取消只放弃尚未保存的输入，不回滚已删除项。
+
+`POST /api/daemon/tasks/{id}/usage` 按 run 加锁并整批事务写入、回读核对。正常 daemon
+在 runner 返回后上报一次完整 run/model 聚合，不传 `executed_at`；实时 token/cost counter
+只记录首次成功写入的新实时模型行。重放、更正和显式 `executed_at` 历史补齐不向当前
+counter 累计。Counter 是实时首次观测，能更正、可重新汇总的账本是数据库；已有 counter
+不作负值修正。历史缺失行以已证明的 run.started_at 归入历史桶，属于 run/model 聚合，
+不是逐调用小时账单；已有行更正保留原 created_at 与本次明确传回的权威费用。

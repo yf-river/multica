@@ -61,11 +61,19 @@ export function Leaderboard({
   agents,
   deletedAgentCount,
   lessThanMinuteLabel,
+  costKnown,
+  costKnownByAgent,
 }: {
   rows: AgentDashboardRow[];
   agents: { id: string; name: string }[];
   deletedAgentCount: number;
   lessThanMinuteLabel: string;
+  // 整段窗口没有任何一行能定价时，费用列显示未知而不是 $0.00——这一列的和
+  // 与上面的费用 KPI 同源，两处必须给出同一个答案。
+  costKnown: boolean;
+  // 每个 agent 自己的用量分组是否可定价；缺省的（例如已删除 agent 的聚合桶）
+  // 回落到整窗标志。
+  costKnownByAgent: Map<string, boolean>;
 }) {
   const { t } = useT("usage");
   const [sortBy, setSortBy] = useState<LeaderboardSort>("tokens");
@@ -248,7 +256,9 @@ export function Leaderboard({
                     <div
                       className={`text-right tabular-nums ${sortBy === "cost" ? "text-body font-medium" : "text-caption text-muted-foreground"}`}
                     >
-                      ${row.cost.toFixed(2)}
+                      {(costKnownByAgent.get(row.agentId) ?? costKnown)
+                        ? `$${row.cost.toFixed(2)}`
+                        : "—"}
                     </div>
                     <div
                       className={`text-right text-caption tabular-nums ${sortBy === "time" ? "font-medium text-foreground" : "text-muted-foreground"}`}

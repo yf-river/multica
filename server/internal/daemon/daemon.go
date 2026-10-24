@@ -5028,23 +5028,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
 
-	// 在任何提前返回前先上报用量——无论任务完成、出错还是被轮询 goroutine 中途
-	// 取消，agent 都会累计 token。即使 runCtx 被取消，claude.go 与 codex.go 也会
-	// 填充 result.Usage，因此在取消路径上丢弃它等于静默少报账单。
-	if len(result.Usage) > 0 {
-		if usageErr := d.client.ReportTaskUsage(ctx, task.ID, result.Usage); usageErr != nil {
-			taskLog.Warn("report task usage failed", "error", usageErr)
-		}
-	}
-
-	// 链路关联与用量分开上报：即使一次模型请求都没发出去（usage 为空），或该
-	// backend 根本不上报用量，子进程自报的根请求 id 仍要落到任务上，否则"给定任务
-	// 号枚举全部执行与链路"永远做不到。失败只记日志——关联缺失不能阻断任务收尾。
-	if traceEntries := buildTaskTraceEntries(provider, result.ProviderTraceIDs); len(traceEntries) > 0 {
-		if traceErr := d.client.ReportTaskTraces(ctx, task.ID, traceEntries); traceErr != nil {
-			taskLog.Warn("report task traces failed", "error", traceErr)
-		}
-	}
+	// 取消与停止路径同样记录已经发生的用量及链路；上报有独立的总时限。
+	d.reportTaskAccounting(ctx, task.ID, provider, result, taskLog)
 
 	if pauseFlag.Load() {
 		if !releaseCheckpointReady(task, result) {
@@ -7596,7 +7581,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Status:           "failed",
 			SessionID:        result.SessionID,
 			Usage:            buildTaskUsageEntries(provider, result.Usage),
-			ProviderTraceIDs: appendTraceID(nil, result.ProviderTraceID, result.SessionID),
+			ProviderTraceIDs: traceListForResult(result),
 		}, err
 	}
 
@@ -7612,7 +7597,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 执行对应两条链路、两个 session；只有一条时是常态，子进程没起来（或 backend 不
 	// 暴露）时是零条。不能只在最后用 result.SessionID 统一补齐——重试成功时那是第二个
 	// 进程的 session，会把首进程的 trace 记到别人的会话上。
-	providerTraceIDs := appendTraceID(nil, result.ProviderTraceID, result.SessionID)
+	providerTraceIDs := traceListForResult(result)
 	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
 	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
@@ -7669,7 +7654,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// retryErr 非空时重试进程仍可能已经发出过请求，trace id 照样要留；空值会被
 		// appendTraceID 忽略，重复值不会重复记。session 用重试进程自己的，不是合并后的
 		// result.SessionID——两者相同只是因为重试成功了，逻辑上仍属于那个进程。
-		providerTraceIDs = appendTraceID(providerTraceIDs, retryResult.ProviderTraceID, retryResult.SessionID)
+		// 重试是第二个进程：它的父链路与子链路都按自己的结果追加，字段整条保留。
+		providerTraceIDs = mergeTraceLists(providerTraceIDs, traceListForResult(retryResult))
 	}
 
 	elapsed := time.Since(agentStartedAt).Round(time.Second)
@@ -8065,6 +8051,10 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	}
 	defer drainCancel()
 
+	// 取消后继续消费已有消息，直到末结果回收结束，避免 backend 因消息管道满而无法退出。
+	messageCtx, stopMessages := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopMessages()
+
 	var toolCount atomic.Int32
 	// lastActivityAt 记录（纳秒）排空循环最近一次从 backend 收到消息的时间。
 	// 空闲看门狗读它来决定 agent 是否静默过久。初始化为起点，这样从不发任何
@@ -8292,7 +8282,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					})
 					mu.Unlock()
 				}
-			case <-drainCtx.Done():
+			case <-messageCtx.Done():
 				goto drainDone
 			}
 		}
@@ -8313,57 +8303,46 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	waitForDrain := func() {
 		select {
 		case <-drainFinished:
+			return
 		case <-time.After(10 * time.Second):
-			drainCancel()
-			select {
-			case <-drainFinished:
-			case <-time.After(12 * time.Second):
-				taskLog.Warn("transcript drain did not stop after cancel; completing anyway")
-			}
+		case <-drainCtx.Done():
+		}
+		stopMessages()
+		select {
+		case <-drainFinished:
+		case <-time.After(12 * time.Second):
+			taskLog.Warn("transcript drain did not stop after cancel; completing anyway")
 		}
 	}
 
+	interrupted := func(result agent.Result, interruption error) agent.Result {
+		if idleWatchdogFired.Load() {
+			result.Status = "idle_watchdog"
+			result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
+		} else if errors.Is(interruption, context.Canceled) {
+			result.Status = "cancelled"
+			result.Error = "task cancelled by upstream context (server cancel or daemon shutdown)"
+		} else if interruption != nil {
+			result.Status = "timeout"
+			result.Error = "agent did not produce result within drain timeout"
+		}
+		return result
+	}
 	select {
 	case result := <-session.Result:
+		// 以结果收到时的截止状态分类；尾部冲刷超时不能抹掉已经正常到达的结果。
+		interruption := drainCtx.Err()
 		waitForDrain()
-		if idleWatchdogFired.Load() {
-			// backend 的等待 goroutine（例如 claude.go）把我们经 agentCancel 送的
-			// SIGKILL 翻译成 Status="aborted"。重新标记为 "idle_watchdog"，让
-			// runTask 把处置路由到专用 failure_reason，而不是 aborted 路径落进的
-			// 泛化 "agent_error" 桶。
-			result.Status = "idle_watchdog"
-			if result.Error == "" {
-				result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
-			}
-		}
-		return result, toolCount.Load(), nil
+		return interrupted(result, interruption), toolCount.Load(), nil
 	case <-drainCtx.Done():
-		// 排空循环正因同一个 Done 信号退出；等它的最终冲刷，让下面的
-		// timeout/watchdog/cancel 终态不会交还（并让 runTask 判失败并广播）一份
-		// 仍在冲刷中的 transcript。
+		agentCancel()
+		result, collected := awaitInterruptedBackendResult(session.Result)
+		if !collected {
+			taskLog.Warn("backend final result unavailable after interruption; accounting may be incomplete", "grace", interruptedResultGrace)
+		}
+		stopMessages()
 		waitForDrain()
-		// 空闲看门狗经 agentCancel() 取消，在这里体现为 context.Canceled。要在
-		// 泛化的 cancelled/timeout 分类器之前检查它，避免看门狗导致的停止被误报
-		// 为 "task cancelled by server"。
-		if idleWatchdogFired.Load() {
-			return agent.Result{
-				Status: "idle_watchdog",
-				Error:  idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load())),
-			}, toolCount.Load(), nil
-		}
-		// 区分外部取消（例如服务器发起的取消——issue 被重新分配，或用户调用
-		// CancelTask）与真实的排空截止超时。context.Canceled 表示上游 runCtx 触发
-		// 了 runCancel()；context.DeadlineExceeded 是排空截止自行到期。
-		if errors.Is(drainCtx.Err(), context.Canceled) {
-			return agent.Result{
-				Status: "cancelled",
-				Error:  "task cancelled by upstream context (server cancel or daemon shutdown)",
-			}, toolCount.Load(), nil
-		}
-		return agent.Result{
-			Status: "timeout",
-			Error:  "agent did not produce result within drain timeout",
-		}, toolCount.Load(), nil
+		return interrupted(result, drainCtx.Err()), toolCount.Load(), nil
 	}
 }
 
@@ -8464,13 +8443,23 @@ func buildTaskTraceEntries(provider string, traces []ProviderTrace) []TaskTraceE
 		if trace.TraceID == "" {
 			continue
 		}
-		entries = append(entries, TaskTraceEntry{
+		entry := TaskTraceEntry{
 			Provider:        provider,
 			SessionID:       trace.SessionID,
 			ProviderTraceID: trace.TraceID,
 			Correlation:     "exact",
 			Source:          "stream_json",
-		})
+		}
+		// 三件套必须一起给，且 source_path 是"id 在记录里的位置"这个固定标记，
+		// 不是本地文件路径——服务端就是按这个契约校验的（providerData.traceId）。
+		// 只带一部分会被整批 400，反而把这条准确关联也丢了。
+		if trace.SDKTraceID != "" && trace.SDKTraceSourceSHA256 != "" {
+			entry.Source = "local_session_jsonl"
+			entry.SDKTraceID = trace.SDKTraceID
+			entry.SDKTraceSourceSHA256 = trace.SDKTraceSourceSHA256
+			entry.SDKTraceSourcePath = "providerData.traceId"
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }
@@ -8502,6 +8491,56 @@ func buildTaskUsageEntries(provider string, usage map[string]agent.TokenUsage) [
 // appendTraceID 把非空、未出现过的 provider 根请求 id 追加到列表。同一次执行可能
 // 因为换新会话重试起两个进程，也可能一个都没有；这里只去重，不做任何"必须有一条"
 // 的假设。
+// traceListForResult 是"一次执行 → 链路列表"的唯一归并点：父链路带自己的 SDK 溯源，
+// 子 Agent 调用作为额外 0:N 链路追加。三条退出路径（正常、重试、提前失败）都走它，
+// 避免某条路径漏掉子链路。
+func traceListForResult(result agent.Result) []ProviderTrace {
+	list := attachSDKProvenance(appendTraceID(nil, result.ProviderTraceID, result.SessionID), result)
+	for _, extra := range result.ExtraTraces {
+		list = append(list, ProviderTrace{
+			SessionID:            extra.SessionID,
+			TraceID:              extra.TraceID,
+			SDKTraceID:           extra.SDKTraceID,
+			SDKTraceSourceSHA256: extra.SDKSourceSHA,
+		})
+	}
+	return list
+}
+
+// mergeTraceLists 按 CID 去重合并两条链路列表，保留先到那条的全部字段（含 SDK 溯源），
+// 只补列表中还没有的链路。
+func mergeTraceLists(list, extra []ProviderTrace) []ProviderTrace {
+	for _, candidate := range extra {
+		found := false
+		for _, existing := range list {
+			if existing.TraceID == candidate.TraceID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			list = append(list, candidate)
+		}
+	}
+	return list
+}
+
+// attachSDKProvenance 把本轮 SDK 文件溯源挂到 CID 相同的那条链路上。归属不唯一时
+// Result 里本来就是空的，这里什么都不做——未知保持未知，不挂到别的链路上。
+func attachSDKProvenance(list []ProviderTrace, result agent.Result) []ProviderTrace {
+	if result.SDKTraceID == "" || result.ProviderTraceID == "" {
+		return list
+	}
+	for i := range list {
+		if list[i].TraceID == result.ProviderTraceID {
+			list[i].SDKTraceID = result.SDKTraceID
+			list[i].SDKTraceSourceSHA256 = result.SDKTraceSourceSHA256
+			list[i].SDKTraceSourcePath = result.SDKTraceSourcePath
+		}
+	}
+	return list
+}
+
 func appendTraceID(list []ProviderTrace, traceID, sessionID string) []ProviderTrace {
 	if traceID == "" {
 		return list

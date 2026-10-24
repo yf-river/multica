@@ -1328,7 +1328,7 @@ func setupForeignWorkspaceFixture(t *testing.T) (string, string) {
 
 	issueID := dbfx.Issue(t, "foreign-workspace-issue", testutil.Cols{
 		"workspace_id": foreignWorkspaceID,
-		"priority":     "medium",
+		"priority":     "important_not_urgent",
 		"creator_id":   agentID,
 		"creator_type": "agent",
 	})

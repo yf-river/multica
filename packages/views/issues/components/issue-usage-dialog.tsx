@@ -18,6 +18,8 @@ import {
   collectUnmappedModels,
   formatTokens,
   formatUsd,
+  hasKnownCost,
+  hasKnownCacheSavings,
   summarizeTaskUsage,
   summarizeTaskUsageAcross,
   type TaskUsageSummary,
@@ -68,6 +70,16 @@ export function IssueUsageDialog({
 
   const total = useMemo(
     () => summarizeTaskUsageAcross(priced.map((task) => task.usage)),
+    [priced, pricings],
+  );
+  // 与统计页、执行日志同一个口径：整批没有可定价来源时显示未知，而不是 $0.00。
+  const costKnown = useMemo(
+    () => hasKnownCost(priced.flatMap((task) => task.usage ?? [])),
+    [priced, pricings],
+  );
+
+  const cacheSavingsKnown = useMemo(
+    () => hasKnownCacheSavings(priced.flatMap((task) => task.usage ?? [])),
     [priced, pricings],
   );
 
@@ -123,13 +135,15 @@ export function IssueUsageDialog({
             <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_cost)}
-                value={formatUsd(total.cost)}
+                value={costKnown ? formatUsd(total.cost) : "—"}
                 hint={<CostConcentrationHint tasks={priced} total={total} />}
               />
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_cache)}
-                value={formatUsd(total.cacheSavings)}
-                accent={total.cacheSavings > 0 ? "success" : "default"}
+                value={cacheSavingsKnown ? formatUsd(total.cacheSavings) : "—"}
+                accent={
+                  cacheSavingsKnown && total.cacheSavings > 0 ? "success" : "default"
+                }
                 hint={t(($) => $.usage_detail.kpi_cache_hint, {
                   pct: cacheHitRate,
                   reads: formatTokens(total.cacheRead),
@@ -146,10 +160,15 @@ export function IssueUsageDialog({
             </div>
 
             {agentIds.length > 1 && (
-              <CostByAgent tasks={priced} agentIds={agentIds} total={total} />
+              <CostByAgent
+                tasks={priced}
+                agentIds={agentIds}
+                total={total}
+                costKnown={costKnown}
+              />
             )}
 
-            <RunTable tasks={priced} total={total} />
+            <RunTable tasks={priced} total={total} costKnown={costKnown} />
 
             <div className="space-y-1 text-micro text-muted-foreground">
               {unpricedCount > 0 && (
@@ -206,10 +225,12 @@ function CostByAgent({
   tasks,
   agentIds,
   total,
+  costKnown,
 }: {
   tasks: AgentTask[];
   agentIds: string[];
   total: TaskUsageSummary;
+  costKnown: boolean;
 }) {
   const { t } = useT("issues");
   const { getActorName } = useActorName();
@@ -220,7 +241,15 @@ function CostByAgent({
       .map((agentId) => {
         const own = tasks.filter((task) => task.agent_id === agentId);
         const summary = summarizeTaskUsageAcross(own.map((task) => task.usage));
-        return { agentId, cost: summary?.cost ?? 0, tokens: summary?.tokens ?? 0 };
+        // 每行只用自己的用量判断：整窗里有一个可定价模型，不代表这个 agent 的
+        // 花费是已知的，直接沿用整窗标志会把"不知道"写成 $0.00。
+        const ownCostKnown = hasKnownCost(own.flatMap((task) => task.usage ?? []));
+        return {
+          agentId,
+          cost: summary?.cost ?? 0,
+          tokens: summary?.tokens ?? 0,
+          costKnown: ownCostKnown,
+        };
       })
       .toSorted((a, b) => b.cost - a.cost);
   }, [agentIds, tasks, pricings]);
@@ -254,13 +283,15 @@ function CostByAgent({
               {formatTokens(row.tokens)}
             </div>
             <div className="text-right text-caption font-medium tabular-nums">
-              {formatUsd(row.cost)}
+              {row.costKnown ? formatUsd(row.cost) : "—"}
             </div>
           </div>
         ))}
       </div>
       <div className="sr-only">
-        {t(($) => $.usage_detail.by_agent_total, { cost: formatUsd(total.cost) })}
+        {t(($) => $.usage_detail.by_agent_total, {
+          cost: costKnown ? formatUsd(total.cost) : "—",
+        })}
       </div>
     </div>
   );
@@ -269,7 +300,15 @@ function CostByAgent({
 /**
  * 按次运行明细表。
  */
-function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummary }) {
+function RunTable({
+  tasks,
+  total,
+  costKnown,
+}: {
+  tasks: AgentTask[];
+  total: TaskUsageSummary;
+  costKnown: boolean;
+}) {
   const { t } = useT("issues");
   const maxTokens = tasks.reduce(
     (m, task) => Math.max(m, summarizeTaskUsage(task.usage)?.tokens ?? 0),
@@ -312,7 +351,7 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
             <td>{formatTokens(total.cacheRead)}</td>
             <td>{formatTokens(total.cacheWrite)}</td>
             <td className="!pr-16">{formatTokens(total.tokens)}</td>
-            <td className="!pr-0">{formatUsd(total.cost)}</td>
+            <td className="!pr-0">{costKnown ? formatUsd(total.cost) : "—"}</td>
           </tr>
         </tfoot>
       </table>
@@ -383,7 +422,9 @@ function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
           </span>
         </div>
       </td>
-      <td className="!pr-0 font-medium">{formatUsd(summary.cost)}</td>
+      <td className="!pr-0 font-medium">
+        {hasKnownCost(task.usage ?? []) ? formatUsd(summary.cost) : "—"}
+      </td>
     </tr>
   );
 }

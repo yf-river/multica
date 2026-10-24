@@ -13,6 +13,8 @@ import {
   estimateCostBreakdown,
   formatTokens,
   hasKnownCost,
+  hasKnownCacheSavings,
+  estimateCacheSavings,
   isModelPriced,
   isSelfHealingRuntime,
   sliceWindow,
@@ -1699,5 +1701,41 @@ describe("hasKnownCost", () => {
         },
       ]),
     ).toBe(true);
+  });
+});
+
+describe("hasKnownCacheSavings", () => {
+  const unknown = {
+    ...zeroUsage,
+    model: "unknown-cache-model",
+    provider: "acme",
+    cache_read_tokens: 1_000_000,
+    cost_usd_ticks: 10_000_000_000,
+  };
+  const priced = { ...unknown, model: "claude-sonnet-4-6", provider: "anthropic" };
+
+  it("requires rates for all cached rows despite authoritative vendor costs", () => {
+    expect(hasKnownCacheSavings([])).toBe(false);
+    expect(hasKnownCacheSavings([unknown])).toBe(false);
+    expect(hasKnownCacheSavings([unknown, priced])).toBe(false);
+  });
+
+  it("does not need prices to know that no cache reads means zero savings", () => {
+    const noReads = { ...unknown, cache_read_tokens: 0 };
+    expect(hasKnownCacheSavings([noReads])).toBe(true);
+    expect(estimateCacheSavings(noReads)).toBe(0);
+    expect(hasKnownCacheSavings([noReads, priced])).toBe(true);
+  });
+
+  it("recognizes genuine zero rates and follows dynamic price additions and removal", () => {
+    const store = useCustomPricingStore.getState();
+    store.setCustomPricing("acme/unknown-cache-model", { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    expect(hasKnownCacheSavings([unknown])).toBe(true);
+    expect(estimateCacheSavings(unknown)).toBe(0);
+    store.setCustomPricing("acme/unknown-cache-model", { input: 7, output: 10, cacheRead: 1, cacheWrite: 7 });
+    expect(hasKnownCacheSavings([unknown])).toBe(true);
+    expect(estimateCacheSavings(unknown)).toBe(6);
+    store.removeCustomPricing("acme/unknown-cache-model");
+    expect(hasKnownCacheSavings([unknown])).toBe(false);
   });
 });

@@ -174,7 +174,10 @@ export function CustomPricingDialog({ open, onOpenChange, unmappedModels }: Prop
                         type="button"
                         variant="ghost"
                         size="icon-xs"
-                        onClick={() => removeCustomPricing(key)}
+                        onClick={() => {
+                          setDrafts((current) => ({ ...current, [key]: EMPTY_DRAFT }));
+                          removeCustomPricing(key);
+                        }}
                         aria-label={t(($) => $.usage.custom_pricing.remove_aria)}
                         title={t(($) => $.usage.custom_pricing.remove_aria)}
                       >

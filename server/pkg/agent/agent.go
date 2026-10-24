@@ -190,10 +190,26 @@ type Result struct {
 	SessionID  string                // 后端会话 id
 	Usage      map[string]TokenUsage // 按模型名索引的 token 用量
 	// ProviderTraceID 是本次子进程自己声明的根请求 id（CodeBuddy 为 stream-json
-	// 事件上的 `_requestId`），不是父进程环境变量里继承来的值。一次 CLI 进程
+	// 事件上的 `_requestId`），不是父进程环境变量里继承来的值。与外部观测系统的
+	// trace/span 对应需另行验证。一次 CLI 进程
 	// 只对应一个根请求；续跑会话会换新的根请求，所以它是"每次执行"级别的标识，
 	// 不能挂在会话或 issue 上。为空表示该 backend 不暴露，或本次运行没有产生请求。
 	ProviderTraceID string
+	// SDKTraceID 是 SDK 自己日志里、属于本轮请求的那条 trace id（取自记录
+	// providerData.traceId）。它与 ProviderTraceID（子进程自报的根请求 id）是两次
+	// 独立取值，正常情况下本就不相等；它与外部观测系统（AgentLens）trace/span 的
+	// 对应关系尚未实测，不能假定相同或不同。只有本轮 CID 在 SDK 日志里能唯一定位
+	// 到一条 trace id 时才填，其余留空。
+	SDKTraceID string
+	// SDKTraceSourceSHA256 是那份 SDK 日志文件快照的 sha256，用来复核"当时读到的
+	// 就是这一份文件"，而不是事后被改写的文件。
+	SDKTraceSourceSHA256 string
+	// SDKTraceSourcePath 是上报字段里的来源标记（固定 providerData.traceId），说明 SDK id
+	// 取自记录中的哪个字段；它**不是**本地文件路径。真实文件路径只进日志与私有证据。
+	SDKTraceSourcePath string
+	// ExtraTraces 是本轮产生的、父链路之外的子 Agent 调用链路。一次执行 0:N，
+	// 每条有自己的 CID/session/SDK trace，不能并进父链路，也不能算成同一次请求。
+	ExtraTraces []SubagentTrace
 	// ResumeRejected 是"本次运行请求的续跑被永久拒绝"的确凿证据——要么会话记录
 	// 已经没了，要么该会话属于另一个 provider 账号，要么会话还在但它的历史已经无法
 	// 再重放给 provider（例如 GH #5975：存储的图片现在超过了 provider 的最大尺寸，

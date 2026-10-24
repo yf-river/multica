@@ -20,6 +20,7 @@ SELECT
     t.provider_trace_id,
     t.correlation,
     t.source,
+    t.metadata,
     t.created_at
 FROM task_provider_trace t
 JOIN agent_task_queue atq ON atq.id = t.task_id
@@ -35,6 +36,7 @@ type ListIssueTaskProviderTracesRow struct {
 	ProviderTraceID  string             `json:"provider_trace_id"`
 	Correlation      string             `json:"correlation"`
 	Source           string             `json:"source"`
+	Metadata         []byte             `json:"metadata"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -56,6 +58,7 @@ func (q *Queries) ListIssueTaskProviderTraces(ctx context.Context, issueID pgtyp
 			&i.ProviderTraceID,
 			&i.Correlation,
 			&i.Source,
+			&i.Metadata,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -107,6 +110,78 @@ func (q *Queries) ListTaskProviderTraces(ctx context.Context, taskID pgtype.UUID
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordTaskProviderSessionConflict = `-- name: RecordTaskProviderSessionConflict :exec
+UPDATE task_provider_trace
+SET metadata = metadata || jsonb_build_object(
+    'session_conflict', jsonb_build_array(session_id, $1::text),
+    'session_conflict_at', now())
+WHERE task_id = $2 AND provider = $3
+  AND provider_trace_id = $4 AND correlation = 'exact'
+  AND session_id = $5
+  AND session_id <> '' AND $1::text <> ''
+  AND session_id <> $1::text
+`
+
+type RecordTaskProviderSessionConflictParams struct {
+	SessionID         string      `json:"session_id"`
+	TaskID            pgtype.UUID `json:"task_id"`
+	Provider          string      `json:"provider"`
+	ProviderTraceID   string      `json:"provider_trace_id"`
+	ExpectedSessionID string      `json:"expected_session_id"`
+}
+
+// 被拒请求的会话冲突审计独立于业务关联事务，只记录已有精确行。
+func (q *Queries) RecordTaskProviderSessionConflict(ctx context.Context, arg RecordTaskProviderSessionConflictParams) error {
+	_, err := q.db.Exec(ctx, recordTaskProviderSessionConflict,
+		arg.SessionID,
+		arg.TaskID,
+		arg.Provider,
+		arg.ProviderTraceID,
+		arg.ExpectedSessionID,
+	)
+	return err
+}
+
+const setTaskProviderSDKTrace = `-- name: SetTaskProviderSDKTrace :execrows
+UPDATE task_provider_trace
+SET metadata = metadata || jsonb_build_object(
+    'sdk_trace_id', $1::text,
+    'sdk_trace_source_sha256', $2::text,
+    'sdk_trace_source_path', $3::text),
+    updated_at = now()
+WHERE task_id = $4 AND provider = 'codebuddy'
+  AND provider_trace_id = $5 AND correlation = 'exact'
+  AND session_id = $6
+  AND (metadata->>'sdk_trace_id' IS NULL OR metadata->>'sdk_trace_id' = $1::text)
+  AND (metadata->>'sdk_trace_source_sha256' IS NULL OR metadata->>'sdk_trace_source_sha256' = $2::text)
+  AND (metadata->>'sdk_trace_source_path' IS NULL OR metadata->>'sdk_trace_source_path' = $3::text)
+`
+
+type SetTaskProviderSDKTraceParams struct {
+	SdkTraceID           string      `json:"sdk_trace_id"`
+	SdkTraceSourceSha256 string      `json:"sdk_trace_source_sha256"`
+	SdkTraceSourcePath   string      `json:"sdk_trace_source_path"`
+	TaskID               pgtype.UUID `json:"task_id"`
+	ProviderTraceID      string      `json:"provider_trace_id"`
+	SessionID            string      `json:"session_id"`
+}
+
+// SDK自身trace标识与精确文件来源只补空或幂等重放，冲突保留先前证据。
+func (q *Queries) SetTaskProviderSDKTrace(ctx context.Context, arg SetTaskProviderSDKTraceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTaskProviderSDKTrace,
+		arg.SdkTraceID,
+		arg.SdkTraceSourceSha256,
+		arg.SdkTraceSourcePath,
+		arg.TaskID,
+		arg.ProviderTraceID,
+		arg.SessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertTaskProviderTrace = `-- name: UpsertTaskProviderTrace :exec

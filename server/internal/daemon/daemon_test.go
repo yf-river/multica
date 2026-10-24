@@ -3429,8 +3429,9 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnInactivity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	cancelledAt := make(chan time.Time, 1)
 	start := time.Now()
-	result, _, err := d.executeAndDrain(ctx, idleWatchdogBackend{emitOne: true}, "p", agent.ExecOptions{}, slog.Default(), "t-idle", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, cancellationObservedBackend{idleWatchdogBackend{emitOne: true}, cancelledAt}, "p", agent.ExecOptions{}, slog.Default(), "t-idle", "", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3443,7 +3444,7 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnInactivity(t *testing.T) {
 	// The watchdog should fire within a few ticks (interval = window/2 with
 	// no floor for sub-minute windows). 5× window is generous and keeps the
 	// test from racing in slow CI.
-	if elapsed := time.Since(start); elapsed > 5*d.cfg.AgentIdleWatchdog {
+	if elapsed := (<-cancelledAt).Sub(start); elapsed > 5*d.cfg.AgentIdleWatchdog {
 		t.Fatalf("watchdog took too long to fire: %s (window=%s)", elapsed, d.cfg.AgentIdleWatchdog)
 	}
 }
@@ -3478,10 +3479,11 @@ func TestExecuteAndDrain_IdleWatchdog_UsesPerRunOverride(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	cancelledAt := make(chan time.Time, 1)
 	start := time.Now()
 	result, _, err := d.executeAndDrain(
 		ctx,
-		idleWatchdogBackend{emitOne: true},
+		cancellationObservedBackend{idleWatchdogBackend{emitOne: true}, cancelledAt},
 		"p",
 		agent.ExecOptions{IdleWatchdogTimeout: 50 * time.Millisecond},
 		slog.Default(),
@@ -3498,7 +3500,7 @@ func TestExecuteAndDrain_IdleWatchdog_UsesPerRunOverride(t *testing.T) {
 	if !strings.Contains(result.Error, "50ms") {
 		t.Fatalf("expected error to report the per-run threshold, got %q", result.Error)
 	}
-	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+	if elapsed := (<-cancelledAt).Sub(start); elapsed > 250*time.Millisecond {
 		t.Fatalf("per-run watchdog override did not fire promptly: %s", elapsed)
 	}
 }
@@ -3736,15 +3738,16 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnStuckInFlightTool(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	cancelledAt := make(chan time.Time, 1)
 	start := time.Now()
-	result, _, err := d.executeAndDrain(ctx, stuckInFlightToolBackend{}, "p", agent.ExecOptions{}, slog.Default(), "t-stuck-tool", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, cancellationObservedBackend{stuckInFlightToolBackend{}, cancelledAt}, "p", agent.ExecOptions{}, slog.Default(), "t-stuck-tool", "", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Status != "idle_watchdog" {
 		t.Fatalf("expected status=idle_watchdog for a hung in-flight tool, got %q (err=%q)", result.Status, result.Error)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
+	if elapsed := (<-cancelledAt).Sub(start); elapsed > 2*time.Second {
 		t.Fatalf("tool watchdog took too long to fire: %s (window=%s)", elapsed, d.cfg.AgentToolWatchdog)
 	}
 }
@@ -5765,5 +5768,88 @@ func TestHermesProfileChainCoversLaunchPrefix(t *testing.T) {
 	}
 	if strings.Join(strippedCustom, "\x00") != "--yolo" {
 		t.Errorf("custom = %v, want only the selector removed", strippedCustom)
+	}
+}
+
+// SDK 溯源字段只能挂到 CID 相同的那条链路上：归属不明时保持空，不能顺手挂到
+// 同一次执行的另一条链路上（换新会话重试就会同时存在两条）。
+func TestBuildTaskTraceEntriesCarriesSDKProvenance(t *testing.T) {
+	entries := buildTaskTraceEntries("codebuddy", []ProviderTrace{
+		{SessionID: "sess-1", TraceID: "trace-1", SDKTraceID: "sdk-1", SDKTraceSourceSHA256: "sum-1", SDKTraceSourcePath: "/tmp/a.jsonl"},
+		{SessionID: "sess-2", TraceID: "trace-2"},
+	})
+	if len(entries) != 2 {
+		t.Fatalf("entries: %d", len(entries))
+	}
+	// source_path 是对服务端契约的固定标记，不是本地文件路径：本地路径只留在
+	// Result 里给人复核，上报时按 providerData.traceId 这个既有契约走。
+	if entries[0].Source != "local_session_jsonl" || entries[0].SDKTraceID != "sdk-1" ||
+		entries[0].SDKTraceSourceSHA256 != "sum-1" || entries[0].SDKTraceSourcePath != "providerData.traceId" {
+		t.Fatalf("provenance dropped: %+v", entries[0])
+	}
+	if entries[1].SDKTraceID != "" || entries[1].Source != "stream_json" {
+		t.Fatalf("unknown must stay empty: %+v", entries[1])
+	}
+}
+
+func TestAttachSDKProvenanceOnlyMatchesCID(t *testing.T) {
+	list := []ProviderTrace{{TraceID: "trace-1"}, {TraceID: "trace-2", SessionID: "sess-2"}}
+	out := attachSDKProvenance(list, agent.Result{ProviderTraceID: "trace-2", SDKTraceID: "sdk-2", SDKTraceSourcePath: "/tmp/b.jsonl"})
+	if out[0].SDKTraceID != "" {
+		t.Fatalf("other link must stay empty: %+v", out[0])
+	}
+	if out[1].SDKTraceID != "sdk-2" || out[1].SDKTraceSourcePath != "/tmp/b.jsonl" {
+		t.Fatalf("cid match must carry provenance: %+v", out[1])
+	}
+}
+
+// 只有 id 没有 hash 时不能发半套：服务端会整批 400，连这条准确关联都丢。
+func TestBuildTaskTraceEntriesSkipsHalfSDKProvenance(t *testing.T) {
+	entries := buildTaskTraceEntries("codebuddy", []ProviderTrace{
+		{SessionID: "sess-1", TraceID: "trace-1", SDKTraceID: "sdk-1"},
+	})
+	if len(entries) != 1 || entries[0].SDKTraceID != "" || entries[0].SDKTraceSourceSHA256 != "" || entries[0].Source != "stream_json" {
+		t.Fatalf("half provenance must fall back to CID-only: %+v", entries[0])
+	}
+}
+
+// 生产者序列化出来的字段必须正好是 traces 接口认的形状：source 切到
+// local_session_jsonl，path 是 JSON 标记，id/hash 是对应长度的十六进制。
+// 这条断言盯的是"实际 payload"，不是结构体字段。
+func TestBuildTaskTraceEntriesMarshalMatchesAPI(t *testing.T) {
+	entries := buildTaskTraceEntries("codebuddy", []ProviderTrace{{
+		SessionID:            "sess-1",
+		TraceID:              "cid-1",
+		SDKTraceID:           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SDKTraceSourceSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}})
+	raw, err := json.Marshal(map[string]any{"traces": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Traces []struct {
+			Provider             string `json:"provider"`
+			SessionID            string `json:"session_id"`
+			ProviderTraceID      string `json:"provider_trace_id"`
+			Correlation          string `json:"correlation"`
+			Source               string `json:"source"`
+			SDKTraceID           string `json:"sdk_trace_id"`
+			SDKTraceSourceSHA256 string `json:"sdk_trace_source_sha256"`
+			SDKTraceSourcePath   string `json:"sdk_trace_source_path"`
+		} `json:"traces"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	got := payload.Traces[0]
+	if got.Source != "local_session_jsonl" || got.SDKTraceSourcePath != "providerData.traceId" {
+		t.Fatalf("payload shape rejected by API: %s", raw)
+	}
+	if got.Correlation != "exact" || got.Provider != "codebuddy" || got.SessionID == "" {
+		t.Fatalf("payload identity wrong: %s", raw)
+	}
+	if len(got.SDKTraceID) != 32 || len(got.SDKTraceSourceSHA256) != 64 {
+		t.Fatalf("payload lengths wrong: %s", raw)
 	}
 }

@@ -17,7 +17,8 @@
     "run_time_label": "运行时长 · {{days}}天",
     "run_time_hint": "共 {{tasks}} 个任务",
     "tasks_label": "任务数 · {{days}}天",
-    "tasks_hint": "失败 {{failed}} 个"
+    "tasks_hint": "失败 {{failed}} 个",
+    "cost_partial_hint": "部分用量没有可定价来源，金额只含已定价部分"
   },
   "dim": {
     "label": "维度",
