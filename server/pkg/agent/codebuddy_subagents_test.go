@@ -205,7 +205,7 @@ func TestMergeSubagentUsageSkipsObservedCalls(t *testing.T) {
 	usage := map[string]TokenUsage{"m": {InputTokens: 100, OutputTokens: 20}}
 	observed := map[codebuddyUsageCall]TokenUsage{{testChildCID, "msg-1", "m"}: {}}
 
-	got := mergeSubagentUsage(usage, observed, []SubagentCall{call})
+	got := mergeSubagentUsage(usage, observed, []SubagentCall{call}, true)
 	if got["m"].InputTokens != 100 || got["m"].OutputTokens != 20 {
 		t.Fatalf("observed call must not be added twice: %+v", got["m"])
 	}
@@ -220,16 +220,48 @@ func TestMergeSubagentUsageAddsUnobservedCalls(t *testing.T) {
 	usage := map[string]TokenUsage{"m": {InputTokens: 100, OutputTokens: 20}}
 	observed := map[codebuddyUsageCall]TokenUsage{{"other", "msg-9", "m"}: {}}
 
-	got := mergeSubagentUsage(usage, observed, []SubagentCall{call})
+	got := mergeSubagentUsage(usage, observed, []SubagentCall{call}, true)
 	if got["m"].InputTokens != 110 || got["m"].OutputTokens != 25 || got["m"].CacheReadTokens != 3 {
 		t.Fatalf("unobserved call must be added: %+v", got["m"])
 	}
 }
 
-// 没有逐调用身份时不做任何增量。
+// 流完全没有逐调用身份、但有真实 child 调用时，绝不能加增量（这是之前的真红例）。
 func TestMergeSubagentUsageWithoutIdentityAddsNothing(t *testing.T) {
 	usage := map[string]TokenUsage{"m": {InputTokens: 100}}
-	if got := mergeSubagentUsage(usage, nil, nil); got["m"].InputTokens != 100 {
-		t.Fatalf("no calls means no increment: %+v", got["m"])
+	call := SubagentCall{CID: testChildCID, MessageID: "msg-1", Model: "m",
+		Usage: TokenUsage{InputTokens: 10}}
+	if got := mergeSubagentUsage(usage, nil, []SubagentCall{call}, false); got["m"].InputTokens != 100 {
+		t.Fatalf("unknown stream identity must not add: %+v", got["m"])
+	}
+}
+
+// 流身份"部分"覆盖（有 usage 但没有对应调用集合）同样不能补。
+func TestMergeSubagentUsagePartialIdentityAddsNothing(t *testing.T) {
+	usage := map[string]TokenUsage{"m": {InputTokens: 100, OutputTokens: 20}}
+	// 只认出其中一个调用：总量对不上，说明还有未识别的调用混在 stream 里。
+	observed := map[codebuddyUsageCall]TokenUsage{{"other", "msg-9", "m"}: {InputTokens: 60, OutputTokens: 20}}
+	call := SubagentCall{CID: testChildCID, MessageID: "msg-1", Model: "m", Usage: TokenUsage{InputTokens: 10}}
+	if streamIdentityComplete(usage, observed) {
+		t.Fatal("coverage must be judged incomplete when the child key is missing")
+	}
+	if got := mergeSubagentUsage(usage, observed, []SubagentCall{call}, false); got["m"].InputTokens != 100 {
+		t.Fatalf("incomplete identity must not add: %+v", got["m"])
+	}
+}
+
+// 覆盖率判定的正例：stream 总量恰好等于逐调用之和。
+func TestStreamIdentityComplete(t *testing.T) {
+	usage := map[string]TokenUsage{"m": {InputTokens: 30, OutputTokens: 5}}
+	observed := map[codebuddyUsageCall]TokenUsage{
+		{"c1", "m1", "m"}: {InputTokens: 10, OutputTokens: 2},
+		{"c2", "m2", "m"}: {InputTokens: 20, OutputTokens: 3},
+	}
+	if !streamIdentityComplete(usage, observed) {
+		t.Fatal("sum of observed calls matching the total means complete")
+	}
+	usage["m"] = TokenUsage{InputTokens: 31, OutputTokens: 5}
+	if streamIdentityComplete(usage, observed) {
+		t.Fatal("a leftover token must make coverage incomplete")
 	}
 }

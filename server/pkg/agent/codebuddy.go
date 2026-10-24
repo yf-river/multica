@@ -429,7 +429,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			if usage == nil {
 				usage = map[string]TokenUsage{}
 			}
-			usage = mergeSubagentUsage(usage, usageCalls, subCalls)
+			usage = mergeSubagentUsage(usage, usageCalls, subCalls, streamIdentityComplete(usage, usageCalls))
 			_ = subUsage // 逐调用合并已经完成，聚合值只用于日志
 		}
 		// SDK 侧溯源：只在 session 文件唯一、文件内 trace id 唯一时附上；任何歧义
@@ -819,10 +819,39 @@ func codebuddyUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
 }
 
+// streamIdentityComplete 判断 stream 里的用量是否都能被逐调用身份解释完。
+// 只有完整时才敢按 key 判断"这个子调用没被观测过"；只要有一个模型对不上，
+// 就说明有未知调用混在里面，此时任何增量都可能重复记账。
+func streamIdentityComplete(usage map[string]TokenUsage, observed map[codebuddyUsageCall]TokenUsage) bool {
+	if len(observed) == 0 || len(usage) == 0 {
+		return false
+	}
+	sum := map[string]TokenUsage{}
+	for key, value := range observed {
+		merged := sum[key.model]
+		merged.InputTokens += value.InputTokens
+		merged.OutputTokens += value.OutputTokens
+		merged.CacheReadTokens += value.CacheReadTokens
+		merged.CacheWriteTokens += value.CacheWriteTokens
+		sum[key.model] = merged
+	}
+	if len(sum) != len(usage) {
+		return false
+	}
+	for model, total := range usage {
+		if sum[model] != total {
+			return false
+		}
+	}
+	return true
+}
+
 // mergeSubagentUsage 把"stream 里还没观测到"的子调用增量并入用量。
-// 已观测的（同 CID+messageId+model）跳过——它们的 token 已经在 stream 里计过一次。
-func mergeSubagentUsage(usage map[string]TokenUsage, observed map[codebuddyUsageCall]TokenUsage, calls []SubagentCall) map[string]TokenUsage {
-	if len(calls) == 0 {
+//
+// 前提是 stream 的逐调用身份完整：只有那时"没在 observed 里"才等于"没被记账"。
+// 身份不完整时保留 stream 已知量、不加任何子增量，避免同一调用被记两次。
+func mergeSubagentUsage(usage map[string]TokenUsage, observed map[codebuddyUsageCall]TokenUsage, calls []SubagentCall, identityComplete bool) map[string]TokenUsage {
+	if len(calls) == 0 || !identityComplete {
 		return usage
 	}
 	if usage == nil {
