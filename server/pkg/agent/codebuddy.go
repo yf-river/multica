@@ -349,6 +349,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		// 等待进程退出。
 		exitErr := cmd.Wait()
 		releaseProcessGroup(cmd)
+		// CLI 已退出（正常/异常/被杀都一样）：把它派生出去、已经脱离进程组的
+		// 后代按本任务归属回收，避免孤儿继续占资源。有界、只杀能证明归属的。
+		reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], startTime, b.cfg.Logger)
 		duration := time.Since(startTime)
 		// writeDone 是有缓冲的（容量 1），且写端总会发送——到 cmd 退出时，prompt 写入
 		// 要么已成功、要么遇到 broken pipe、要么被结束 cmd 的 kill 解除阻塞。

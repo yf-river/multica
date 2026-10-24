@@ -1,0 +1,61 @@
+//go:build linux
+
+package agent
+
+import (
+	"os"
+	"os/exec"
+	"testing"
+	"time"
+)
+
+// startEscapee 起一个"另起进程组"的后代，模拟工具 setsid 之后脱离 CLI 组的情形。
+func startEscapee(t *testing.T, taskID string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command("setsid", "sleep", "60")
+	cmd.Env = append(os.Environ(), "MULTICA_TASK_ID="+taskID)
+	if err := cmd.Start(); err != nil {
+		t.Skipf("setsid unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	return cmd
+}
+
+func waitGone(pid int, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if !ownedProcessAlive(pid) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func TestReapTaskEscapeesTerminatesOwnedEscapee(t *testing.T) {
+	start := time.Now()
+	owned := startEscapee(t, "task-owned")
+	// 让它真正跑起来再判定。
+	time.Sleep(50 * time.Millisecond)
+
+	n := reapTaskEscapees("task-owned", start, nil)
+	if n == 0 {
+		t.Fatal("owned escapee should have been reaped")
+	}
+	if !waitGone(owned.Process.Pid, 2*time.Second) {
+		t.Fatalf("owned escapee %d survived", owned.Process.Pid)
+	}
+}
+
+// 关键控制：同一个 UID、但属于别的任务的进程，绝不能被杀。
+func TestReapTaskEscapeesLeavesOtherTasksAlone(t *testing.T) {
+	start := time.Now()
+	other := startEscapee(t, "task-other")
+	time.Sleep(50 * time.Millisecond)
+
+	reapTaskEscapees("task-owned", start, nil)
+	time.Sleep(200 * time.Millisecond)
+	if !ownedProcessAlive(other.Process.Pid) {
+		t.Fatalf("process of another task was killed: %d", other.Process.Pid)
+	}
+}
