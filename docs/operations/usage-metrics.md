@@ -244,6 +244,23 @@ daemon 现在会自己带上这三项。一次运行结束后，先解析配置�
 与 `prompt_cache_write_tokens` 并存且互不相等，外部口径对"input 是否包含缓存"也有不一致的表现，
 因此不把某一侧的数值当作已验证结论，也不为对齐总数去改类别或取最大值。
 
+### 缓存类别的来源与当前范围
+
+同一份调用可能同时存在两个口径：CLI 的 stream 事件和 SDK 落盘的 `providerData.rawUsage`。
+已确认 CLI 2.125.5 在 `getCacheCreationTokens` 里会把 **cache miss** 回退当成 cache creation
+（顺序：`cache_creation_input_tokens` → `cacheCreationInputTokens` →
+`prompt_cache_write_tokens` → `prompt_cache_miss_tokens`）。因此：
+
+- 子 Agent 采集直接读 `rawUsage`，写缓存取 `prompt_cache_write_tokens`（缺省
+  `cache_creation_input_tokens`），不参与 miss 回退；
+- 父调用的用量仍来自 stream，`cache_write` 里可能含这种回退结果。我们不把它更正成一个
+  "已核实的写入"，也不把它当 0：保留 CLI 上报值，并把这条差异记为**来源未验证**，
+  等真实 CLI（2.174.0）行为复测后再定；
+- 任何位置都不做"取最大值""别名合并"或按总数反推类别。
+
+**当前范围**：本轮所有验证都只在本地/验收环境，verify 候选仍是 CodeBuddy 2.125.5，
+生产是 2.174.0；本文描述的缓存口径与子调用采集尚未在生产版本上验证，也没有发布。
+
 ### CLI 退出后的越组后代
 
 CLI 只是进程组的组首，工具可以 `setsid` 另起一组（实测 `sh`/`sleep` 的 pgid 与 CLI 不同）。

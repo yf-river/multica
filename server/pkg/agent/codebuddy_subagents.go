@@ -80,6 +80,9 @@ func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootC
 
 	usage := map[string]TokenUsage{}
 	var traces []SubagentTrace
+	// 不同 child 文件之间也必须按 (CID, messageId) 唯一：同一个调用出现在两个文件里，
+	// 归属就说不清了，整份放弃而不是把用量加两遍。
+	globalCalls := map[[2]string]struct{}{}
 	for _, childID := range childIDs {
 		// 只在父文件所在的同一个项目目录下找，不跨项目。
 		childPath := filepath.Join(parentDir, parentSessionID, "subagents", childID+".jsonl")
@@ -87,10 +90,16 @@ func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootC
 		if !ok {
 			return nil, nil
 		}
-		childUsage, trace, ok := parseSubagentFile(raw, childID)
+		childUsage, trace, calls, ok := parseSubagentFile(raw, childID)
 		if !ok {
 			// 任何一个子文件不成立就不合并，避免"部分可信"的用量进账。
 			return nil, nil
+		}
+		for _, call := range calls {
+			if _, dup := globalCalls[call]; dup {
+				return nil, nil
+			}
+			globalCalls[call] = struct{}{}
 		}
 		for model, u := range childUsage {
 			current := usage[model]
@@ -245,7 +254,7 @@ func validAgentID(id string) bool {
 
 // parseSubagentFile 严格解析一个子会话文件：任何一行解析失败、字段不全、
 // 同一 (CID,messageId) 用量不一致、trace 不唯一，都返回 false，不做部分采纳。
-func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, SubagentTrace, bool) {
+func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, SubagentTrace, [][2]string, bool) {
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	usage := map[string]TokenUsage{}
@@ -264,7 +273,7 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 		}
 		var record subagentRecord
 		if json.Unmarshal(line, &record) != nil {
-			return nil, SubagentTrace{}, false
+			return nil, SubagentTrace{}, nil, false
 		}
 		pd := record.Provider
 		if len(pd.RawUsage) == 0 {
@@ -272,17 +281,17 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 		}
 		var u subagentRawUsage
 		if json.Unmarshal(pd.RawUsage, &u) != nil {
-			return nil, SubagentTrace{}, false
+			return nil, SubagentTrace{}, nil, false
 		}
 		if pd.TraceID == "" || pd.ConversationRequestID == "" || pd.MessageID == "" || pd.Model == "" ||
 			record.SessionID == "" || len(pd.TraceID) != 32 {
-			return nil, SubagentTrace{}, false
+			return nil, SubagentTrace{}, nil, false
 		}
 		sawUsage = true
 		key := callKey{pd.ConversationRequestID, pd.MessageID}
 		if old, ok := seen[key]; ok {
 			if old != u {
-				return nil, SubagentTrace{}, false
+				return nil, SubagentTrace{}, nil, false
 			}
 			continue
 		}
@@ -301,7 +310,7 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 		usage[pd.Model] = total
 	}
 	if scanner.Err() != nil || !sawUsage || len(traceIDs) != 1 || len(cids) != 1 || len(sessions) != 1 || len(cwds) > 1 {
-		return nil, SubagentTrace{}, false
+		return nil, SubagentTrace{}, nil, false
 	}
 	var sdkTrace, cid, session string
 	for id := range traceIDs {
@@ -314,12 +323,16 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 		session = id
 	}
 	digest := sha256.Sum256(raw)
+	calls := make([][2]string, 0, len(seen))
+	for key := range seen {
+		calls = append(calls, [2]string{key.cid, key.message})
+	}
 	return usage, SubagentTrace{
 		TraceID:      cid,
 		SessionID:    session,
 		SDKTraceID:   sdkTrace,
 		SDKSourceSHA: hex.EncodeToString(digest[:]),
-	}, true
+	}, calls, true
 }
 
 // readRegularFileBounded 复用父 SDK 读取的保护：只读普通文件、有上限、读完才算数。
