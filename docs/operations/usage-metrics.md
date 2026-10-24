@@ -188,8 +188,17 @@ SDK ID、文件hash或session冲突返回409，整批关联变更回滚；已有
 `session_conflict`审计，原身份、来源与SDK证据保留。旧daemon不传这些字段仍可上报。
 SDK自报的 traceId 与外部 AgentLens 的解析/权限/逐span对照是不同证据，后者仍需单独验证。
 
-daemon 现在会自己带上这三项。一次运行结束后，先解析配置目录：子进程环境里的
-`CODEBUDDY_CONFIG_DIR` → daemon 进程自身的同名变量 → `$HOME/.codebuddy`，都解析不出就不找。
+daemon 现在会自己带上这三项。一次运行结束后，先解析配置目录，规则与子进程看到的env一致
+（`buildEnv` 是 `os.Environ()` 叠加 `cfg.Env`），逐层按 **key 是否存在**判断，而不是看值是否为空：
+
+- `CODEBUDDY_CONFIG_DIR`：`cfg.Env` 有这个 key 就用它——**显式空值也照用**，表示子进程里这个变量
+  是空的，此时结论保持未知，不回读被它覆盖掉的进程变量；没有这个 key 才继承 daemon 进程环境。
+- 没有配置目录时 CLI 回落到 `$HOME/.codebuddy`，`HOME` 同样按 key 存在性处理：`cfg.Env` 覆盖了
+  HOME 就用覆盖后的（**显式空 HOME 也保持未知**），否则用进程 HOME。
+- 两者都解析不出就不找，元数据留空。
+
+在 Linux 上这等价于子进程的视角；HOME 未设置或未提供显式目录的平台一律返回未知——这是能力边界，
+不是"默认推导已支持"。
 然后按 `<配置目录>/projects/*/<session>.jsonl` 定位本 session 的日志，并且**只统计属于本轮
 请求的记录**：`providerData.conversationRequestId` 等于本轮 CID，记录自带的 `sessionId`、
 `cwd` 与本轮一致（有才比），`providerData.traceId` 为 32 位小写十六进制。
@@ -204,6 +213,30 @@ daemon 现在会自己带上这三项。一次运行结束后，先解析配置�
 当未知，避免阻塞），上限 **64 MiB**，并在 open 之后再用 limit reader 兜一次；读不到或超限就
 返回未知，不拖住已知的 usage/session/CID。本地绝对路径只进日志与私有证据，API 字段始终是
 `providerData.traceId` 这个标记。
+
+### 续接前的快速拒绝
+
+要 resume 的会话在本地已经不存在时，CLI 会起来但一个事件都不发，任务会一直停在 running 直到
+被取消。因此在启动 CLI 之前先做一次判定：只有**明确配置了 `CODEBUDDY_CONFIG_DIR`**、且该树
+可完整读完、确实没有 `<session>.jsonl` 时，才立即按"续跑被拒"返回（`ResumeRejected=true`，
+不带 session id），交给 daemon 已有的换新会话重试——只有一次 fresh 重试，首次尝试没有真正
+拉起 CLI、也没有模型请求，所以不产生 trace，也不会伪造一个 attempt ID。
+
+以下情形一律保持未知、走原来的续接：目录没配置（含只能从 HOME 推导出默认位置）、目录不可读、
+条目是符号链接无法核实、stat/枚举报错。缺文件与权限错误、网络错误分开处理，不会把所有失败
+都清掉会话，已观测的 usage/session/CID 始终保留。
+
+当前生产 daemon 的 `CODEBUDDY_CONFIG_DIR` 是显式设置的（`…/state/prod/codebuddy`，只读核对过），
+所以这条快速拒绝在本现场有效；"只能从 HOME 推导"的部署不在覆盖范围内，属已知边界。
+
+### 外部对照（CodeBuddy 2.125.5，三个正常样本）
+
+- 外部链路根 trace id **等于本轮 CID**（`provider_trace_id`），span 属性里的
+  `codebuddy.trace_id` **等于本地 SDK trace id**，两层标识精确对应，不能互相替代；
+- 每次调用一个 LLM span，**input 归一后**与 output / cache_read / cache_write 与本地逐项一致；
+- 取消样本存在一处已解释的差异：取消瞬间仍在途的第四次调用没有落盘，外部多出的 output 814、
+  cache_write 262 正是它，本地记录的是**已观测**的三次调用。因此"已保留观测量"不等于
+  "最终 provider 消费量"，不能据此声称全部消费已还原。
 
 取消立即终止backend，最多5秒收取末Result，期间继续消费已在途消息。已观测的 Usage、
 session、provider 请求标识随结果保留，取消/超时/watchdog终态不变；末结果未返回时明确
