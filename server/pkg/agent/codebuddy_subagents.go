@@ -234,17 +234,22 @@ func agentIDsInText(text string) []string {
 	}
 }
 
-// validAgentID 限制成"可以直接拼进路径"的形态，杜绝 ../ 之类。
+// validAgentID 限制成"可以直接拼进路径"的形态：只允许 agent- 前缀 + [a-z0-9-]，
+// 且不允许路径分隔符、点段或首尾连字符。真实 2.174.0 会给带连字符的 UUID
+// （agent-3cf4114c-b604-4974-8278-8a6549f0b370），这类必须接受。
 func validAgentID(id string) bool {
-	if !strings.HasPrefix(id, "agent-") || len(id) > 40 {
+	if !strings.HasPrefix(id, "agent-") || len(id) > 64 {
 		return false
 	}
 	body := id[len("agent-"):]
-	if body == "" {
+	if body == "" || strings.HasPrefix(body, "-") || strings.HasSuffix(body, "-") {
+		return false
+	}
+	if strings.Contains(body, "..") || strings.ContainsAny(body, `/\`) {
 		return false
 	}
 	for _, r := range body {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 			continue
 		}
 		return false

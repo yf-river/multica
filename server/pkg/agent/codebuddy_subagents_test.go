@@ -16,7 +16,7 @@ const (
 	testChildCID      = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	testSDKTrace      = "cccccccccccccccccccccccccccccccc"
 	testChildSession  = "99999999-8888-7777-6666-555555555555"
-	testChildID       = "agent-abcdef12"
+	testChildID       = "agent-3cf4114c-b604-4974-8278-8a6549f0b370"
 )
 
 func testParentLine(kind, name, callID, cid, text string) string {
@@ -119,11 +119,11 @@ func TestCodebuddyCollectSubagentUsageRejectsBrokenChildFile(t *testing.T) {
 func TestCodebuddyCollectSubagentUsageRejectsCrossFileDuplicate(t *testing.T) {
 	parent := testParentTranscript(
 		testParentLine("function_call", "Agent", "call-two", testRootCID, ""),
-		testParentLine("function_call_result", "Agent", "call-two", testRootCID, "done [Agent ID: agent-99999999]"),
+		testParentLine("function_call_result", "Agent", "call-two", testRootCID, "done [Agent ID: agent-11111111-2222-3333-4444-555555555555]"),
 	)
 	root := stageTree(t, parent, testChildTranscript(292))
 	sub := filepath.Join(root, "projects", "work", testParentSession, "subagents")
-	if err := os.WriteFile(filepath.Join(sub, "agent-99999999.jsonl"), testChildTranscript(292), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(sub, "agent-11111111-2222-3333-4444-555555555555.jsonl"), testChildTranscript(292), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if usage, traces := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID); usage != nil || traces != nil {
@@ -167,8 +167,26 @@ func TestAgentToolChildIDsRequiresRealToolResult(t *testing.T) {
 	}
 }
 
+func TestAgentIDsInTextAcceptsUUIDShape(t *testing.T) {
+	// 2.174.0 的 child id 是带连字符的 UUID；这是脱敏后同形态的样例。
+	ids := agentIDsInText("[Agent ID: agent-3cf4114c-b604-4974-8278-8a6549f0b370]")
+	if len(ids) != 1 || ids[0] != "agent-3cf4114c-b604-4974-8278-8a6549f0b370" {
+		t.Fatalf("uuid-shaped child id rejected: %v", ids)
+	}
+}
+
 func TestAgentIDsInTextRejectsUnsafeNames(t *testing.T) {
-	for _, c := range []string{"[Agent ID: ../../etc/passwd]", "[Agent ID: agent-../../x]", "[Agent ID: agent-ABC$]", "[Agent ID: ]"} {
+	for _, c := range []string{
+		"[Agent ID: ../../etc/passwd]",
+		"[Agent ID: agent-../../x]",
+		"[Agent ID: agent-ABC$]",
+		"[Agent ID: ]",
+		"[Agent ID: agent-a/b]",
+		"[Agent ID: agent--lead]",
+		"[Agent ID: agent-trail-]",
+		"[Agent ID: agent-a..b]",
+		"[Agent ID: agent-a\\b]",
+	} {
 		if ids := agentIDsInText(c); len(ids) != 0 {
 			t.Fatalf("%q must not yield a child id, got %v", c, ids)
 		}
