@@ -229,6 +229,21 @@ daemon 现在会自己带上这三项。一次运行结束后，先解析配置�
 当前生产 daemon 的 `CODEBUDDY_CONFIG_DIR` 是显式设置的（`…/state/prod/codebuddy`，只读核对过），
 所以这条快速拒绝在本现场有效；"只能从 HOME 推导"的部署不在覆盖范围内，属已知边界。
 
+### 子 Agent 调用（0:N）
+
+父 session 目录下的 `subagents/*.jsonl` 是同一轮里子 Agent 的调用记录，和父链路属于**不同**的
+请求：它们有自己的 CID、session 与 SDK trace。采集时只读
+`<配置目录>/projects/<工作目录>/<父 session>/subagents/*.jsonl`，不碰别的轮次、不扫别的任务；
+同一调用按 (CID, messageId) 去重，同一 key 内容不一致、trace/CID 不唯一、读取中断，整份放弃。
+命中的每条子调用作为独立链路随 traces 上报（沿用 SDK 三字段与 409 保原契约），用量按模型并入
+本任务用量行。
+
+缓存类别取自 CLI 明确给出的字段：`cache_read_input_tokens`（缺省看 `prompt_cache_hit_tokens`）、
+`prompt_cache_write_tokens`（缺省看 `cache_creation_input_tokens`），`input` 取 prompt 去掉这两部分
+之后的余量。**这套类别语义没有对外部逐字段验证**：实测过同一条记录里 `prompt_cache_miss_tokens`
+与 `prompt_cache_write_tokens` 并存且互不相等，外部口径对"input 是否包含缓存"也有不一致的表现，
+因此不把某一侧的数值当作已验证结论，也不为对齐总数去改类别或取最大值。
+
 ### CLI 退出后的越组后代
 
 CLI 只是进程组的组首，工具可以 `setsid` 另起一组（实测 `sh`/`sleep` 的 pgid 与 CLI 不同）。

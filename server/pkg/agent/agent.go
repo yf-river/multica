@@ -206,6 +206,9 @@ type Result struct {
 	SDKTraceSourceSHA256 string
 	// SDKTraceSourcePath 是该文件的绝对路径，便于人工复核；它是证据位置，不是可外链。
 	SDKTraceSourcePath string
+	// ExtraTraces 是本轮产生的、父链路之外的子 Agent 调用链路。一次执行 0:N，
+	// 每条有自己的 CID/session/SDK trace，不能并进父链路，也不能算成同一次请求。
+	ExtraTraces []SubagentTrace
 	// ResumeRejected 是"本次运行请求的续跑被永久拒绝"的确凿证据——要么会话记录
 	// 已经没了，要么该会话属于另一个 provider 账号，要么会话还在但它的历史已经无法
 	// 再重放给 provider（例如 GH #5975：存储的图片现在超过了 provider 的最大尺寸，

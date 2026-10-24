@@ -407,6 +407,17 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		}
 
 		usage = codebuddySelectUsage(usage, resultUsage, opts.ResumeSessionID != "", b.cfg.Logger)
+		// 子 Agent 的调用记录在父 session 目录下的 subagents/ 里，属于本次执行的 0:N 链路。
+		// 只有路径、CID、trace 都唯一时才并入；并入的是各自独立的用量行，不覆盖父链路。
+		subUsage, subTraces := codebuddyCollectSubagentUsage(b.cfg.Env, reportedSessionID)
+		for model, extra := range subUsage {
+			merged := usage[model]
+			merged.InputTokens += extra.InputTokens
+			merged.OutputTokens += extra.OutputTokens
+			merged.CacheReadTokens += extra.CacheReadTokens
+			merged.CacheWriteTokens += extra.CacheWriteTokens
+			usage[model] = merged
+		}
 		// SDK 侧溯源：只在 session 文件唯一、文件内 trace id 唯一时附上；任何歧义
 		// 都留空，让上层把这条链路当作"只有 CID 的准确关联"。
 		sdkTraceID, sdkSum, sdkSource, sdkFile := codebuddySDKProvenanceWithSource(
@@ -427,6 +438,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			SDKTraceID:           sdkTraceID,
 			SDKTraceSourceSHA256: sdkSum,
 			SDKTraceSourcePath:   sdkSource,
+			ExtraTraces:          subTraces,
 			ResumeRejected:       resumeRejected,
 		}
 	}()

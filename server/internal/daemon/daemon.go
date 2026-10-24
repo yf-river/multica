@@ -7600,6 +7600,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 暴露）时是零条。不能只在最后用 result.SessionID 统一补齐——重试成功时那是第二个
 	// 进程的 session，会把首进程的 trace 记到别人的会话上。
 	providerTraceIDs := attachSDKProvenance(appendTraceID(nil, result.ProviderTraceID, result.SessionID), result)
+	// 子 Agent 的链路是本次执行的 0:N 附加项：各自 CID/session/SDK trace，
+	// 不能折进父链路，也不能因为父链路存在就丢掉。
+	for _, extra := range result.ExtraTraces {
+		providerTraceIDs = append(providerTraceIDs, ProviderTrace{
+			SessionID:            extra.SessionID,
+			TraceID:              extra.TraceID,
+			SDKTraceID:           extra.SDKTraceID,
+			SDKTraceSourceSHA256: extra.SDKSourceSHA,
+		})
+	}
 	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
 	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
