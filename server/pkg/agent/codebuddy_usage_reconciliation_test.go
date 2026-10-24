@@ -19,10 +19,10 @@ func TestCodebuddyUsageProtocolPreservesObservedCalls(t *testing.T) {
 	prefix := TokenUsage{OutputTokens: full.OutputTokens - tail.OutputTokens, CacheReadTokens: full.CacheReadTokens - tail.CacheReadTokens, CacheWriteTokens: full.CacheWriteTokens - tail.CacheWriteTokens}
 	for _, mode := range []string{"smaller-summary", "different-model-identity", "session-cumulative-summary", "no-stream", "resumed-no-stream", "empty-result-session", "assistant-session", "no-summary", "snapshot-update", "distinct-requests", "missing-identity"} {
 		t.Run(mode, func(t *testing.T) {
-			// 夹具会话只存在于协议流里；把 HOME 指到空目录，避免宿主的
-			// ~/.codebuddy/projects 影响"本地是否有该 session"的判断。
-			t.Setenv("HOME", t.TempDir())
-			t.Setenv("CODEBUDDY_CONFIG_DIR", "")
+			// 夹具会话只存在于协议流里，本地没有对应记录。用显式的空配置目录
+			// 把判定固定成"未知"，而不是依赖宿主的 HOME（也不去改进程环境，
+			// 免得影响同包并行用例）。
+			emptyConfigDir := t.TempDir()
 			model := "deepseek-v4.1-flash"
 			chosenModel := model
 			events := []map[string]any{{"type": "system", "subtype": "init", "session_id": "fixture-session"}}
@@ -87,7 +87,11 @@ func TestCodebuddyUsageProtocolPreservesObservedCalls(t *testing.T) {
 			executable := filepath.Join(t.TempDir(), "provider-fixture")
 			writeTestExecutable(t, executable, []byte(script.String()))
 			var logs bytes.Buffer
-			backend := &codebuddyBackend{cfg: Config{ExecutablePath: executable, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}}
+			backend := &codebuddyBackend{cfg: Config{
+				ExecutablePath: executable,
+				Logger:         slog.New(slog.NewJSONHandler(&logs, nil)),
+				Env:            map[string]string{"CODEBUDDY_CONFIG_DIR": emptyConfigDir},
+			}}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			opts := ExecOptions{Model: model, Timeout: 3 * time.Second}
