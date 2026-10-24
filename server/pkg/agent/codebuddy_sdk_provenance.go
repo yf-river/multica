@@ -44,13 +44,16 @@ func resolveSDKConfigDir(env map[string]string) string {
 	if dir := strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR")); dir != "" {
 		return dir
 	}
-	// 没有配置目录时 CLI 回落到 $HOME/.codebuddy，而 $HOME 同样是"子进程看到的值"：
-	// cfg.Env 覆盖了 HOME 就用覆盖后的，否则才是进程自己的 HOME。
-	home := strings.TrimSpace(env["HOME"])
-	if home == "" {
-		home = strings.TrimSpace(os.Getenv("HOME"))
+	// 没有配置目录时 CLI 回落到 $HOME/.codebuddy，而 $HOME 同样是"子进程看到的值"。
+	// 这里也按 key 存在性判断：显式置空 HOME 会把子进程的 HOME 覆盖成空值，
+	// 再去回读 daemon 的 HOME 就会指向一棵 CLI 根本不看的树。
+	home, homeSet := env["HOME"]
+	if !homeSet {
+		home = os.Getenv("HOME")
 	}
+	home = strings.TrimSpace(home)
 	if home == "" {
+		// 显式空值，或两边都没有：CLI 的默认目录无从确定，保持未知。
 		return ""
 	}
 	return filepath.Join(home, ".codebuddy")

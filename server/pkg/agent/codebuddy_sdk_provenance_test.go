@@ -322,3 +322,16 @@ func TestCodebuddySDKProvenanceFollowsChildHome(t *testing.T) {
 		t.Fatalf("provenance must read the child's tree, got %q %q %q", id, sum, src)
 	}
 }
+
+// 显式空 HOME 同样会覆盖子进程的 HOME；此时不能回读 daemon 的 HOME 去猜默认目录。
+func TestResolveSDKConfigDirExplicitEmptyHome(t *testing.T) {
+	daemonHome := t.TempDir()
+	t.Setenv("HOME", daemonHome)
+	if got := resolveSDKConfigDir(map[string]string{"HOME": ""}); got != "" {
+		t.Fatalf("explicit empty HOME must stay unknown, got %q", got)
+	}
+	// provenance 同理：宁可不给元数据，也不能指向 daemon 的树。
+	if id, sum, src := codebuddySDKProvenance(map[string]string{"HOME": ""}, "sess", "/work", "cid"); id != "" || sum != "" || src != "" {
+		t.Fatalf("provenance must stay unknown for an empty HOME, got %q %q %q", id, sum, src)
+	}
+}
