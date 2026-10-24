@@ -188,6 +188,13 @@ SDK ID、文件hash或session冲突返回409，整批关联变更回滚；已有
 `session_conflict`审计，原身份、来源与SDK证据保留。旧daemon不传这些字段仍可上报。
 SDK自报的 traceId 与外部 AgentLens 的解析/权限/逐span对照是不同证据，后者仍需单独验证。
 
+daemon 现在会自己带上这三项：一次运行结束后按 `<CODEBUDDY_CONFIG_DIR>/projects/*/<session>.jsonl`
+定位该 session 的 SDK 日志，要求**文件唯一且文件内 `providerData.traceId` 唯一**，才把
+SDK trace id、该文件快照的 sha256 与路径挂到 CID 相同的那条链路上。文件不唯一（同一 session
+出现在多个工作目录）、trace id 不唯一、文件缺失或未配置目录时，三项全部留空——那条记录仍是
+只带 CID 的准确关联，不会因为"看起来能凑"而得到猜测的 SDK id。换新会话重试会产生第二条链路，
+第二条不会继承第一条的溯源。
+
 取消立即终止backend，最多5秒收取末Result，期间继续消费已在途消息。已观测的 Usage、
 session、provider 请求标识随结果保留，取消/超时/watchdog终态不变；末结果未返回时明确
 记录 accounting incomplete，不能当成零消费。记账沿原daemon凭据，使用不继承父取消的
