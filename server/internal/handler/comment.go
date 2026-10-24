@@ -1426,20 +1426,34 @@ type commentTriggerComputeOptions struct {
 	// 派发在 autopilot 创建的 issue 上链中委派时，借它的调用权过 A2A 闸门（MUL-4857）。
 	// 与 OriginatorUserID 分开解析，在受信任的请求/评论边界、从服务端信任的发言任务解析
 	//（见 autopilotDelegationAuthority）；血缘无法验证时为空，闸门保持失败关闭。
-	// effectiveInvoker 只在 OriginatorUserID 为空时才看它。仅是鉴权输入——归属/审计读
+	// effectiveInvokerFor 只在 OriginatorUserID 为空时才看它。仅是鉴权输入——归属/审计读
 	// OriginatorUserID，永远不读它，因此入队的运行保持无归属。
 	AutopilotDelegationAuthorityUserID string
+
+	// 修改 1. TaskDelegationAuthority 是任务级委托授权继承的解析器（GONG-83）：给定目标 Agent，返回
+	// 该任务范围内已验证的原授权人类，或空串。它是「用户已授权的当前任务范围」内的续接，不是
+	// 通用放权，所以按目标 Agent 惰性查询——证据本身绑定 workspace + 任务范围 + 委托者 +
+	// 目标。仅在 OriginatorUserID 与 AutopilotDelegationAuthorityUserID 都为空时才追问，且与
+	// 两者一样只管鉴权输入，不写归因。
+	TaskDelegationAuthority func(db.Agent) string
 }
 
-// effectiveInvoker 返回本次评论 A2A 调用闸门（canInvokeAgent）所依据的人类主体：解析出的
-// 顶层人类发起人；或——仅当运行没有人类发起人时——血缘验证过的 autopilot 委派授权者
-// （MUL-4857）。OriginatorUserID 保持不动以保归属准确；该授权只是闸门专用回退。member 角色
-// 两者都是 member 本身（或回退未设置），canInvokeAgent 对 member 反正忽略这个值。
-func (o commentTriggerComputeOptions) effectiveInvoker() string {
+// 修改 2. effectiveInvokerFor 返回本次评论 A2A 调用闸门（canInvokeAgent）所依据的人类主体，按优先级：
+// 解析出的顶层人类发起人；血缘验证过的 autopilot 委派授权者（MUL-4857）；以及任务级委托授权
+// 继承（GONG-83，按目标 Agent 解析）。OriginatorUserID 保持不动以保归属准确；后两者只是闸门
+// 专用回退。member 角色两者都是 member 本身（或回退未设置），canInvokeAgent 对 member 反正
+// 忽略这个值。
+func (o commentTriggerComputeOptions) effectiveInvokerFor(agent db.Agent) string {
 	if o.OriginatorUserID != "" {
 		return o.OriginatorUserID
 	}
-	return o.AutopilotDelegationAuthorityUserID
+	if o.AutopilotDelegationAuthorityUserID != "" {
+		return o.AutopilotDelegationAuthorityUserID
+	}
+	if o.TaskDelegationAuthority != nil {
+		return o.TaskDelegationAuthority(agent)
+	}
+	return ""
 }
 
 // commentAgentTriggerReason 生成预览 UI 给每个触发 agent 看的人类可读原因。
@@ -1552,6 +1566,9 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	opts.OriginatorUserID = h.invokeOriginatorFromRequest(r, actorType, actorID)
 	opts.AutopilotDelegationAuthorityUserID = h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
+	// 修改 3. 预览必须与真实派发用同一个任务级委托判定（GONG-83），否则「预览说会触发、保存后却被拒」
+	// （或反之）会让人照着错的结果决定要不要发。
+	opts.TaskDelegationAuthority = h.requestTaskDelegationResolver(r, scopeExistingIssue(&issue), actorType, actorID, uuidToString(issue.WorkspaceID))
 	triggers, targets, reviewReply := h.computeCommentAgentTriggers(r.Context(), issue, content, parentComment, actorType, actorID, opts)
 	resp := CommentTriggerPreviewResponse{
 		Agents:  make([]CommentTriggerAgentResponse, 0, len(triggers)),
@@ -1837,7 +1854,13 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, authorType, authorID)
 	// 评论已保存；被拦截的提及不能让整个请求失败。把按目标结果发出来，客户端能提示「部分
 	// 成功」而不是静默无操作（MUL-4525 §2）。
-	dispatch := h.triggerTasksForComment(r.Context(), issue, comment, parentComment, authorType, authorID, originatorUserID, delegationAuthority, suppressAgentIDs)
+	dispatch := h.triggerTasksForComment(r.Context(), issue, comment, parentComment, authorType, authorID, commentTriggerComputeOptions{
+		OriginatorUserID:                   originatorUserID,
+		AutopilotDelegationAuthorityUserID: delegationAuthority,
+		// 修改 4. 系统 / 审查反馈唤醒的运行没有人类发起人，靠这条评论所在任务范围内已发生
+		// 过的委托证据续接同一授权。
+		TaskDelegationAuthority: h.commentTaskDelegationResolver(r.Context(), issue, comment),
+	}, suppressAgentIDs)
 	resp.TriggerOutcomes = dispatch.Outcomes
 	resp.ReviewReply = dispatch.ReviewReply
 
@@ -1882,15 +1905,15 @@ type commentTriggerDispatch struct {
 // triggerTasksForComment 解析并入队评论的 agent 触发，返回显式 @agent / @squad 提及的按目标
 // 结果（MUL-4525 §2）：解析阶段被拦截的提及 + 入队阶段的 queued / coalesced / deferred /
 // blocked。UI 抑制的触发（用户取消勾选）在入队前移除、不产生任何结果。
-func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID, delegationAuthorityUserID string, suppressAgentIDs []pgtype.UUID) commentTriggerDispatch {
+// 修改 5. opts 携带调用方在受信任边界解析好的授权来源（真实发起人 / autopilot 委派 / 任务级
+// 委托继承），由这里补上「本条评论自身」的排除项后原样传给触发计算，保存与延迟调和才共用
+// 同一判定。
+func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions, suppressAgentIDs []pgtype.UUID) commentTriggerDispatch {
 	if isNoteComment(comment.Content) {
 		return commentTriggerDispatch{}
 	}
-	triggers, targets, reviewReply := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
-		ExcludeTriggerCommentID:            comment.ID,
-		OriginatorUserID:                   originatorUserID,
-		AutopilotDelegationAuthorityUserID: delegationAuthorityUserID,
-	})
+	opts.ExcludeTriggerCommentID = comment.ID
+	triggers, targets, reviewReply := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
 	h.noteBlockedRuntimeTargets(ctx, issue, targets)
 	enqueued := h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
@@ -2476,10 +2499,11 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		return nil, nil, nil
 	}
 
-	// Autopilot 委派授权（MUL-4857）由闸门经 opts.effectiveInvoker() 应用：运行没有人类发起人
-	// 时，闸门回退到 opts.AutopilotDelegationAuthorityUserID——调用方已从服务端信任、血缘验证
-	// 过的发言任务解析（见 autopilotDelegationAuthority）。这里不按 issue 来源重新推导，无关的
-	// 无归属运行因此不能靠评论那条 autopilot 的 issue 来借陌生 autopilot 创建者的授权。
+	// 修改 6. 委派授权由闸门经 opts.effectiveInvokerFor(agent) 应用：运行没有人类发起人时，闸门依次
+	// 回退到 opts.AutopilotDelegationAuthorityUserID（MUL-4857 的 autopilot 创建者）与
+	// opts.TaskDelegationAuthority（GONG-83 的任务级委托继承）——两者都由调用方从服务端信任、
+	// 血缘验证过的发言任务解析。这里不按 issue 来源重新推导，无关的无归属运行因此不能靠评论
+	// 所在那条 autopilot 的 issue 来借陌生 autopilot 创建者的授权。
 	mentions := util.ParseMentions(content)
 
 	// 显式 @agent / @squad 提及是直接请求，优先级高于 @all 广播（MUL-5411）。@all 只抑制下面
@@ -2598,7 +2622,7 @@ func (h *Handler) routeReplyToParentAuthor(ctx context.Context, issue db.Issue, 
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
-	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), uuidToString(issue.WorkspaceID)) {
+	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvokerFor(agent), uuidToString(issue.WorkspaceID)) {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, parent.AuthorID, opts)
@@ -2785,7 +2809,7 @@ func (h *Handler) routeAssignedSquadLeaderFallback(ctx context.Context, issue db
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
-	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), uuidToString(issue.WorkspaceID)) {
+	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvokerFor(agent), uuidToString(issue.WorkspaceID)) {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, squad.LeaderID, opts)
@@ -2953,7 +2977,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 			}
 			// 私密 leader 闸门优先（枚举安全：调不动 leader 的调用方永远学不到它的
 			// archived/runtime 状态）。
-			if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), wsID) {
+			if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvokerFor(agent), wsID) {
 				blockTarget("squad", m.ID, ReasonInvocationNotAllowed)
 				continue
 			}
@@ -3013,7 +3037,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 			continue
 		}
 		// 私密 agent 闸门优先，先于任何 archived/runtime 状态读取。
-		if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), wsID) {
+		if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvokerFor(agent), wsID) {
 			blockTarget("agent", m.ID, ReasonInvocationNotAllowed)
 			continue
 		}
@@ -3310,7 +3334,13 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		// 请求算出的、以及与完成 reconcile 将恢复的完全一致。非作者编辑留下 NULL，跨 issue 的
 		// 编辑任务在 autopilotDelegationAuthority 内被拒，两者都不能借用旧作者运行的权利。
 		delegationAuthority := h.autopilotDelegationAuthorityFromComment(r.Context(), issue, comment)
-		return h.triggerTasksForComment(r.Context(), issue, comment, parentComment, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), delegationAuthority, suppressAgentIDs)
+		return h.triggerTasksForComment(r.Context(), issue, comment, parentComment, actorType, actorID, commentTriggerComputeOptions{
+			OriginatorUserID:                   h.invokeOriginatorFromRequest(r, actorType, actorID),
+			AutopilotDelegationAuthorityUserID: delegationAuthority,
+			// 修改 7. 编辑重发与完成调和必须从「同一个」存储血缘解析任务级继承（GONG-83），
+			// 否则预览说会派发、真正重放时却被拒。
+			TaskDelegationAuthority: h.commentTaskDelegationResolver(r.Context(), issue, comment),
+		}, suppressAgentIDs)
 	}
 
 	// 取更新后评论的表情与附件。
@@ -3536,6 +3566,9 @@ func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.
 			ExcludeTriggerCommentID:            comment.ID,
 			OriginatorUserID:                   originatorUserID,
 			AutopilotDelegationAuthorityUserID: delegationAuthority,
+			// 修改 8. 推迟到完成时才重放的评论，同样靠这条评论自己的存储血缘续接
+			// 任务范围内的既定委托授权。
+			TaskDelegationAuthority: h.commentTaskDelegationResolver(ctx, issue, comment),
 		})
 		targets := targetsByComment[uuidToString(comment.ID)]
 		scoped := make([]commentAgentTrigger, 0, len(targets))

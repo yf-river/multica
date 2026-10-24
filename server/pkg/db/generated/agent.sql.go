@@ -3989,6 +3989,53 @@ func (q *Queries) FailStaleTasks(ctx context.Context, arg FailStaleTasksParams) 
 	return items, nil
 }
 
+const findTaskDelegationAuthorization = `-- name: FindTaskDelegationAuthorization :one
+SELECT t.originator_user_id
+FROM agent_task_queue t
+JOIN issue i ON i.id = t.issue_id
+JOIN agent_task_queue d ON d.id = t.delegated_from_task_id
+WHERE t.agent_id = $1
+  AND d.agent_id = $2
+  AND t.originator_user_id IS NOT NULL
+  AND d.originator_user_id = t.originator_user_id
+  AND t.originator_source IN ('delegation', 'comment_source')
+  AND (t.issue_id = $3 OR i.parent_issue_id = $3)
+  AND i.workspace_id = $4
+ORDER BY t.created_at DESC
+LIMIT 1
+`
+
+type FindTaskDelegationAuthorizationParams struct {
+	TargetAgentID    pgtype.UUID `json:"target_agent_id"`
+	DelegatorAgentID pgtype.UUID `json:"delegator_agent_id"`
+	ScopeIssueID     pgtype.UUID `json:"scope_issue_id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+}
+
+// 1. GONG-83: the evidence that authorizes task-level delegation inheritance.
+// Finds the evidence that a human authorized a delegating agent's run to hand
+// work to the target agent inside one board task scope. delegated_from_task_id
+// records the delegating run, so a match proves the chain
+// "human -> delegator run -> target agent" really happened; it is never inferred
+// from provenance columns alone. Scope may be the board task itself or one of
+// its direct children (the delegation form is "the coordinator creates a
+// sub-task and assigns the developer"), and the evidence issue must live in the
+// requested workspace so a foreign tenant can never satisfy it.
+// originator_source is restricted to the two lineage labels that copy a parent
+// run's human (direct_human / trigger_owner / rule_owner / owner_fallback /
+// unattributed never describe a delegation).
+func (q *Queries) FindTaskDelegationAuthorization(ctx context.Context, arg FindTaskDelegationAuthorizationParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, findTaskDelegationAuthorization,
+		arg.TargetAgentID,
+		arg.DelegatorAgentID,
+		arg.ScopeIssueID,
+		arg.WorkspaceID,
+	)
+	var originator_user_id pgtype.UUID
+	err := row.Scan(&originator_user_id)
+	return originator_user_id, err
+}
+
 const getAgent = `-- name: GetAgent :one
 SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, conversation_starters FROM agent
 WHERE id = $1

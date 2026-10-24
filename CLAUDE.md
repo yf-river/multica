@@ -278,3 +278,4 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 - All queries filter by `workspace_id`; membership gates access; `X-Workspace-ID` selects the workspace.
 - Issue assignees are polymorphic: `assignee_type` plus `assignee_id` can reference a member or an agent.
+- Agent invocation authority (who may trigger a run, and which human the gate uses) is defined in [docs/operations/agent-invocation-authority.md](docs/operations/agent-invocation-authority.md); attribution is never the same thing as authorization.

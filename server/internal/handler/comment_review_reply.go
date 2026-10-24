@@ -143,7 +143,7 @@ func (h *Handler) resolveReviewReplyAgentRoute(ctx context.Context, issue db.Iss
 		return recipient
 	}
 	recipient.RecipientName = agent.Name
-	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvoker(), uuidToString(issue.WorkspaceID)) {
+	if !h.canInvokeAgent(ctx, agent, authorType, authorID, opts.effectiveInvokerFor(agent), uuidToString(issue.WorkspaceID)) {
 		recipient.ReasonCode = ReasonInvocationNotAllowed
 		return recipient
 	}

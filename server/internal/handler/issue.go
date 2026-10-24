@@ -3681,7 +3681,7 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 			return http.StatusBadRequest, "cannot assign to archived agent"
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		effectiveInvoker := h.effectiveInvocationAuthorityFromRequest(r, scope, actorType, actorID, workspaceID)
+		effectiveInvoker := h.effectiveInvocationAuthorityFromRequest(r, scope, agent, actorType, actorID, workspaceID)
 		if !h.canInvokeAgent(ctx, agent, actorType, actorID, effectiveInvoker, workspaceID) {
 			// 指明「缺什么权限」，而不是「目标是什么配置」：旧的 "private agent" 措辞既泄露了
 			// agent 的权限模式，对 scoped 到特定人身上的 public_to agent 又根本是错的。这里
@@ -3707,7 +3707,10 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad"
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		effectiveInvoker := h.effectiveInvocationAuthorityFromRequest(r, scope, actorType, actorID, workspaceID)
+		// 修改 1. squad 分支刻意不接任务级委托继承：领袖真正入队时还会被 enqueueSquadLeaderTask 用
+		// OriginatorForIssueTask 再判一次（那是领袖任务行上的归因来源），两处解析不同会让指派
+		// 成功返回却什么都不跑。这条路径保持既有边界——无法归因的运行指派私有领袖仍失败关闭。
+		effectiveInvoker := h.baseInvocationAuthorityFromRequest(r, scope, actorType, actorID, workspaceID)
 		if !h.canInvokeAgent(ctx, leader, actorType, actorID, effectiveInvoker, workspaceID) {
 			// 与上面 agent 分支同样的措辞规则；「this squad」避免泄露 leader agent 的
 			// 权限模式。
@@ -3753,7 +3756,7 @@ func (h *Handler) assigneeFallbackAgent(ctx context.Context, issue db.Issue, act
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return db.Agent{}, false, false
 	}
-	if !h.canInvokeAgent(ctx, agent, actorType, actorID, opts.effectiveInvoker(), uuidToString(issue.WorkspaceID)) {
+	if !h.canInvokeAgent(ctx, agent, actorType, actorID, opts.effectiveInvokerFor(agent), uuidToString(issue.WorkspaceID)) {
 		return db.Agent{}, false, false
 	}
 	// 合并队列：有待处理任务仍是合法的路由目标，但真正会入队的调用方用它避免叠加重复任务。

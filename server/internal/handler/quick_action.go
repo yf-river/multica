@@ -936,7 +936,12 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 	h.publishEvent(createdEvent)
 
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
-	dispatch := h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, originatorUserID, delegationAuthority, nil)
+	dispatch := h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, commentTriggerComputeOptions{
+		OriginatorUserID:                   originatorUserID,
+		AutopilotDelegationAuthorityUserID: delegationAuthority,
+		// 1. quick action 的评论按发起动作入队，任务级继承与普通评论走同一判定（GONG-83）。
+		TaskDelegationAuthority: h.requestTaskDelegationResolver(r, scopeExistingIssue(&issue), actorType, actorID, uuidToString(issue.WorkspaceID)),
+	}, nil)
 	resp.TriggerOutcomes = dispatch.Outcomes
 	resp.ReviewReply = dispatch.ReviewReply
 
