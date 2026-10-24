@@ -414,17 +414,23 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		usage = codebuddySelectUsage(usage, resultUsage, opts.ResumeSessionID != "", b.cfg.Logger)
 		// 子 Agent 的调用记录在父 session 目录下的 subagents/ 里，属于本次执行的 0:N 链路。
 		// 只有路径、CID、trace 都唯一时才并入；并入的是各自独立的用量行，不覆盖父链路。
-		subUsage, subTraces := codebuddyCollectSubagentUsage(b.cfg.Env, reportedSessionID, requestID)
-		if len(subUsage) > 0 && usage == nil {
-			usage = map[string]TokenUsage{}
-		}
-		for model, extra := range subUsage {
-			merged := usage[model]
-			merged.InputTokens += extra.InputTokens
-			merged.OutputTokens += extra.OutputTokens
-			merged.CacheReadTokens += extra.CacheReadTokens
-			merged.CacheWriteTokens += extra.CacheWriteTokens
-			usage[model] = merged
+		subUsage, subTraces, subCalls := codebuddyCollectSubagentUsage(b.cfg.Env, reportedSessionID, requestID)
+		// 子 Agent 的 assistant 信封也会进 stream，所以同一个调用可能已经被记过一次。
+		// 只在"stream 没有提供逐调用身份"或"这个 key 确实没被观测到"时才补用量；
+		// 已观测的只补那条独立 trace。判不准就不加，绝不按最大值/差值猜。
+		switch {
+		case len(subCalls) == 0:
+			// 没有可比对的调用集合，子用量未知：保留 stream 已知量，只让 traces 落地。
+			if len(subTraces) > 0 {
+				b.cfg.Logger.Info("subagent usage stays unknown: no per-call identity in stream",
+					"traces", len(subTraces))
+			}
+		default:
+			if usage == nil {
+				usage = map[string]TokenUsage{}
+			}
+			usage = mergeSubagentUsage(usage, usageCalls, subCalls)
+			_ = subUsage // 逐调用合并已经完成，聚合值只用于日志
 		}
 		// SDK 侧溯源：只在 session 文件唯一、文件内 trace id 唯一时附上；任何歧义
 		// 都留空，让上层把这条链路当作"只有 CID 的准确关联"。
@@ -811,4 +817,28 @@ func codebuddyUncachedInput(input, cacheRead, cacheWrite int64) int64 {
 // 「字段齐全但全零」的用量当有效数据。
 func codebuddyUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+}
+
+// mergeSubagentUsage 把"stream 里还没观测到"的子调用增量并入用量。
+// 已观测的（同 CID+messageId+model）跳过——它们的 token 已经在 stream 里计过一次。
+func mergeSubagentUsage(usage map[string]TokenUsage, observed map[codebuddyUsageCall]TokenUsage, calls []SubagentCall) map[string]TokenUsage {
+	if len(calls) == 0 {
+		return usage
+	}
+	if usage == nil {
+		usage = map[string]TokenUsage{}
+	}
+	for _, call := range calls {
+		key := codebuddyUsageCall{request: call.CID, message: call.MessageID, model: call.Model}
+		if _, seen := observed[key]; seen {
+			continue
+		}
+		merged := usage[call.Model]
+		merged.InputTokens += call.Usage.InputTokens
+		merged.OutputTokens += call.Usage.OutputTokens
+		merged.CacheReadTokens += call.Usage.CacheReadTokens
+		merged.CacheWriteTokens += call.Usage.CacheWriteTokens
+		usage[call.Model] = merged
+	}
+	return usage
 }

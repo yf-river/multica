@@ -71,7 +71,7 @@ func stageTree(t *testing.T, parent, child []byte) string {
 func TestCodebuddyCollectSubagentUsageCollectsThisRun(t *testing.T) {
 	root := stageTree(t, testParentTranscript(), testChildTranscript(292))
 
-	usage, traces := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID)
+	usage, traces, _ := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID)
 	if len(traces) != 1 || traces[0].TraceID != testChildCID || traces[0].SDKTraceID != testSDKTrace {
 		t.Fatalf("traces: %+v", traces)
 	}
@@ -84,7 +84,7 @@ func TestCodebuddyCollectSubagentUsageCollectsThisRun(t *testing.T) {
 // 同一父 session 的下一轮没有 Agent 调用时，绝不能把上一轮的 child 再算进来。
 func TestCodebuddyCollectSubagentUsageIgnoresPreviousRound(t *testing.T) {
 	root := stageTree(t, testParentTranscript(), testChildTranscript(292))
-	if usage, traces := codebuddyCollectSubagentUsage(envOf(root), testParentSession, "dddddddddddddddddddddddddddddddd"); usage != nil || traces != nil {
+	if usage, traces, _ := codebuddyCollectSubagentUsage(envOf(root), testParentSession, "dddddddddddddddddddddddddddddddd"); usage != nil || traces != nil {
 		t.Fatalf("must not replay an earlier round's child: %v %v", usage, traces)
 	}
 }
@@ -108,7 +108,7 @@ func TestCodebuddyCollectSubagentUsageRejectsBrokenChildFile(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := stageTree(t, testParentTranscript(), body)
-			if usage, traces := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID); usage != nil || traces != nil {
+			if usage, traces, _ := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID); usage != nil || traces != nil {
 				t.Fatalf("broken child file must yield nothing, got %v %v", usage, traces)
 			}
 		})
@@ -126,7 +126,7 @@ func TestCodebuddyCollectSubagentUsageRejectsCrossFileDuplicate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sub, "agent-11111111-2222-3333-4444-555555555555.jsonl"), testChildTranscript(292), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if usage, traces := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID); usage != nil || traces != nil {
+	if usage, traces, _ := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID); usage != nil || traces != nil {
 		t.Fatalf("same call in two child files must be rejected, got %v %v", usage, traces)
 	}
 }
@@ -141,7 +141,7 @@ func TestCodebuddyCollectSubagentUsageSkipsFIFO(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if usage, traces := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID); usage != nil || traces != nil {
+		if usage, traces, _ := codebuddyCollectSubagentUsage(envOf(root), testParentSession, testRootCID); usage != nil || traces != nil {
 			t.Errorf("FIFO child must stay unknown: %v %v", usage, traces)
 		}
 	}()
@@ -193,5 +193,43 @@ func TestAgentIDsInTextRejectsUnsafeNames(t *testing.T) {
 	}
 	if ids := agentIDsInText("[Agent ID: agent-c4ec9986]"); len(ids) != 1 {
 		t.Fatalf("valid id rejected: %v", ids)
+	}
+}
+
+// 子调用已经进入 stream（同 CID+messageId+model）时不能再加一次用量。
+func TestMergeSubagentUsageSkipsObservedCalls(t *testing.T) {
+	call := SubagentCall{
+		CID: testChildCID, MessageID: "msg-1", Model: "m",
+		Usage: TokenUsage{InputTokens: 10, OutputTokens: 5},
+	}
+	usage := map[string]TokenUsage{"m": {InputTokens: 100, OutputTokens: 20}}
+	observed := map[codebuddyUsageCall]TokenUsage{{testChildCID, "msg-1", "m"}: {}}
+
+	got := mergeSubagentUsage(usage, observed, []SubagentCall{call})
+	if got["m"].InputTokens != 100 || got["m"].OutputTokens != 20 {
+		t.Fatalf("observed call must not be added twice: %+v", got["m"])
+	}
+}
+
+// 流里没有这条调用时才补增量。
+func TestMergeSubagentUsageAddsUnobservedCalls(t *testing.T) {
+	call := SubagentCall{
+		CID: testChildCID, MessageID: "msg-2", Model: "m",
+		Usage: TokenUsage{InputTokens: 10, OutputTokens: 5, CacheReadTokens: 3},
+	}
+	usage := map[string]TokenUsage{"m": {InputTokens: 100, OutputTokens: 20}}
+	observed := map[codebuddyUsageCall]TokenUsage{{"other", "msg-9", "m"}: {}}
+
+	got := mergeSubagentUsage(usage, observed, []SubagentCall{call})
+	if got["m"].InputTokens != 110 || got["m"].OutputTokens != 25 || got["m"].CacheReadTokens != 3 {
+		t.Fatalf("unobserved call must be added: %+v", got["m"])
+	}
+}
+
+// 没有逐调用身份时不做任何增量。
+func TestMergeSubagentUsageWithoutIdentityAddsNothing(t *testing.T) {
+	usage := map[string]TokenUsage{"m": {InputTokens: 100}}
+	if got := mergeSubagentUsage(usage, nil, nil); got["m"].InputTokens != 100 {
+		t.Fatalf("no calls means no increment: %+v", got["m"])
 	}
 }
