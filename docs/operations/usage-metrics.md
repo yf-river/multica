@@ -188,12 +188,22 @@ SDK ID、文件hash或session冲突返回409，整批关联变更回滚；已有
 `session_conflict`审计，原身份、来源与SDK证据保留。旧daemon不传这些字段仍可上报。
 SDK自报的 traceId 与外部 AgentLens 的解析/权限/逐span对照是不同证据，后者仍需单独验证。
 
-daemon 现在会自己带上这三项：一次运行结束后按 `<CODEBUDDY_CONFIG_DIR>/projects/*/<session>.jsonl`
-定位该 session 的 SDK 日志，要求**文件唯一且文件内 `providerData.traceId` 唯一**，才把
-SDK trace id、该文件快照的 sha256 与路径挂到 CID 相同的那条链路上。文件不唯一（同一 session
-出现在多个工作目录）、trace id 不唯一、文件缺失或未配置目录时，三项全部留空——那条记录仍是
-只带 CID 的准确关联，不会因为"看起来能凑"而得到猜测的 SDK id。换新会话重试会产生第二条链路，
-第二条不会继承第一条的溯源。
+daemon 现在会自己带上这三项。一次运行结束后，先解析配置目录：子进程环境里的
+`CODEBUDDY_CONFIG_DIR` → daemon 进程自身的同名变量 → `$HOME/.codebuddy`，都解析不出就不找。
+然后按 `<配置目录>/projects/*/<session>.jsonl` 定位本 session 的日志，并且**只统计属于本轮
+请求的记录**：`providerData.conversationRequestId` 等于本轮 CID，记录自带的 `sessionId`、
+`cwd` 与本轮一致（有才比），`providerData.traceId` 为 32 位小写十六进制。
+
+因为筛选是按 CID 而不是按整份文件，同一 session 里旧一轮与新一轮可以各自取得自己的 trace id；
+文件里只有旧 CID 时本轮留空，绝不会把上一轮的 trace 挂到这次执行上。两条不同 trace、截断行、
+读取错误、非 32hex、session/cwd 不符、同一 session 出现在多个工作目录，一律留空——那条记录
+仍是只带 CID 的准确关联。换新会话重试会产生第二条链路，第二条带自己的 CID 与溯源，不继承
+第一条。
+
+这段读取跑在发送核心 Result 之前，所以有硬保护：只接受**普通文件**（FIFO/设备/符号链接直接
+当未知，避免阻塞），上限 **64 MiB**，并在 open 之后再用 limit reader 兜一次；读不到或超限就
+返回未知，不拖住已知的 usage/session/CID。本地绝对路径只进日志与私有证据，API 字段始终是
+`providerData.traceId` 这个标记。
 
 取消立即终止backend，最多5秒收取末Result，期间继续消费已在途消息。已观测的 Usage、
 session、provider 请求标识随结果保留，取消/超时/watchdog终态不变；末结果未返回时明确
