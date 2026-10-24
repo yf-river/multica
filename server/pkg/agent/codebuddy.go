@@ -156,6 +156,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			SessionID:      "",
 			ResumeRejected: true,
 		}
+		close(result)
 		return &Session{Messages: messages, Result: result}, nil
 	}
 

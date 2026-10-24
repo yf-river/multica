@@ -150,18 +150,24 @@ func isLowerHex(value string) bool {
 	return !strings.ContainsAny(value, " \t")
 }
 
-// codebuddySessionTranscriptMissing 判断本轮要 resume 的会话在本地是否根本没有记录。
+// codebuddySessionTranscriptMissing 判断本轮要 resume 的会话在本地是否确定没有记录。
 //
-// 只有当我们确实能定位到 CodeBuddy 的 projects 目录时才给出结论：目录不存在、
-// 或者配置目录解析不出来，说明我们对磁盘一无所知，此时返回 false，让原来的
-// 续接流程照常走，不能拿"看不到"当成"不存在"。
+// 配置目录的解析必须和子进程看到的一致：子进程环境是 os.Environ() 再叠加 cfg.Env，
+// 所以 cfg.Env 没写但 daemon 进程环境里有 CODEBUDDY_CONFIG_DIR 时，CLI 用的是后者
+// ——只看 cfg.Env 会把"能续接"误判成"缺文件"。
+//
+// 结论只允许在"确定不存在"时给出：目录 stat 失败、项目目录不可读（例如 0111）、
+// 枚举出错，都算未知（返回 false），继续走原来的续接流程。Glob 会静默吞掉读取
+// 权限错误，所以这里逐层 ReadDir 并检查错误，而不是用 Glob 的空结果当证据。
 func codebuddySessionTranscriptMissing(envDir, sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
-	// 这里不用进程环境/HOME 回落：拒绝续接是"否定"判断，只有子进程自己的配置目录
-	// 明确可见时才下结论，否则宁可照常续接。
 	dir := strings.TrimSpace(envDir)
+	if dir == "" {
+		// 子进程会继承 daemon 进程的环境，这里必须同样看待。
+		dir = strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR"))
+	}
 	if dir == "" {
 		return false
 	}
@@ -169,9 +175,27 @@ func codebuddySessionTranscriptMissing(envDir, sessionID string) bool {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return false
 	}
-	matches, err := filepath.Glob(filepath.Join(root, "*", sessionID+".jsonl"))
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return false
 	}
-	return len(matches) == 0
+	target := sessionID + ".jsonl"
+	sawProjectDir := false
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sawProjectDir = true
+		files, err := os.ReadDir(filepath.Join(root, entry.Name()))
+		if err != nil {
+			// 读不进去就证明不了"没有"，保持未知。
+			return false
+		}
+		for _, file := range files {
+			if file.Name() == target {
+				return false
+			}
+		}
+	}
+	return sawProjectDir
 }

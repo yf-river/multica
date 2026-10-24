@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -153,6 +156,7 @@ func TestCodebuddySDKProvenanceSkipsOversizedFile(t *testing.T) {
 }
 
 func TestCodebuddySessionTranscriptMissing(t *testing.T) {
+	t.Setenv("CODEBUDDY_CONFIG_DIR", "")
 	root := t.TempDir()
 	// 没有 projects 目录：我们对磁盘一无所知，不能据此判定"缺失"。
 	if codebuddySessionTranscriptMissing(root, "sess") {
@@ -170,5 +174,72 @@ func TestCodebuddySessionTranscriptMissing(t *testing.T) {
 	}
 	if codebuddySessionTranscriptMissing(root, "") {
 		t.Fatal("no session requested means nothing to check")
+	}
+}
+
+// 子进程继承 daemon 进程环境：cfg.Env 没写、进程环境有 CODEBUDDY_CONFIG_DIR 时，
+// CLI 用的就是进程环境里那个目录，判定必须同样。
+func TestCodebuddySessionTranscriptMissingInheritsProcessEnv(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "projects", "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEBUDDY_CONFIG_DIR", root)
+	if !codebuddySessionTranscriptMissing("", "gone-session") {
+		t.Fatal("inherited config dir must be used, otherwise the guard never fires")
+	}
+	writeSDKSession(t, root, "work", "live-session", `{"providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
+	if codebuddySessionTranscriptMissing("", "live-session") {
+		t.Fatal("present transcript must not be reported missing")
+	}
+}
+
+// 目录可 stat 但不可读时，"没有这个文件"证明不了，必须保持未知。
+func TestCodebuddySessionTranscriptUnknownWhenUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses directory permission checks")
+	}
+	root := t.TempDir()
+	project := filepath.Join(root, "projects", "locked")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(project, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(project, 0o755) })
+	if codebuddySessionTranscriptMissing(root, "sess") {
+		t.Fatal("unreadable project dir cannot prove absence")
+	}
+}
+
+// 快速拒绝路径必须像正常收尾一样关闭两条通道，否则消费者会一直等。
+func TestCodebuddyExecuteClosesChannelsOnResumeRejection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "projects", "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEBUDDY_CONFIG_DIR", root)
+	backend := &codebuddyBackend{cfg: Config{
+		ExecutablePath: "true",
+		Env:            map[string]string{"CODEBUDDY_CONFIG_DIR": root},
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}}
+	session, err := backend.Execute(context.Background(), "hi", ExecOptions{ResumeSessionID: "gone-session"})
+	if err != nil {
+		t.Fatalf("expected a rejected session, got error %v", err)
+	}
+	for range session.Messages {
+		t.Fatal("messages channel must be closed and empty")
+	}
+	result, ok := <-session.Result
+	if !ok {
+		t.Fatal("result must carry the rejection")
+	}
+	if !result.ResumeRejected || result.Status != "failed" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if _, ok := <-session.Result; ok {
+		t.Fatal("result channel must be closed after the single value")
 	}
 }
