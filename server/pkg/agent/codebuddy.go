@@ -352,9 +352,6 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		// 等待进程退出。
 		exitErr := cmd.Wait()
 		releaseProcessGroup(cmd)
-		// CLI 已退出（正常/异常/被杀都一样）：把它派生出去、已经脱离进程组的
-		// 后代按本任务归属回收，避免孤儿继续占资源。有界、只杀能证明归属的。
-		reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], cliIdentity, b.cfg.Logger)
 		duration := time.Since(startTime)
 		// writeDone 是有缓冲的（容量 1），且写端总会发送——到 cmd 退出时，prompt 写入
 		// 要么已成功、要么遇到 broken pipe、要么被结束 cmd 的 kill 解除阻塞。
@@ -409,6 +406,11 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			)
 		}
 
+		// 只在"没正常收尾"时回收越组后代：正常完成的运行可能故意留下后台服务，
+		// 不能因为我们看不出意图就杀掉。异常退出、被杀、超时、取消才清理。
+		if exitErr != nil || runCtx.Err() != nil || finalStatus != "completed" {
+			reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], cliIdentity, b.cfg.Logger)
+		}
 		usage = codebuddySelectUsage(usage, resultUsage, opts.ResumeSessionID != "", b.cfg.Logger)
 		// 子 Agent 的调用记录在父 session 目录下的 subagents/ 里，属于本次执行的 0:N 链路。
 		// 只有路径、CID、trace 都唯一时才并入；并入的是各自独立的用量行，不覆盖父链路。

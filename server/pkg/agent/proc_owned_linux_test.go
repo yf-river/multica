@@ -69,3 +69,19 @@ func TestReapTaskEscapeesLeavesOtherTasksAlone(t *testing.T) {
 		t.Fatalf("process of another task was killed: %d", other.Process.Pid)
 	}
 }
+
+// 比 CLI 更早启动的同任务进程不属于本次运行，不能被回收。
+func TestReapTaskEscapeesLeavesOlderProcessesAlone(t *testing.T) {
+	older := startEscapee(t, "task-owned")
+	time.Sleep(30 * time.Millisecond)
+	cli := startEscapee(t, "task-cli")
+	identity := captureCLIIdentity(cli.Process.Pid)
+	if !identity.Valid {
+		t.Fatal("identity must be readable")
+	}
+	reapTaskEscapees("task-owned", identity, nil)
+	time.Sleep(150 * time.Millisecond)
+	if !ownedProcessAlive(older.Process.Pid) {
+		t.Fatalf("process started before the CLI must survive: %d", older.Process.Pid)
+	}
+}

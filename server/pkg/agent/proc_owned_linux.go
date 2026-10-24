@@ -48,18 +48,19 @@ func reapTaskEscapees(taskID string, cli CLIIdentity, logger *slog.Logger) int {
 		return 0
 	}
 	cliTicks := cli.StartTicks
-	targets := ownedTaskProcesses(taskID, cliTicks, cli.UID)
+	// 发现阶段也计入同一个预算：枚举 /proc、读 environ 都不能无界。
+	deadline := time.Now().Add(reapBudget)
+	targets := ownedTaskProcesses(taskID, cliTicks, cli.UID, deadline)
 	if len(targets) == 0 {
 		return 0
 	}
-	for _, pid := range targets {
-		if !stillOwned(pid, taskID, cli.UID) {
+	for _, target := range targets {
+		if !stillOwned(target, taskID, cli.UID) {
 			continue
 		}
-		_ = syscall.Kill(pid, syscall.SIGTERM)
+		_ = syscall.Kill(target.pid, syscall.SIGTERM)
 	}
 	// 有界等待：不拉长 Result/记账的总预算，最多 150ms 就升级到 KILL。
-	deadline := time.Now().Add(150 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if !anyOwnedAlive(targets) {
 			return len(targets)
@@ -67,9 +68,10 @@ func reapTaskEscapees(taskID string, cli CLIIdentity, logger *slog.Logger) int {
 		time.Sleep(10 * time.Millisecond)
 	}
 	killed := 0
-	for _, pid := range targets {
-		if ownedProcessAlive(pid) && stillOwned(pid, taskID, cli.UID) {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+	for _, target := range targets {
+		// KILL 前再核一遍身份：PID 可能已经被复用成别的进程。
+		if ownedProcessAlive(target.pid) && stillOwned(target, taskID, cli.UID) {
+			_ = syscall.Kill(target.pid, syscall.SIGKILL)
 			killed++
 		}
 	}
@@ -80,23 +82,38 @@ func reapTaskEscapees(taskID string, cli CLIIdentity, logger *slog.Logger) int {
 	return len(targets)
 }
 
-// stillOwned 在每次发信号前复核：UID 与任务标识都没变才算我们的。
-func stillOwned(pid int, taskID string, uid int) bool {
-	if current, ok := processUID(pid); !ok || current != uid {
-		return false
-	}
-	return envHasTaskID(pid, taskID)
+// ownedTarget 是发现阶段记下的候选身份；每次发信号前都要整份复核。
+type ownedTarget struct {
+	pid    int
+	ticks  uint64
+	taskID string
 }
 
-func ownedTaskProcesses(taskID string, cliTicks uint64, uid int) []int {
+// stillOwned 在每次发信号前复核：UID、启动 tick 与任务标识都没变才算我们的。
+// PID 被复用后 tick 会变，这里就把它挡掉。
+func stillOwned(target ownedTarget, taskID string, uid int) bool {
+	if current, ok := processUID(target.pid); !ok || current != uid {
+		return false
+	}
+	ticks, ok := processStartTicks(target.pid)
+	if !ok || ticks != target.ticks {
+		return false
+	}
+	return envHasTaskID(target.pid, taskID)
+}
+
+func ownedTaskProcesses(taskID string, cliTicks uint64, uid int, deadline time.Time) []ownedTarget {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
 	euid := uid
 	self := os.Getpid()
-	var out []int
+	var out []ownedTarget
 	for _, entry := range entries {
+		if time.Now().After(deadline) {
+			return nil
+		}
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid <= 1 || pid == self {
 			continue
@@ -114,7 +131,7 @@ func ownedTaskProcesses(taskID string, cliTicks uint64, uid int) []int {
 		if !envHasTaskID(pid, taskID) {
 			continue
 		}
-		out = append(out, pid)
+		out = append(out, ownedTarget{pid: pid, ticks: ticks})
 	}
 	return out
 }
@@ -139,9 +156,9 @@ func ownedProcessAlive(pid int) bool {
 	return fields[0] != "Z"
 }
 
-func anyOwnedAlive(pids []int) bool {
-	for _, pid := range pids {
-		if ownedProcessAlive(pid) {
+func anyOwnedAlive(pids []ownedTarget) bool {
+	for _, target := range pids {
+		if ownedProcessAlive(target.pid) {
 			return true
 		}
 	}
@@ -245,3 +262,6 @@ func envHasTaskID(pid int, taskID string) bool {
 	}
 	return false
 }
+
+// reapBudget 是"发现 + 等待 + 升级"的整体上限，不与 Result 收集抢预算。
+const reapBudget = 150 * time.Millisecond
