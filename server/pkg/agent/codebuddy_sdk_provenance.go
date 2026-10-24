@@ -159,7 +159,9 @@ func codebuddySessionTranscriptMissing(envDir, sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
-	dir := resolveSDKConfigDir(envDir)
+	// 这里不用进程环境/HOME 回落：拒绝续接是"否定"判断，只有子进程自己的配置目录
+	// 明确可见时才下结论，否则宁可照常续接。
+	dir := strings.TrimSpace(envDir)
 	if dir == "" {
 		return false
 	}
