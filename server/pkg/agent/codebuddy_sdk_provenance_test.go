@@ -3,7 +3,9 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func writeSDKSession(t *testing.T, dir, project, session, body string) string {
@@ -101,5 +103,51 @@ func TestCodebuddySDKProvenanceMissingInputs(t *testing.T) {
 	writeSDKSession(t, dir, "work-b", "sess", `{"providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
 	if id, _, _ := codebuddySDKProvenance(dir, "sess", "/work", "cid"); id != "" {
 		t.Fatal("ambiguous file must stay unknown")
+	}
+}
+
+// 溯源是附加信息：源不是普通文件（FIFO/设备）时必须立刻当未知返回，
+// 不能阻塞在读取上——这段代码跑在发送核心 Result 之前。
+func TestCodebuddySDKProvenanceSkipsNonRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	full := filepath.Join(dir, "projects", "work")
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(full, "sess.jsonl")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if id, sum, src := codebuddySDKProvenance(dir, "sess", "/work", "cid"); id != "" || sum != "" || src != "" {
+			t.Errorf("non-regular file must stay unknown, got %q %q %q", id, sum, src)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provenance blocked on a FIFO")
+	}
+}
+
+func TestCodebuddySDKProvenanceSkipsOversizedFile(t *testing.T) {
+	dir := t.TempDir()
+	full := filepath.Join(dir, "projects", "work")
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(full, "sess.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxSDKLogBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if id, _, _ := codebuddySDKProvenance(dir, "sess", "/work", "cid"); id != "" {
+		t.Fatal("oversized file must stay unknown")
 	}
 }

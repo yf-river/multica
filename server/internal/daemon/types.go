@@ -341,9 +341,10 @@ type TaskUsageEntry struct {
 // TaskTraceEntry 是本次执行在外部链路观测系统里的一条根请求记录。
 //
 // Provider 是 backend 名（codebuddy / claude …），SessionID 是子进程自己声明的会话，
-// ProviderTraceID 是子进程自己声明的根请求 id（等于观测系统的 trace id）。三者都
-// 取自子进程输出，绝不从父进程环境变量推断。Correlation 说明这条关联是"准确记录"
-// 还是"事后按会话+时间窗推断"，为空的按准确记录处理。
+// ProviderTraceID 是子进程自己声明的根请求 id。它与外部观测系统（AgentLens）的
+// trace/span 是否对应**未经实测**，不要把它当成观测系统 id 使用。三者都取自子进程
+// 输出，绝不从父进程环境变量推断。Correlation 说明这条关联是"准确记录"还是"事后
+// 按会话+时间窗推断"，为空的按准确记录处理。
 // ProviderTrace 是一条"某个子进程自报的根请求 id"及其所属 session。SessionID 可能为
 // 空——子进程没有在事件里声明 session 时，未知就保持未知，不能用别的进程的 session 补。
 type ProviderTrace struct {

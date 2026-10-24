@@ -6,10 +6,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// maxSDKLogBytes 是读 SDK 日志的上限。溯源是"有就给、没有就算了"的附加信息，
+// 不能为了它把一次已完成的运行拖住，也不能把大文件整个读进内存。
+const maxSDKLogBytes = 64 << 20
 
 // SDKTraceSourceMarker 是正式 traces 接口对 sdk_trace_source_path 要求的字面值：
 // 它说明 SDK id 取自记录里的哪个字段，而不是本地文件路径。绝对路径属于私有证据，
@@ -49,8 +54,24 @@ func codebuddySDKProvenanceWithSource(configDir, sessionID, cwd, cid string) (tr
 		return "", "", "", ""
 	}
 	filePath = matches[0]
-	raw, err := os.ReadFile(filePath)
+	// 只读普通文件：FIFO/字符设备/符号链接一律当未知。ReadFile 在 FIFO 上会阻塞，
+	// 而这段代码跑在"发核心 Result 之前"，堵住它会连带把取消时收回 Result 的预算
+	// 耗尽——宁可不给溯源，也不能拖住已知的 usage/session/CID。
+	info, err := os.Lstat(filePath)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", "", "", ""
+	}
+	if info.Size() > maxSDKLogBytes {
+		return "", "", "", ""
+	}
+	file, err := os.Open(filePath)
 	if err != nil {
+		return "", "", "", ""
+	}
+	defer func() { _ = file.Close() }()
+	// 再按上限读一次：Lstat 与 open 之间文件仍可能变大。
+	raw, err := io.ReadAll(io.LimitReader(file, maxSDKLogBytes+1))
+	if err != nil || int64(len(raw)) > maxSDKLogBytes {
 		return "", "", "", ""
 	}
 

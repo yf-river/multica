@@ -195,10 +195,11 @@ type Result struct {
 	// 只对应一个根请求；续跑会话会换新的根请求，所以它是"每次执行"级别的标识，
 	// 不能挂在会话或 issue 上。为空表示该 backend 不暴露，或本次运行没有产生请求。
 	ProviderTraceID string
-	// SDKTraceID 是 SDK 自己日志里的 trace id（traceparent 的 trace-id 段），
-	// 与 ProviderTraceID（子进程自报的根请求 id / CID）是两个不同命名空间的值，
-	// 也与外部观测系统（AgentLens）的 trace/span 不是一回事。只有在本轮实际
-	// session 对应的 SDK 日志文件唯一、且文件内 trace id 唯一时才填，其余留空。
+	// SDKTraceID 是 SDK 自己日志里、属于本轮请求的那条 trace id（取自记录
+	// providerData.traceId）。它与 ProviderTraceID（子进程自报的根请求 id）是两次
+	// 独立取值，正常情况下本就不相等；它与外部观测系统（AgentLens）trace/span 的
+	// 对应关系尚未实测，不能假定相同或不同。只有本轮 CID 在 SDK 日志里能唯一定位
+	// 到一条 trace id 时才填，其余留空。
 	SDKTraceID string
 	// SDKTraceSourceSHA256 是那份 SDK 日志文件快照的 sha256，用来复核"当时读到的
 	// 就是这一份文件"，而不是事后被改写的文件。
