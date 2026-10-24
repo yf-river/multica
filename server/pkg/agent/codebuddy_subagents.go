@@ -284,7 +284,7 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 			return nil, SubagentTrace{}, nil, false
 		}
 		if pd.TraceID == "" || pd.ConversationRequestID == "" || pd.MessageID == "" || pd.Model == "" ||
-			record.SessionID == "" || len(pd.TraceID) != 32 {
+			record.SessionID == "" || len(pd.TraceID) != 32 || !isLowerHex(pd.TraceID) {
 			return nil, SubagentTrace{}, nil, false
 		}
 		sawUsage = true

@@ -98,6 +98,9 @@ func TestCodebuddyCollectSubagentUsageRejectsBrokenChildFile(t *testing.T) {
 	cases := map[string][]byte{
 		"conflicting duplicate": append(testChildTranscript(292), []byte(second)...),
 		"malformed tail":        append(testChildTranscript(292), []byte(`{"sessionId":"x","providerData":{`)...),
+		"non-hex sdk id": []byte(fmt.Sprintf(
+			`{"sessionId":%q,"providerData":{"conversationRequestId":%q,"messageId":"msg-9","traceId":%q,"model":"claude-sonnet-5","rawUsage":{"prompt_tokens":10,"completion_tokens":1}}}`+"\n",
+			testChildSession, testChildCID, "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")),
 		"missing message id": []byte(fmt.Sprintf(
 			`{"sessionId":%q,"providerData":{"conversationRequestId":%q,"traceId":%q,"model":"claude-sonnet-5","rawUsage":{"prompt_tokens":10,"completion_tokens":1}}}`+"\n",
 			testChildSession, testChildCID, testSDKTrace)),
