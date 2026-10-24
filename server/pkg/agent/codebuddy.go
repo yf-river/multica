@@ -386,7 +386,13 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		usage = codebuddySelectUsage(usage, resultUsage, opts.ResumeSessionID != "", b.cfg.Logger)
 		// SDK 侧溯源：只在 session 文件唯一、文件内 trace id 唯一时附上；任何歧义
 		// 都留空，让上层把这条链路当作"只有 CID 的准确关联"。
-		sdkTraceID, sdkSum, sdkPath := codebuddySDKProvenance(b.cfg.Env["CODEBUDDY_CONFIG_DIR"], reportedSessionID)
+		sdkTraceID, sdkSum, sdkSource, sdkFile := codebuddySDKProvenanceWithSource(
+			b.cfg.Env["CODEBUDDY_CONFIG_DIR"], reportedSessionID, opts.Cwd, requestID,
+		)
+		if sdkTraceID != "" {
+			// 文件位置只留在日志与私有证据里；API 字段要用固定标记。
+			b.cfg.Logger.Info("codebuddy SDK trace provenance", "cid", requestID, "sdk_trace_id", sdkTraceID, "source_file", sdkFile)
+		}
 		resCh <- Result{
 			Status:               finalStatus,
 			Output:               finalOutput,
@@ -397,7 +403,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			ProviderTraceID:      requestID,
 			SDKTraceID:           sdkTraceID,
 			SDKTraceSourceSHA256: sdkSum,
-			SDKTraceSourcePath:   sdkPath,
+			SDKTraceSourcePath:   sdkSource,
 			ResumeRejected:       resumeRejected,
 		}
 	}()

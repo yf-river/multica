@@ -7578,10 +7578,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// token，而 task_usage 一条都没有。这里把已观测到的部分随错误一起带出去，
 		// 状态不参与决策（调用方只看 err），只用于记账。
 		return TaskResult{
-			Status:           "failed",
-			SessionID:        result.SessionID,
-			Usage:            buildTaskUsageEntries(provider, result.Usage),
-			ProviderTraceIDs: appendTraceID(nil, result.ProviderTraceID, result.SessionID),
+			Status:    "failed",
+			SessionID: result.SessionID,
+			Usage:     buildTaskUsageEntries(provider, result.Usage),
+			ProviderTraceIDs: attachSDKProvenance(
+				appendTraceID(nil, result.ProviderTraceID, result.SessionID), result,
+			),
 		}, err
 	}
 
@@ -7654,7 +7656,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// retryErr 非空时重试进程仍可能已经发出过请求，trace id 照样要留；空值会被
 		// appendTraceID 忽略，重复值不会重复记。session 用重试进程自己的，不是合并后的
 		// result.SessionID——两者相同只是因为重试成功了，逻辑上仍属于那个进程。
-		providerTraceIDs = appendTraceID(providerTraceIDs, retryResult.ProviderTraceID, retryResult.SessionID)
+		providerTraceIDs = attachSDKProvenance(
+			appendTraceID(providerTraceIDs, retryResult.ProviderTraceID, retryResult.SessionID), retryResult,
+		)
 	}
 
 	elapsed := time.Since(agentStartedAt).Round(time.Second)

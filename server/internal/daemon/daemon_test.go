@@ -5812,3 +5812,44 @@ func TestBuildTaskTraceEntriesSkipsHalfSDKProvenance(t *testing.T) {
 		t.Fatalf("half provenance must fall back to CID-only: %+v", entries[0])
 	}
 }
+
+// 生产者序列化出来的字段必须正好是 traces 接口认的形状：source 切到
+// local_session_jsonl，path 是 JSON 标记，id/hash 是对应长度的十六进制。
+// 这条断言盯的是"实际 payload"，不是结构体字段。
+func TestBuildTaskTraceEntriesMarshalMatchesAPI(t *testing.T) {
+	entries := buildTaskTraceEntries("codebuddy", []ProviderTrace{{
+		SessionID:            "sess-1",
+		TraceID:              "cid-1",
+		SDKTraceID:           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SDKTraceSourceSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}})
+	raw, err := json.Marshal(map[string]any{"traces": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Traces []struct {
+			Provider             string `json:"provider"`
+			SessionID            string `json:"session_id"`
+			ProviderTraceID      string `json:"provider_trace_id"`
+			Correlation          string `json:"correlation"`
+			Source               string `json:"source"`
+			SDKTraceID           string `json:"sdk_trace_id"`
+			SDKTraceSourceSHA256 string `json:"sdk_trace_source_sha256"`
+			SDKTraceSourcePath   string `json:"sdk_trace_source_path"`
+		} `json:"traces"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	got := payload.Traces[0]
+	if got.Source != "local_session_jsonl" || got.SDKTraceSourcePath != "providerData.traceId" {
+		t.Fatalf("payload shape rejected by API: %s", raw)
+	}
+	if got.Correlation != "exact" || got.Provider != "codebuddy" || got.SessionID == "" {
+		t.Fatalf("payload identity wrong: %s", raw)
+	}
+	if len(got.SDKTraceID) != 32 || len(got.SDKTraceSourceSHA256) != 64 {
+		t.Fatalf("payload lengths wrong: %s", raw)
+	}
+}
