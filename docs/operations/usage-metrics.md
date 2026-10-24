@@ -244,6 +244,25 @@ daemon 现在会自己带上这三项。一次运行结束后，先解析配置�
 与 `prompt_cache_write_tokens` 并存且互不相等，外部口径对"input 是否包含缓存"也有不一致的表现，
 因此不把某一侧的数值当作已验证结论，也不为对齐总数去改类别或取最大值。
 
+### 子调用标识的版本差异（2.174.0）
+
+外部 span 上的 `codebuddy.trace_id` 在 2.174.0 的子调用里**不等于**本地 SDK trace：
+
+| 项 | 值 |
+| --- | --- |
+| 外部子 span 属性 `codebuddy.trace_id` | `148b0cb292bd749c1a74864bf8fdd28c`（根 SDK） |
+| 本地 child SDK（`providerData.traceId`） | `ea9432f687b8b54352c92eab287e1b96` |
+
+两者仍能强对应，依据是 **CID + session + response.id（= 本地 messageId）** 三者一致，不是靠
+SDK id 相等。因此：
+
+- 落库保留**本地 SDK 源值**，不为了和外部属性相等去覆盖它；
+- 2.125.5 与 2.174.0 的对应关系不同，文档按版本分开写，不把"本地 child SDK = 外部 span 属性"
+  当成跨版本的通用结论；
+- 父子四类别的总量在 2.174.0 已确认精确进入 stream（父+child 一致），异常退出样本的
+  inclusive input 27962 / output 211 / read 23040 / write 0 也与平台 4922+23040 / 211 / 23040 / 0
+  一致，自有工具进程自动退出——该场景不受 child 采集改动影响，不再重复实测。
+
 ### 子调用与 stream 的重叠
 
 CLI 也会把子 Agent 的 assistant 信封送进父 stream，所以同一调用可能被记录两次。合并时按
