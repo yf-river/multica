@@ -351,7 +351,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		releaseProcessGroup(cmd)
 		// CLI 已退出（正常/异常/被杀都一样）：把它派生出去、已经脱离进程组的
 		// 后代按本任务归属回收，避免孤儿继续占资源。有界、只杀能证明归属的。
-		reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], startTime, b.cfg.Logger)
+		reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], cmd.Process.Pid, b.cfg.Logger)
 		duration := time.Since(startTime)
 		// writeDone 是有缓冲的（容量 1），且写端总会发送——到 cmd 退出时，prompt 写入
 		// 要么已成功、要么遇到 broken pipe、要么被结束 cmd 的 kill 解除阻塞。
@@ -409,7 +409,10 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		usage = codebuddySelectUsage(usage, resultUsage, opts.ResumeSessionID != "", b.cfg.Logger)
 		// 子 Agent 的调用记录在父 session 目录下的 subagents/ 里，属于本次执行的 0:N 链路。
 		// 只有路径、CID、trace 都唯一时才并入；并入的是各自独立的用量行，不覆盖父链路。
-		subUsage, subTraces := codebuddyCollectSubagentUsage(b.cfg.Env, reportedSessionID)
+		subUsage, subTraces := codebuddyCollectSubagentUsage(b.cfg.Env, reportedSessionID, requestID)
+		if len(subUsage) > 0 && usage == nil {
+			usage = map[string]TokenUsage{}
+		}
 		for model, extra := range subUsage {
 			merged := usage[model]
 			merged.InputTokens += extra.InputTokens

@@ -204,7 +204,8 @@ type Result struct {
 	// SDKTraceSourceSHA256 是那份 SDK 日志文件快照的 sha256，用来复核"当时读到的
 	// 就是这一份文件"，而不是事后被改写的文件。
 	SDKTraceSourceSHA256 string
-	// SDKTraceSourcePath 是该文件的绝对路径，便于人工复核；它是证据位置，不是可外链。
+	// SDKTraceSourcePath 是上报字段里的来源标记（固定 providerData.traceId），说明 SDK id
+	// 取自记录中的哪个字段；它**不是**本地文件路径。真实文件路径只进日志与私有证据。
 	SDKTraceSourcePath string
 	// ExtraTraces 是本轮产生的、父链路之外的子 Agent 调用链路。一次执行 0:N，
 	// 每条有自己的 CID/session/SDK trace，不能并进父链路，也不能算成同一次请求。

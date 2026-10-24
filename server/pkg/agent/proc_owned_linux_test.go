@@ -33,12 +33,13 @@ func waitGone(pid int, d time.Duration) bool {
 }
 
 func TestReapTaskEscapeesTerminatesOwnedEscapee(t *testing.T) {
-	start := time.Now()
+	cli := startEscapee(t, "task-cli")
+	time.Sleep(25 * time.Millisecond)
 	owned := startEscapee(t, "task-owned")
 	// 让它真正跑起来再判定。
 	time.Sleep(50 * time.Millisecond)
 
-	n := reapTaskEscapees("task-owned", start, nil)
+	n := reapTaskEscapees("task-owned", cli.Process.Pid, nil)
 	if n == 0 {
 		t.Fatal("owned escapee should have been reaped")
 	}
@@ -49,11 +50,12 @@ func TestReapTaskEscapeesTerminatesOwnedEscapee(t *testing.T) {
 
 // 关键控制：同一个 UID、但属于别的任务的进程，绝不能被杀。
 func TestReapTaskEscapeesLeavesOtherTasksAlone(t *testing.T) {
-	start := time.Now()
+	cli := startEscapee(t, "task-cli")
+	time.Sleep(25 * time.Millisecond)
 	other := startEscapee(t, "task-other")
 	time.Sleep(50 * time.Millisecond)
 
-	reapTaskEscapees("task-owned", start, nil)
+	reapTaskEscapees("task-owned", cli.Process.Pid, nil)
 	time.Sleep(200 * time.Millisecond)
 	if !ownedProcessAlive(other.Process.Pid) {
 		t.Fatalf("process of another task was killed: %d", other.Process.Pid)

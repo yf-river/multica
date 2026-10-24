@@ -21,11 +21,17 @@ import (
 // 归属判定必须够硬，否则就是误杀：同 UID + 进程环境里 MULTICA_TASK_ID 正好是本
 // 任务 + 启动时刻不早于 CLI。环境变量只在内存里读这两个字段，不打印、不落盘；
 // 判不准的进程一律放过。
-func reapTaskEscapees(taskID string, cliStart time.Time, logger *slog.Logger) int {
-	if taskID == "" {
+func reapTaskEscapees(taskID string, cliPID int, logger *slog.Logger) int {
+	if taskID == "" || cliPID <= 0 {
 		return 0
 	}
-	targets := ownedTaskProcesses(taskID, cliStart)
+	// 归属下界用 CLI 自己的原始 startTicks，而不用墙钟时间：墙钟会被 NTP/时区/采样
+	// 误差影响，tick 是内核给的、和候选进程同一坐标系。
+	cliTicks, ok := processStartTicks(cliPID)
+	if !ok {
+		return 0
+	}
+	targets := ownedTaskProcesses(taskID, cliTicks)
 	if len(targets) == 0 {
 		return 0
 	}
@@ -54,7 +60,7 @@ func reapTaskEscapees(taskID string, cliStart time.Time, logger *slog.Logger) in
 	return len(targets)
 }
 
-func ownedTaskProcesses(taskID string, cliStart time.Time) []int {
+func ownedTaskProcesses(taskID string, cliTicks uint64) []int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
@@ -73,8 +79,8 @@ func ownedTaskProcesses(taskID string, cliStart time.Time) []int {
 		if uid, ok := processUID(pid); !ok || uid != euid {
 			continue
 		}
-		start, ok := processStartTime(pid)
-		if !ok || start.Before(cliStart.Add(-time.Second)) {
+		ticks, ok := processStartTicks(pid)
+		if !ok || ticks < cliTicks {
 			continue
 		}
 		if !envHasTaskID(pid, taskID) {
@@ -132,6 +138,24 @@ func processUID(pid int) (int, bool) {
 		return uid, err == nil
 	}
 	return 0, false
+}
+
+// processStartTicks 取 /proc/<pid>/stat 第 22 字段：开机后 tick 数，用作进程身份下界。
+func processStartTicks(pid int) (uint64, bool) {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0, false
+	}
+	idx := bytes.LastIndexByte(raw, ')')
+	if idx < 0 || idx+2 > len(raw) {
+		return 0, false
+	}
+	fields := strings.Fields(string(raw[idx+2:]))
+	if len(fields) < 20 {
+		return 0, false
+	}
+	ticks, err := strconv.ParseUint(fields[19], 10, 64)
+	return ticks, err == nil
 }
 
 // processStartTime 从 /proc/<pid>/stat 的第 22 个字段取启动时刻（开机后 tick 数）。
