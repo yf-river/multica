@@ -388,12 +388,12 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		// 都留空，让上层把这条链路当作"只有 CID 的准确关联"。
 		sdkTraceID, sdkSum, sdkPath := codebuddySDKProvenance(b.cfg.Env["CODEBUDDY_CONFIG_DIR"], reportedSessionID)
 		resCh <- Result{
-			Status:          finalStatus,
-			Output:          finalOutput,
-			Error:           finalError,
-			DurationMs:      duration.Milliseconds(),
-			SessionID:       reportedSessionID,
-			Usage:           usage,
+			Status:               finalStatus,
+			Output:               finalOutput,
+			Error:                finalError,
+			DurationMs:           duration.Milliseconds(),
+			SessionID:            reportedSessionID,
+			Usage:                usage,
 			ProviderTraceID:      requestID,
 			SDKTraceID:           sdkTraceID,
 			SDKTraceSourceSHA256: sdkSum,
