@@ -31,6 +31,23 @@ const SDKTraceSourceMarker = "providerData.traceId"
 //   - 文件必须读完整（scan 出错或某行解析不了都算未读全），否则不能说"唯一"。
 //
 // 任一条件不成立就返回空三件套，上层保留未知，不猜。
+// resolveSDKConfigDir 决定去哪个配置目录找会话日志。agent 子进程拿到的是过滤后的
+// 环境，配置目录不一定在里面；daemon 进程自身的环境里通常有（runtime_mcp 用同一个
+// 变量），都没有时按 CLI 的约定回落到 $HOME/.codebuddy。解析不出就返回空，让溯源
+// 保持未知，而不是到处乱找。
+func resolveSDKConfigDir(fromEnv string) string {
+	if dir := strings.TrimSpace(fromEnv); dir != "" {
+		return dir
+	}
+	if dir := strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR")); dir != "" {
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".codebuddy")
+	}
+	return ""
+}
+
 func codebuddySDKProvenance(configDir, sessionID, cwd, cid string) (traceID, sum, source string) {
 	traceID, sum, _, _ = codebuddySDKProvenanceWithSource(configDir, sessionID, cwd, cid)
 	return traceID, sum, sourceOrEmpty(traceID)
@@ -46,6 +63,7 @@ func sourceOrEmpty(traceID string) string {
 // codebuddySDKProvenanceWithSource 与上面同义，额外返回本地文件路径，供日志与私有
 // 证据清单复核；该路径不会被写进 API 字段。
 func codebuddySDKProvenanceWithSource(configDir, sessionID, cwd, cid string) (traceID, sum, source, filePath string) {
+	configDir = resolveSDKConfigDir(configDir)
 	if configDir == "" || sessionID == "" || cid == "" {
 		return "", "", "", ""
 	}
