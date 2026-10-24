@@ -195,6 +195,16 @@ type Result struct {
 	// 只对应一个根请求；续跑会话会换新的根请求，所以它是"每次执行"级别的标识，
 	// 不能挂在会话或 issue 上。为空表示该 backend 不暴露，或本次运行没有产生请求。
 	ProviderTraceID string
+	// SDKTraceID 是 SDK 自己日志里的 trace id（traceparent 的 trace-id 段），
+	// 与 ProviderTraceID（子进程自报的根请求 id / CID）是两个不同命名空间的值，
+	// 也与外部观测系统（AgentLens）的 trace/span 不是一回事。只有在本轮实际
+	// session 对应的 SDK 日志文件唯一、且文件内 trace id 唯一时才填，其余留空。
+	SDKTraceID string
+	// SDKTraceSourceSHA256 是那份 SDK 日志文件快照的 sha256，用来复核"当时读到的
+	// 就是这一份文件"，而不是事后被改写的文件。
+	SDKTraceSourceSHA256 string
+	// SDKTraceSourcePath 是该文件的绝对路径，便于人工复核；它是证据位置，不是可外链。
+	SDKTraceSourcePath string
 	// ResumeRejected 是"本次运行请求的续跑被永久拒绝"的确凿证据——要么会话记录
 	// 已经没了，要么该会话属于另一个 provider 账号，要么会话还在但它的历史已经无法
 	// 再重放给 provider（例如 GH #5975：存储的图片现在超过了 provider 的最大尺寸，

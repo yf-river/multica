@@ -5770,3 +5770,32 @@ func TestHermesProfileChainCoversLaunchPrefix(t *testing.T) {
 		t.Errorf("custom = %v, want only the selector removed", strippedCustom)
 	}
 }
+
+// SDK 溯源字段只能挂到 CID 相同的那条链路上：归属不明时保持空，不能顺手挂到
+// 同一次执行的另一条链路上（换新会话重试就会同时存在两条）。
+func TestBuildTaskTraceEntriesCarriesSDKProvenance(t *testing.T) {
+	entries := buildTaskTraceEntries("codebuddy", []ProviderTrace{
+		{SessionID: "sess-1", TraceID: "trace-1", SDKTraceID: "sdk-1", SDKTraceSourceSHA256: "sum-1", SDKTraceSourcePath: "/tmp/a.jsonl"},
+		{SessionID: "sess-2", TraceID: "trace-2"},
+	})
+	if len(entries) != 2 {
+		t.Fatalf("entries: %d", len(entries))
+	}
+	if entries[0].SDKTraceID != "sdk-1" || entries[0].SDKTraceSourceSHA256 != "sum-1" || entries[0].SDKTraceSourcePath != "/tmp/a.jsonl" {
+		t.Fatalf("provenance dropped: %+v", entries[0])
+	}
+	if entries[1].SDKTraceID != "" {
+		t.Fatalf("unknown must stay empty: %+v", entries[1])
+	}
+}
+
+func TestAttachSDKProvenanceOnlyMatchesCID(t *testing.T) {
+	list := []ProviderTrace{{TraceID: "trace-1"}, {TraceID: "trace-2", SessionID: "sess-2"}}
+	out := attachSDKProvenance(list, agent.Result{ProviderTraceID: "trace-2", SDKTraceID: "sdk-2", SDKTraceSourcePath: "/tmp/b.jsonl"})
+	if out[0].SDKTraceID != "" {
+		t.Fatalf("other link must stay empty: %+v", out[0])
+	}
+	if out[1].SDKTraceID != "sdk-2" || out[1].SDKTraceSourcePath != "/tmp/b.jsonl" {
+		t.Fatalf("cid match must carry provenance: %+v", out[1])
+	}
+}

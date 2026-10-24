@@ -349,14 +349,22 @@ type TaskUsageEntry struct {
 type ProviderTrace struct {
 	SessionID string
 	TraceID   string
+	// SDK 侧溯源：与 CID（TraceID）不是同一个命名空间，且不是外部观测系统的 id。
+	// 归属唯一时才有值；空表示未知，不是"没有"。
+	SDKTraceID           string
+	SDKTraceSourceSHA256 string
+	SDKTraceSourcePath   string
 }
 
 type TaskTraceEntry struct {
-	Provider        string `json:"provider"`
-	SessionID       string `json:"session_id,omitempty"`
-	ProviderTraceID string `json:"provider_trace_id"`
-	Correlation     string `json:"correlation,omitempty"`
-	Source          string `json:"source,omitempty"`
+	Provider             string `json:"provider"`
+	SessionID            string `json:"session_id,omitempty"`
+	ProviderTraceID      string `json:"provider_trace_id"`
+	Correlation          string `json:"correlation,omitempty"`
+	Source               string `json:"source,omitempty"`
+	SDKTraceID           string `json:"sdk_trace_id,omitempty"`
+	SDKTraceSourceSHA256 string `json:"sdk_trace_source_sha256,omitempty"`
+	SDKTraceSourcePath   string `json:"sdk_trace_source_path,omitempty"`
 }
 
 // TaskResult 是一次任务执行的结果。

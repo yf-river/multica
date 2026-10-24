@@ -7597,7 +7597,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 执行对应两条链路、两个 session；只有一条时是常态，子进程没起来（或 backend 不
 	// 暴露）时是零条。不能只在最后用 result.SessionID 统一补齐——重试成功时那是第二个
 	// 进程的 session，会把首进程的 trace 记到别人的会话上。
-	providerTraceIDs := appendTraceID(nil, result.ProviderTraceID, result.SessionID)
+	providerTraceIDs := attachSDKProvenance(appendTraceID(nil, result.ProviderTraceID, result.SessionID), result)
 	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
 	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
@@ -8443,11 +8443,14 @@ func buildTaskTraceEntries(provider string, traces []ProviderTrace) []TaskTraceE
 			continue
 		}
 		entries = append(entries, TaskTraceEntry{
-			Provider:        provider,
-			SessionID:       trace.SessionID,
-			ProviderTraceID: trace.TraceID,
-			Correlation:     "exact",
-			Source:          "stream_json",
+			Provider:             provider,
+			SessionID:            trace.SessionID,
+			ProviderTraceID:      trace.TraceID,
+			Correlation:          "exact",
+			Source:               "stream_json",
+			SDKTraceID:           trace.SDKTraceID,
+			SDKTraceSourceSHA256: trace.SDKTraceSourceSHA256,
+			SDKTraceSourcePath:   trace.SDKTraceSourcePath,
 		})
 	}
 	return entries
@@ -8480,6 +8483,22 @@ func buildTaskUsageEntries(provider string, usage map[string]agent.TokenUsage) [
 // appendTraceID 把非空、未出现过的 provider 根请求 id 追加到列表。同一次执行可能
 // 因为换新会话重试起两个进程，也可能一个都没有；这里只去重，不做任何"必须有一条"
 // 的假设。
+// attachSDKProvenance 把本轮 SDK 文件溯源挂到 CID 相同的那条链路上。归属不唯一时
+// Result 里本来就是空的，这里什么都不做——未知保持未知，不挂到别的链路上。
+func attachSDKProvenance(list []ProviderTrace, result agent.Result) []ProviderTrace {
+	if result.SDKTraceID == "" || result.ProviderTraceID == "" {
+		return list
+	}
+	for i := range list {
+		if list[i].TraceID == result.ProviderTraceID {
+			list[i].SDKTraceID = result.SDKTraceID
+			list[i].SDKTraceSourceSHA256 = result.SDKTraceSourceSHA256
+			list[i].SDKTraceSourcePath = result.SDKTraceSourcePath
+		}
+	}
+	return list
+}
+
 func appendTraceID(list []ProviderTrace, traceID, sessionID string) []ProviderTrace {
 	if traceID == "" {
 		return list
