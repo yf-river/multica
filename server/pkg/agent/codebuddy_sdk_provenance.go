@@ -149,3 +149,27 @@ func isLowerHex(value string) bool {
 	}
 	return !strings.ContainsAny(value, " \t")
 }
+
+// codebuddySessionTranscriptMissing 判断本轮要 resume 的会话在本地是否根本没有记录。
+//
+// 只有当我们确实能定位到 CodeBuddy 的 projects 目录时才给出结论：目录不存在、
+// 或者配置目录解析不出来，说明我们对磁盘一无所知，此时返回 false，让原来的
+// 续接流程照常走，不能拿"看不到"当成"不存在"。
+func codebuddySessionTranscriptMissing(envDir, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	dir := resolveSDKConfigDir(envDir)
+	if dir == "" {
+		return false
+	}
+	root := filepath.Join(dir, "projects")
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return false
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "*", sessionID+".jsonl"))
+	if err != nil {
+		return false
+	}
+	return len(matches) == 0
+}

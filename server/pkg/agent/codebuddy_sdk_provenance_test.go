@@ -151,3 +151,24 @@ func TestCodebuddySDKProvenanceSkipsOversizedFile(t *testing.T) {
 		t.Fatal("oversized file must stay unknown")
 	}
 }
+
+func TestCodebuddySessionTranscriptMissing(t *testing.T) {
+	root := t.TempDir()
+	// 没有 projects 目录：我们对磁盘一无所知，不能据此判定"缺失"。
+	if codebuddySessionTranscriptMissing(root, "sess") {
+		t.Fatal("unknown layout must not be treated as missing")
+	}
+	if err := os.MkdirAll(filepath.Join(root, "projects", "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !codebuddySessionTranscriptMissing(root, "sess") {
+		t.Fatal("empty projects tree means the transcript is gone")
+	}
+	writeSDKSession(t, root, "work", "sess", `{"providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
+	if codebuddySessionTranscriptMissing(root, "sess") {
+		t.Fatal("existing transcript must not be reported missing")
+	}
+	if codebuddySessionTranscriptMissing(root, "") {
+		t.Fatal("no session requested means nothing to check")
+	}
+}

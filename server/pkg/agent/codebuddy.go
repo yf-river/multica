@@ -140,6 +140,25 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	timeout := opts.Timeout
 	runCtx, cancel := runContext(ctx, timeout)
 
+	// 续接一个本地已经没有记录的会话时，CLI 会起来但一个事件都不发（2.125.5 实测：
+	// 进程在，stdout 静默，任务一直 running）。这种情况下马上按"续跑被拒"返回，
+	// 让 daemon 走既有的换新会话重试，而不是让一个任务挂到超时。
+	if opts.ResumeSessionID != "" && codebuddySessionTranscriptMissing(b.cfg.Env["CODEBUDDY_CONFIG_DIR"], opts.ResumeSessionID) {
+		cancel()
+		b.cfg.Logger.Info("codebuddy resume target missing locally; asking for a fresh session",
+			"session_id", opts.ResumeSessionID)
+		messages := make(chan Message)
+		close(messages)
+		result := make(chan Result, 1)
+		result <- Result{
+			Status:         "failed",
+			Error:          "codebuddy: resume transcript not found locally",
+			SessionID:      "",
+			ResumeRejected: true,
+		}
+		return &Session{Messages: messages, Result: result}, nil
+	}
+
 	args := buildCodebuddyArgs(opts, b.cfg.Logger)
 
 	// 托管 agent 配置会写到临时文件、用 --mcp-config 传入——它是在 CodeBuddy 从自身
