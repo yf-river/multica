@@ -37,10 +37,10 @@ func TestCodebuddySDKProvenancePicksCurrentCID(t *testing.T) {
 `
 	writeSDKSession(t, dir, "work", "sess", body)
 
-	if id, _, _ := codebuddySDKProvenance(dir, "sess", "/work", "old-cid"); id != traceA {
+	if id, _, _ := codebuddySDKProvenance(envOf(dir), "sess", "/work", "old-cid"); id != traceA {
 		t.Fatalf("old cid must get its own trace, got %q", id)
 	}
-	if id, _, _ := codebuddySDKProvenance(dir, "sess", "/work", "new-cid"); id != traceB {
+	if id, _, _ := codebuddySDKProvenance(envOf(dir), "sess", "/work", "new-cid"); id != traceB {
 		t.Fatalf("new cid must get its own trace, got %q", id)
 	}
 }
@@ -51,7 +51,7 @@ func TestCodebuddySDKProvenanceNeverAttributesOldRun(t *testing.T) {
 	body := `{"sessionId":"sess","cwd":"/work","providerData":{"conversationRequestId":"old-cid","traceId":"` + traceA + `"}}` + "\n"
 	writeSDKSession(t, dir, "work", "sess", body)
 
-	if id, _, _ := codebuddySDKProvenance(dir, "sess", "/work", "new-cid"); id != "" {
+	if id, _, _ := codebuddySDKProvenance(envOf(dir), "sess", "/work", "new-cid"); id != "" {
 		t.Fatalf("old run attributed to current run: %q", id)
 	}
 }
@@ -61,11 +61,11 @@ func TestCodebuddySDKProvenanceSourceIsMarkerNotPath(t *testing.T) {
 	body := `{"sessionId":"sess","providerData":{"conversationRequestId":"cid","traceId":"` + traceA + `"}}` + "\n"
 	writeSDKSession(t, dir, "work", "sess", body)
 
-	_, _, source := codebuddySDKProvenance(dir, "sess", "/work", "cid")
+	_, _, source := codebuddySDKProvenance(envOf(dir), "sess", "/work", "cid")
 	if source != "providerData.traceId" {
 		t.Fatalf("API requires the JSON marker, got %q", source)
 	}
-	if _, _, _, path := codebuddySDKProvenanceWithSource(dir, "sess", "/work", "cid"); path == "" {
+	if _, _, _, path := codebuddySDKProvenanceWithSource(envOf(dir), "sess", "/work", "cid"); path == "" {
 		t.Fatal("private evidence path should still be available")
 	}
 }
@@ -85,7 +85,7 @@ func TestCodebuddySDKProvenanceRejectsWeakEvidence(t *testing.T) {
 	for name, body := range cases {
 		dir := t.TempDir()
 		writeSDKSession(t, dir, "work", "sess", body)
-		if id, sum, src := codebuddySDKProvenance(dir, "sess", "/work", "cid"); id != "" || sum != "" || src != "" {
+		if id, sum, src := codebuddySDKProvenance(envOf(dir), "sess", "/work", "cid"); id != "" || sum != "" || src != "" {
 			t.Fatalf("%s must stay unknown, got %q %q %q", name, id, sum, src)
 		}
 	}
@@ -95,16 +95,16 @@ func TestCodebuddySDKProvenanceMissingInputs(t *testing.T) {
 	dir := t.TempDir()
 	writeSDKSession(t, dir, "work", "sess", `{"providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
 	for _, args := range [][4]string{{"", "sess", "/work", "cid"}, {dir, "", "/work", "cid"}, {dir, "sess", "/work", ""}} {
-		if id, _, _ := codebuddySDKProvenance(args[0], args[1], args[2], args[3]); id != "" {
+		if id, _, _ := codebuddySDKProvenance(envOf(args[0]), args[1], args[2], args[3]); id != "" {
 			t.Fatalf("missing input must stay unknown: %v", args)
 		}
 	}
-	if id, _, _ := codebuddySDKProvenance(dir, "nope", "/work", "cid"); id != "" {
+	if id, _, _ := codebuddySDKProvenance(envOf(dir), "nope", "/work", "cid"); id != "" {
 		t.Fatal("missing file must stay unknown")
 	}
 	// 同一个 session 出现在两个工作目录：无法确定文件归属。
 	writeSDKSession(t, dir, "work-b", "sess", `{"providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
-	if id, _, _ := codebuddySDKProvenance(dir, "sess", "/work", "cid"); id != "" {
+	if id, _, _ := codebuddySDKProvenance(envOf(dir), "sess", "/work", "cid"); id != "" {
 		t.Fatal("ambiguous file must stay unknown")
 	}
 }
@@ -124,7 +124,7 @@ func TestCodebuddySDKProvenanceSkipsNonRegularFile(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if id, sum, src := codebuddySDKProvenance(dir, "sess", "/work", "cid"); id != "" || sum != "" || src != "" {
+		if id, sum, src := codebuddySDKProvenance(envOf(dir), "sess", "/work", "cid"); id != "" || sum != "" || src != "" {
 			t.Errorf("non-regular file must stay unknown, got %q %q %q", id, sum, src)
 		}
 	}()
@@ -150,7 +150,7 @@ func TestCodebuddySDKProvenanceSkipsOversizedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = f.Close()
-	if id, _, _ := codebuddySDKProvenance(dir, "sess", "/work", "cid"); id != "" {
+	if id, _, _ := codebuddySDKProvenance(envOf(dir), "sess", "/work", "cid"); id != "" {
 		t.Fatal("oversized file must stay unknown")
 	}
 }
@@ -159,20 +159,20 @@ func TestCodebuddySessionTranscriptMissing(t *testing.T) {
 	t.Setenv("CODEBUDDY_CONFIG_DIR", "")
 	root := t.TempDir()
 	// 没有 projects 目录：我们对磁盘一无所知，不能据此判定"缺失"。
-	if codebuddySessionTranscriptMissing(root, "sess") {
+	if codebuddySessionTranscriptMissing(envOf(root), "sess") {
 		t.Fatal("unknown layout must not be treated as missing")
 	}
 	if err := os.MkdirAll(filepath.Join(root, "projects", "work"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if !codebuddySessionTranscriptMissing(root, "sess") {
+	if !codebuddySessionTranscriptMissing(envOf(root), "sess") {
 		t.Fatal("empty projects tree means the transcript is gone")
 	}
 	writeSDKSession(t, root, "work", "sess", `{"providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
-	if codebuddySessionTranscriptMissing(root, "sess") {
+	if codebuddySessionTranscriptMissing(envOf(root), "sess") {
 		t.Fatal("existing transcript must not be reported missing")
 	}
-	if codebuddySessionTranscriptMissing(root, "") {
+	if codebuddySessionTranscriptMissing(envOf(root), "") {
 		t.Fatal("no session requested means nothing to check")
 	}
 }
@@ -185,11 +185,11 @@ func TestCodebuddySessionTranscriptMissingInheritsProcessEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEBUDDY_CONFIG_DIR", root)
-	if !codebuddySessionTranscriptMissing("", "gone-session") {
+	if !codebuddySessionTranscriptMissing(nil, "gone-session") {
 		t.Fatal("inherited config dir must be used, otherwise the guard never fires")
 	}
 	writeSDKSession(t, root, "work", "live-session", `{"providerData":{"conversationRequestId":"cid","traceId":"`+traceA+`"}}`+"\n")
-	if codebuddySessionTranscriptMissing("", "live-session") {
+	if codebuddySessionTranscriptMissing(nil, "live-session") {
 		t.Fatal("present transcript must not be reported missing")
 	}
 }
@@ -208,7 +208,7 @@ func TestCodebuddySessionTranscriptUnknownWhenUnreadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(project, 0o755) })
-	if codebuddySessionTranscriptMissing(root, "sess") {
+	if codebuddySessionTranscriptMissing(envOf(root), "sess") {
 		t.Fatal("unreadable project dir cannot prove absence")
 	}
 }
@@ -241,5 +241,47 @@ func TestCodebuddyExecuteClosesChannelsOnResumeRejection(t *testing.T) {
 	}
 	if _, ok := <-session.Result; ok {
 		t.Fatal("result channel must be closed after the single value")
+	}
+}
+
+func envOf(dir string) map[string]string {
+	if dir == "" {
+		return nil
+	}
+	return map[string]string{"CODEBUDDY_CONFIG_DIR": dir}
+}
+
+// 显式空值会用空字符串覆盖进程环境（buildEnv 的语义），此时不能回读进程里的目录，
+// 否则会从另一个 projects 树里得出"这个 session 不见了"的错误结论。
+func TestCodebuddySessionTranscriptExplicitEmptyOverridesProcessEnv(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "projects", "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEBUDDY_CONFIG_DIR", root)
+	env := map[string]string{"CODEBUDDY_CONFIG_DIR": ""}
+	if codebuddySessionTranscriptMissing(env, "gone-session") {
+		t.Fatal("explicit empty value must stay unknown, not fall back to the process env")
+	}
+	if id, sum, src := codebuddySDKProvenance(env, "gone-session", "/work", "cid"); id != "" || sum != "" || src != "" {
+		t.Fatalf("provenance must stay unknown for an explicitly empty config dir, got %q %q %q", id, sum, src)
+	}
+}
+
+// 项目条目是符号链接时内容没有核实过，不能据此认定整棵树可读且不存在。
+func TestCodebuddySessionTranscriptUnknownOnSymlinkedProject(t *testing.T) {
+	root := t.TempDir()
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "inner"), filepath.Join(root, "projects", "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if codebuddySessionTranscriptMissing(envOf(root), "sess") {
+		t.Fatal("unverified symlinked project cannot prove absence")
 	}
 }

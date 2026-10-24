@@ -35,9 +35,11 @@ const SDKTraceSourceMarker = "providerData.traceId"
 // 环境，配置目录不一定在里面；daemon 进程自身的环境里通常有（runtime_mcp 用同一个
 // 变量），都没有时按 CLI 的约定回落到 $HOME/.codebuddy。解析不出就返回空，让溯源
 // 保持未知，而不是到处乱找。
-func resolveSDKConfigDir(fromEnv string) string {
-	if dir := strings.TrimSpace(fromEnv); dir != "" {
-		return dir
+func resolveSDKConfigDir(env map[string]string) string {
+	// key 存在就用它：buildEnv 会用显式值覆盖进程环境，空字符串也一样覆盖。
+	// 所以 "显式空值" 和 "没设置" 不是一回事——前者不能回读进程环境。
+	if dir, ok := env["CODEBUDDY_CONFIG_DIR"]; ok {
+		return strings.TrimSpace(dir)
 	}
 	if dir := strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR")); dir != "" {
 		return dir
@@ -48,8 +50,8 @@ func resolveSDKConfigDir(fromEnv string) string {
 	return ""
 }
 
-func codebuddySDKProvenance(configDir, sessionID, cwd, cid string) (traceID, sum, source string) {
-	traceID, sum, _, _ = codebuddySDKProvenanceWithSource(configDir, sessionID, cwd, cid)
+func codebuddySDKProvenance(env map[string]string, sessionID, cwd, cid string) (traceID, sum, source string) {
+	traceID, sum, _, _ = codebuddySDKProvenanceWithSource(env, sessionID, cwd, cid)
 	return traceID, sum, sourceOrEmpty(traceID)
 }
 
@@ -62,8 +64,8 @@ func sourceOrEmpty(traceID string) string {
 
 // codebuddySDKProvenanceWithSource 与上面同义，额外返回本地文件路径，供日志与私有
 // 证据清单复核；该路径不会被写进 API 字段。
-func codebuddySDKProvenanceWithSource(configDir, sessionID, cwd, cid string) (traceID, sum, source, filePath string) {
-	configDir = resolveSDKConfigDir(configDir)
+func codebuddySDKProvenanceWithSource(env map[string]string, sessionID, cwd, cid string) (traceID, sum, source, filePath string) {
+	configDir := resolveSDKConfigDir(env)
 	if configDir == "" || sessionID == "" || cid == "" {
 		return "", "", "", ""
 	}
@@ -159,16 +161,13 @@ func isLowerHex(value string) bool {
 // 结论只允许在"确定不存在"时给出：目录 stat 失败、项目目录不可读（例如 0111）、
 // 枚举出错，都算未知（返回 false），继续走原来的续接流程。Glob 会静默吞掉读取
 // 权限错误，所以这里逐层 ReadDir 并检查错误，而不是用 Glob 的空结果当证据。
-func codebuddySessionTranscriptMissing(envDir, sessionID string) bool {
+func codebuddySessionTranscriptMissing(env map[string]string, sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
-	dir := strings.TrimSpace(envDir)
+	dir := resolveSDKConfigDir(env)
 	if dir == "" {
-		// 子进程会继承 daemon 进程的环境，这里必须同样看待。
-		dir = strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR"))
-	}
-	if dir == "" {
+		// 解析不出（未设置且进程环境也没有，或显式置空）：我们对磁盘一无所知。
 		return false
 	}
 	root := filepath.Join(dir, "projects")
@@ -183,6 +182,10 @@ func codebuddySessionTranscriptMissing(envDir, sessionID string) bool {
 	sawProjectDir := false
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			// 符号链接等项目条目没有核实过内容，不能据此认定"整棵树都可读且不存在"。
+			if entry.Type()&os.ModeSymlink != 0 {
+				return false
+			}
 			continue
 		}
 		sawProjectDir = true

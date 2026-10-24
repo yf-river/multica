@@ -143,7 +143,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	// 续接一个本地已经没有记录的会话时，CLI 会起来但一个事件都不发（2.125.5 实测：
 	// 进程在，stdout 静默，任务一直 running）。这种情况下马上按"续跑被拒"返回，
 	// 让 daemon 走既有的换新会话重试，而不是让一个任务挂到超时。
-	if opts.ResumeSessionID != "" && codebuddySessionTranscriptMissing(b.cfg.Env["CODEBUDDY_CONFIG_DIR"], opts.ResumeSessionID) {
+	if opts.ResumeSessionID != "" && codebuddySessionTranscriptMissing(b.cfg.Env, opts.ResumeSessionID) {
 		cancel()
 		b.cfg.Logger.Info("codebuddy resume target missing locally; asking for a fresh session",
 			"session_id", opts.ResumeSessionID)
@@ -407,7 +407,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		// SDK 侧溯源：只在 session 文件唯一、文件内 trace id 唯一时附上；任何歧义
 		// 都留空，让上层把这条链路当作"只有 CID 的准确关联"。
 		sdkTraceID, sdkSum, sdkSource, sdkFile := codebuddySDKProvenanceWithSource(
-			b.cfg.Env["CODEBUDDY_CONFIG_DIR"], reportedSessionID, opts.Cwd, requestID,
+			b.cfg.Env, reportedSessionID, opts.Cwd, requestID,
 		)
 		if sdkTraceID != "" {
 			// 文件位置只留在日志与私有证据里；API 字段要用固定标记。

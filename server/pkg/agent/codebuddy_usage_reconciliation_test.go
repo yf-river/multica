@@ -19,6 +19,10 @@ func TestCodebuddyUsageProtocolPreservesObservedCalls(t *testing.T) {
 	prefix := TokenUsage{OutputTokens: full.OutputTokens - tail.OutputTokens, CacheReadTokens: full.CacheReadTokens - tail.CacheReadTokens, CacheWriteTokens: full.CacheWriteTokens - tail.CacheWriteTokens}
 	for _, mode := range []string{"smaller-summary", "different-model-identity", "session-cumulative-summary", "no-stream", "resumed-no-stream", "empty-result-session", "assistant-session", "no-summary", "snapshot-update", "distinct-requests", "missing-identity"} {
 		t.Run(mode, func(t *testing.T) {
+			// 夹具会话只存在于协议流里；把 HOME 指到空目录，避免宿主的
+			// ~/.codebuddy/projects 影响"本地是否有该 session"的判断。
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("CODEBUDDY_CONFIG_DIR", "")
 			model := "deepseek-v4.1-flash"
 			chosenModel := model
 			events := []map[string]any{{"type": "system", "subtype": "init", "session_id": "fixture-session"}}
