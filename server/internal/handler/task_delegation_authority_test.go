@@ -158,6 +158,56 @@ func (b *taskDelegationBase) wakeAuthority(t *testing.T) (string, string) {
 	return b.authority(t, b.WakeRunID, b.ScopeIssueID, b.WorkerID, "agent", b.CoordinatorID, testWorkspaceID)
 }
 
+// replayAuthority 是同一个输入走重放形态：服务端重新处理一条已存评论，而不是一条新
+// 请求。
+func (b *taskDelegationBase) replayAuthority(t *testing.T) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	run, err := testHandler.Queries.GetAgentTask(ctx, util.MustParseUUID(b.WakeRunID))
+	if err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(b.ScopeIssueID))
+	if err != nil {
+		t.Fatalf("load scope issue: %v", err)
+	}
+	target, err := testHandler.Queries.GetAgent(ctx, util.MustParseUUID(b.WorkerID))
+	if err != nil {
+		t.Fatalf("load target: %v", err)
+	}
+	return testHandler.taskDelegationAuthorityForReplay(ctx, run, issue, target, "agent", b.CoordinatorID, testWorkspaceID)
+}
+
+// coordinatorMentionComment 让协调者经真实创建路径发一条 @开发 Agent 的评论，返回
+// 评论 id 与该提及的按目标结果。
+func coordinatorMentionComment(t *testing.T, b *taskDelegationBase, authorTaskID string) (string, *CommentTriggerOutcome) {
+	t.Helper()
+	r := newRequest(http.MethodPost, "/api/issues/"+b.ScopeIssueID+"/comments", map[string]any{
+		"content": "[@Worker](mention://agent/" + b.WorkerID + ") please take this",
+	})
+	r.Header.Set("X-Agent-ID", b.CoordinatorID)
+	r.Header.Set("X-Task-ID", authorTaskID)
+	r = withURLParam(r, "id", b.ScopeIssueID)
+	var resp CommentResponse
+	testutil.Call(t, testHandler.CreateComment, r).Want(http.StatusCreated).JSON(&resp)
+	for i := range resp.TriggerOutcomes {
+		if resp.TriggerOutcomes[i].TargetID == b.WorkerID {
+			return resp.ID, &resp.TriggerOutcomes[i]
+		}
+	}
+	t.Fatalf("no trigger outcome for the mentioned worker, got %+v", resp.TriggerOutcomes)
+	return "", nil
+}
+
+// queuedWorkerTasks 数 (issue, worker) 上排队的任务。
+func queuedWorkerTasks(t *testing.T, issueID, agentID string) int {
+	t.Helper()
+	return dbfx.Count(t, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'
+	`, issueID, agentID)
+}
+
 // delegationChildIssueRequest 是协调者「在 S 下建子任务并指派开发 Agent」的请求。
 func delegationChildIssueRequest(t *testing.T, parentID, workerID, actorAgentID, taskID string) *http.Request {
 	t.Helper()
@@ -553,5 +603,120 @@ func TestCommentTriggerOptions_EffectiveInvokerPrecedence(t *testing.T) {
 				t.Fatalf("effectiveInvokerFor = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestTaskDelegationAuthority_ReplayAfterAuthorRunFinished 钉住被审查打回的那条时序：
+// 协调者写完评论这一轮就结束，重放发生在目标 Agent 完成之后，作者运行早已不在
+// running。新请求必须继续拒绝（已结束的运行不能为一条新请求放权），重放则按同一条
+// 已存评论的血缘继续判定，且其余边界一条不少。
+func TestTaskDelegationAuthority_ReplayAfterAuthorRunFinished(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	b := newTaskDelegationBase(t)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status = 'completed' WHERE id = $1`, b.WakeRunID)
+
+	// 新请求：拒绝的理由仍是运行已结束。
+	if got, reason := b.wakeAuthority(t); got != "" || reason != "run_not_running" {
+		t.Fatalf("a finished run must not authorize a new request, got %q / %q", got, reason)
+	}
+
+	// 重放：同一条评论、同一份证据，放行。
+	got, reason := b.replayAuthority(t)
+	if got != b.AuthorizerID || reason != "" {
+		t.Fatalf("the replay of an accepted comment must keep resolving %s, got %q / %q", b.AuthorizerID, got, reason)
+	}
+
+	// 重放不放宽证据：没有历史委托照样拒绝。
+	dbfx.Exec(t, `DELETE FROM agent_task_queue WHERE id = $1`, b.EvidenceTaskID)
+	if got, reason := b.replayAuthority(t); got != "" || reason != "no_authorization_evidence" {
+		t.Fatalf("the replay must still require delegation evidence, got %q / %q", got, reason)
+	}
+}
+
+// TestReconcileCommentsOnCompletion_TaskDelegationRestoresAuthority 是原故障的完整
+// 时序：目标 Agent 正忙 → 创建时只能回报 deferred → 协调者这一轮结束、目标完成后完成
+// 调和重放。修复前这条重放用 running 重新判定继承授权，@提及被静默丢弃。
+func TestReconcileCommentsOnCompletion_TaskDelegationRestoresAuthority(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	b := newTaskDelegationBase(t)
+
+	busyTaskID := seedTaskOn(t, b.WorkerID, b.RuntimeID, b.ScopeIssueID, testutil.Cols{"status": "dispatched"})
+	_, outcome := coordinatorMentionComment(t, b, b.WakeRunID)
+	if outcome.Status != DispatchDeferred {
+		t.Fatalf("a busy target must report the success shape deferred, got %q/%q", outcome.Status, outcome.ReasonCode)
+	}
+
+	// 协调者写完这句就结束，目标 Agent 随后完成——重放时两条运行都不在 running。
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status = 'completed' WHERE id = $1`, b.WakeRunID)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status = 'completed' WHERE id = $1`, busyTaskID)
+	workerTask, err := testHandler.Queries.GetAgentTask(ctx, util.MustParseUUID(busyTaskID))
+	if err != nil {
+		t.Fatalf("load worker task: %v", err)
+	}
+
+	testHandler.reconcileCommentsOnCompletion(ctx, &workerTask)
+
+	if n := queuedWorkerTasks(t, b.ScopeIssueID, b.WorkerID); n != 1 {
+		t.Fatalf("the deferred mention must be replayed into exactly one follow-up, got %d", n)
+	}
+	// 继承来的授权只进闸门：续接的任务仍是没有人类发起人的系统来源。
+	var originatorValid bool
+	var source pgtype.Text
+	if err := testPool.QueryRow(ctx, `
+		SELECT originator_user_id IS NOT NULL, originator_source
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'
+	`, b.ScopeIssueID, b.WorkerID).Scan(&originatorValid, &source); err != nil {
+		t.Fatalf("read follow-up attribution: %v", err)
+	}
+	if originatorValid {
+		t.Fatal("the replayed follow-up must stay unattributed; inherited authority is authorization-only")
+	}
+	if source.String != "delegation" {
+		t.Fatalf("the replayed follow-up must keep its delegation descent, got %q", source.String)
+	}
+}
+
+// TestRetriggerCancelledTaskSurvivors_TaskDelegationRestoresAuthority 覆盖另一条重放：
+// 取消批次的幸存者评论在批次被取消后重新派发，此时写下这条评论的运行同样已经结束。
+func TestRetriggerCancelledTaskSurvivors_TaskDelegationRestoresAuthority(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	b := newTaskDelegationBase(t)
+
+	busyTaskID := seedTaskOn(t, b.WorkerID, b.RuntimeID, b.ScopeIssueID, testutil.Cols{"status": "dispatched"})
+	commentID, outcome := coordinatorMentionComment(t, b, b.WakeRunID)
+	if outcome.Status != DispatchDeferred {
+		t.Fatalf("a busy target must report the success shape deferred, got %q/%q", outcome.Status, outcome.ReasonCode)
+	}
+	// 承载这条评论的批次被取消：任务连同它的输入一起交给幸存者重放。
+	dbfx.Exec(t, `
+		UPDATE agent_task_queue
+		SET status = 'cancelled', coalesced_comment_ids = ARRAY[$1]::uuid[]
+		WHERE id = $2
+	`, commentID, busyTaskID)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status = 'completed' WHERE id = $1`, b.WakeRunID)
+
+	cancelledTask, err := testHandler.Queries.GetAgentTask(ctx, util.MustParseUUID(busyTaskID))
+	if err != nil {
+		t.Fatalf("load cancelled task: %v", err)
+	}
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(b.ScopeIssueID))
+	if err != nil {
+		t.Fatalf("load scope issue: %v", err)
+	}
+
+	testHandler.retriggerCancelledTaskSurvivors(ctx, issue, []db.AgentTaskQueue{cancelledTask}, pgtype.UUID{})
+
+	if n := queuedWorkerTasks(t, b.ScopeIssueID, b.WorkerID); n != 1 {
+		t.Fatalf("the cancelled survivor must be replayed into exactly one task, got %d", n)
 	}
 }

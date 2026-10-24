@@ -4310,8 +4310,9 @@ func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.Ag
 			OriginatorUserID:                   originatorUserID,
 			AutopilotDelegationAuthorityUserID: delegationAuthority,
 			// 修改 1. 完成时重放被推迟的委托，同样按这条评论的存储血缘续接当前任务范围内（GONG-83）
-			// 已授权的同一目标。
-			TaskDelegationAuthority: h.commentTaskDelegationResolver(ctx, issue, c),
+			// 已授权的同一目标。重放发生在目标 Agent 完成之后、作者运行通常已经结束，所以走重放
+			// 形态：只核身份、范围、证据与授权者当下资格，不要求作者运行仍在跑。
+			TaskDelegationAuthority: h.commentTaskDelegationReplayResolver(ctx, issue, c),
 		})
 		// For an AGENT author, compensate ONLY explicit @agent/@squad mentions.
 		// computeCommentAgentTriggers can also return the assigned-squad-leader

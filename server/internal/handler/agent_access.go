@@ -614,7 +614,22 @@ func (h *Handler) autopilotDelegationAuthorityFromComment(ctx context.Context, i
 // 按顺序失败关闭，返回 (授权人类, 拒绝原因码)。原因码只进结构化日志，绝不回给
 // 调用方——HTTP 错误文案保持既有通用措辞，不泄露目标 Agent 的权限模式。
 func (h *Handler) taskDelegationAuthority(ctx context.Context, run db.AgentTaskQueue, scopeIssue db.Issue, target db.Agent, actorType, actorID, workspaceID string) (string, string) {
-	authorizer, reason := h.resolveTaskDelegationAuthority(ctx, run, scopeIssue, target, actorType, actorID, workspaceID)
+	return h.taskDelegationAuthorityForRun(ctx, run, scopeIssue, target, actorType, actorID, workspaceID, false)
+}
+
+// 修改 1. taskDelegationAuthorityForReplay 是重放入口：服务端重新处理一条已经存在的
+// 评论（目标 Agent 完成时的调和、取消批次的幸存者重放），而不是一条新请求。它与新
+// 请求走同一套判定，唯独不要求作者运行此刻仍在跑——协调者最常见的行为就是写完这条
+// 评论这一轮就结束，而重放恰恰发生在目标 Agent 完成 / 取消之后。若沿用 running 约束，
+// 创建评论时已回报的 deferred 会在重放时被拒、且没有任何可见结果。
+func (h *Handler) taskDelegationAuthorityForReplay(ctx context.Context, run db.AgentTaskQueue, scopeIssue db.Issue, target db.Agent, actorType, actorID, workspaceID string) (string, string) {
+	return h.taskDelegationAuthorityForRun(ctx, run, scopeIssue, target, actorType, actorID, workspaceID, true)
+}
+
+// 修改 2. taskDelegationAuthorityForRun 是判定与审计的外壳，replay 只影响「运行是否必须
+// 仍在跑」这一条，其余拒绝原因对新请求与重放完全一致。
+func (h *Handler) taskDelegationAuthorityForRun(ctx context.Context, run db.AgentTaskQueue, scopeIssue db.Issue, target db.Agent, actorType, actorID, workspaceID string, replay bool) (string, string) {
+	authorizer, reason := h.resolveTaskDelegationAuthority(ctx, run, scopeIssue, target, actorType, actorID, workspaceID, replay)
 	if reason != "" {
 		slog.WarnContext(ctx, "task delegation authority denied",
 			"reason", reason,
@@ -631,9 +646,12 @@ func (h *Handler) taskDelegationAuthority(ctx context.Context, run db.AgentTaskQ
 
 // 5. resolveTaskDelegationAuthority 是 taskDelegationAuthority 的判定体，逐段检查
 // 「真实运行身份 → 任务范围绑定 → 授权生命周期 → 证据 → 授权者当下资格」。
-func (h *Handler) resolveTaskDelegationAuthority(ctx context.Context, run db.AgentTaskQueue, scopeIssue db.Issue, target db.Agent, actorType, actorID, workspaceID string) (string, string) {
-	// 真实运行身份：只有该 Agent 自己正在跑的运行才能续接委托。已结束的运行不能
-	// 再凭旧的系统反馈放权——同一任务 id 的重放必须重新走一次真实发起的运行。
+func (h *Handler) resolveTaskDelegationAuthority(ctx context.Context, run db.AgentTaskQueue, scopeIssue db.Issue, target db.Agent, actorType, actorID, workspaceID string, replay bool) (string, string) {
+	// 真实运行身份：只有该 Agent 自己的运行才能续接委托。新请求（评论创建 / 预览、
+	// 编辑重发、指派、quick action）必须来自仍在跑的那条运行——已结束的运行不能再凭
+	// 旧的系统反馈放权。重放不同：它重新处理一条内容未变的已存评论，作者运行正是写下
+	// 这条评论的那一条，重放时点又必然在目标 Agent 完成之后，所以这里只核对身份与血缘，
+	// 不要求它仍在跑；范围、证据、授权者当下资格照样逐条复核。
 	if actorType != "agent" {
 		return "", "not_agent_actor"
 	}
@@ -643,7 +661,7 @@ func (h *Handler) resolveTaskDelegationAuthority(ctx context.Context, run db.Age
 	if !run.AgentID.Valid || uuidToString(run.AgentID) != actorID {
 		return "", "run_agent_mismatch"
 	}
-	if run.Status != "running" {
+	if !replay && run.Status != "running" {
 		return "", "run_not_running"
 	}
 	if !run.IssueID.Valid {
@@ -726,11 +744,22 @@ func (h *Handler) taskDelegationAuthorityFromRequest(r *http.Request, scope assi
 	return authorizer
 }
 
-// 7. taskDelegationAuthorityFromComment 在评论相关路径（保存、编辑重发、完成调和）上
-// 解析同一个任务级继承。发言运行取自存储的 comment.source_task_id——与
+// 7. taskDelegationAuthorityFromComment 在评论相关路径（保存、编辑重发）上解析同一个
+// 任务级继承。发言运行取自存储的 comment.source_task_id——与
 // autopilotDelegationAuthorityFromComment 同一条服务端可信血统，因此预览、真实
 // 派发与延迟调和看到的是同一条证据。
 func (h *Handler) taskDelegationAuthorityFromComment(ctx context.Context, issue db.Issue, comment db.Comment, target db.Agent) string {
+	return h.taskDelegationAuthorityFromCommentForRun(ctx, issue, comment, target, false)
+}
+
+// 修改 3. taskDelegationAuthorityFromCommentForReplay 是重放路径（目标完成调和、取消批次
+// 幸存者重放）上的同一解析：证据照旧来自 comment.source_task_id，只是不再要求写下这条
+// 评论的那条运行此刻仍在跑，否则创建时已受理的 deferred 会在重放时无结果地消失。
+func (h *Handler) taskDelegationAuthorityFromCommentForReplay(ctx context.Context, issue db.Issue, comment db.Comment, target db.Agent) string {
+	return h.taskDelegationAuthorityFromCommentForRun(ctx, issue, comment, target, true)
+}
+
+func (h *Handler) taskDelegationAuthorityFromCommentForRun(ctx context.Context, issue db.Issue, comment db.Comment, target db.Agent, replay bool) string {
 	if comment.AuthorType != "agent" || !comment.SourceTaskID.Valid {
 		return ""
 	}
@@ -738,7 +767,7 @@ func (h *Handler) taskDelegationAuthorityFromComment(ctx context.Context, issue 
 	if err != nil {
 		return ""
 	}
-	authorizer, _ := h.taskDelegationAuthority(ctx, run, issue, target, comment.AuthorType, uuidToString(comment.AuthorID), uuidToString(issue.WorkspaceID))
+	authorizer, _ := h.taskDelegationAuthorityForRun(ctx, run, issue, target, comment.AuthorType, uuidToString(comment.AuthorID), uuidToString(issue.WorkspaceID), replay)
 	return authorizer
 }
 
@@ -748,6 +777,15 @@ func (h *Handler) taskDelegationAuthorityFromComment(ctx context.Context, issue 
 func (h *Handler) commentTaskDelegationResolver(ctx context.Context, issue db.Issue, comment db.Comment) func(db.Agent) string {
 	return func(target db.Agent) string {
 		return h.taskDelegationAuthorityFromComment(ctx, issue, comment, target)
+	}
+}
+
+// 修改 4. commentTaskDelegationReplayResolver 是同一包装的重放形态，只给
+// reconcileCommentsOnCompletion 与 retriggerCancelledTaskSurvivors 这两条「重放已存评论」
+// 的路径用；请求路径永远走严格形态，已结束的运行不能为一条新请求放权。
+func (h *Handler) commentTaskDelegationReplayResolver(ctx context.Context, issue db.Issue, comment db.Comment) func(db.Agent) string {
+	return func(target db.Agent) string {
+		return h.taskDelegationAuthorityFromCommentForReplay(ctx, issue, comment, target)
 	}
 }
 
