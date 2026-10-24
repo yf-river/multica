@@ -533,7 +533,7 @@ func TestUpdateComment_AutopilotAuthorityReStampedToEditingTask(t *testing.T) {
 }
 
 // TestCreateComment_AutopilotWorkerResultWakesSquadLeader locks the review's
-// accepted behavior: effectiveInvoker() lets the autopilot-creator authority reach
+// accepted behavior: effectiveInvokerFor() lets the autopilot-creator authority reach
 // the plain (non-@mention) assigned-squad-leader fallback too, so a worker's
 // result comment on the autopilot issue can still wake the private squad leader
 // and close the leader -> worker -> leader loop under the autopilot chain.

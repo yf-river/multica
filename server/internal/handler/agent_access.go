@@ -3,17 +3,21 @@
 // （canInvokeAgent）是两个不同问题。调用门禁是安全关键点——admin 不该仅因为是
 // admin 就能调用他人的 private agent（从而借用其所有者的 Composio/OAuth 连接）；
 // 授权语义以调用链顶端的人类发起者（originator）为准，杜绝 agent 绕开 owner
-// 白名单成链。文件还含 autopilot 派生的委派授权（MUL-4857 / MUL-6691）与
+// 白名单成链。文件还含 autopilot 派生的委派授权（MUL-4857 / MUL-6691）、任务级
+// 委托授权继承（GONG-83：系统/审查反馈唤醒、链顶没有人类时的同任务续接）与
 // 聚合端点用的可访问/受限 agent 集合。
 package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/review"
 	"github.com/multica-ai/multica/server/internal/upstream"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -288,15 +292,41 @@ func scopeNoDelegation() assignAuthorityScope {
 	return assignAuthorityScope{}
 }
 
-// effectiveInvocationAuthorityFromRequest 返回 canInvokeAgent 使用的人类主体，
-// 且不改变归因。真实的链顶 originator 总是赢。只有「无法归因的 AGENT 请求」才
-// 可能回退到 autopilot 权威，且仅限调用方背书过的 scope 内。
-func (h *Handler) effectiveInvocationAuthorityFromRequest(r *http.Request, scope assignAuthorityScope, actorType, actorID, workspaceID string) string {
+// 1. delegationScopeIssue 返回「任务级委托授权继承」可以绑定的 scope issue：建子任务
+// 绑到父 issue，指派绑到被更新的那条 issue。新顶层 issue 没有可绑定的对象，任何
+// 未显式背书的 scope 也不授予——新任务不能凭一次授权凭空获得权限。
+func (s assignAuthorityScope) delegationScopeIssue() (db.Issue, bool) {
+	switch s.Kind {
+	case scopeKindChildOf, scopeKindExistingIssue:
+		if s.Issue == nil {
+			return db.Issue{}, false
+		}
+		return *s.Issue, true
+	default:
+		return db.Issue{}, false
+	}
+}
+
+// 2. baseInvocationAuthorityFromRequest 把既有的两段解析单独拿出来：真实的链顶
+// originator，或「无法归因的 AGENT 请求」在调用方背书过的 scope 内借用的 autopilot
+// 权威。两者都不成立时返回空串，任务级继承才有机会接手。
+func (h *Handler) baseInvocationAuthorityFromRequest(r *http.Request, scope assignAuthorityScope, actorType, actorID, workspaceID string) string {
 	originatorUserID := h.invokeOriginatorFromRequest(r, actorType, actorID)
 	if originatorUserID != "" {
 		return originatorUserID
 	}
 	return h.autopilotAssignAuthorityFromRequest(r, scope, actorType, actorID, workspaceID)
+}
+
+// 3. effectiveInvocationAuthorityFromRequest 返回 canInvokeAgent 使用的人类主体，
+// 且不改变归因。真实的链顶 originator 总是赢。只有「无法归因的 AGENT 请求」才
+// 可能回退到 autopilot 权威或任务级委托继承，且仅限调用方背书过的 scope 内。
+// agent 是本次要调用的目标——任务级继承按「目标 Agent」绑定，因此要按目标惰性解析。
+func (h *Handler) effectiveInvocationAuthorityFromRequest(r *http.Request, scope assignAuthorityScope, agent db.Agent, actorType, actorID, workspaceID string) string {
+	if userID := h.baseInvocationAuthorityFromRequest(r, scope, actorType, actorID, workspaceID); userID != "" {
+		return userID
+	}
+	return h.taskDelegationAuthorityFromRequest(r, scope, agent, actorType, actorID, workspaceID)
 }
 
 // autopilotAssignAuthorityFromRequest 为「无法归因的 agent 运行」做出的指派解析
@@ -565,6 +595,168 @@ func (h *Handler) autopilotDelegationAuthorityFromComment(ctx context.Context, i
 		return ""
 	}
 	return h.autopilotDelegationAuthority(ctx, issue, comment.AuthorType, uuidToString(comment.AuthorID), task)
+}
+
+// 4. taskDelegationAuthority 是「任务级委托授权继承」的唯一判定：用户已经在当前看板
+// 任务范围内授权过「这个 Agent 的某次运行把工作交给这个目标 Agent」，那么同一条
+// 任务范围内再次发生的委托（评论 @、子任务创建、指派）继续以那位原授权人类过
+// canInvokeAgent——即使唤醒这次运行的是系统 / 审查反馈，链顶没有人类发起人。
+//
+// 它只回答「授权人类是谁」，绝不改归因：返回的 id 只作为 canInvokeAgent 的输入，
+// 新派发的任务保持原有的「系统来源」归因（source 不变、originator 为空）。私有权限
+// 边界不放宽——门禁照样跑，只是递进去的人类来自已验证的委托证据。
+//
+// 证据来自 FindTaskDelegationAuthorization：一条落在 scope 任务（或其直接子任务）
+// 上、由 delegator 运行的 delegated_from_task_id 指向、且带同一人类 originator 的
+// 目标 Agent 任务。绑定四元组是 workspace + scope 任务 + delegator + target，
+// 所以一次授权推不出其他任务、其他 Agent 或新顶层任务的权限。
+//
+// 按顺序失败关闭，返回 (授权人类, 拒绝原因码)。原因码只进结构化日志，绝不回给
+// 调用方——HTTP 错误文案保持既有通用措辞，不泄露目标 Agent 的权限模式。
+func (h *Handler) taskDelegationAuthority(ctx context.Context, run db.AgentTaskQueue, scopeIssue db.Issue, target db.Agent, actorType, actorID, workspaceID string) (string, string) {
+	authorizer, reason := h.resolveTaskDelegationAuthority(ctx, run, scopeIssue, target, actorType, actorID, workspaceID)
+	if reason != "" {
+		slog.WarnContext(ctx, "task delegation authority denied",
+			"reason", reason,
+			"workspace_id", workspaceID,
+			"issue_id", uuidToString(scopeIssue.ID),
+			"task_id", uuidToString(run.ID),
+			"agent_id", uuidToString(target.ID),
+			"actor_id", actorID,
+		)
+		return "", reason
+	}
+	return authorizer, ""
+}
+
+// 5. resolveTaskDelegationAuthority 是 taskDelegationAuthority 的判定体，逐段检查
+// 「真实运行身份 → 任务范围绑定 → 授权生命周期 → 证据 → 授权者当下资格」。
+func (h *Handler) resolveTaskDelegationAuthority(ctx context.Context, run db.AgentTaskQueue, scopeIssue db.Issue, target db.Agent, actorType, actorID, workspaceID string) (string, string) {
+	// 真实运行身份：只有该 Agent 自己正在跑的运行才能续接委托。已结束的运行不能
+	// 再凭旧的系统反馈放权——同一任务 id 的重放必须重新走一次真实发起的运行。
+	if actorType != "agent" {
+		return "", "not_agent_actor"
+	}
+	if !run.ID.Valid {
+		return "", "no_run"
+	}
+	if !run.AgentID.Valid || uuidToString(run.AgentID) != actorID {
+		return "", "run_agent_mismatch"
+	}
+	if run.Status != "running" {
+		return "", "run_not_running"
+	}
+	if !run.IssueID.Valid {
+		return "", "run_unbound"
+	}
+
+	// 任务范围：只允许当前运行所在任务及其直接子任务：兄弟任务、父任务、更远的血缘，以及
+	// 没有任何绑定对象的新顶层任务都不在既定范围内。
+	if !scopeIssue.ID.Valid {
+		return "", "scope_unbound"
+	}
+	runIssueID := uuidToString(run.IssueID)
+	scopeIsRunIssue := uuidToString(scopeIssue.ID) == runIssueID
+	scopeIsChildOfRunIssue := scopeIssue.ParentIssueID.Valid && uuidToString(scopeIssue.ParentIssueID) == runIssueID
+	if !scopeIsRunIssue && !scopeIsChildOfRunIssue {
+		return "", "scope_mismatch"
+	}
+	if !scopeIssue.WorkspaceID.Valid || uuidToString(scopeIssue.WorkspaceID) != workspaceID {
+		return "", "scope_workspace_mismatch"
+	}
+	// 授权随任务终止失效：完成后不再有可续接的既定范围。
+	switch issuestatus.Effective(ctx, h.Queries, scopeIssue.WorkspaceID, scopeIssue.Status) {
+	case "done", "cancelled":
+		return "", "issue_inactive"
+	}
+
+	// 原授权证据：确实发生过「人类 U 授权这个 Agent 的某次运行 → 把工作交给目标
+	// Agent」，且落在同一条任务范围内。
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return "", "scope_workspace_mismatch"
+	}
+	if !target.ID.Valid {
+		return "", "target_unbound"
+	}
+	userUUID, err := h.Queries.FindTaskDelegationAuthorization(ctx, db.FindTaskDelegationAuthorizationParams{
+		TargetAgentID:    target.ID,
+		DelegatorAgentID: run.AgentID,
+		ScopeIssueID:     scopeIssue.ID,
+		WorkspaceID:      wsUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "no_authorization_evidence"
+	}
+	if err != nil {
+		return "", "authorization_lookup_failed"
+	}
+	authorizer := uuidToString(userUUID)
+	if authorizer == "" {
+		return "", "no_authorization_evidence"
+	}
+
+	// 授权者「现在」仍然有资格：还在工作区，且当前仍能调用这个目标 Agent。原授权
+	// 者被移出、私有 Agent 换 owner 或从白名单移除，都在这里失败关闭，而不是沿用
+	// 历史授权。门禁照跑——继承来的只是「用谁的名义过闸」，私有边界一字未改；这里以
+	// member 主体判定（授权人类本人即发起人，originator 参数对 member 不起作用）。
+	if _, err := h.getWorkspaceMember(ctx, authorizer, workspaceID); err != nil {
+		return "", "authorizer_not_member"
+	}
+	if !h.canInvokeAgent(ctx, target, "member", authorizer, "", workspaceID) {
+		return "", "authorizer_lacks_permission"
+	}
+	return authorizer, ""
+}
+
+// 6. taskDelegationAuthorityFromRequest 为正在创建 / 预览的 HTTP 请求解析任务级委托
+// 继承的授权人类。发言运行取自服务端可信的 X-Task-ID 头；scope 必须是已经加载好的
+// 那条任务（或它的直接子任务），否则不授予。没有可绑定 scope 的入口（新顶层 issue、
+// member-only 入口）直接返回空串，门禁保持失败关闭。
+func (h *Handler) taskDelegationAuthorityFromRequest(r *http.Request, scope assignAuthorityScope, target db.Agent, actorType, actorID, workspaceID string) string {
+	scopeIssue, ok := scope.delegationScopeIssue()
+	if !ok {
+		return ""
+	}
+	run, ok := h.taskFromRequestHeader(r)
+	if !ok {
+		return ""
+	}
+	authorizer, _ := h.taskDelegationAuthority(r.Context(), run, scopeIssue, target, actorType, actorID, workspaceID)
+	return authorizer
+}
+
+// 7. taskDelegationAuthorityFromComment 在评论相关路径（保存、编辑重发、完成调和）上
+// 解析同一个任务级继承。发言运行取自存储的 comment.source_task_id——与
+// autopilotDelegationAuthorityFromComment 同一条服务端可信血统，因此预览、真实
+// 派发与延迟调和看到的是同一条证据。
+func (h *Handler) taskDelegationAuthorityFromComment(ctx context.Context, issue db.Issue, comment db.Comment, target db.Agent) string {
+	if comment.AuthorType != "agent" || !comment.SourceTaskID.Valid {
+		return ""
+	}
+	run, err := h.Queries.GetAgentTask(ctx, comment.SourceTaskID)
+	if err != nil {
+		return ""
+	}
+	authorizer, _ := h.taskDelegationAuthority(ctx, run, issue, target, comment.AuthorType, uuidToString(comment.AuthorID), uuidToString(issue.WorkspaceID))
+	return authorizer
+}
+
+// 8. commentTaskDelegationResolver 把评论路径的解析包成按目标 Agent 惰性求值的函数，
+// 供 commentTriggerComputeOptions 使用：触发计算逐个目标调用闸门时才去查证据，没有
+// 无归属运行或没有目标时一次查询都不发生。scope 固定为这条评论所在的任务。
+func (h *Handler) commentTaskDelegationResolver(ctx context.Context, issue db.Issue, comment db.Comment) func(db.Agent) string {
+	return func(target db.Agent) string {
+		return h.taskDelegationAuthorityFromComment(ctx, issue, comment, target)
+	}
+}
+
+// 9. requestTaskDelegationResolver 是 HTTP 请求路径（评论预览、指派）上的同一包装：
+// 发言运行与 scope 来自请求头与调用方已加载的 issue，规则与评论路径完全相同。
+func (h *Handler) requestTaskDelegationResolver(r *http.Request, scope assignAuthorityScope, actorType, actorID, workspaceID string) func(db.Agent) string {
+	return func(target db.Agent) string {
+		return h.taskDelegationAuthorityFromRequest(r, scope, target, actorType, actorID, workspaceID)
+	}
 }
 
 // commentSourceTaskID 返回 agent 当前正在执行的任务 id（来自服务端可信的

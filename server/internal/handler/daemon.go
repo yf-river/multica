@@ -4309,6 +4309,9 @@ func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.Ag
 			ExcludeTriggerCommentID:            c.ID,
 			OriginatorUserID:                   originatorUserID,
 			AutopilotDelegationAuthorityUserID: delegationAuthority,
+			// 修改 1. 完成时重放被推迟的委托，同样按这条评论的存储血缘续接当前任务范围内（GONG-83）
+			// 已授权的同一目标。
+			TaskDelegationAuthority: h.commentTaskDelegationResolver(ctx, issue, c),
 		})
 		// For an AGENT author, compensate ONLY explicit @agent/@squad mentions.
 		// computeCommentAgentTriggers can also return the assigned-squad-leader

@@ -44,11 +44,21 @@ func (h *Handler) issueTriggerWriteProbe(r *http.Request, actorType, actorID str
 // issueTriggerPreviewProbe 为只读预览镜像真实写时的闸门：私密 agent 闸门（预览不会向看不见它
 // 的成员泄露私密 agent 的就绪状态——与 validateAssigneePair / canEnqueueSquadLeader 一致）与
 // 同样的自循环守卫。
-func (h *Handler) issueTriggerPreviewProbe(r *http.Request, actorType, actorID, workspaceID string, issue db.Issue) service.IssueTriggerProbe {
-	originatorUserID := h.invokeOriginatorFromRequest(r, actorType, actorID)
+//
+// 1. scopeIssue 是授权绑定的那条任务（写路径传 prevIssue）；nil 表示尚不存在的候选新任务，
+// 没有可绑定对象，因此不授予任何继承授权。
+func (h *Handler) issueTriggerPreviewProbe(r *http.Request, actorType, actorID, workspaceID string, issue db.Issue, scopeIssue *db.Issue) service.IssueTriggerProbe {
+	// 2. 与写路径共用同一套授权解析（真实发起人 → autopilot 委派 → 任务级委托继承，GONG-83），
+	// 否则预览会说「不会启动」而保存后真的启动，或反之。scope 也必须与写路径选同一条 issue
+	//（更新时是写前的那条），否则「任务已结束」的判定会在两边得出相反结论。
+	scope := scopeNewTopLevelIssue()
+	if scopeIssue != nil {
+		scope = scopeExistingIssue(scopeIssue)
+	}
 	return service.IssueTriggerProbe{
 		CanAccessAgent: func(agent db.Agent) bool {
-			return h.canInvokeAgent(r.Context(), agent, actorType, actorID, originatorUserID, workspaceID)
+			effectiveInvoker := h.effectiveInvocationAuthorityFromRequest(r, scope, agent, actorType, actorID, workspaceID)
+			return h.canInvokeAgent(r.Context(), agent, actorType, actorID, effectiveInvoker, workspaceID)
 		},
 		IsSelfLoop: func() bool {
 			return h.isAgentRunningOnIssue(r, actorType, issue)
@@ -172,8 +182,10 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	resp := IssueTriggerPreviewResponse{Triggers: make([]IssueTriggerPreviewItem, 0)}
 
-	appendTrigger := func(issue db.Issue, in service.IssueTriggerInput) {
-		probe := h.issueTriggerPreviewProbe(r, actorType, actorID, workspaceID, issue)
+	// 3. scopeIssue 是授权绑定的那条任务：更新时传写前的那条 issue，与 validateAssigneePair
+	// 的选择一致；创建一条尚不存在的任务没有绑定对象（nil），不授予继承授权。
+	appendTrigger := func(issue db.Issue, in service.IssueTriggerInput, scopeIssue *db.Issue) {
+		probe := h.issueTriggerPreviewProbe(r, actorType, actorID, workspaceID, issue, scopeIssue)
 		if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(), in, probe); ok {
 			resp.Triggers = append(resp.Triggers, IssueTriggerPreviewItem{
 				IssueID:          uuidToString(trigger.IssueID),
@@ -200,7 +212,7 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 			AssigneeType: newAssigneeType,
 			AssigneeID:   newAssigneeID,
 		}
-		appendTrigger(candidate, service.IssueTriggerInput{Issue: candidate, IsCreate: true})
+		appendTrigger(candidate, service.IssueTriggerInput{Issue: candidate, IsCreate: true}, nil)
 		resp.TotalCount = len(resp.Triggers)
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -232,7 +244,7 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 			in.StatusChanged = loaded.Status != *req.Status
 		}
 		in.Issue = post
-		appendTrigger(post, in)
+		appendTrigger(post, in, &loaded)
 	}
 
 	resp.TotalCount = len(resp.Triggers)
