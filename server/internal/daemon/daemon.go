@@ -6695,10 +6695,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.ReviewCommit != "" {
 		task.PriorWorkDir = ""
 		task.PriorSessionID = ""
-		if localAssignment != nil {
-			localAssignment.Ref.BaseRef = task.ReviewCommit
-			localAssignment.Ref.ExecutionMode = "worktree"
-		}
 	}
 	// local_directory 任务刻意跳过 Reuse：prior WorkDir 是用户自己的路径（总是存
 	// 在），但复用路径会丢掉 GC 循环需要的 envRoot 关联，而且对着稳定用户路径重跑

@@ -3,7 +3,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { testAgentControlOptions } from "@multica/core/test-agents";
+import { testAgentControlCapabilityOptions } from "@multica/core/test-agents";
 import React, { lazy, Suspense } from "react";
 import {
   User,
@@ -162,8 +162,12 @@ export function SettingsPage() {
   const isMobile = useIsMobile();
   const production = useConfigStore(state => state.environmentName) === "生产";
   const ws = workspace?.id ?? "";
-  const capability = useQuery({...testAgentControlOptions(ws),enabled:production && !!ws,retry:false});
-  const testAgentsAvailable = production && capability.isSuccess;
+  const capability = useQuery({
+    ...testAgentControlCapabilityOptions(ws),
+    enabled: production && !!ws,
+    retry: false,
+  });
+  const testAgentsAvailable = production && capability.data === true;
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
 
   // 只保留被 feature flag 打开的标签；plugins 默认隐藏。

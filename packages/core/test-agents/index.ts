@@ -54,3 +54,10 @@ export const testAgentControlOptions = (workspace: string) =>
     queryFn: () => api.getTestAgentControl(),
     refetchInterval: 30_000,
   });
+
+export const testAgentControlCapabilityOptions = (workspace: string) =>
+  queryOptions({
+    queryKey: [...testAgentControlKey(workspace), "capability"],
+    queryFn: () => api.getTestAgentControlCapability(),
+    refetchInterval: 30_000,
+  });

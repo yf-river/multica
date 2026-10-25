@@ -334,6 +334,7 @@ import {
   IssueSchema,
   AgentTaskSchema,
   TestEnvironmentControlSchema,
+  TestAgentControlCapabilitySchema,
   SourceContextPreviewSchema,
   CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
@@ -778,6 +779,15 @@ export class ApiClient {
     this.options.onUnauthorized?.();
   }
 
+  async getTestAgentControlCapability(): Promise<boolean> {
+    const value = parseWithFallback(
+      await this.fetch<unknown>("/api/test-agent-control/capability"),
+      TestAgentControlCapabilitySchema,
+      { available: false },
+      { endpoint: "GET /api/test-agent-control/capability" },
+    );
+    return value.available === true;
+  }
   async getTestAgentControl(): Promise<TestEnvironmentControl[]> {
     return parseWithFallback(await this.fetch<unknown>("/api/test-agent-control"),TestEnvironmentControlSchema.array(),[],{endpoint:"GET /api/test-agent-control"});
   }

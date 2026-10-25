@@ -895,3 +895,9 @@ it("rejects malformed test environment management payloads", async () => {
  expect(TestEnvironmentControlSchema.array().safeParse([{name:"int",desired:{policy:"bad"}}]).success).toBe(false);
  expect(TestEnvironmentControlSchema.array().safeParse([]).success).toBe(true);
 });
+
+it("requires a boolean test environment capability",async()=>{
+ const {TestAgentControlCapabilitySchema}=await import("./schemas");
+ expect(TestAgentControlCapabilitySchema.safeParse({available:"yes"}).success).toBe(false);
+ expect(TestAgentControlCapabilitySchema.parse({available:false})).toEqual({available:false});
+});

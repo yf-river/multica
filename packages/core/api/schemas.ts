@@ -3282,3 +3282,5 @@ export const TestEnvironmentControlSchema = z.object({
  observed:z.object({status:z.string().optional(),revision:z.number().optional(),error:z.string().optional(),agents:z.array(z.object({id:z.string(),name:z.string(),model:z.string().nullable(),runtime_id:z.string().nullable(),status:z.string(),archived_at:z.string().nullable()})).optional(),runtimes:z.array(z.object({id:z.string(),provider:z.string()})).optional()}).passthrough(),
  observed_at:z.string().nullable(),
 });
+
+export const TestAgentControlCapabilitySchema = z.object({ available: z.boolean() });

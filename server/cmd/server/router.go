@@ -1672,6 +1672,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			r.Get("/api/test-agent-control", h.TestAgentControl)
+			r.Get("/api/test-agent-control/capability", h.TestAgentControlCapability)
 			r.Post("/api/test-agent-control", h.TestAgentControl)
 			r.Get("/api/delivery-queue/window", h.ReleaseWindow)
 			r.Post("/api/delivery-queue/window", h.ReleaseWindow)

@@ -149,3 +149,28 @@ func TestGong78PaginationKeepsLegacyRunIdentityCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestGong78CapabilityProbeUsesBooleanAndPreservesManagementGate(t *testing.T) {
+	t.Setenv("MULTICA_ENV_ID", "prod")
+	t.Setenv("MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID", "00000000-0000-0000-0000-000000000099")
+	check := func(want bool) {
+		rec := httptest.NewRecorder()
+		testHandler.TestAgentControlCapability(rec, newRequest("GET", "/capability", nil))
+		var value struct {
+			Available bool `json:"available"`
+		}
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &value) != nil || value.Available != want {
+			t.Fatalf("capability %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	check(false)
+	rec := httptest.NewRecorder()
+	testHandler.TestAgentControl(rec, newRequest("GET", "/control", nil))
+	if rec.Code != 403 {
+		t.Fatal("management permission widened")
+	}
+	t.Setenv("MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID", testWorkspaceID)
+	check(true)
+	t.Setenv("MULTICA_ENV_ID", "int")
+	check(false)
+}
