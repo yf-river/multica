@@ -2262,6 +2262,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// 归档通知，服务 inbox 的「Archived」子视图。与 "/" 分开，让主列表保持
 				// 自身契约、永不携带无界归档。
 				r.Get("/archived", h.ListArchivedInbox)
+				r.Get("/archived/page", h.ListArchivedInboxPage)
+				r.Get("/archived/facets", h.GetArchivedInboxFacets)
 				r.Get("/unread-count", h.CountUnreadInbox)
 				// 跨工作区未读汇总：账号级，按用户分键。支撑工作区切换器里「其他
 				// 工作区」的圆点。

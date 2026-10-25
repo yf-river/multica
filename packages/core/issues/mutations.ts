@@ -5,13 +5,23 @@ import { useRef } from "react";
 import { workspaceKeys } from "../workspace/queries";
 import type { Workspace } from "../types/workspace";
 import { findIssueLocation } from "./cache-helpers";
-import type { QueryClient } from "@tanstack/react-query";
 import { normalizeStatusPatch } from "./status-category";
-import { hashKey, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import {
+  hashKey,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { api } from "../api";
 import { issueKeys } from "./queries";
 import { projectKeys } from "../projects/queries";
-import { inboxKeys } from "../inbox/queries";
+import { inboxKeys, type ArchivedInboxCache } from "../inbox/queries";
+import {
+  cancelInboxLists,
+  isInboxListRequestInFlight,
+  onInboxInvalidate,
+} from "../inbox/ws-updaters";
 import {
   applyIssueChange,
   invalidateIssueDerivatives,
@@ -117,10 +127,58 @@ export type UpdateIssueMutationInput = {
 // 议题增删改（CRUD）
 // ---------------------------------------------------------------------------
 
-/**
- * 议题创建类 mutation 的公共骨架：所有"创建一个新议题"的 hook 共用。
- * @param mutationFn 具体的创建请求函数（返回新创建的议题）。
- */
+// Shared by the single and batch update hooks, so the inbox re-read can wait
+// for the last of them (see `owedInboxRereads`).
+const ISSUE_WRITE = "issue-write";
+const issueWriteMutationKey = (wsId: string) => [ISSUE_WRITE, wsId] as const;
+
+// Workspaces whose inbox lists owe a re-read, per client.
+const inboxRereadsOwed = new WeakMap<QueryClient, Set<string>>();
+
+// A client's owed re-reads, each paid once its workspace has no issue write
+// left in flight. Issued earlier, the re-read could read a pending write's old
+// value and land after that write's patch, reverting a saved change. The check
+// runs when a write reaches its terminal state, not in onSettled: TanStack
+// calls onSettled while the mutation still counts as pending, so two writes
+// settling in the same tick would each count the other and both skip
+// (MUL-7286).
+function owedInboxRereads(qc: QueryClient): Set<string> {
+  const existing = inboxRereadsOwed.get(qc);
+  if (existing) return existing;
+  const owed = new Set<string>();
+  inboxRereadsOwed.set(qc, owed);
+  qc.getMutationCache().subscribe((event) => {
+    if (event.type !== "updated") return;
+    if (event.action.type !== "success" && event.action.type !== "error") return;
+    const [kind, wsId] = event.mutation.options.mutationKey ?? [];
+    if (kind !== ISSUE_WRITE || typeof wsId !== "string") return;
+    if (!owed.has(wsId)) return;
+    if (qc.isMutating({ mutationKey: issueWriteMutationKey(wsId) }) > 0) return;
+    owed.delete(wsId);
+    void onInboxInvalidate(qc, wsId);
+  });
+  return owed;
+}
+
+// Inbox side of settling a status / priority write. It patched the inbox rows
+// optimistically, so the lists owe a re-read only when the write left them
+// behind the server: onMutate interrupted one of their requests (see
+// `cancelInboxLists`), a failure restored their rollback snapshot, or a list
+// request is still out and may have read the server before this write
+// committed. Otherwise the patch was the whole change, and no request is added.
+function settleInboxAfterIssueWrite(
+  qc: QueryClient,
+  wsId: string,
+  // Set by onMutate for status / priority writes only.
+  inboxWrite: { interrupted: boolean } | undefined,
+  failed: boolean,
+) {
+  if (!inboxWrite) return;
+  if (inboxWrite.interrupted || failed || isInboxListRequestInFlight(qc, wsId)) {
+    owedInboxRereads(qc).add(wsId);
+  }
+}
+
 function useIssueCreateMutation<TVariables>(
   mutationFn: (variables: TVariables) => Promise<Issue>,
 ) {
@@ -180,6 +238,7 @@ export function useUpdateIssue() {
   const wsId = useWorkspaceId();
   const sources = useRef(new Map<string, string | undefined>());
   return useMutation({
+    mutationKey: issueWriteMutationKey(wsId),
     mutationFn: ({ id, move_intent: moveIntent, ...data }: UpdateIssueMutationInput) => {
       if (!moveIntent) return api.updateIssue(id, data, sources.current.get(id));
       const { position: _optimisticPosition, ...target } = data;
@@ -207,9 +266,10 @@ export function useUpdateIssue() {
       qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) });
       qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) });
       qc.cancelQueries({ queryKey: issueKeys.tableAll(wsId) });
-      if (patch.status !== undefined || patch.priority !== undefined) {
-        qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
-      }
+      const inboxWrite =
+        patch.status !== undefined || patch.priority !== undefined
+          ? { interrupted: cancelInboxLists(qc, wsId) }
+          : undefined;
       const prevDetail = qc.getQueryData<Issue>(issueKeys.detail(wsId, id));
       // 协调器拥有跨缓存规则：卡片已加载且仍属于该列表 → 外科手术式修补/重分桶；
       // 变更让它离开某过滤视图 → 外科手术式移除；服务器结果可能漂移（涉及成员关系
@@ -259,7 +319,7 @@ export function useUpdateIssue() {
               : old?.map((c) => (c.id === id ? { ...c, ...normalizeStatusPatch(patch) } : c)),
         );
       }
-      return { change, prevChildren, parentId, id };
+      return { change, prevChildren, parentId, id, inboxWrite };
     },
     onError: (_err, vars, ctx) => {
       if (ctx) {
@@ -322,7 +382,8 @@ export function useUpdateIssue() {
       // 服务器已提交——现在可以安全地冲刷它报告的任何漂移。
       invalidateStaleListKeys(qc, reconcile.staleKeys);
     },
-    onSettled: (_data, _err, vars, ctx) => {
+    onSettled: (_data, err, vars, ctx) => {
+      settleInboxAfterIssueWrite(qc, wsId, ctx?.inboxWrite, err !== null);
       sources.current.delete(vars.id);
       // 议题自己的列表 + 详情缓存在 onSuccess / onError 里已做外科手术式对账，
       // 所以这里刻意不失效它们——settle 时整表重取正是拖拽闪烁的来源。只有无法从
@@ -480,6 +541,7 @@ export function useBatchUpdateIssues() {
   const wsId = useWorkspaceId();
   const sources = useRef(new Map<string, string | undefined>());
   return useMutation({
+    mutationKey: issueWriteMutationKey(wsId),
     mutationFn: ({
       ids,
       updates,
@@ -503,9 +565,10 @@ export function useBatchUpdateIssues() {
       await qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) });
       await qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) });
       await qc.cancelQueries({ queryKey: issueKeys.tableAll(wsId) });
-      if (patch.status !== undefined || patch.priority !== undefined) {
-        await qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
-      }
+      const inboxWrite =
+        patch.status !== undefined || patch.priority !== undefined
+          ? { interrupted: cancelInboxLists(qc, wsId) }
+          : undefined;
 
       // 让每个议题都经过协调器——与单条更新同一张规则表，因此批量编辑会在工作区
       // 看板 AND 每个过滤的 myList 视图上做一致的修补/移除。
@@ -519,7 +582,7 @@ export function useBatchUpdateIssues() {
       >();
       const prevDetailById = new Map<string, Issue>();
       let prevInboxList: InboxItem[] | undefined;
-      let prevArchivedInboxList: InboxItem[] | undefined;
+      let prevArchivedInboxCaches: [QueryKey, ArchivedInboxCache | undefined][] | undefined;
       const staleKeys: QueryKey[] = [];
       for (const id of ids) {
         const base = qc.getQueryData<Issue>(issueKeys.detail(wsId, id));
@@ -548,10 +611,10 @@ export function useBatchUpdateIssues() {
           prevInboxList = change.prevInboxList;
         }
         if (
-          prevArchivedInboxList === undefined &&
-          change.prevArchivedInboxList !== undefined
+          prevArchivedInboxCaches === undefined &&
+          change.prevArchivedInboxCaches !== undefined
         ) {
-          prevArchivedInboxList = change.prevArchivedInboxList;
+          prevArchivedInboxCaches = change.prevArchivedInboxCaches;
         }
         staleKeys.push(...change.staleKeys);
       }
@@ -581,7 +644,8 @@ export function useBatchUpdateIssues() {
         prevTableRows: [...prevTableRowByHash.values()],
         prevDetailById,
         prevInboxList,
-        prevArchivedInboxList,
+        prevArchivedInboxCaches,
+        inboxWrite,
         staleKeys,
         prevChildren,
         affectedParentIds,
@@ -611,11 +675,8 @@ export function useBatchUpdateIssues() {
       if (ctx?.prevInboxList !== undefined) {
         qc.setQueryData(inboxKeys.list(wsId), ctx.prevInboxList);
       }
-      if (ctx?.prevArchivedInboxList !== undefined) {
-        qc.setQueryData(
-          inboxKeys.archived(wsId),
-          ctx.prevArchivedInboxList,
-        );
+      for (const [key, snapshot] of ctx?.prevArchivedInboxCaches ?? []) {
+        qc.setQueryData(key, snapshot);
       }
       if (ctx?.prevChildren) {
         for (const [parentId, snapshot] of ctx.prevChildren) {
@@ -623,7 +684,8 @@ export function useBatchUpdateIssues() {
         }
       }
     },
-    onSettled: (_data, _err, _vars, ctx) => {
+    onSettled: (_data, err, _vars, ctx) => {
+      settleInboxAfterIssueWrite(qc, wsId, ctx?.inboxWrite, err !== null);
       for (const id of _vars.ids) sources.current.delete(id);
       // 刻意不失效 issueKeys.list / myAll：上面 onMutate 的一轮已经是已加载分桶看板
       // 的完整外科对账，settle 时整板重取只会把单条更新刚消除的闪烁带回来。下面只刷新

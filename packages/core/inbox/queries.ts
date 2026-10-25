@@ -1,7 +1,7 @@
-// 本文件封装收件箱的 React Query 查询：未读列表、归档列表、跨工作区未读汇总，
-// 以及若干对 InboxItem 的按 issue 去重/未读派生逻辑。
-
-import { focusManager, queryOptions, useQuery } from "@tanstack/react-query";
+import type { InfiniteData, QueryClient } from "@tanstack/react-query";
+import type { ArchivedInboxPage } from "../types/inbox";
+import { EMPTY_INBOX_FILTERS, type InboxFilters } from "./filter-store";
+import { focusManager, infiniteQueryOptions, queryOptions, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import type { InboxItem, InboxWorkspaceUnread } from "../types";
 
@@ -10,8 +10,11 @@ export const inboxKeys = {
   all: (wsId: string) => ["inbox", wsId] as const,
   list: (wsId: string) => [...inboxKeys.all(wsId), "list"] as const,
   archived: (wsId: string) => [...inboxKeys.all(wsId), "archived"] as const,
-  // 账号级（不按工作区分桶）：一份共享缓存条目，装着用户所属每个工作区的
-  // 未读数。
+  pages: (wsId: string) => [...inboxKeys.archived(wsId), "pages"] as const,
+  lookup: (wsId: string) => [...inboxKeys.archived(wsId), "lookup"] as const,
+  facets: (wsId: string) => [...inboxKeys.all(wsId), "archived-facets"] as const,
+  // Account-level (not workspace-scoped): a single shared cache entry that
+  // holds unread counts for every workspace the user belongs to.
   unreadSummary: () => ["inbox", "unread-summary"] as const,
 };
 
@@ -35,6 +38,54 @@ export function archivedInboxListOptions(wsId: string) {
     queryKey: inboxKeys.archived(wsId),
     queryFn: () => api.listArchivedInbox(),
   });
+}
+
+function normalizedInboxFilters(filters: InboxFilters): InboxFilters {
+  return { statuses: [...filters.statuses].sort(), priorities: [...filters.priorities].sort(),
+    actors: [...filters.actors].sort(), unreadOnly: filters.unreadOnly, idleOnly: false };
+}
+
+export function archivedInboxPagesOptions(wsId: string, filters: InboxFilters) {
+  return infiniteQueryOptions({
+    queryKey: [...inboxKeys.pages(wsId), normalizedInboxFilters(filters)],
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) => api.listArchivedInboxPage(filters, { cursor: pageParam, signal }),
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    retry: false,
+  });
+}
+
+export function archivedInboxLookupOptions(wsId: string, groupId: string, filters: InboxFilters = EMPTY_INBOX_FILTERS) {
+  return queryOptions({
+    queryKey: [...inboxKeys.lookup(wsId), groupId, normalizedInboxFilters(filters)],
+    queryFn: ({ signal }) => api.listArchivedInboxPage(filters, { groupId, signal }),
+    enabled: !!groupId,
+    retry: false,
+  });
+}
+
+export function archivedInboxFacetsOptions(wsId: string, filters: InboxFilters) {
+  return queryOptions({
+    queryKey: [...inboxKeys.facets(wsId), normalizedInboxFilters(filters)],
+    queryFn: ({ signal }) => api.getArchivedInboxFacets(filters, signal),
+    retry: false,
+  });
+}
+
+export type ArchivedInboxCache = InboxItem[] | ArchivedInboxPage | InfiniteData<ArchivedInboxPage>;
+
+export function mapArchivedInboxCache(data: ArchivedInboxCache, patch: (items: InboxItem[]) => InboxItem[]): ArchivedInboxCache {
+  if (Array.isArray(data)) return patch(data);
+  if ("pages" in data) return { ...data, pages: data.pages.map((page) => ({ ...page, items: patch(page.items) })) };
+  return { ...data, items: patch(data.items) };
+}
+
+export function patchArchivedInboxCaches(qc: QueryClient, wsId: string, patch: (items: InboxItem[]) => InboxItem[]) {
+  const snapshot = qc.getQueriesData<ArchivedInboxCache>({ queryKey: inboxKeys.archived(wsId) });
+  for (const [key, data] of snapshot) {
+    if (data) qc.setQueryData(key, mapArchivedInboxCache(data, patch));
+  }
+  return snapshot;
 }
 
 /**
@@ -81,11 +132,32 @@ export function unreadWorkspaceIds(summary: InboxWorkspaceUnread[]): Set<string>
 }
 
 /**
- * 指定工作区的未读收件箱计数，口径与收件箱列表 UI 一致：先排除已归档项，
- * 再按 issue 去重——同一个 issue 的三条未读通知只算一次。
+ * Unread inbox count for one workspace within the cross-workspace summary.
+ * A workspace with nothing unread is absent from the response entirely, so a
+ * missing entry means zero rather than "not loaded yet".
+ */
+export function unreadCountForWorkspace(
+  summary: InboxWorkspaceUnread[],
+  wsId: string | null | undefined,
+): number {
+  if (!wsId) return 0;
+  return summary.find((s) => s.workspace_id === wsId)?.count ?? 0;
+}
+
+/**
+ * Unread inbox count for the given workspace — the number the sidebar nav
+ * badge and the desktop dock badge render.
  *
- * @param wsId - 工作区 id（可为空，为空时不请求）
- * @returns 未读数
+ * Read from the cross-workspace summary, NOT from the inbox list. The summary
+ * is one small server-computed row per workspace and the sidebar already
+ * fetches it for the workspace-switcher dot, so the badge costs no request of
+ * its own; deriving it from `listInbox()` instead downloaded the entire
+ * unbounded inbox on every app start just to render a number (MUL-6967).
+ *
+ * `GET /api/inbox/unread-count` is deliberately not the source: it counts raw
+ * notification rows, while the inbox renders one row per issue. The summary
+ * endpoint applies the same newest-per-issue rule `deduplicateInboxItems`
+ * applies client-side, so this number matches the list the user sees.
  */
 export function inboxUnreadSummaryEnabled(wsId: string | null | undefined, { whileHidden = false }: { whileHidden?: boolean } = {}) {
   return () => !!wsId && (whileHidden || focusManager.isFocused());

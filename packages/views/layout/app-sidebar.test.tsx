@@ -3,11 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
 
-const { detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
+const { detail, deletePin, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
   sidebarState: { setOpenMobile: vi.fn() },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
-  inboxItems: { current: [] as { id: string; read: boolean }[] },
   navigation: { current: { pathname: "/acme/issues" } },
   summary: { current: [] as { workspace_id: string; count: number }[] },
   workspaces: {
@@ -125,6 +124,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     runtimes: () => "/acme/runtimes",
     mcp: () => "/acme/mcp",
     quickActions: () => "/acme/quick-actions",
+    upstream: () => "/acme/upstream",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
     issueDetail: (id: string) => `/acme/issues/${id}`,
@@ -143,9 +143,12 @@ vi.mock("@multica/core/api", async (importOriginal) => {
   };
 });
 vi.mock("@multica/core/inbox/queries", () => ({
-  deduplicateInboxItems: (items: unknown[]) => items,
-  inboxKeys: { list: () => ["inbox"], unreadSummary: () => ["inbox", "unread-summary"] },
+  inboxUnreadSummaryEnabled: (id: string | null) => () => !!id,
   inboxUnreadSummaryOptions: () => ({ queryKey: ["inbox", "unread-summary"] }),
+  // The nav badge and the switcher dot read the SAME cross-workspace summary,
+  // so the fixture that drives one drives the other.
+  useInboxUnreadCount: (currentWsId: string | null) =>
+    summary.current.find((s) => s.workspace_id === currentWsId)?.count ?? 0,
   hasOtherWorkspaceUnread: (
     entries: { workspace_id: string; count: number }[],
     currentWsId: string | null,
@@ -175,7 +178,6 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "pins") return { data: pins.current };
     if (queryKey[0] === "issue") return detail.current;
     if (queryKey[0] === "inbox" && queryKey[1] === "unread-summary") return { data: summary.current };
-    if (queryKey[0] === "inbox") return { data: inboxItems.current };
     if (queryKey[0] === "workspaces") return { data: workspaces.current };
     return { data: [] };
   },

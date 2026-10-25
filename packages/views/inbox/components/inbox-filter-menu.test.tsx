@@ -85,15 +85,22 @@ const ITEMS = [
 function renderMenu({
   items = ITEMS,
   priorityFilterSupport = "supported",
+  archived = false,
+  getArchivedInboxFacets = vi.fn(async () => ({ statuses: {}, priorities: {}, actors: {}, unreadCount: 0 })),
+  statusEntries = STATUS_ORDER.map(statusEntry),
 }: {
   items?: InboxItem[];
   priorityFilterSupport?: InboxPriorityFilterSupport;
+  archived?: boolean;
+  getArchivedInboxFacets?: ReturnType<typeof vi.fn>;
+  statusEntries?: IssueStatusEntry[];
 } = {}) {
   setApiInstance({
+    getArchivedInboxFacets,
     listIssueStatuses: async () => ({
-      statuses: STATUS_ORDER.map(statusEntry),
+      statuses: statusEntries,
       categories: [],
-      total: STATUS_ORDER.length,
+      total: statusEntries.length,
     }),
   } as unknown as ApiClient);
   const queryClient = new QueryClient({
@@ -105,6 +112,7 @@ function renderMenu({
         wsId="ws-1"
         items={items}
         priorityFilterSupport={priorityFilterSupport}
+        archived={archived}
       />
     </QueryClientProvider>,
   );
@@ -128,6 +136,43 @@ afterEach(() => {
 });
 
 describe("InboxFilterMenu", () => {
+  it("keeps a selected retired status removable when absent from archive facets and pages", async () => {
+    useInboxFilterStore.getState().toggleStatusFilter("ws-1", "custom-retired");
+    renderMenu({
+      items: [], archived: true,
+      statusEntries: [...STATUS_ORDER.map(statusEntry), {
+        ...statusEntry("todo"), id: "retired", key: "custom-retired",
+        name: "Retired status", is_system: false, archived_at: "2026-09-01T00:00:00Z",
+      }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "1 active filter" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Status/ }));
+    const selected = await screen.findByRole("menuitemcheckbox", { name: "Retired status" });
+    expect(selected).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(selected);
+    expect(useInboxFilterStore.getState().filtersByWorkspace["ws-1"]?.statuses).toEqual([]);
+  });
+
+  it("keeps a selected priority removable when absent from archive facets and pages", async () => {
+    useInboxFilterStore.getState().togglePriorityFilter("ws-1", "important_urgent");
+    renderMenu({ items: [], archived: true });
+    fireEvent.click(screen.getByRole("button", { name: "1 active filter" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Priority/ }));
+    const selected = await screen.findByRole("menuitemcheckbox", { name: "Important and urgent" });
+    expect(selected).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(selected);
+    expect(useInboxFilterStore.getState().filtersByWorkspace["ws-1"]?.priorities).toEqual([]);
+  });
+
+  it("loads full-archive facets only when opened, including an actor absent from loaded rows", async () => {
+    const getArchivedInboxFacets = vi.fn(async () => ({ statuses: { done: 251 }, priorities: { high: 251 }, actors: { "member:alice": 251 }, unreadCount: 0 }));
+    renderMenu({ items: [], archived: true, getArchivedInboxFacets });
+    expect(getArchivedInboxFacets).not.toHaveBeenCalled();
+    await openSubmenu("From");
+    expect(await screen.findByRole("menuitemcheckbox", { name: /Alice.*251/ })).toBeTruthy();
+    expect(getArchivedInboxFacets).toHaveBeenCalledTimes(1);
+  });
+
   it("selects a status and exposes the active count on the trigger", async () => {
     renderMenu();
     await openSubmenu("Status");

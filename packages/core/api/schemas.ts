@@ -2795,7 +2795,24 @@ export const InboxItemListSchema = z.array(
     .loose(),
 );
 
-/** 收件箱项列表的空值兜底。 */
+export const ArchivedInboxPageSchema = z.object({
+  items: InboxItemListSchema,
+  next_cursor: z.string().min(1).nullable(),
+  has_more: z.boolean(),
+}).refine((page) => page.has_more === (page.next_cursor !== null) &&
+  (!page.has_more || page.items.length > 0))
+  .transform((page) => ({ items: page.items, nextCursor: page.next_cursor, hasMore: page.has_more }));
+
+export const ArchivedInboxFacetsSchema = z.object({
+  statuses: z.record(z.string(), z.number().int().nonnegative()),
+  priorities: z.record(z.string(), z.number().int().nonnegative()),
+  actors: z.record(z.string(), z.number().int().nonnegative()),
+  unread_count: z.number().int().nonnegative(),
+}).transform((facets) => ({
+  statuses: facets.statuses, priorities: facets.priorities,
+  actors: facets.actors, unreadCount: facets.unread_count,
+}));
+
 export const EMPTY_INBOX_ITEMS: InboxItem[] = [];
 
 // ---------------------------------------------------------------------------

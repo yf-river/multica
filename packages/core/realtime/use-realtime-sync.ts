@@ -52,7 +52,6 @@ import {
   invalidateUpdatedAtSortedIssueLists,
 } from "../issues/cache-coordinator";
 import { onInboxNew, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted, onInboxSummaryInvalidate } from "../inbox/ws-updaters";
-import { inboxKeys } from "../inbox/queries";
 import {
   notificationPreferenceOptions,
   notificationPreferenceKeys,
@@ -528,12 +527,14 @@ export async function handleInboxNew(
   item: InboxItem,
 ): Promise<void> {
   const sourceWsId = item.workspace_id;
-  if (sourceWsId) onInboxNew(qc, sourceWsId, item);
-  // 任何工作区的新条目都可能点亮工作区切换器的圆点，所以无论活跃工作区是谁，
-  // 都要刷新跨工作区的汇总。
-  onInboxSummaryInvalidate(qc);
-  // 只在应用没有聚焦时弹浏览器通知。用户已经在看 Multica 时，inbox 侧边栏的
-  // 未读样式就够——不必用横幅打断。
+  if (sourceWsId) void onInboxNew(qc, sourceWsId, item);
+  // A new item in ANY workspace can light the workspace-switcher dot, so
+  // refresh the cross-workspace summary regardless of the active workspace.
+  void onInboxSummaryInvalidate(qc);
+  // Fire a native OS notification only when the app isn't focused. When
+  // the user is already looking at Multica, the inbox sidebar's unread
+  // styling is enough — no need to interrupt with a banner. `desktopAPI`
+  // is injected by the preload script; its absence (web app) skips silently.
   if (typeof document !== "undefined" && document.hasFocus()) return;
   // 只解析一次来源工作区的 slug：它把静音检查和深链都钉在 inbox 条目*属于*的
   // 工作区上，绝不在当前活跃工作区。在这里读 `getCurrentSlug()` 曾是错误路由
@@ -583,7 +584,10 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   const wsId = getCurrentWsId();
   if (wsId) {
     qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
-    qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+    // Through the inbox's own entry point, not a plain invalidate: a reconnect
+    // can land during the list's first load, and a plain invalidate would be
+    // answered by the request already on the wire (see refreshInboxQuery).
+    void onInboxInvalidate(qc, wsId);
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
@@ -603,14 +607,16 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     // 归档的状态继续提供出去，或一直画着它的旧名字。
     qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
   }
-  // 跨工作区，所以在 wsId 守卫之外：重连可能错过任意工作区的 inbox 事件，
-  // 所以重拉切换器圆点的汇总。
-  onInboxSummaryInvalidate(qc);
-  // 按议题的缓存不带 wsId 作 key，所以上面的 issueKeys.all(wsId) 前缀够不到它们。
-  // 它们完全依赖 WS 事件保新鲜（staleTime: Infinity），断线期间错过的事件会让它们
-  // 一直陈旧到整页刷新——inbox 显示了某 Agent 的新评论而议题时间线没有（#3953）。
-  // 非活跃缓存在这里只被标为过期、下次挂载时重取；唯一挂载着的议题立即重取，
-  // 与它自己的 useWSReconnect 行为相同。
+  // Cross-workspace, so outside the wsId guard: a reconnect may have missed
+  // inbox events from any workspace, so re-pull the switcher-dot summary.
+  void onInboxSummaryInvalidate(qc);
+  // Per-issue caches are keyed without wsId, so the issueKeys.all(wsId)
+  // prefix above does not reach them. They rely entirely on WS events for
+  // freshness (staleTime: Infinity), so events missed while disconnected
+  // left them stale until a full reload — the inbox showed an agent's new
+  // comment while the issue timeline didn't (#3953). Inactive caches only
+  // get marked stale here and refetch on next mount; the one mounted issue
+  // refetches immediately, same as its own useWSReconnect already does.
   qc.invalidateQueries({ queryKey: issueKeys.timelineAll() });
   qc.invalidateQueries({ queryKey: issueKeys.reactionsAll() });
   qc.invalidateQueries({ queryKey: issueKeys.subscribersAll() });
@@ -687,12 +693,14 @@ export function useRealtimeSync(
     const refreshMap: Record<string, () => void> = {
       inbox: () => {
         const wsId = getCurrentWsId();
-        if (wsId) onInboxInvalidate(qc, wsId);
-        // inbox:read / inbox:archived / inbox:unarchived / 批量事件都落在这里。
-        // 它们可能来自当前活跃工作区之外的另一个工作区（个人事件会扇出到该用户所有
-        // 连接），所以总是刷新跨工作区汇总——别的条目被读/归档时它的圆点必须熄灭，
-        // 未读条目从归档里恢复时又要点亮。
-        onInboxSummaryInvalidate(qc);
+        if (wsId) void onInboxInvalidate(qc, wsId);
+        // inbox:read / inbox:archived / inbox:unarchived / batch events arrive
+        // here. They can originate from a workspace other than the active one
+        // (personal events fan out to all the user's connections), so always
+        // refresh the cross-workspace summary — its dot must clear when another
+        // workspace's items are read/archived, and light again when an unread
+        // item is restored from the archive.
+        void onInboxSummaryInvalidate(qc);
       },
       agent: () => {
         const wsId = getCurrentWsId();
@@ -941,7 +949,7 @@ export function useRealtimeSync(
       const wsId = getCurrentWsId();
       if (wsId) {
         onIssueDeleted(qc, wsId, issue_id);
-        onInboxIssueDeleted(qc, wsId, issue_id);
+        void onInboxIssueDeleted(qc, wsId, issue_id);
       }
     });
 

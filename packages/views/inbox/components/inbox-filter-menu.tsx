@@ -1,8 +1,6 @@
 "use client";
 
-// 收件箱的分面筛选菜单：可按「来自谁 / 状态 / 优先级 / 只看未读」过滤，每个
-// 选项旁带计数；能力随后端是否支持优先级过滤而裁剪。
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CircleDot, Filter, Mail, RotateCcw, SignalHigh, UserRound } from "lucide-react";
 import { PRIORITY_DISPLAY_ORDER } from "@multica/core/issues/config";
 import {
@@ -15,6 +13,8 @@ import {
   useInboxFilters,
   useInboxFilterStore,
 } from "@multica/core/inbox/filter-store";
+import { useQuery } from "@tanstack/react-query";
+import { archivedInboxFacetsOptions } from "@multica/core/inbox/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import type { InboxItem } from "@multica/core/types";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -86,6 +86,9 @@ export function InboxFilterMenu({
   const { t: tIssues } = useT("issues");
   const filters = useInboxFilters(wsId);
   const toggleIdleOnly = useInboxFilterStore((state) => state.toggleIdleOnly);
+  const [open, setOpen] = useState(false);
+  const facetsQuery = useQuery({ ...archivedInboxFacetsOptions(wsId, filters), enabled: archived && open });
+  const facets = archived ? facetsQuery.data : undefined;
   const toggleStatus = useInboxFilterStore((state) => state.toggleStatusFilter);
   const togglePriority = useInboxFilterStore(
     (state) => state.togglePriorityFilter,
@@ -101,13 +104,15 @@ export function InboxFilterMenu({
   );
   const inboxStatusKeys = useMemo(
     () => [
-      ...new Set(
-        items.flatMap((item) =>
+      ...new Set([
+        ...filters.statuses,
+        ...Object.keys(facets?.statuses ?? {}),
+        ...items.flatMap((item) =>
           item.issue_status == null ? [] : [item.issue_status],
         ),
-      ),
+      ]),
     ],
-    [items],
+    [items, facets, filters.statuses],
   );
   const statusOptions = useStatusOptions(wsId, inboxStatusKeys);
   const effectiveFilters = useMemo(
@@ -148,30 +153,36 @@ export function InboxFilterMenu({
     () => filterInboxItems(items, { ...effectiveFilters, actors: [] }),
     [items, effectiveFilters],
   );
-  const unreadCount = useMemo(
+  const localUnreadCount = useMemo(
     () =>
       filterInboxItems(items, { ...effectiveFilters, unreadOnly: false }).filter(
         (item) => item.read !== true,
       ).length,
     [items, effectiveFilters],
   );
-  const statuses = useMemo(
+  const localStatuses = useMemo(
     () => statusCounts(statusFacetItems),
     [statusFacetItems],
   );
-  const priorities = useMemo(
+  const localPriorities = useMemo(
     () => priorityCounts(priorityFacetItems),
     [priorityFacetItems],
   );
-  const actors = useMemo(
+  const localActors = useMemo(
     () => actorCounts(actorFacetItems),
     [actorFacetItems],
   );
-  // 来源候选项来自视图里的「每一行」，而不是分面子集：选中一个来源时，不能让
-  // 菜单里其它来源消失。按名字排序，这样列表不会随着其它选择下的计数变化而重排。
+  const unreadCount = archived ? facets?.unreadCount ?? 0 : localUnreadCount;
+  const statuses = archived ? new Map(Object.entries(facets?.statuses ?? {})) : localStatuses;
+  const priorities = archived ? new Map(Object.entries(facets?.priorities ?? {})) : localPriorities;
+  const actors = archived ? new Map(Object.entries(facets?.actors ?? {})) : localActors;
+  // The universe of actors comes from every row in the view rather than the
+  // faceted subset: picking one actor must not remove the others from the menu
+  // that offers them. Sorted by name so the list does not reshuffle as counts
+  // change under other selections.
   const actorOptions = useMemo(() => {
-    const keys = new Set<string>();
-    for (const item of items) {
+    const keys = new Set<string>(archived ? [...Object.keys(facets?.actors ?? {}), ...filters.actors] : []);
+    for (const item of archived ? [] : items) {
       const key = inboxActorKey(item);
       if (key != null) keys.add(key);
     }
@@ -181,14 +192,14 @@ export function InboxFilterMenu({
         return { key, type, id, name: getActorName(type, id) };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [items, getActorName]);
+  }, [items, getActorName, archived, facets, filters.actors]);
   const triggerLabel =
     activeCount > 0
       ? t(($) => $.filters.active_count, { count: activeCount })
       : t(($) => $.filters.tooltip);
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         render={
           <Button
@@ -210,6 +221,11 @@ export function InboxFilterMenu({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto min-w-44">
+        {archived && facetsQuery.isLoading && <p role="status" className="px-2 py-1 text-caption text-muted-foreground">{t(($) => $.list.loading_more)}</p>}
+        {archived && facetsQuery.isError && <div className="px-2 py-1">
+          <p role="alert" className="text-caption text-destructive">{t(($) => $.errors.filters_load_failed)}</p>
+          <Button variant="ghost" size="sm" onClick={() => { void facetsQuery.refetch(); }}>{t(($) => $.list.retry)}</Button>
+        </div>}
         <DropdownMenuCheckboxItem
           checked={effectiveFilters.unreadOnly}
           onCheckedChange={() => toggleUnreadOnly(wsId)}

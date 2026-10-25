@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   parseTabSubject,
   resolveTabPresentation,
@@ -26,8 +26,10 @@ import { runtimeDisplayName } from "@multica/core/runtimes";
 import { chatSessionsOptions } from "@multica/core/chat/queries";
 import {
   inboxListOptions,
-  archivedInboxListOptions,
+  archivedInboxPagesOptions,
+  archivedInboxLookupOptions,
 } from "@multica/core/inbox/queries";
+import { useInboxFilters } from "@multica/core/inbox/filter-store";
 import { cn } from "@multica/ui/lib/utils";
 import { StatusIcon } from "../issues/components";
 import { ProjectIcon } from "../projects/components/project-icon";
@@ -78,10 +80,16 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   // 两个收件箱列表都只读缓存；归档视图维护自己的列表，所以归档项要对着
   // 归档缓存解析——正是 `?view=archived` 生效时 InboxPage 填充的那个列表。
   const inboxList = useQuery({ ...inboxListOptions(wsId), enabled: false }).data;
-  const archivedInboxList = useQuery({
-    ...archivedInboxListOptions(wsId),
+  const inboxFilters = useInboxFilters(wsId);
+  const archivedPages = useInfiniteQuery({ ...archivedInboxPagesOptions(wsId, inboxFilters), enabled: false }).data;
+  const archivedLookup = useQuery({
+    ...archivedInboxLookupOptions(wsId, subject.kind === "inbox" ? subject.selectedKey ?? "" : ""),
     enabled: false,
   }).data;
+  const archivedInboxList = useMemo(() => [
+    ...(archivedPages?.pages.flatMap((page) => page.items) ?? []),
+    ...(archivedLookup?.items ?? []),
+  ], [archivedPages, archivedLookup]);
   const activeInboxList =
     subject.kind === "inbox" && subject.archived ? archivedInboxList : inboxList;
   const inboxItem =
@@ -95,11 +103,14 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   const issueId =
     subject.kind === "issue"
       ? subject.id
-      : (inboxItem?.issue_id ?? "");
-  // issue 标签的 URL 段可能是人类可读的标识符（如 `MUL-123`）。路由在解析
-  // 时会先填那条记录，但只有 UUID 为 key 的记录才会收到实时补丁——所以要
-  // 从这里跳过去，否则按标识符打开的标签会永远冻结在首次打开时的标题和状态。
-  // 两次读取都只走缓存，UUID 段会解析到它自己。
+      : subject.kind === "inbox"
+        ? (subject.selectedKey ?? "")
+        : "";
+  // An issue tab's URL segment may be a human-readable identifier (`MUL-123`).
+  // The route seeds that entry when it resolves, but only the UUID-keyed entry
+  // receives realtime patches — so hop through it, or a tab opened by
+  // identifier would freeze on the title and status it had when first opened.
+  // Both reads stay cache-only, and a UUID segment resolves to itself.
   const rawIssue = useQuery({
     ...issueDetailOptions(wsId, issueId || NONE),
     enabled: false,
@@ -179,37 +190,54 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
       }
       break;
     case "inbox":
-      if (inboxItem) {
-        if (inboxItem.issue_id && issue) {
-          data.inboxSelection = {
-            kind: "issue",
-            identifier: issue.identifier,
-            title: issue.title,
-          };
-        } else if (!inboxItem.issue_id) {
-          data.inboxSelection = {
-            kind: "item",
-            title: getInboxDisplayTitle(inboxItem),
-          };
-        }
+      if (issue) {
+        // Issue-backed selection — answered by the issue cache alone.
+        data.inboxSelection = {
+          kind: "issue",
+          identifier: issue.identifier,
+          title: issue.title,
+        };
+      } else if (inboxItem && !inboxItem.issue_id) {
+        // An issue-less notification (autopilot paused, quota exceeded, …)
+        // carries its title only on the inbox row, so this branch is the one
+        // case that still needs the list cache.
+        data.inboxSelection = {
+          kind: "item",
+          title: getInboxDisplayTitle(inboxItem),
+        };
       }
       break;
   }
   return data;
 }
 
-/** 把一个标题规格本地化，加载中时优先用持久化的兜底标题。 */
-function useTabTitle(spec: TabTitleSpec, fallbackTitle?: string): string {
+/**
+ * Localize a title spec, preferring a persisted fallback while pending.
+ *
+ * `pending` is for identities the spec cannot report as pending on its own. A
+ * resource tab that has not loaded resolves to its type label, which
+ * `PENDING_RESOURCE_KEYS` recognizes; a CONTAINER tab with an unresolved
+ * selection resolves to the container's own nav label, which is
+ * indistinguishable from a container with nothing selected — so the caller,
+ * which still has the subject, decides.
+ */
+function useTabTitle(
+  spec: TabTitleSpec,
+  fallbackTitle?: string,
+  pending = false,
+): string {
   const { t: layoutT } = useT("layout");
+  const persisted = fallbackTitle?.trim();
   switch (spec.kind) {
     case "text":
       return spec.text;
     case "nav":
-      return layoutT(($) => $.nav[spec.navKey]);
+      return pending && persisted
+        ? persisted
+        : layoutT(($) => $.nav[spec.navKey]);
     case "tab": {
-      if (PENDING_RESOURCE_KEYS.has(spec.tabKey)) {
-        const clean = fallbackTitle?.trim();
-        if (clean) return clean;
+      if (pending || PENDING_RESOURCE_KEYS.has(spec.tabKey)) {
+        if (persisted) return persisted;
       }
       return layoutT(($) => $.tab[spec.tabKey]);
     }
@@ -241,7 +269,12 @@ export function useTabPresentation(
   const wsId = ws?.id ?? "";
   const data = useTabEntityData(subject, wsId);
   const { visual, title: titleSpec } = resolveTabPresentation(subject, data);
-  const title = useTabTitle(titleSpec, fallbackTitle);
+  // A selected notification whose identity has not resolved from cache yet is
+  // pending in exactly the sense a not-yet-loaded issue is — keep the tab's
+  // persisted title instead of collapsing it to the bare container label.
+  const selectionPending =
+    subject.kind === "inbox" && !!subject.selectedKey && !data.inboxSelection;
+  const title = useTabTitle(titleSpec, fallbackTitle, selectionPending);
 
   // actor 头像要通过工作区目录查询解析，在工作区还没就绪时渲染会抛错。
   // 所以在那之前先显示一个类型图标。
