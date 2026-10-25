@@ -42,7 +42,8 @@ type HeartbeatScheduler interface {
 // BatchedHeartbeatScheduler 内部对「必须在返回前落库」的场景（offline→online 翻转、
 // 从未见过的 runtime）的同步兜底。
 type PassthroughHeartbeatScheduler struct {
-	queries *db.Queries
+	RecoveryNotifier RuntimeRecoveryNotifier
+	queries          *db.Queries
 }
 
 // NewPassthroughHeartbeatScheduler 构造同步直写版心跳调度器。
@@ -54,6 +55,10 @@ func NewPassthroughHeartbeatScheduler(queries *db.Queries) *PassthroughHeartbeat
 // （TouchAgentRuntimeLastSeen）；若它没命中任何行，说明清扫器在我们 SELECT 之后、本
 // UPDATE 之前把行翻成了 offline，落下去 MarkAgentRuntimeOnline 把行翻回来。
 func (p *PassthroughHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRuntime) error {
+	return p.scheduleWithRecovery(ctx, rt, p.RecoveryNotifier)
+}
+
+func (p *PassthroughHeartbeatScheduler) scheduleWithRecovery(ctx context.Context, rt db.AgentRuntime, notifier RuntimeRecoveryNotifier) error {
 	if rt.Status == "online" && rt.LastSeenAt.Valid {
 		rows, err := p.queries.TouchAgentRuntimeLastSeen(ctx, rt.ID)
 		if err != nil {
@@ -65,7 +70,17 @@ func (p *PassthroughHeartbeatScheduler) Schedule(ctx context.Context, rt db.Agen
 		// 清扫器在我们 SELECT 与这次 UPDATE 之间把 runtime 抢标成了 offline，
 		// 落到 MarkAgentRuntimeOnline 把它翻回 online。
 	}
-	_, err := p.queries.MarkAgentRuntimeOnline(ctx, rt.ID)
+	flipped, err := p.queries.MarkAgentRuntimeOnlineIfOffline(ctx, rt.ID)
+	if err != nil {
+		return err
+	}
+	if flipped > 0 {
+		if notifier != nil {
+			notifier.NotifyRuntimeRecovered(ctx, uuidToString(rt.WorkspaceID))
+		}
+		return nil
+	}
+	_, err = p.queries.MarkAgentRuntimeOnline(ctx, rt.ID)
 	return err
 }
 
@@ -81,9 +96,10 @@ func (p *PassthroughHeartbeatScheduler) Schedule(ctx context.Context, rt db.Agen
 // runtime 至多占一项。数据库持续报错时只记日志、绝不把失败的 ID 重新入队：每个
 // runtime 的下一次心跳自然会重新调度；若在硬故障期间反复入队，map 会无限膨胀。
 type BatchedHeartbeatScheduler struct {
-	queries      *db.Queries
-	fallback     *PassthroughHeartbeatScheduler
-	tickInterval time.Duration
+	RecoveryNotifier RuntimeRecoveryNotifier
+	queries          *db.Queries
+	fallback         *PassthroughHeartbeatScheduler
+	tickInterval     time.Duration
 
 	mu      sync.Mutex
 	pending map[pgtype.UUID]struct{}
@@ -120,7 +136,7 @@ func NewBatchedHeartbeatScheduler(queries *db.Queries, tickInterval time.Duratio
 func (b *BatchedHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRuntime) error {
 	// 见上方注释：非 online 或没有历史 last_seen 的行直接走同步兜底，不批量。
 	if rt.Status != "online" || !rt.LastSeenAt.Valid {
-		return b.fallback.Schedule(ctx, rt)
+		return b.fallback.scheduleWithRecovery(ctx, rt, b.RecoveryNotifier)
 	}
 	b.mu.Lock()
 	b.pending[rt.ID] = struct{}{}

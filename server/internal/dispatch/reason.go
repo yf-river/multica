@@ -31,6 +31,10 @@ const (
 	// 这里等待无济于事——机器已经在线，修复方式是用户到机器上执行一条命令；daemon
 	// 用这个判定把情况报回来，让客户端可以直接展示。
 	ReasonRuntimeUnusable ReasonCode = "runtime_unusable"
+	// 调用者可以使用 Agent，但 Agent 不能借用该私有运行时。
+	ReasonRuntimeAccessDenied ReasonCode = "runtime_access_denied"
+	// 运行时协议配置缺失，须修复配置，不能仅等待机器上线。
+	ReasonRuntimeProfileMissing ReasonCode = "runtime_profile_missing"
 	// ReasonAgentRuntimeRequired：目标有权限但完全没绑定 runtime（agent.runtime_id
 	// IS NULL）——runtime 被删除后 agent 就落在这个状态（MUL-5559）。刻意与
 	// runtime_offline 区分：没有机器可带回，永远不会有人认领该 agent 的工作，唯一

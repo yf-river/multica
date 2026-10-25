@@ -56,6 +56,11 @@ func lifeTaskActive(status string) bool {
 // failLifeCognitionTask 是受治理 Life 后台任务唯一的普通任务终态兜底。它刻意不创建平台重试或 issue/chat
 // 副作用：认知作业握有自己的重试预算，会在预定退避后被再次认领。
 func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.UUID, errMsg, failureReason string) (*db.AgentTaskQueue, error) {
+	task, _, err := s.failLifeCognitionTaskWithTransition(ctx, taskID, errMsg, failureReason)
+	return task, err
+}
+
+func (s *TaskService) failLifeCognitionTaskWithTransition(ctx context.Context, taskID pgtype.UUID, errMsg, failureReason string) (*db.AgentTaskQueue, bool, error) {
 	errMsg = util.SanitizeTextForPostgres(strings.TrimSpace(errMsg))
 	if errMsg == "" {
 		errMsg = "life cognition task ended without governed structured output"
@@ -67,6 +72,7 @@ func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.U
 
 	var task db.AgentTaskQueue
 	var terminalEvent events.Event
+	transitioned := false
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		// 结构化完成在任务转换前取作业锁。这里用相同顺序，迟到的普通回调才不至于与合法的 life_job_complete
 		// 请求死锁或部分获胜。
@@ -101,6 +107,7 @@ func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.U
 			return err
 		}
 		task = failed
+		transitioned = true
 
 		if jobErr == nil && job.Status == "running" {
 			var changed int64
@@ -134,10 +141,10 @@ func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.U
 		}
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("fail Life cognition task: %w", err)
+		return nil, false, fmt.Errorf("fail Life cognition task: %w", err)
 	}
 
-	if task.ID.Valid && task.Status == "failed" {
+	if transitioned {
 		slog.Warn("Life cognition task failed through governed fallback",
 			"task_id", util.UUIDToString(task.ID), "failure_reason", failureReason)
 		s.captureTaskFailed(ctx, task)
@@ -149,5 +156,5 @@ func (s *TaskService) failLifeCognitionTask(ctx context.Context, taskID pgtype.U
 			s.broadcastTaskFailedEvent(ctx, task, errMsg, failureReason, false)
 		}
 	}
-	return &task, nil
+	return &task, transitioned, nil
 }

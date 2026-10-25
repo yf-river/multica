@@ -11,12 +11,16 @@ import (
 	"time"
 )
 
-// authRequestWithAgent makes an authenticated request with X-Agent-ID +
-// X-Task-ID headers, causing the server to resolve the actor as an agent
-// instead of a member. resolveActor requires both headers to grant agent
-// identity (defense against header forgery — see #2359 PR review), so we
-// seed a queued task for the agent on demand and pass its UUID as
-// X-Task-ID. The task is best-effort cleaned up via test teardown elsewhere.
+// authRequestWithAgent makes a request the server resolves as coming from an
+// agent, by authenticating with a real `mat_` task token bound to (agent, task,
+// workspace, user) — the same credential the daemon injects into an agent
+// process.
+//
+// It used to send a member token plus X-Agent-ID / X-Task-ID headers. That
+// stopped working, on purpose: both middlewares now strip client-supplied agent
+// identity, because both ids are observable by any workspace member and the
+// pair therefore proved nothing (MUL-3428). A test that poses as an agent must
+// hold the credential a real agent holds.
 func authRequestWithAgent(t *testing.T, method, path string, body any, agentID string) *http.Response {
 	t.Helper()
 	var bodyReader io.Reader
@@ -29,10 +33,7 @@ func authRequestWithAgent(t *testing.T, method, path string, body any, agentID s
 		t.Fatalf("failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
-	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", ensureAgentTask(t, agentID))
+	req.Header.Set("Authorization", "Bearer "+mintAgentTaskToken(t, agentID, ensureAgentTask(t, agentID), testUserID))
 
 	r, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -41,10 +42,10 @@ func authRequestWithAgent(t *testing.T, method, path string, body any, agentID s
 	return r
 }
 
-// ensureAgentTask returns a queued task UUID belonging to the given agent,
-// inserting one if none exists. Used by authRequestWithAgent so callers
-// can keep treating "set X-Agent-ID" as the single knob for posing as an
-// agent — resolveActor's pair-required policy is satisfied transparently.
+// ensureAgentTask returns a task UUID belonging to the given agent, inserting a
+// queued one if none exists. authRequestWithAgent binds its mat_ token to that
+// task, so callers keep treating "name the agent" as the single knob for
+// posing as one.
 func ensureAgentTask(t *testing.T, agentID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -222,7 +223,8 @@ func postComment(t *testing.T, issueID, content string, parentID *string) string
 	return comment["id"].(string)
 }
 
-// postCommentAsAgent posts a comment with the X-Agent-ID header.
+// postCommentAsAgent posts a comment authenticated as the agent, using the
+// real mat_ task token authRequestWithAgent mints.
 func postCommentAsAgent(t *testing.T, issueID, content, agentID string, parentID *string) string {
 	t.Helper()
 	body := map[string]any{

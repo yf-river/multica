@@ -42,9 +42,37 @@ export function useUnbindAgentsAndDeleteRuntime(wsId: string) {
   });
 }
 
-// useUpdateRuntime 补丁更新一台 runtime 的可编辑字段（可见性、自定义名）。
-// 失效 runtime 列表，让选择器的禁用态与展示名重新计算。
-/** 更新 runtime 可编辑字段的 mutation hook。 */
+// Confirmed public→private transition. Like runtime deletion, this changes
+// runtime rows, agent bindings, and task presence, so every affected server
+// projection is invalidated after the transaction settles.
+export function useRevokeRuntimeWorkspaceAccess(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      runtimeId,
+      expectedNonownerAgentIds,
+      expectedTaskIds,
+    }: {
+      runtimeId: string;
+      expectedNonownerAgentIds: string[];
+      expectedTaskIds: string[];
+    }) =>
+      api.revokeRuntimeWorkspaceAccess(
+        runtimeId,
+        expectedNonownerAgentIds,
+        expectedTaskIds,
+      ),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+      qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+      qc.invalidateQueries({ queryKey: agentTaskSnapshotKeys.all(wsId) });
+    },
+  });
+}
+
+// useUpdateRuntime patches editable fields on a runtime (visibility, custom
+// name). Invalidates the runtime list so the picker disabled-state and
+// display names recompute.
 export function useUpdateRuntime(wsId: string) {
   const qc = useQueryClient();
   return useMutation({

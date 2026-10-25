@@ -24,6 +24,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
 import { issueStatusCategory } from "@multica/core/issues";
+import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
@@ -34,6 +35,7 @@ import {
   isProjectDirectHit,
 } from "@multica/core/search/cancelled-rank";
 import { isImeComposing } from "@multica/core/utils";
+import { isMentionBoundaryAfter } from "@multica/core/markdown";
 import type {
   Issue,
   ListIssuesCache,
@@ -56,6 +58,7 @@ import { cn } from "@multica/ui/lib/utils";
 import type { IssueStatus, IssueStatusCategory, ProjectStatus } from "@multica/core/types";
 import { PROJECT_STATUS_CONFIG } from "@multica/core/projects/config";
 import type { SuggestionOptions } from "@tiptap/suggestion";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { PluginKey } from "@tiptap/pm/state";
 import {
   getRecencyMap,
@@ -270,11 +273,14 @@ function demoteCancelledItems(items: MentionItem[], query: string): MentionItem[
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
   function MentionList({ items, query, command, includeProjectSearch = false }, ref) {
     const { t } = useT("editor");
-    // 选中态按条目身份跟踪，而不是位置下标。列表会被 groupItems() 反复
-    // 重分桶、还会异步增长（服务端搜索结果），所以下标不是稳定目标——
-    // 下标 N 下的那一行会随列表重排而变化。selectedKey 把高亮钉在具体条目
-    // 上；数值下标只是相对弹层实际渲染的同一份顺序（orderedItems）推导
-    // 出来的。null 表示「还没显式选中」→ 默认高亮第一行。
+    const { colorOf: statusColorOf } = useIssueStatuses(getCurrentWsId() ?? "");
+    // Selection is tracked by item identity, NOT by a positional index. The
+    // list is re-bucketed by groupItems() and grows asynchronously (server
+    // search results), so a slot index is not a stable target — the row under
+    // index N changes as the list reorders. selectedKey pins the highlight to
+    // a specific item; the numeric index is derived from it against the SAME
+    // order the popup renders (orderedItems). null means "no explicit pick yet"
+    // → the first rendered row is highlighted by default.
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [serverItems, setServerItems] = useState<MentionItem[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -411,9 +417,14 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         // pickerNavigationDirection。
         const direction = pickerNavigationDirection(event);
         if (direction !== null) {
+          // With no rows, including while remote search is pending, the picker
+          // has nothing to navigate. Let the host editor own the key instead.
+          if (orderedItems.length === 0) return false;
           const selectableIndexes = orderedItems.flatMap((item, index) =>
             item.disabledReason ? [] : [index],
           );
+          // Rows exist but all are disabled: keep the picker inert rather than
+          // moving the caret behind the visible popup.
           if (selectableIndexes.length === 0) return true;
           const current = selectableIndexes.indexOf(selectedIndex);
           const delta =
@@ -429,6 +440,11 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         // Enter 是规范确认键；纯 Tab 是附加别名（见 isPickerAcceptKey）。
         // Shift/修饰键 + Tab 落进焦点导航。
         if (isPickerAcceptKey(event)) {
+          // An empty picker cannot accept anything, so preserve the editor's
+          // newline, submit shortcut, and focus-navigation behavior.
+          if (orderedItems.length === 0) return false;
+          // A non-empty list can still have no selectable row when every item
+          // is disabled. Keep those visible rows inert instead of falling through.
           if (selectedIndex < 0) return true;
           selectItem(orderedItems[selectedIndex]);
           return true;
@@ -473,6 +489,11 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           <MentionRow
             key={`${item.type}-${item.id}`}
             item={item}
+            statusColor={
+              item.type === "issue" && item.status
+                ? statusColorOf(item.status)
+                : null
+            }
             selected={idx === selectedIndex}
             onSelect={() => selectItem(item)}
             buttonRef={(el) => { itemRefs.current[idx] = el; }}
@@ -518,11 +539,13 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
 function MentionRow({
   item,
+  statusColor,
   selected,
   onSelect,
   buttonRef,
 }: {
   item: MentionItem;
+  statusColor?: string | null;
   selected: boolean;
   onSelect: () => void;
   buttonRef: (el: HTMLButtonElement | null) => void;
@@ -548,6 +571,7 @@ function MentionRow({
             <StatusIcon
               status={item.status}
               category={item.statusCategory}
+              color={statusColor}
               className="h-3.5 w-3.5"
             />
           ) : (
@@ -679,7 +703,15 @@ function projectToMention(p: { id: string; title: string; description?: string |
   };
 }
 
-/** 候选是否命中当前查询（子串 + 拼音匹配，label 与 description 都查）。 */
+/** 读取完整 Unicode 字符并复用提及边界规则。 */
+function isMentionBoundary(doc: ProseMirrorNode, pos: number): boolean {
+  if (pos <= 0) return true;
+  // Two units wide, so a code point outside the BMP arrives whole; one would
+  // hand back a lone surrogate. Across a block boundary this is the separator,
+  // which is not a word character either.
+  return isMentionBoundaryAfter(doc.textBetween(Math.max(0, pos - 2), pos, "\n", "\n"));
+}
+
 function matchesMentionQuery(item: MentionItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -812,9 +844,15 @@ export function createMentionSuggestion(
   return {
     pluginKey,
     allowSpaces: true,
-    // 只对用户真正敲下的 `@` 打开。Tiptap 只看文档内容匹配，没有这条的话，
-    // 粘贴、拖放、撤销或服务端加载的 `@` 也会一样打开弹层（MUL-5429）。
-    shouldShow: ({ editor, range }) => isTriggerArmedAt(editor, range.from),
+    // The boundary rule is isMentionBoundary's, not Tiptap's default of "a
+    // half-width space and nothing else" (see the note there).
+    allowedPrefixes: null,
+    // Only open over an `@` the user actually typed. Tiptap matches on document
+    // content alone, so without this a pasted, dropped, undone or server-loaded
+    // `@` opens the picker just as readily (MUL-5429).
+    shouldShow: ({ editor, range, transaction }) =>
+      isTriggerArmedAt(editor, range.from) &&
+      isMentionBoundary(transaction.doc, range.from),
     items: ({ query }) => {
       if (options.mode === "context") {
         const normalizedQuery = query.trim();

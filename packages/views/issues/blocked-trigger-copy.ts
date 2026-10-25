@@ -34,8 +34,12 @@ export function blockedReasonLabel(reasonCode: string, t: IssuesT): string {
       return t(($) => $.comment.trigger_blocked_runtime_offline);
     case "runtime_unusable":
       return t(($) => $.comment.trigger_blocked_runtime_unusable);
+    case "runtime_profile_missing":
+      return t(($) => $.comment.trigger_blocked_runtime_profile_missing);
     case "agent_runtime_required":
       return t(($) => $.comment.trigger_blocked_agent_runtime_required);
+    case "runtime_access_denied":
+      return t(($) => $.comment.trigger_blocked_runtime_access_denied);
     default:
       return t(($) => $.comment.trigger_blocked_generic);
   }
@@ -58,8 +62,12 @@ export function blockedShortReasonLabel(reasonCode: string, t: IssuesT): string 
       return t(($) => $.comment.trigger_blocked_short_runtime_offline);
     case "runtime_unusable":
       return t(($) => $.comment.trigger_blocked_short_runtime_unusable);
+    case "runtime_profile_missing":
+      return t(($) => $.comment.trigger_blocked_short_runtime_profile_missing);
     case "agent_runtime_required":
       return t(($) => $.comment.trigger_blocked_short_agent_runtime_required);
+    case "runtime_access_denied":
+      return t(($) => $.comment.trigger_blocked_short_runtime_access_denied);
     default:
       return t(($) => $.comment.trigger_blocked_short_generic);
   }

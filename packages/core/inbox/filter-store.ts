@@ -12,15 +12,19 @@ export interface InboxFilters {
   /** 操作者 key——含义见 `inboxActorKey`。 */
   readonly actors: readonly string[];
   readonly unreadOnly: boolean;
+  /** Only issues no agent is running or queued on. Active inbox only. */
+  readonly idleOnly: boolean;
 }
 
 /**
- * 为「这条通知来自谁」生成稳定标识，用作 `actors` 维度的取值。
- *
- * 成员和 agent 用自己的 id 做 key。`system` 没有 id——后端写的是一个会序列化成
- * null 的非法 UUID——所以它只用类型做 key，所有系统通知都归进同一个桶。
- * 行上没有任何可用的来源归属时返回 null；这样的行永远匹配不上任何操作者选择，
- * 正如没有 issue 的行永远匹配不上任何状态选择。
+ * The dimensions the server-filtered archive understands. It has no idle
+ * dimension, so `idleOnly` never reaches its endpoints or query keys.
+ */
+export type ArchivedInboxFilters = Omit<InboxFilters, "idleOnly">;
+
+/**
+ * Stable identity for "who this notification came from", used as the value of
+ * the `actors` dimension.
  *
  * @param item - 收件箱条目
  * @returns 操作者 key；无法归属时返回 null
@@ -56,6 +60,7 @@ export const EMPTY_INBOX_FILTERS: InboxFilters = Object.freeze({
   priorities: Object.freeze([]),
   actors: Object.freeze([]),
   unreadOnly: false,
+  idleOnly: false,
 });
 
 /** 所有维度都没选中任何东西时返回 true。 */
@@ -70,6 +75,7 @@ interface InboxFilterState {
   togglePriorityFilter: (wsId: string, priority: IssuePriority) => void;
   toggleActorFilter: (wsId: string, actor: string) => void;
   toggleUnreadOnly: (wsId: string) => void;
+  toggleIdleOnly: (wsId: string) => void;
   clearPriorityFilters: (wsId: string) => void;
   clearFilters: (wsId: string) => void;
 }
@@ -130,6 +136,16 @@ export const useInboxFilterStore = create<InboxFilterState>()((set) => ({
         filtersByWorkspace: {
           ...state.filtersByWorkspace,
           [wsId]: { ...current, unreadOnly: !current.unreadOnly },
+        },
+      };
+    }),
+  toggleIdleOnly: (wsId) =>
+    set((state) => {
+      const current = state.filtersByWorkspace[wsId] ?? EMPTY_INBOX_FILTERS;
+      return {
+        filtersByWorkspace: {
+          ...state.filtersByWorkspace,
+          [wsId]: { ...current, idleOnly: !current.idleOnly },
         },
       };
     }),
@@ -202,6 +218,33 @@ export function inboxFiltersForPrioritySupport(
   return { ...filters, priorities: [] };
 }
 
+const EMPTY_ISSUE_IDS: ReadonlySet<string> = new Set();
+
+/** Page state `filterInboxItems` needs beyond the selected filters. */
+export interface InboxFilterContext {
+  /** Issues an agent is running or queued on. Read only by `idleOnly`. */
+  readonly activeIssueIds?: ReadonlySet<string>;
+  /**
+   * Group key (`issue_id ?? id`) of the open notification, pinned against the
+   * unread dimension only. Set by the page after opening marks the row read.
+   */
+  readonly pinnedUnreadKey?: string | null;
+  /**
+   * Group key of the open notification, pinned against the idle dimension
+   * only. Set by the page once the row was opened while idle.
+   */
+  readonly pinnedIdleKey?: string | null;
+}
+
+/**
+ * The archive is filtered server-side and the backend has no idle dimension,
+ * so a selection kept from the active inbox stays dormant there instead of
+ * narrowing whichever archived pages happen to be loaded.
+ */
+export function inboxFiltersForArchive(filters: InboxFilters): InboxFilters {
+  return filters.idleOnly ? { ...filters, idleOnly: false } : filters;
+}
+
 /**
  * 把过滤应用到条目列表。维度内是「或」，维度之间是「与」。
  *
@@ -221,6 +264,11 @@ export function inboxFiltersForPrioritySupport(
 export function filterInboxItems(
   items: InboxItem[],
   filters: InboxFilters,
+  {
+    activeIssueIds = EMPTY_ISSUE_IDS,
+    pinnedUnreadKey = null,
+    pinnedIdleKey = null,
+  }: InboxFilterContext = {},
 ): InboxItem[] {
   if (isEmptyInboxFilters(filters)) return items;
 
@@ -229,14 +277,23 @@ export function filterInboxItems(
   const actors = new Set(filters.actors);
   return items.filter((item) => {
     const actor = inboxActorKey(item);
-    return (
+    const matchesOtherDimensions =
       (statuses.size === 0 ||
         (item.issue_status != null && statuses.has(item.issue_status))) &&
       (priorities.size === 0 ||
         (item.issue_priority != null && priorities.has(item.issue_priority))) &&
-      (actors.size === 0 || (actor != null && actors.has(actor))) &&
-      (!filters.unreadOnly || item.read !== true)
-    );
+      (actors.size === 0 || (actor != null && actors.has(actor)));
+    if (!matchesOtherDimensions) return false;
+    const key = item.issue_id ?? item.id;
+    const matchesUnread =
+      !filters.unreadOnly ||
+      item.read !== true ||
+      (pinnedUnreadKey != null && key === pinnedUnreadKey);
+    const matchesIdle =
+      !filters.idleOnly ||
+      (item.issue_id != null && !activeIssueIds.has(item.issue_id)) ||
+      (pinnedIdleKey != null && key === pinnedIdleKey);
+    return matchesUnread && matchesIdle;
   });
 }
 
@@ -246,6 +303,7 @@ export function inboxFilterCount(filters: InboxFilters): number {
     filters.statuses.length +
     filters.priorities.length +
     filters.actors.length +
-    (filters.unreadOnly ? 1 : 0)
+    (filters.unreadOnly ? 1 : 0) +
+    (filters.idleOnly ? 1 : 0)
   );
 }

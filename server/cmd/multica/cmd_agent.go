@@ -223,6 +223,8 @@ func init() {
 
 	// agent tasks
 	agentTasksCmd.Flags().String("output", "table", "Output format: table or json")
+	agentTasksCmd.Flags().Int("limit", 200, "Maximum tasks per page (1-200)")
+	agentTasksCmd.Flags().String("before", "", "Continuation cursor from the previous response")
 
 	// agent avatar
 	agentAvatarCmd.Flags().String("file", "", "Path to the avatar image file (required)")
@@ -868,15 +870,34 @@ func runAgentTasks(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	output, _ := cmd.Flags().GetString("output")
+	params := url.Values{}
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit < 1 {
+		return fmt.Errorf("limit must be a positive integer")
+	}
+	params.Set("limit", fmt.Sprint(limit))
+	before, _ := cmd.Flags().GetString("before")
+	if before != "" {
+		params.Set("before", before)
+	}
+	if output == "json" {
+		params.Set("include_usage", "true")
+	}
+	path := "/api/agents/" + args[0] + "/tasks?" + params.Encode()
+
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var tasks []map[string]any
-	if err := client.GetJSON(ctx, "/api/agents/"+args[0]+"/tasks", &tasks); err != nil {
+	responseHeaders, err := client.GetJSONWithHeaders(ctx, path, &tasks)
+	if err != nil {
 		return fmt.Errorf("list agent tasks: %w", err)
 	}
+	if cursor := responseHeaders.Get("X-Agent-Tasks-Next-Cursor"); cursor != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "More runs available; use --before %q to fetch the next page.\n", cursor)
+	}
 
-	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
 		return cli.PrintJSON(os.Stdout, tasks)
 	}

@@ -4,8 +4,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { motion } from "motion/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "motion/react";
 import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Archive, Pencil, Loader2, Square } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
@@ -49,7 +49,6 @@ import { AgentAccessRevokedBanner } from "./agent-access-revoked-banner";
 import { RuntimeRequiredBanner } from "./runtime-required-banner";
 import {
   chatSessionsOptions,
-  chatMessagesPageOptions,
   pendingChatTaskOptions,
   pendingChatTasksOptions,
   chatKeys,
@@ -58,7 +57,6 @@ import {
 import {
   useCreateChatSession,
   useMarkChatSessionRead,
-  useRegenerateChatQuickActions,
   useSetChatSessionArchived,
   useSetChatSessionProject,
   useUpdateChatSession,
@@ -68,12 +66,11 @@ import { upsertChatMessageToCaches } from "@multica/core/chat/message-cache";
 import { chatQuickActionsPendingOptions } from "@multica/core/chat/queries";
 import { useQuickActionsPendingTimeout } from "@multica/core/chat/use-quick-actions-pending-timeout";
 import { useQuickActionsFailureToast } from "./use-quick-actions-failure-toast";
-import { hideQueuedChatMessages } from "@multica/core/chat/pending";
 import { removeChatMessageFromCaches } from "@multica/core/realtime";
 import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatInputFocus } from "./use-chat-input-focus";
-import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
+import { ChatWindowMessages } from "./chat-window-messages";
 import { ChatInput } from "./chat-input";
 import { ChatQueue } from "./chat-queue";
 import { EmptyState } from "./chat-empty-state";
@@ -96,7 +93,6 @@ import { useLocale, useT } from "../../i18n";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
-const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
 /**
  * 悬浮聊天窗口：挂在 dashboard 布局里的可调整大小的浮动面板。关闭时保持挂载
@@ -117,7 +113,6 @@ export function ChatWindow() {
   useQuickActionsPendingTimeout(activeSessionId ?? null, quickActionsPending);
   // 一次被接受的刷新后来在 daemon 里失败时弹 toast（异步的那一半）。
   useQuickActionsFailureToast(activeSessionId ?? null);
-  const regenerateQuickActions = useRegenerateChatQuickActions();
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const selectedProjectId = useChatStore((s) => s.selectedProjectId);
   const setOpen = useChatStore((s) => s.setOpen);
@@ -142,42 +137,10 @@ export function ChatWindow() {
     ...projectListOptions(wsId),
     enabled: isOpen,
   });
-  const {
-    data: rawMessagePages,
-    isLoading: messagesLoading,
-    fetchNextPage: fetchOlderMessages,
-    hasNextPage: hasOlderMessages,
-    isFetchingNextPage: isFetchingOlderMessages,
-  } = useInfiniteQuery({
-    ...chatMessagesPageOptions(activeSessionId ?? ""),
-    enabled: isOpen && !!activeSessionId,
-  });
-  // 没有活动会话时永远显示空——不用过期缓存。第 0 页是最新的时间窗，之后的游标
-  // 页是更早的时间窗。反转页面顺序，让后拉取的旧页渲染在最新页之上。Virtuoso 的
-  // firstItemIndex 是客户端持有的：从一个大而稳定的基数开始，只减去已加载的
-  // 前插行数，这样并发的服务端插入不会漂移滚动锚点。
-  const messagePages = activeSessionId ? rawMessagePages?.pages ?? [] : [];
-  const allMessages = [...messagePages].reverse().flatMap((page) => page.messages);
-  // 骨架屏只对"未缓存的会话拉取"显示。缓存内的切换会同步返回数据——不闪屏。
-  // `enabled: false`（新聊天）保持 isLoading 为 false，开场建议不被藏起来。
-  // 服务端权威的 pending 任务。按 sessionId 键进 Query 缓存，所以刷新 / 重开 /
-  // 切会话都存活；WS 事件（chat:message / chat:done / task:*）实时使它失效。
-  //
-  // 它是 pendingTaskId 的唯一来源——store 里没有镜像。
   const { data: pendingTask, isLoading: pendingTaskLoading } = useQuery({
     ...pendingChatTaskOptions(activeSessionId ?? ""),
     enabled: isOpen && !!activeSessionId,
   });
-  const showSkeleton =
-    !!activeSessionId && (messagesLoading || pendingTaskLoading);
-  const messages = hideQueuedChatMessages(allMessages, pendingTask);
-  const olderMessageCount = messagePages.slice(1).reduce(
-    (sum, page) => sum + page.messages.length,
-    0,
-  );
-  const firstItemIndex = messages.length > 0
-    ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
-    : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   // 持久化的"推迟取消"草稿恢复（#5219）。与聊天页控制器同一只 hook——
@@ -198,15 +161,16 @@ export function ChatWindow() {
     handleClearQueuedTasks,
     handleSendQueuedTaskNow,
   } = useChatTaskActions(activeSessionId, enqueueLocalRestore);
-  // 交给 ChatInput 的聚焦 nonce：新建聊天时（⊕ 或切换 agent）、以及窗口每次
-  // 打开时把键盘焦点拉进输入框。
-  const { focusRequest, requestInputFocus } = useChatInputFocus(isOpen);
+  // Nonce handed to ChatInput to pull focus into the compose box: when a new
+  // chat starts (⊕ or switching agent), and whenever the window itself opens.
+  const windowRef = useRef<HTMLDivElement>(null);
+  const { focusRequest, requestInputFocus } = useChatInputFocus(isOpen, windowRef);
   const [conversationStarterRequest, setConversationStarterRequest] = useState<{
     id: number;
     content: string;
   } | null>(null);
   const nextConversationStarterRequestIdRef = useRef(0);
-  const prefillConversationStarter = useCallback(
+  const sendConversationStarter = useCallback(
     (prompt: string) => {
       setConversationStarterRequest({
         id: ++nextConversationStarterRequestIdRef.current,
@@ -489,7 +453,9 @@ export function ChatWindow() {
             ? t(($) => $.input.send_blocked_toast)
             : reason === "agent_runtime_required"
               ? t(($) => $.input.runtime_required_toast)
-              : t(($) => $.input.send_failed_toast),
+              : reason === "runtime_access_denied"
+                ? t(($) => $.input.runtime_access_denied_toast)
+                : t(($) => $.input.send_failed_toast),
         );
         return false;
       }
@@ -513,7 +479,9 @@ export function ChatWindow() {
             ? t(($) => $.input.send_blocked_toast)
             : reason === "agent_runtime_required"
               ? t(($) => $.input.runtime_required_toast)
-              : t(($) => $.input.send_failed_toast),
+              : reason === "runtime_access_denied"
+                ? t(($) => $.input.runtime_access_denied_toast)
+                : t(($) => $.input.send_failed_toast),
         );
         return false;
       }
@@ -740,12 +708,10 @@ export function ChatWindow() {
 
   const isExpanded = useChatStore((s) => s.isExpanded);
 
-  const windowRef = useRef<HTMLDivElement>(null);
   const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
 
   // 有东西可显示就立刻显示列表（而不是空状态）——一条真实消息，或一条会有
   // timeline 流进来的 pending 任务。
-  const hasMessages = messages.length > 0 || !!pendingTaskId;
 
   const isVisible = isOpen && (isExpanded || boundsReady);
 
@@ -806,6 +772,8 @@ export function ChatWindow() {
   return (
     <motion.div
       ref={windowRef}
+      inert={!isOpen}
+      aria-hidden={!isOpen}
       className={containerClass}
       style={containerStyle}
       initial={{ opacity: 0, scale: 0.95, ...motionSize }}
@@ -887,46 +855,18 @@ export function ChatWindow() {
         </div>
       </div>
 
-      {/* 消息 / 骨架屏 / 空状态 */}
-      {showSkeleton ? (
-        <ChatMessageSkeleton />
-      ) : hasMessages ? (
-        <ChatMessageList
-          key={activeSessionId}
-          messages={messages}
-          pendingTask={pendingTask}
-          availability={availability}
-          firstItemIndex={firstItemIndex}
-          hasOlderMessages={!!hasOlderMessages}
-          isFetchingOlderMessages={isFetchingOlderMessages}
-          onLoadOlderMessages={() => void fetchOlderMessages()}
+      {/* 消息订阅随列表退出，输入草稿继续保留。 */}
+      <AnimatePresence initial={false}>
+        {isOpen && <ChatWindowMessages sessionId={activeSessionId} pendingTask={pendingTask}
+          pendingTaskLoading={pendingTaskLoading} availability={availability}
           onQuickAction={(action) => handleSend(action.prompt)}
-          quickActionsDisabled={
-            !!pendingTaskId ||
-            isSessionArchived ||
-            isAgentArchived ||
-            isAgentAccessRevoked ||
-            !activeAgentRuntimeBound ||
-            noAgent
-          }
-          onRegenerateQuickActions={(message) =>
-            activeSessionId
-              ? regenerateQuickActions.mutateAsync({
-                  sessionId: activeSessionId,
-                  messageId: message.id,
-                })
-              : undefined
-          }
-          quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
-        />
-      ) : (
-        <EmptyState
-          agent={activeAgent}
-          hasSessions={sessions.length > 0}
-          onPickPrompt={prefillConversationStarter}
-          customizeHref={customizeConversationStartersHref}
-        />
-      )}
+          quickActionsDisabled={!!pendingTaskId || isSessionArchived || isAgentArchived || isAgentAccessRevoked || !activeAgentRuntimeBound || noAgent}
+          quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}>
+          <EmptyState agent={activeAgent} hasSessions={sessions.length > 0}
+            onPickPrompt={sendConversationStarter}
+            customizeHref={customizeConversationStartersHref} />
+        </ChatWindowMessages>}
+      </AnimatePresence>
 
       {/* 输入框上方的状态横幅——互斥的单槽位。
        *  优先级：无 agent > 访问被撤销 > agent 已归档 > 需要 runtime > 离线 / 不稳定。

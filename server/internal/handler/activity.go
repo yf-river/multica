@@ -5,12 +5,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -22,6 +24,11 @@ type TimelineEntry struct {
 	ActorType string `json:"actor_type"`
 	ActorID   string `json:"actor_id"`
 	CreatedAt string `json:"created_at"`
+	// Display-only identity is hydrated from the global user row for member
+	// actors. It remains available after the member leaves this workspace;
+	// actor_type + actor_id stay the durable attribution keys.
+	ActorName      string `json:"actor_name,omitempty"`
+	ActorAvatarURL string `json:"actor_avatar_url,omitempty"`
 
 	// 仅活动日志拥有的字段
 	Action  *string         `json:"action,omitempty"`
@@ -42,6 +49,12 @@ type TimelineEntry struct {
 	ResolvedByType *string              `json:"resolved_by_type,omitempty"`
 	ResolvedByID   *string              `json:"resolved_by_id,omitempty"`
 	SourceTaskID   *string              `json:"source_task_id,omitempty"`
+	// Set only on a tombstone: a comment deleted while it still had replies.
+	DeletedAt               *string `json:"deleted_at,omitempty"`
+	SupplementTaskID        string  `json:"supplement_task_id,omitempty"`
+	SupplementStatus        string  `json:"supplement_status,omitempty"`
+	SupplementFailureReason *string `json:"supplement_failure_reason,omitempty"`
+	SupplementDeliveredAt   *string `json:"supplement_delivered_at,omitempty"`
 }
 
 // timelineHardCap 限制单个 issue 时间线载荷的行数。它是防御性安全网，不是 UX 分页窗口——
@@ -182,11 +195,17 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(HeaderTimelineTruncated, kinds)
 	}
 
+	entries := h.mergeTimeline(r, comments, activities, !wantWrapped)
+	// The current-member directory deliberately excludes departed members, but
+	// timeline attribution must remain readable after they leave. Hydrate only
+	// the member ids already present in this authorised issue response; lookup
+	// failure is display-only and must not make the timeline unavailable.
+	h.hydrateTimelineMemberActors(ctx, entries)
+	if entries == nil {
+		entries = []TimelineEntry{}
+	}
+
 	if wantWrapped {
-		entries := h.mergeTimeline(r, comments, activities, false)
-		if entries == nil {
-			entries = []TimelineEntry{}
-		}
 		resp := timelinePaginatedResponse{
 			Entries:       entries,
 			HasMoreBefore: commentsTruncated || activitiesTruncated,
@@ -205,10 +224,6 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := h.mergeTimeline(r, comments, activities, true)
-	if entries == nil {
-		entries = []TimelineEntry{}
-	}
 	writeJSON(w, http.StatusOK, entries)
 }
 
@@ -247,6 +262,14 @@ func (h *Handler) commentsToEntries(r *http.Request, comments []db.Comment) []Ti
 	}
 	reactions := h.groupReactions(r, ids)
 	attachments := h.groupAttachments(r, ids)
+	supplements := make(map[string]db.TaskSupplement)
+	if rows, err := h.Queries.ListTaskSupplementsByCommentIDs(r.Context(), db.ListTaskSupplementsByCommentIDsParams{
+		WorkspaceID: comments[0].WorkspaceID, CommentIds: ids,
+	}); err == nil {
+		for _, row := range rows {
+			supplements[uuidToString(row.CommentID)] = row
+		}
+	}
 
 	out := make([]TimelineEntry, len(comments))
 	for i, c := range comments {
@@ -272,6 +295,13 @@ func (h *Handler) commentsToEntries(r *http.Request, comments []db.Comment) []Ti
 			ResolvedByType: textToPtr(c.ResolvedByType),
 			ResolvedByID:   uuidToPtr(c.ResolvedByID),
 			SourceTaskID:   uuidToPtr(c.SourceTaskID),
+			DeletedAt:      timestampToPtr(c.DeletedAt),
+		}
+		if supplement, ok := supplements[cid]; ok {
+			out[i].SupplementTaskID = uuidToString(supplement.TaskID)
+			out[i].SupplementStatus = supplement.Status
+			out[i].SupplementFailureReason = textToPtr(supplement.FailureReason)
+			out[i].SupplementDeliveredAt = timestampToPtr(supplement.DeliveredAt)
 		}
 	}
 	return out
@@ -296,7 +326,58 @@ func activityToEntry(a db.ActivityLog) TimelineEntry {
 	}
 }
 
-// AssigneeFrequencyEntry 表示某个用户把任务指派给某个具体目标的频次。
+// hydrateTimelineMemberActors adds display identity for member-authored rows
+// without changing the active-member directory's semantics. The ids came from
+// comments/activity rows on an issue loadIssueForUser already authorised, so
+// this creates no arbitrary user lookup surface. The query is bounded by the
+// timeline hard caps and runs once for the whole response, never once per row.
+func (h *Handler) hydrateTimelineMemberActors(ctx context.Context, entries []TimelineEntry) {
+	seen := make(map[string]struct{})
+	ids := make([]pgtype.UUID, 0)
+	for i := range entries {
+		entry := &entries[i]
+		if entry.ActorType != "member" || entry.ActorID == "" {
+			continue
+		}
+		if _, ok := seen[entry.ActorID]; ok {
+			continue
+		}
+		id, err := util.ParseUUID(entry.ActorID)
+		if err != nil {
+			continue
+		}
+		seen[entry.ActorID] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	users, err := h.Queries.GetUsersByIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	byID := make(map[string]db.GetUsersByIDsRow, len(users))
+	for _, user := range users {
+		byID[uuidToString(user.ID)] = user
+	}
+	for i := range entries {
+		entry := &entries[i]
+		if entry.ActorType != "member" {
+			continue
+		}
+		user, ok := byID[entry.ActorID]
+		if !ok {
+			continue
+		}
+		entry.ActorName = user.Name
+		if user.AvatarUrl.Valid {
+			entry.ActorAvatarURL = h.resolveAvatarURL(user.AvatarUrl.String)
+		}
+	}
+}
+
+// AssigneeFrequencyEntry represents how often a user assigns to a specific target.
 type AssigneeFrequencyEntry struct {
 	AssigneeType string `json:"assignee_type"`
 	AssigneeID   string `json:"assignee_id"`

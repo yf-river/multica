@@ -280,3 +280,13 @@ ON CONFLICT (issue_id, pull_request_id) DO UPDATE SET
 -- name: UnlinkIssueFromPullRequest :exec
 DELETE FROM issue_pull_request
 WHERE issue_id = $1 AND pull_request_id = $2;
+
+-- name: IssueHasDelivery :one
+-- 已登记方案或交付的任务由发布验收流程收尾，PR 合并仅更新关联信息。
+SELECT EXISTS (
+    SELECT 1 FROM issue_delivery d
+    WHERE d.workspace_id = $1 AND d.issue_id = $2
+    UNION ALL
+    SELECT 1 FROM issue_delivery_plan p
+    WHERE p.workspace_id = $1 AND p.issue_id = $2
+);

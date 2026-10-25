@@ -1,5 +1,7 @@
 "use client";
 
+import { ShimmerText } from "@multica/ui/components/common/shimmer-text";
+
 import { memo, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -10,7 +12,6 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import type { AgentTask } from "@multica/core/types";
-import { cn } from "@multica/ui/lib/utils";
 import type { AvatarSize } from "@multica/ui/lib/avatar-size";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { AgentActivityHoverContent } from "../../agents/components/agent-activity-hover-content";
@@ -55,10 +56,7 @@ interface IssueAgentActivityIndicatorProps {
  *   - 0 运行、≥1 排队   → 半透明堆叠 + 弱化"Queued"
  *   - 什么都没有          → 返回 null（无任何 UI 装饰或占位）
  *
- * 微光复用聊天的 `animate-chat-text-shimmer` 工具类（定义在
- * packages/ui/styles/base.css）。早期版本在头像周围叠了品牌描边环 +
- * 透明度脉冲；两者在密集看板上都读作焦躁。把"活着"信号挪到标签上，
- * 让头像本身保持静止、让提示骑在一段用户本来就看得懂的文字上。
+ * 状态文案使用共享 ShimmerText，头像静态展示。
  *
  * 悬停打开 AgentActivityHoverContent，列出每个活跃任务（状态点 + 时长）。
  * 没有链接行——卡片本身就是跳转 issue detail 的导航目标。
@@ -114,20 +112,11 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
         opacity={opacity}
         max={3}
       />
-      {/* 不要 leading-none：微光用 background-clip: text 给字形上色，
-          而背景只覆盖行盒——被压扁的行盒会让下伸部变透明。 */}
-      <span
-        className={cn(
-          "text-micro",
-          isRunning
-            ? "animate-chat-text-shimmer"
-            : "text-muted-foreground",
-        )}
-      >
+      <ShimmerText active={isRunning} className="text-micro text-muted-foreground">
         {isRunning
           ? t(($) => $.agent_activity.status_running)
           : t(($) => $.agent_activity.status_queued)}
-      </span>
+      </ShimmerText>
     </>
   );
 

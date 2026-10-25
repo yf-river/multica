@@ -54,3 +54,16 @@ func mediaTypeTitle(kind channel.MsgType) string {
 		return "File chat"
 	}
 }
+
+// chatTitleSource 用发送者自己的文字生成标题，消费过的清空指令不进入标题。
+func chatTitleSource(body, commandText string, consumedFresh bool) string {
+	if strings.TrimSpace(commandText) != "" {
+		if consumedFresh {
+			if current, ok := ParseFreshSessionCommand(commandText); ok {
+				return current
+			}
+		}
+		return commandText
+	}
+	return body
+}

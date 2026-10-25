@@ -21,7 +21,6 @@ import { router } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import type {
   Issue,
-  IssuePriority,
 } from "@multica/core/types";
 import { formatDateOnly } from "@multica/core/issues/date";
 import { Text } from "@/components/ui/text";
@@ -38,10 +37,7 @@ import { useIssueStatuses } from "@/lib/use-issue-statuses";
 
 // Chip placeholder shortens `none` from "无优先级" → "优先级" so the
 // unset chip reads as a placeholder, not as a confusing assigned value.
-const PRIORITY_CHIP_LABEL: Record<IssuePriority, string> = {
-  ...PRIORITY_FULL_LABEL,
-  none: "优先级",
-};
+const PRIORITY_CHIP_LABEL = PRIORITY_FULL_LABEL;
 
 /**
  * The picker fields the issue-detail attribute row can open. Bound to a
@@ -131,7 +127,7 @@ export function AttributeRow({ issue }: { issue: Issue }) {
       <AttributeChip
         icon={<PriorityIcon priority={issue.priority} size={14} />}
         label={PRIORITY_CHIP_LABEL[issue.priority]}
-        variant={issue.priority === "none" ? "dimmed" : "filled"}
+        variant={"filled"}
         onPress={() => openPicker("priority")}
       />
 

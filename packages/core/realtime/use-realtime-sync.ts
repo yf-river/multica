@@ -52,7 +52,6 @@ import {
   invalidateUpdatedAtSortedIssueLists,
 } from "../issues/cache-coordinator";
 import { onInboxNew, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted, onInboxSummaryInvalidate } from "../inbox/ws-updaters";
-import { inboxKeys } from "../inbox/queries";
 import {
   notificationPreferenceOptions,
   notificationPreferenceKeys,
@@ -528,12 +527,14 @@ export async function handleInboxNew(
   item: InboxItem,
 ): Promise<void> {
   const sourceWsId = item.workspace_id;
-  if (sourceWsId) onInboxNew(qc, sourceWsId, item);
-  // 任何工作区的新条目都可能点亮工作区切换器的圆点，所以无论活跃工作区是谁，
-  // 都要刷新跨工作区的汇总。
-  onInboxSummaryInvalidate(qc);
-  // 只在应用没有聚焦时弹浏览器通知。用户已经在看 Multica 时，inbox 侧边栏的
-  // 未读样式就够——不必用横幅打断。
+  if (sourceWsId) void onInboxNew(qc, sourceWsId, item);
+  // A new item in ANY workspace can light the workspace-switcher dot, so
+  // refresh the cross-workspace summary regardless of the active workspace.
+  void onInboxSummaryInvalidate(qc);
+  // Fire a native OS notification only when the app isn't focused. When
+  // the user is already looking at Multica, the inbox sidebar's unread
+  // styling is enough — no need to interrupt with a banner. `desktopAPI`
+  // is injected by the preload script; its absence (web app) skips silently.
   if (typeof document !== "undefined" && document.hasFocus()) return;
   // 只解析一次来源工作区的 slug：它把静音检查和深链都钉在 inbox 条目*属于*的
   // 工作区上，绝不在当前活跃工作区。在这里读 `getCurrentSlug()` 曾是错误路由
@@ -583,7 +584,10 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   const wsId = getCurrentWsId();
   if (wsId) {
     qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
-    qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+    // Through the inbox's own entry point, not a plain invalidate: a reconnect
+    // can land during the list's first load, and a plain invalidate would be
+    // answered by the request already on the wire (see refreshInboxQuery).
+    void onInboxInvalidate(qc, wsId);
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
@@ -603,14 +607,16 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     // 归档的状态继续提供出去，或一直画着它的旧名字。
     qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
   }
-  // 跨工作区，所以在 wsId 守卫之外：重连可能错过任意工作区的 inbox 事件，
-  // 所以重拉切换器圆点的汇总。
-  onInboxSummaryInvalidate(qc);
-  // 按议题的缓存不带 wsId 作 key，所以上面的 issueKeys.all(wsId) 前缀够不到它们。
-  // 它们完全依赖 WS 事件保新鲜（staleTime: Infinity），断线期间错过的事件会让它们
-  // 一直陈旧到整页刷新——inbox 显示了某 Agent 的新评论而议题时间线没有（#3953）。
-  // 非活跃缓存在这里只被标为过期、下次挂载时重取；唯一挂载着的议题立即重取，
-  // 与它自己的 useWSReconnect 行为相同。
+  // Cross-workspace, so outside the wsId guard: a reconnect may have missed
+  // inbox events from any workspace, so re-pull the switcher-dot summary.
+  void onInboxSummaryInvalidate(qc);
+  // Per-issue caches are keyed without wsId, so the issueKeys.all(wsId)
+  // prefix above does not reach them. They rely entirely on WS events for
+  // freshness (staleTime: Infinity), so events missed while disconnected
+  // left them stale until a full reload — the inbox showed an agent's new
+  // comment while the issue timeline didn't (#3953). Inactive caches only
+  // get marked stale here and refetch on next mount; the one mounted issue
+  // refetches immediately, same as its own useWSReconnect already does.
   qc.invalidateQueries({ queryKey: issueKeys.timelineAll() });
   qc.invalidateQueries({ queryKey: issueKeys.reactionsAll() });
   qc.invalidateQueries({ queryKey: issueKeys.subscribersAll() });
@@ -687,12 +693,14 @@ export function useRealtimeSync(
     const refreshMap: Record<string, () => void> = {
       inbox: () => {
         const wsId = getCurrentWsId();
-        if (wsId) onInboxInvalidate(qc, wsId);
-        // inbox:read / inbox:archived / inbox:unarchived / 批量事件都落在这里。
-        // 它们可能来自当前活跃工作区之外的另一个工作区（个人事件会扇出到该用户所有
-        // 连接），所以总是刷新跨工作区汇总——别的条目被读/归档时它的圆点必须熄灭，
-        // 未读条目从归档里恢复时又要点亮。
-        onInboxSummaryInvalidate(qc);
+        if (wsId) void onInboxInvalidate(qc, wsId);
+        // inbox:read / inbox:archived / inbox:unarchived / batch events arrive
+        // here. They can originate from a workspace other than the active one
+        // (personal events fan out to all the user's connections), so always
+        // refresh the cross-workspace summary — its dot must clear when another
+        // workspace's items are read/archived, and light again when an unread
+        // item is restored from the archive.
+        void onInboxSummaryInvalidate(qc);
       },
       agent: () => {
         const wsId = getCurrentWsId();
@@ -766,8 +774,13 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
-          // runtime 在线/离线转换会移动托管在这台 runtime 上每个 Agent 的派生状态，
-          // 从而改变 squad 页上的 working/idle/offline 药丸。
+          // Shared agents may carry a redacted runtime liveness projection;
+          // refetch it when a daemon changes state even if its private runtime
+          // is absent from this member's runtime list.
+          qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          // Runtime online/offline transitions move the derived status
+          // for every agent that hosts on this runtime, which shifts the
+          // working/idle/offline pill on the squad page.
           invalidateSquadMemberStatusQueries(qc, wsId);
         }
       },
@@ -936,7 +949,7 @@ export function useRealtimeSync(
       const wsId = getCurrentWsId();
       if (wsId) {
         onIssueDeleted(qc, wsId, issue_id);
-        onInboxIssueDeleted(qc, wsId, issue_id);
+        void onInboxIssueDeleted(qc, wsId, issue_id);
       }
     });
 
@@ -1204,20 +1217,40 @@ export function useRealtimeSync(
       );
     });
 
-    // invitation:accepted / declined / revoked —— 刷新邀请列表。
-    const unsubInvitationAccepted = ws.on("invitation:accepted", () => {
-      const currentWsId = getCurrentWsId();
-      if (currentWsId) {
-        qc.invalidateQueries({ queryKey: workspaceKeys.invitations(currentWsId) });
-        qc.invalidateQueries({ queryKey: workspaceKeys.members(currentWsId) });
-      }
-    });
-    const unsubInvitationDeclined = ws.on("invitation:declined", () => {
-      const currentWsId = getCurrentWsId();
-      if (currentWsId) {
-        qc.invalidateQueries({ queryKey: workspaceKeys.invitations(currentWsId) });
-      }
-    });
+    // invitation:accepted / declined / revoked — refresh invitation lists.
+    // The workspace broadcast reaches every online member, so the admin lists
+    // refresh unconditionally. The account-level pending list is gated on the
+    // acting user: only the invitee who concluded the invite (possibly from
+    // another surface or device) needs their stale pending row dropped —
+    // staleTime is Infinity, so nothing refetches it on its own. Without the
+    // gate every accept/decline fanout refetches the list once per online
+    // member. The actor rides the frame envelope (ws-client hands it to the
+    // handler as its second argument), not the event payload.
+    const unsubInvitationAccepted = ws.on(
+      "invitation:accepted",
+      (_payload, actorId) => {
+        const currentWsId = getCurrentWsId();
+        if (currentWsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.invitations(currentWsId) });
+          qc.invalidateQueries({ queryKey: workspaceKeys.members(currentWsId) });
+        }
+        if (actorId === authStore.getState().user?.id) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
+        }
+      },
+    );
+    const unsubInvitationDeclined = ws.on(
+      "invitation:declined",
+      (_payload, actorId) => {
+        const currentWsId = getCurrentWsId();
+        if (currentWsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.invitations(currentWsId) });
+        }
+        if (actorId === authStore.getState().user?.id) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
+        }
+      },
+    );
     const unsubInvitationRevoked = ws.on("invitation:revoked", () => {
       qc.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
     });
@@ -1245,23 +1278,29 @@ export function useRealtimeSync(
     const taskMessageBatches = new Map<string, TaskMessagePayload[]>();
     let taskMessageFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const writeTaskMessageBatch = (taskId: string, batch: TaskMessagePayload[]) => {
+      // Re-check, because a queued batch may be up to one window old and
+      // `setQueryData` does NOT postpone garbage collection — query-core arms
+      // that timer when the last observer leaves and never again on write.
+      // Closing a transcript while its run keeps streaming therefore has the
+      // entry disappear mid-window, and writing then REBUILDS it holding only
+      // this batch. With the app-wide `staleTime: Infinity` the next open
+      // would read that stub as fresh and never fetch, so everything before it
+      // would be missing until the window is reloaded. Dropping the batch
+      // instead costs nothing: the rows are persisted, so the next open fetches
+      // the whole timeline.
+      if (!isTaskMessageTimelineHeld(qc, taskId)) return;
+      qc.setQueryData<TaskMessagePayload[]>(
+        chatKeys.taskMessages(taskId),
+        (old = []) => mergeTaskMessagesBySeq(old, batch),
+      );
+    };
+
     const flushTaskMessages = () => {
       taskMessageFlushTimer = null;
 
       for (const [taskId, batch] of taskMessageBatches) {
-        // 再查一次：持有状态最远在一个窗口之前被验证过，而 `setQueryData` 不会推迟
-        // GC——query-core 在最后一个观察者离开时武装计时器，且之后写入永不重挂。
-        // 因此一场运行还在流式输出时关闭它的时间线，条目会在窗口中途消失；此时写入
-        // 会用"只含本批"重建一条持有条目。在应用级 `staleTime: Infinity` 下，下次打开
-        // 会把这份残片读成新鲜的、永不拉取，于是它之前的所有内容都要缺到窗口重载。
-        // 丢弃这批反而零损失：行都已持久化，下次打开会拉整条时间线。
-        if (!isTaskMessageTimelineHeld(qc, taskId)) {
-          continue;
-        }
-        qc.setQueryData<TaskMessagePayload[]>(
-          chatKeys.taskMessages(taskId),
-          (old = []) => mergeTaskMessagesBySeq(old, batch),
-        );
+        writeTaskMessageBatch(taskId, batch);
       }
       taskMessageBatches.clear();
     };
@@ -1272,14 +1311,17 @@ export function useRealtimeSync(
       // 不只是可见的那些。
       if (!isTaskMessageTimelineHeld(qc, payload.task_id)) return;
 
-      const batch = taskMessageBatches.get(payload.task_id);
-      if (batch) batch.push(payload);
-      else taskMessageBatches.set(payload.task_id, [payload]);
-
-      // 固定窗口而不是可重置的去抖：连续流仍须每 TASK_MESSAGE_FLUSH_MS 冲刷一次，
-      // 而不是被饿到出现间隙才冲刷。
+      // Leading edge: render the first frame after an idle window now. The
+      // timer is still armed so the remainder of a burst is coalesced and a
+      // continuous stream cannot render more than once per fixed window after
+      // this one immediate write.
       if (!taskMessageFlushTimer) {
+        writeTaskMessageBatch(payload.task_id, [payload]);
         taskMessageFlushTimer = setTimeout(flushTaskMessages, TASK_MESSAGE_FLUSH_MS);
+      } else {
+        const batch = taskMessageBatches.get(payload.task_id);
+        if (batch) batch.push(payload);
+        else taskMessageBatches.set(payload.task_id, [payload]);
       }
 
       chatWsLogger.debug("task:message (global)", {

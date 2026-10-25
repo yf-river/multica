@@ -29,7 +29,7 @@ import (
 
 const (
 	dshProfile         = "multica"       // 启动 dsh 时固定使用的 profile 名
-	dshProtocolVersion = 1               // 本适配器认的协议版本；帧 v 与它不符即为协议错误
+	DshProtocolVersion = 1               // 本适配器认的协议版本；帧 v 与它不符即为协议错误
 	dshCancelGrace     = 3 * time.Second // 发完 cancel 帧后，等进程自行退出的宽限时间
 	dshTerminateGrace  = 2 * time.Second // 发完 SIGTERM 后，等进程组消失的宽限时间，超了就 SIGKILL
 )
@@ -91,7 +91,7 @@ type dshWireError struct {
 
 // dshFrame 是 DSH 出站协议帧的通用载体，按 Type 区分语义、只取相关字段。
 type dshFrame struct {
-	Version          int             `json:"v"`                 // 协议版本，应与 dshProtocolVersion 一致
+	Version          int             `json:"v"`                 // 协议版本，应与 DshProtocolVersion 一致
 	Type             string          `json:"type"`              // 帧类型：ready/session/text/thinking/tool_call/tool_result/usage/protocol_error/result/models
 	Runtime          string          `json:"runtime,omitempty"` // ready 帧里自报的运行时名，需为 "dsh"
 	ProtocolVersion  int             `json:"protocol_version,omitempty"`
@@ -296,7 +296,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		requestID = "multica-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 	command := dshExecuteCommand{
-		Version: dshProtocolVersion, Type: "execute", RequestID: requestID,
+		Version: DshProtocolVersion, Type: "execute", RequestID: requestID,
 		Cwd: opts.Cwd, Prompt: prompt, ResumeSessionID: opts.ResumeSessionID,
 		Model: model, ReasoningEffort: opts.ThinkingLevel, MCPServers: mcpServers,
 	}
@@ -332,7 +332,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			return
 		case <-runCtx.Done():
 		}
-		_ = writeFrame(dshCancelCommand{Version: dshProtocolVersion, Type: "cancel", RequestID: requestID})
+		_ = writeFrame(dshCancelCommand{Version: DshProtocolVersion, Type: "cancel", RequestID: requestID})
 		timer := time.NewTimer(dshCancelGrace)
 		defer timer.Stop()
 		select {
@@ -433,7 +433,7 @@ type dshRunState struct {
 // 版本不符或 request_id 不属于本次请求的帧一律忽略——前者记入 protocolError
 // 以便最终结果给出明确原因，后者是上游还在回放别的任务的残留。
 func handleDshFrame(frame dshFrame, requestID string, ch chan<- Message, state *dshRunState) {
-	if frame.Version != dshProtocolVersion {
+	if frame.Version != DshProtocolVersion {
 		state.protocolError = fmt.Sprintf("dsh returned unsupported protocol version %d", frame.Version)
 		return
 	}
@@ -519,7 +519,7 @@ func discoverDshModels(ctx context.Context, runtimeCmd Command) ([]Model, error)
 	for scanner.Scan() {
 		// 只认版本正确、类型为 models 的帧；其余行（如日志）直接跳过。
 		var frame dshFrame
-		if json.Unmarshal(scanner.Bytes(), &frame) != nil || frame.Version != dshProtocolVersion || frame.Type != "models" {
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil || frame.Version != DshProtocolVersion || frame.Type != "models" {
 			continue
 		}
 		for _, item := range frame.Models {

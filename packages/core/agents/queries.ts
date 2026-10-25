@@ -1,6 +1,4 @@
-// Agent 相关查询：query key 工厂与 queryOptions。覆盖任务快照、工作中 Agent、
-// 近 30 天活动/运行计数、单 Agent 全部任务、以及未完成的 Agent 构建会话。
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
   WorkspaceWorkingAgentMineRelation,
@@ -132,9 +130,12 @@ export const agentTasksKeys = {
 // 里已有的 task 前缀失效逻辑来失效本查询。
 /** 单个 Agent 的全部任务查询配置。 */
 export function agentTasksOptions(wsId: string, agentId: string) {
-  return queryOptions({
-    queryKey: agentTasksKeys.detail(wsId, agentId),
-    queryFn: () => api.listAgentTasks(agentId),
+  return infiniteQueryOptions({
+    queryKey: [...agentTasksKeys.detail(wsId, agentId), "pages"],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) =>
+      api.listAgentTasksPage(agentId, { limit: 200, before: pageParam, signal }),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,

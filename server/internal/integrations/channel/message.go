@@ -88,6 +88,17 @@ type MediaRef struct {
 	// 该标记第几次出现（0 起），这样部分媒体失败也不会把后面的附件顶错位。
 	InlinePlaceholder string
 	InlineIndex       int
+	// InlineIDOnly makes that replacement name the attachment instead of
+	// embedding it: the marker becomes itself carrying the attachment's id,
+	// "[Image: 019fe1d3-…]", rather than a Markdown link to the object.
+	//
+	// Set it when the marker REFERS to an attachment rather than carrying
+	// one — a picture the message quotes belongs to a message somebody else
+	// sent, and rendering it inline would state this sender attached it. The
+	// id is the point either way: it is what joins the marker to the entry
+	// the agent sees in the attachment list, and what it passes to
+	// `multica attachment download`.
+	InlineIDOnly bool
 }
 
 // ReplyCtx 描述一条入站消息引用/回复的那条消息。入站消息不是回复时为 nil。
@@ -121,6 +132,9 @@ type InboundMessage struct {
 	// 识别器读这个字段，这样被改写过的 Text 永远不会被当成第二条命令重复解析。空则
 	// 回落用 Text。
 	CommandText string
+
+	// HasSelectedContext 表示发送者主动选择的引用上下文，裸控制命令携带它时仍是一条真实输入。
+	HasSelectedContext bool
 
 	// MediaRefs 是 engine.MediaResolver.ResolveMedia 的**输出**通道：它为本消息下载并
 	// 上传好的对象，每个都先写意图台账行、再 PUT，上传完成才把引用挂到这里。入站消息

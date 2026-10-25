@@ -2,7 +2,7 @@
 // 该把键盘焦点拉进编辑器了，覆盖"该输入新内容了"的各种时刻。
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 /**
  * 管理悬浮窗口输入框的聚焦 nonce。
@@ -19,12 +19,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * ChatWindow 关闭时仍保持挂载，`isOpen` 又是从存储恢复的；如果把"挂载"当成
  * "打开"，持久化的"已打开"偏好就会在任何页面加载时抢走用户的焦点。
  */
-export function useChatInputFocus(isOpen: boolean): {
+export function useChatInputFocus(isOpen: boolean, windowRef?: RefObject<HTMLElement | null>): {
   focusRequest: number;
   requestInputFocus: () => void;
 } {
   const [focusRequest, setFocusRequest] = useState(0);
   const requestInputFocus = useCallback(() => setFocusRequest((n) => n + 1), []);
+
+  // The window stays mounted to preserve drafts and its closing animation.
+  // Release its focus before the next keystroke can enter a hidden composer.
+  // Do not blur a dialog or page control the user has already moved to.
+  useLayoutEffect(() => {
+    if (isOpen) return;
+    const container = windowRef?.current;
+    const active = container?.ownerDocument.activeElement;
+    if (active instanceof HTMLElement && container?.contains(active)) active.blur();
+  }, [isOpen, windowRef]);
 
   const wasOpenRef = useRef(isOpen);
   useEffect(() => {

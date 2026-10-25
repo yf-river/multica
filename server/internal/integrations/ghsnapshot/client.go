@@ -15,7 +15,6 @@
 package ghsnapshot
 
 import (
-	"bytes"
 	"context"
 	"crypto/rsa"
 	"encoding/json"
@@ -169,7 +168,7 @@ func (c *Client) mintInstallationToken(ctx context.Context, installationID int64
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+	if isRateLimited(resp, body) {
 		return "", rateLimitFromResponse(resp, c.now())
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
@@ -198,62 +197,61 @@ func (c *Client) mintInstallationToken(ctx context.Context, installationID int64
 	return parsed.Token, nil
 }
 
-// graphQL 以指定安装身份跑一条 GraphQL 查询，返回原始 `data` 对象。GitHub 即使查询级
-// 报错也回 HTTP 200，所以这里也检查 `errors` 数组，把 RATE_LIMITED 错误类型映射成
-// RateLimitError。
-func (c *Client) graphQL(ctx context.Context, installationID int64, query string, variables map[string]any) (json.RawMessage, error) {
+// restGet authenticates against a fixed API path. Response bodies and tokens
+// never appear in errors; permission failures must not pause an installation.
+func (c *Client) restGet(ctx context.Context, installationID int64, path string) (json.RawMessage, error) {
 	token, err := c.installationToken(ctx, installationID)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := json.Marshal(map[string]any{"query": query, "variables": variables})
-	if err != nil {
-		return nil, err
-	}
-	endpoint := strings.TrimRight(c.apiBase, "/") + "/graphql"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	endpoint := strings.TrimRight(c.apiBase, "/") + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+	const maxBody = 8 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil {
+		return nil, errors.New("github REST: failed to read response")
+	}
+	if isRateLimited(resp, body) {
 		return nil, rateLimitFromResponse(resp, c.now())
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github graphql: unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("github REST: unexpected status %d", resp.StatusCode)
 	}
-	var envelope struct {
-		Data   json.RawMessage `json:"data"`
-		Errors []struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"errors"`
+	if len(body) > maxBody {
+		return nil, errors.New("github REST: response exceeds size limit")
 	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, errors.New("github graphql: malformed response")
+	return body, nil
+}
+
+func isRateLimited(resp *http.Response, body []byte) bool {
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return true
 	}
-	if len(envelope.Errors) > 0 {
-		for _, e := range envelope.Errors {
-			if e.Type == "RATE_LIMITED" {
-				return nil, &RateLimitError{RetryAfter: time.Minute}
-			}
-		}
-		// 只透出 message 本身，其余不带；GraphQL 错误消息不含凭据。
-		return nil, fmt.Errorf("github graphql error: %s", envelope.Errors[0].Message)
+	if resp.StatusCode != http.StatusForbidden {
+		return false
 	}
-	if len(envelope.Data) == 0 {
-		return nil, errors.New("github graphql: empty data")
+	if resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "" {
+		return true
 	}
-	return envelope.Data, nil
+	var failure struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &failure) != nil {
+		return false
+	}
+	message := strings.ToLower(failure.Message)
+	return strings.Contains(message, "secondary rate limit") || strings.Contains(message, "abuse detection")
 }
 
 // rateLimitFromResponse 根据 GitHub 的限流响应头构造 RateLimitError。Retry-After

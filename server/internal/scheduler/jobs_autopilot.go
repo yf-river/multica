@@ -213,7 +213,6 @@ func autopilotScopes(
 func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 	ctx context.Context, scope Scope, now time.Time, latest LatestPlanInfo,
 ) ([]time.Time, error) {
-	const replayWindow = 24 * time.Hour
 	return func(ctx context.Context, scope Scope, now time.Time, latest LatestPlanInfo) ([]time.Time, error) {
 		cfg, ok := cache.get(scope.ID)
 		if !ok {
@@ -255,11 +254,11 @@ func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 		default:
 			after = cfg.CreatedAt
 		}
-		// 用 CatchUpWindow 界住重放，防止长时间暂停/休眠的触发器枚举出数百万个历史桶。
-		// `after` 通常已经很新（要么是 latest.PlanTime，要么是 last_fired_at）；这个
-		// 上限只在「触发器几周前就建了但从没触发过」这种不常见路径上有意义。
-		if oldest := now.Add(-replayWindow); after.Before(oldest) {
-			after = oldest
+		// Enumerate only dispatchable history so the 1024-entry cap cannot
+		// hide recent occurrences after a long pause. Subtract 1ns because
+		// enumeration excludes `after`, but the lateness bound is inclusive.
+		if floor := now.Add(-maxAutopilotScheduleLateness); after.Before(floor) {
+			after = floor.Add(-time.Nanosecond)
 		}
 
 		occs, err := service.NextOccurrencesUTC(cfg.CronExpression, cfg.Timezone, after, now)

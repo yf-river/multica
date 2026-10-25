@@ -44,7 +44,7 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/start"):
 			startCalls.Add(1)
 		}
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -113,7 +113,7 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 				envRootOnDisk.Store(true)
 			}
 		}
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -191,7 +191,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -428,7 +428,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -529,7 +529,7 @@ printf 'ran\n' > "$CAPTURE_FILE"
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -595,6 +595,7 @@ func TestRunTask_ExtendsPrepareLeaseDuringStartTask(t *testing.T) {
 		closeLeaseOnce   sync.Once
 	)
 	leaseSeenDuringStart := make(chan struct{})
+	var startAttempts atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -603,16 +604,21 @@ func TestRunTask_ExtendsPrepareLeaseDuringStartTask(t *testing.T) {
 				leaseDuringStart.Store(true)
 				closeLeaseOnce.Do(func() { close(leaseSeenDuringStart) })
 			}
-			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
 		case strings.HasSuffix(r.URL.Path, "/start"):
+			attempt := startAttempts.Add(1)
 			startEntered.Store(true)
 			select {
 			case <-leaseSeenDuringStart:
 			case <-time.After(2 * time.Second):
 			}
-			w.WriteHeader(http.StatusOK)
+			if attempt == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(`{}`))
 		default:
-			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -633,12 +639,14 @@ func TestRunTask_ExtendsPrepareLeaseDuringStartTask(t *testing.T) {
 	}
 
 	task := Task{
-		ID:          taskID,
-		WorkspaceID: workspaceID,
-		RuntimeID:   "rt-1",
-		IssueID:     "issue-runtask-start-lease",
-		AgentID:     "agent-runtask-start-lease",
-		Agent:       &AgentData{ID: "agent-runtask-start-lease", Name: "test-agent"},
+		ID:                  taskID,
+		WorkspaceID:         workspaceID,
+		RuntimeID:           "rt-1",
+		IssueID:             "issue-runtask-start-lease",
+		StartClaimSupported: true,
+		DispatchedAt:        "2026-09-17T09:00:00.123456Z",
+		AgentID:             "agent-runtask-start-lease",
+		Agent:               &AgentData{ID: "agent-runtask-start-lease", Name: "test-agent"},
 	}
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -649,6 +657,9 @@ func TestRunTask_ExtendsPrepareLeaseDuringStartTask(t *testing.T) {
 	}
 	if !leaseDuringStart.Load() {
 		t.Fatal("prepare lease was not extended while /start was still in flight")
+	}
+	if startAttempts.Load() != 2 {
+		t.Fatalf("start attempts = %d, want transient failure then success", startAttempts.Load())
 	}
 }
 
@@ -691,6 +702,7 @@ func TestRunTask_PrepareTimeoutStopsLeaseDuringBlockedStartTask(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -724,12 +736,14 @@ func TestRunTask_PrepareTimeoutStopsLeaseDuringBlockedStartTask(t *testing.T) {
 	}
 
 	task := Task{
-		ID:          "task-runtask-start-timeout",
-		WorkspaceID: "ws-runtask-start-timeout",
-		RuntimeID:   "rt-1",
-		IssueID:     "issue-runtask-start-timeout",
-		AgentID:     "agent-runtask-start-timeout",
-		Agent:       &AgentData{ID: "agent-runtask-start-timeout", Name: "test-agent"},
+		ID:                  "task-runtask-start-timeout",
+		StartClaimSupported: true,
+		DispatchedAt:        "2026-09-17T09:00:00.123456Z",
+		WorkspaceID:         "ws-runtask-start-timeout",
+		RuntimeID:           "rt-1",
+		IssueID:             "issue-runtask-start-timeout",
+		AgentID:             "agent-runtask-start-timeout",
+		Agent:               &AgentData{ID: "agent-runtask-start-timeout", Name: "test-agent"},
 	}
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
 	startedAt := time.Now()
@@ -817,7 +831,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 				activeAtComplete.Store(true)
 			}
 		}
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(srv.Close)
 	d.client = NewClient(srv.URL)

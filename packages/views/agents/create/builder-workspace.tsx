@@ -84,7 +84,10 @@ export function BuilderWorkspace({
   const runtimeSeed = useMemo(
     () => ({
       ready: sessionSettled,
-      runtimeId: session?.runtime_id || fallbackRuntimeId,
+      // An existing session with an empty runtime is authoritatively unbound.
+      // Only a just-created, not-yet-listed session may use the URL fallback.
+      runtimeId: session?.runtime_id ?? fallbackRuntimeId,
+      fallbackToFirstUsable: false,
     }),
     [fallbackRuntimeId, session?.runtime_id, sessionSettled],
   );
@@ -234,18 +237,18 @@ export function BuilderWorkspace({
     [builder.messages],
   );
 
-  // 草稿的运行环境确知与 carrier 一致之前为 false。在那之前，任何选择都不得发到
-  // 服务端：RuntimePicker 自己会通过 onSelect 播种空选择，而本面板的 onSelect 会去
-  // 重绑实时会话——听从那个种子，等于把会话挪到“排序第一”的机器上：空闲时无声
-  // 发生，不空闲时表现为“换运行环境前先打断当前回复”。
-  const runtimeKnown = sessionSettled && draft.runtimeId.length > 0;
+  // An explicitly unbound carrier is resolved too: the user must be able to
+  // select a runtime and bind it, even when there is only one available.
+  // Automatic selection stays disabled for live sessions so a local draft
+  // cannot display a binding the server never committed.
+  const runtimeResolved = sessionSettled && (session !== undefined || fallbackRuntimeId.length > 0);
 
   useEffect(() => {
     onRuntimeLabel(selectedRuntime ? runtimeDisplayLabel(selectedRuntime) : null);
   }, [onRuntimeLabel, selectedRuntime]);
 
   const handleRuntimeSelect = async (runtimeId: string) => {
-    if (!runtimeKnown) return;
+    if (!runtimeResolved) return;
     if (!runtimeId || runtimeId === draft.runtimeId) return;
     const bound = await builder.switchRuntime(runtimeId);
     if (!bound) return;
@@ -339,7 +342,7 @@ export function BuilderWorkspace({
                   // carrier 运行环境未知期间也锁定，选择器就不会给出一个它拒绝
                   // 执行的切换入口。
                   runtimeSwitchInFlight={
-                    builder.switchingRuntime || !runtimeKnown
+                    builder.switchingRuntime || !runtimeResolved
                   }
                 />
               </div>

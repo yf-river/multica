@@ -375,7 +375,7 @@ func TestBatchChildDoneCrossStage_Cancelled(t *testing.T) {
 		t.Fatalf("expected exactly 1 system comment on parent, got %d", got)
 	}
 	content, _, _, _ := systemCommentOn(t, fx.parent.ID)
-	if !strings.Contains(content, "第 2 阶段已完成") {
+	if !strings.Contains(content, "第 2 阶段已结束") {
 		t.Errorf("expected Stage 2 completion announcement, got: %s", content)
 	}
 	if strings.Contains(content, "下一步是阶段") || strings.Contains(content, "（下一阶段）") {

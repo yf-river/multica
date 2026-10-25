@@ -6,11 +6,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -83,7 +85,8 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 		ID:          commentUUID,
 		WorkspaceID: wsUUID,
 	})
-	if err != nil {
+	// A deleted comment's tombstone takes no reactions.
+	if err != nil || comment.DeletedAt.Valid {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
@@ -110,6 +113,15 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	if _, lockErr := qtx.LockLiveComment(r.Context(), db.LockLiveCommentParams{ID: comment.ID, WorkspaceID: wsUUID}); lockErr != nil {
+		if errors.Is(lockErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "comment not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load comment")
+		}
+		return
+	}
+
 	reaction, err := qtx.AddReaction(r.Context(), db.AddReactionParams{
 		CommentID:   comment.ID,
 		WorkspaceID: wsUUID,
@@ -117,6 +129,11 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 		ActorID:     parseUUID(actorID),
 		Emoji:       req.Emoji,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Deleted after the check above.
+		writeError(w, http.StatusNotFound, "comment not found")
+		return
+	}
 	if err != nil {
 		slog.Warn("add reaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
 		writeError(w, http.StatusInternalServerError, "failed to add reaction")
@@ -197,7 +214,8 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 		ID:          commentUUID,
 		WorkspaceID: wsUUID,
 	})
-	if err != nil {
+	// A deleted comment's tombstone has no reactions left to remove.
+	if err != nil || comment.DeletedAt.Valid {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
@@ -224,12 +242,25 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	if _, lockErr := qtx.LockLiveComment(r.Context(), db.LockLiveCommentParams{ID: comment.ID, WorkspaceID: wsUUID}); lockErr != nil {
+		if errors.Is(lockErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "comment not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load comment")
+		}
+		return
+	}
+
 	removed, err := qtx.RemoveReaction(r.Context(), db.RemoveReactionParams{
 		CommentID: comment.ID,
 		ActorType: actorType,
 		ActorID:   parseUUID(actorID),
 		Emoji:     req.Emoji,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "comment not found")
+		return
+	}
 	if err != nil {
 		slog.Warn("remove reaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
 		writeError(w, http.StatusInternalServerError, "failed to remove reaction")

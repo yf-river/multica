@@ -38,6 +38,7 @@ import {
 import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import {
+  cacheHitRatePercent,
   formatTokens,
   formatUsd,
   estimateCost,
@@ -185,9 +186,11 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
 
   const tokensTotal =
     totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
-  const cacheableTokens = totals.input + totals.cacheRead;
-  const cacheHitRate =
-    cacheableTokens > 0 ? Math.round((totals.cacheRead / cacheableTokens) * 100) : 0;
+  const cacheHitRate = cacheHitRatePercent(
+    totals.input,
+    totals.cacheRead,
+    totals.cacheWrite,
+  );
 
   const costDelta = pctChange(totals.cost, prevTotals.cost);
   // 有 token 消耗、但没有任何一行能定价时，费用是"未知"而不是 0。
@@ -293,10 +296,12 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
           }
           hint={
             <span>
-              {t(($) => $.usage.kpi_cache_hint, {
-                pct: cacheHitRate,
-                reads: formatTokens(totals.cacheRead),
-              })}
+              {cacheHitRate == null
+                ? "—"
+                : t(($) => $.usage.kpi_cache_hint, {
+                    pct: cacheHitRate,
+                    reads: formatTokens(totals.cacheRead),
+                  })}
             </span>
           }
         />

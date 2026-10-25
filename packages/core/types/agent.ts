@@ -247,6 +247,7 @@ export type TaskFailureReason =
   | "agent_error" // agent 本身跑出错
   | "timeout" // 整体超时
   | "codex_semantic_inactivity" // codex 长时间无实质进展被判挂起
+  | "runtime_access_revoked" // 运行时所有者撤销访问
   | "runtime_offline" // 运行时掉线
   | "runtime_reconnect_timeout" // 断线后重连超时
   | "runtime_recovery" // 运行时恢复过程失败
@@ -265,6 +266,13 @@ export interface AgentActivityBucket {
   task_count: number;
   /** 当天失败的任务数（是 task_count 的子集）。 */
   failed_count: number;
+  // task_count = completed_count + failed_count + cancelled_count; the
+  // back-end always reports all three.
+  completed_count: number;
+  cancelled_count: number;
+  // Absent on older servers; do not estimate duration from a task page.
+  duration_ms?: number;
+  duration_count?: number;
 }
 
 /** 单个 agent 近 30 天累计运行次数，驱动 Agents 列表的 RUNS 列。 */
@@ -439,6 +447,12 @@ export interface AgentTask {
    * 的计划并集兜底；显式给一个空数组同样权威（表示确实一条都没带）。
    */
   delivered_comment_ids?: string[];
+  /** Exact run-scoped live-input capability negotiated at this task's start. */
+  supplement_capability?: string;
+  /** Ordinary historical comments explicitly bound to this run, in send order. */
+  supplement_comment_ids?: string[];
+  /** Server-side invocation verdict for the current member and this agent. */
+  can_supplement?: boolean;
   /**
    * 触发本任务的来源做的简短描述快照，创建任务那一刻截下。评论触发的任务是
    * 评论正文（约截断 200 字符）；autopilot 触发的是其标题；直接分配和 chat
@@ -570,7 +584,8 @@ export interface Agent {
   runtime_id: string;
   /** 恰在 agent 没有 runtime 时为 false。老后端缺省该字段。 */
   runtime_bound?: boolean;
-  /** 展示名。 */
+  /** Privacy-safe coarse liveness for a runtime hidden from the runtime list. */
+  runtime_availability?: "online" | "unstable" | "offline";
   name: string;
   /** 一句话描述。 */
   description: string;
@@ -1003,6 +1018,11 @@ export interface IssueUsageSummary {
   uncosted_output_tokens?: number;
   uncosted_cache_read_tokens?: number;
   uncosted_cache_write_tokens?: number;
+  // Coverage fields are optional for compatibility with older backends.
+  // task_count remains the legacy count of runs represented by usage rows.
+  terminal_task_count?: number;
+  metered_task_count?: number;
+  unreported_task_count?: number;
   task_count: number;
 }
 
@@ -1135,7 +1155,10 @@ export interface DashboardAgentRunTime {
   total_seconds: number;
   /** 任务总数。 */
   task_count: number;
-  /** 失败任务数。 */
+  // Optional for compatibility with backends predating usage-coverage
+  // reporting. Consumers can still identify the fully-unreported case when
+  // this is absent by checking whether the agent has any usage rows.
+  metered_task_count?: number;
   failed_count: number;
   // 用户中途停掉的任务数。与 `failed_count` 互斥，二者都是 `task_count` 的
   // 子集——成功数就是余下的那部分。被停的运行也占了 agent、也花了 token，
@@ -1231,7 +1254,22 @@ export interface RuntimeModel {
   supports_explicit_standard_service_tier?: boolean;
 }
 
-/** 一个运行时原生执行档位（服务档位，如 Codex 的 Fast/Priority）。 */
+/**
+ * A model the runtime named but will not run on that host — today only Claude
+ * Code, reporting one that needs a newer CLI than the installed one.
+ *
+ * These arrive in their own list and never inside `models`, which is what keeps
+ * an older client from offering one: it reads `models`, and they are not there.
+ * The picker shows them greyed out with `reason` so the gap reads as "your CLI
+ * is behind" rather than "Multica does not support this model" (MUL-6961).
+ */
+export interface RuntimeUnavailableModel {
+  id: string;
+  label: string;
+  /** The runtime's own remedy, e.g. "Update to 2.1.255+ to use Fable 5.1". */
+  reason?: string;
+}
+
 export interface RuntimeModelServiceTier {
   /** 原样发给 provider 协议的目录 id。 */
   id: string;
@@ -1276,7 +1314,8 @@ export interface RuntimeModelListRequest {
   status: RuntimeModelListStatus;
   /** 探测出的模型列表（完成时有）。 */
   models?: RuntimeModel[];
-  /** 该运行时是否支持"按 agent 选模型"。 */
+  /** Advisory rows the runtime cannot run; never selectable. */
+  unavailable_models?: RuntimeUnavailableModel[];
   supported: boolean;
   /** 失败原因（可选）。 */
   error?: string;
@@ -1298,6 +1337,13 @@ export interface RuntimeModelListRequest {
  */
 export interface RuntimeModelsResult {
   models: RuntimeModel[];
+  /**
+   * Rows the runtime named but cannot run. Kept out of `models` on purpose —
+   * see RuntimeUnavailableModel. Optional like `cached` beside it: the resolver
+   * always sets it, but a backend older than the field contributes nothing, so
+   * consumers read it defensively.
+   */
+  unavailableModels?: RuntimeUnavailableModel[];
   supported: boolean;
   /**
    * 服务器是否用目录缓存而非真跑 daemon 往返作答（MUL-5444）。驱动查询的

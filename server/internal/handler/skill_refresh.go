@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -188,7 +189,8 @@ func (h *Handler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, errSkillOverwriteNameConflict):
 			writeError(w, http.StatusConflict, "a skill named \""+newName+"\" already exists in this workspace")
 		default:
-			writeError(w, http.StatusInternalServerError, "failed to update skill from source: "+err.Error())
+			slog.Warn("update skill from source failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to update skill from source")
 		}
 		return
 	}

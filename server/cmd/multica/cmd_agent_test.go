@@ -33,6 +33,109 @@ func freshAgentEnvSetCmd() *cobra.Command {
 	return c
 }
 
+func newAgentTasksTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "tasks"}
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().Int("limit", 200, "")
+	cmd.Flags().String("before", "", "")
+	cmd.Flags().String("profile", "", "")
+	return cmd
+}
+
+func TestRunAgentTasksRequestsUsageForJSON(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/agents/agent-123/tasks" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("include_usage"); got != "true" {
+			t.Errorf("include_usage = %q, want true for JSON output", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id":    "task-1",
+			"usage": []map[string]any{{"provider": "openai", "input_tokens": 12}},
+		}})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+
+	cmd := newAgentTasksTestCmd()
+	out, err := captureStdout(t, func() error { return runAgentTasks(cmd, []string{"agent-123"}) })
+	if err != nil {
+		t.Fatalf("runAgentTasks: %v", err)
+	}
+	if !strings.Contains(out, `"input_tokens": 12`) {
+		t.Fatalf("JSON output missing usage: %s", out)
+	}
+}
+
+func TestRunAgentTasksPagination(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+	cursor := "2026-09-24T01:02:03.123456Z|00000000-0000-0000-0000-000000000001"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "7" || r.URL.Query().Get("before") != cursor {
+			t.Errorf("pagination query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("X-Agent-Tasks-Next-Cursor", cursor)
+		_, _ = w.Write([]byte(`[{"id":"task-1"}]`))
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	cmd := newAgentTasksTestCmd()
+	_ = cmd.Flags().Set("limit", "7")
+	_ = cmd.Flags().Set("before", cursor)
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	output, err := captureStdout(t, func() error { return runAgentTasks(cmd, []string{"agent-123"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "--before") || !strings.Contains(stderr.String(), cursor) {
+		t.Fatalf("missing continuation: %s", stderr.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(output), &rows); err != nil {
+		t.Fatalf("stdout must remain JSON: %s", output)
+	}
+}
+
+func TestRunAgentTasksKeepsTableRequestLightweight(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/agents/agent-123/tasks" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("include_usage"); got != "" {
+			t.Errorf("include_usage = %q, want omitted for table output", got)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "task-1", "status": "completed"}})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+
+	cmd := newAgentTasksTestCmd()
+	if err := cmd.Flags().Set("output", "table"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureStdout(t, func() error { return runAgentTasks(cmd, []string{"agent-123"}) })
+	if err != nil {
+		t.Fatalf("runAgentTasks: %v", err)
+	}
+	if !strings.Contains(out, "task-1") {
+		t.Fatalf("output = %s", out)
+	}
+}
+
 func chdirWithDaemonTaskMarker(t *testing.T) {
 	t.Helper()
 

@@ -9,6 +9,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { TaskSupplementReceipt } from "./task-supplement-dialog";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -45,6 +46,8 @@ import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import type { TimelineEntry, Attachment } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
+import { isDeletedComment } from "@multica/core/issues/comment-deletion";
+import { useConfigStore } from "@multica/core/config";
 import { selectStandaloneAttachments } from "@multica/core/attachments/image-sequence";
 import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { useT } from "../../i18n";
@@ -159,15 +162,20 @@ function DeleteCommentDialog({
   hasReplies?: boolean;
 }) {
   const { t } = useT("issues");
+  // Only a server that declares it keeps the replies (#8296); an older one
+  // deletes them with the comment, and the copy must say so.
+  const keepsReplies = useConfigStore((s) => s.commentDeleteKeepRepliesSupported);
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t(($) => $.comment.delete_title)}</AlertDialogTitle>
           <AlertDialogDescription>
-            {hasReplies
-              ? t(($) => $.comment.delete_desc_with_replies)
-              : t(($) => $.comment.delete_desc)}
+            {!hasReplies
+              ? t(($) => $.comment.delete_desc)
+              : keepsReplies
+                ? t(($) => $.comment.delete_desc_replies_kept)
+                : t(($) => $.comment.delete_desc_with_replies)}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -599,6 +607,7 @@ function CommentRow({
   canModerate = false,
   isResolution = false,
   isHighlighted = false,
+  hasReplies = false,
   onEdit,
   onDelete,
   onToggleReaction,
@@ -612,7 +621,9 @@ function CommentRow({
   canModerate?: boolean;
   /** 此回复是否为该线程的解决者（显示绿色徽标）。 */
   isResolution?: boolean;
-  /** 此行是否为当前深链目标（正在做高亮）。 */
+  /** True when other replies answer this one; they are kept when it is deleted. */
+  hasReplies?: boolean;
+  /** True when this row is the deep-link target currently being highlighted. */
   isHighlighted?: boolean;
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[], contentBase?: string) => Promise<void>;
   onDelete: (commentId: string) => void;
@@ -630,8 +641,8 @@ function CommentRow({
   const edit = useEditAttachmentState(issueId, entry, onEdit);
 
   const isOwn = entry.actor_type === "member" && entry.actor_id === currentUserId;
-  const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
-  const canDeleteEntry = isOwn || canModerate;
+  const canEditEntry = !entry.supplement_task_id && (isOwn || (canModerate && entry.actor_type === "member"));
+  const canDeleteEntry = entry.supplement_status !== "pending" && entry.supplement_status !== "delivering" && (isOwn || canModerate);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const reactions = entry.reactions ?? [];
@@ -640,6 +651,8 @@ function CommentRow({
     entry.source_task_id && runDiffCommentIds?.get(entry.source_task_id) === entry.id
       ? entry.source_task_id
       : null;
+
+  if (isDeletedComment(entry)) return null;
 
   return (
     <div className="py-1.5">
@@ -650,9 +663,18 @@ function CommentRow({
         highlighted={isHighlighted}
         className="flex items-center gap-2.5 px-4 max-md:px-3 pt-1 pb-1.5"
       >
-        <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="md" enableHoverCard showStatusDot />
+        <ActorAvatar
+          actorType={entry.actor_type}
+          actorId={entry.actor_id}
+          name={entry.actor_name}
+          avatarUrl={entry.actor_avatar_url}
+          profileRequiresDirectoryEntry
+          size="md"
+          enableHoverCard
+          showStatusDot
+        />
         <span className="cursor-pointer text-body font-medium">
-          {getActorName(entry.actor_type, entry.actor_id)}
+          {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
         </span>
         <Tooltip>
           <TooltipTrigger
@@ -742,6 +764,7 @@ function CommentRow({
             open={confirmDelete}
             onOpenChange={setConfirmDelete}
             onConfirm={() => onDelete(entry.id)}
+            hasReplies={hasReplies}
           />
         </div>
       </StickyHeaderShell>
@@ -797,6 +820,7 @@ function CommentRow({
               <CommentTriggerChips
                 agents={edit.triggerPreview.agents}
                 blocked={edit.triggerPreview.blocked}
+                hasAllMembersMention={edit.triggerPreview.hasAllMembersMention}
                 draftContent={edit.content}
                 reviewReply={edit.triggerPreview.reviewReply}
                 suppressedAgentIds={edit.suppressedAgentIds}
@@ -829,6 +853,7 @@ function CommentRow({
         <>
           <div className="pl-12 pr-4 max-md:pl-3 max-md:pr-3 pt-1 text-body leading-relaxed text-foreground">
             <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+                  {entry.supplement_task_id && <TaskSupplementReceipt entry={entry} issueId={issueId} />}
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4 max-md:pl-3 max-md:pr-3" />
           {runDiffTaskId && (
@@ -901,13 +926,16 @@ function CommentCardImpl({
   const edit = useEditAttachmentState(issueId, entry, onEdit);
 
   const isOwn = entry.actor_type === "member" && entry.actor_id === currentUserId;
-  const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
-  const canDeleteEntry = isOwn || canModerate;
+  const canEditEntry = !entry.supplement_task_id && (isOwn || (canModerate && entry.actor_type === "member"));
+  const canDeleteEntry = entry.supplement_status !== "pending" && entry.supplement_status !== "delivering" && (isOwn || canModerate);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const allNestedReplies = replies;
+  const visibleReplies = allNestedReplies.filter((reply) => !isDeletedComment(reply));
 
-  const replyCount = allNestedReplies.length;
+  const replyCount = visibleReplies.length;
+  const repliedToIds = new Set(allNestedReplies.map((reply) => reply.parent_id));
+  const deleted = isDeletedComment(entry);
   const contentPreview = (entry.content ?? "").replace(/\n/g, " ").slice(0, 80);
   const reactions = entry.reactions ?? [];
 
@@ -927,8 +955,8 @@ function CommentCardImpl({
   const threadExpanded = !!expandedResolvedIds?.has(entry.id);
   const replyFolded = replyResolutionId != null && !threadExpanded;
   const foldedReplies = replyResolutionId
-    ? allNestedReplies.filter((r) => r.id !== replyResolutionId)
-    : allNestedReplies;
+    ? visibleReplies.filter((r) => r.id !== replyResolutionId)
+    : visibleReplies;
   const resolutionReply = replyResolutionId
     ? allNestedReplies.find((r) => r.id === replyResolutionId) ?? null
     : null;
@@ -977,9 +1005,19 @@ function CommentCardImpl({
               >
                 <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
               </button>
-              <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="md" enableHoverCard showStatusDot />
+              {deleted ? <span className="min-w-0 truncate text-body italic text-muted-foreground">{t(($) => $.comment.deleted_placeholder)}</span> : <>
+              <ActorAvatar
+                actorType={entry.actor_type}
+                actorId={entry.actor_id}
+                name={entry.actor_name}
+                avatarUrl={entry.actor_avatar_url}
+                profileRequiresDirectoryEntry
+                size="md"
+                enableHoverCard
+                showStatusDot
+              />
               <span className="shrink-0 cursor-pointer text-body font-medium">
-                {getActorName(entry.actor_type, entry.actor_id)}
+                {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
               </span>
               <Tooltip>
                 <TooltipTrigger
@@ -992,7 +1030,8 @@ function CommentCardImpl({
                 <TooltipContent side="top">
                   {new Date(entry.created_at).toLocaleString(locale)}
                 </TooltipContent>
-              </Tooltip>
+              </Tooltip>              </>}
+
 
               {!open && contentPreview && (
                 <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">
@@ -1005,7 +1044,7 @@ function CommentCardImpl({
                 </span>
               )}
 
-              {open && (
+              {open && !deleted && (
                 <div className="ml-auto flex items-center gap-0.5">
                   <DropdownMenu>
                     <DropdownMenuTrigger
@@ -1077,7 +1116,7 @@ function CommentCardImpl({
                     open={confirmDelete}
                     onOpenChange={setConfirmDelete}
                     onConfirm={() => onDelete(entry.id)}
-                    hasReplies
+                    hasReplies={replyCount > 0}
                   />
                 </div>
               )}
@@ -1086,7 +1125,7 @@ function CommentCardImpl({
 
         {/* 根评论正文。这里避免用 Base UI 的 Panel：每个挂载的 Panel 都会探测计算
             样式以检测动画，迫使超长 issue 详情文档里发生样式重算。 */}
-        {open && (
+        {open && !deleted && (
           <div id={`comment-body-${entry.id}`} className="px-4 max-md:px-3 pt-1 pb-3">
             {edit.editing ? (
               <div
@@ -1139,6 +1178,7 @@ function CommentCardImpl({
                     <CommentTriggerChips
                       agents={edit.triggerPreview.agents}
                       blocked={edit.triggerPreview.blocked}
+                      hasAllMembersMention={edit.triggerPreview.hasAllMembersMention}
                       draftContent={edit.content}
                       reviewReply={edit.triggerPreview.reviewReply}
                       suppressedAgentIds={edit.suppressedAgentIds}
@@ -1171,6 +1211,7 @@ function CommentCardImpl({
               <>
                 <div className="pl-10 max-md:pl-0 text-body leading-relaxed text-foreground">
                   <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+                  {entry.supplement_task_id && <TaskSupplementReceipt entry={entry} issueId={issueId} />}
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10 max-md:pl-0" />
                 {runDiffTaskId && (
@@ -1229,6 +1270,7 @@ function CommentCardImpl({
                     currentUserId={currentUserId}
                     canModerate={canModerate}
                     isResolution
+                    hasReplies={repliedToIds.has(resolutionReply.id)}
                     isHighlighted={highlightedCommentId === resolutionReply.id}
                     onEdit={onEdit}
                     onDelete={onDelete}
@@ -1255,7 +1297,7 @@ function CommentCardImpl({
                 </button>
               )}
               {/* 回复——按时间排序；解决者留在原位并带徽标 */}
-              {allNestedReplies.map((reply) => (
+              {visibleReplies.map((reply) => (
                 <div
                   key={reply.id}
                   id={`comment-${reply.id}`}
@@ -1270,6 +1312,7 @@ function CommentCardImpl({
                     currentUserId={currentUserId}
                     canModerate={canModerate}
                     isResolution={reply.id === replyResolutionId}
+                    hasReplies={repliedToIds.has(reply.id)}
                     isHighlighted={highlightedCommentId === reply.id}
                     onEdit={onEdit}
                     onDelete={onDelete}

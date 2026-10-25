@@ -33,8 +33,9 @@ type Backend interface {
 
 // ExecOptions 配置单次执行（execute）的参数。
 type ExecOptions struct {
-	Cwd   string // 工作目录：agent 子进程在哪里启动
-	Model string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
+	EnableTaskSupplement bool   // 已协商的运行内追加输入能力
+	Cwd                  string // 工作目录：agent 子进程在哪里启动
+	Model                string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
 	// SystemPrompt 携带 Multica 的运行时简报（runtime brief），仅对少数无法
 	// 从磁盘读取该简报的 provider 有效。daemon 对其它所有 provider 都把它留空
 	// （见 daemon.providerNeedsInlineSystemPrompt），因为那份简报已经以"每次任务的
@@ -47,6 +48,7 @@ type ExecOptions struct {
 	ThreadName                string        // 会话/线程名，用于命名 agent 侧的会话
 	MaxTurns                  int           // 最多允许的回合数；0 表示不限
 	Timeout                   time.Duration // 整体执行超时（墙钟时间）
+	TurnInterruptTimeout      time.Duration // Codex 中断回合并等待计量收尾的预算，默认两秒
 	SemanticInactivityTimeout time.Duration // 语义无进展超时：长时间没有任何实质产出的上限
 	// FirstTurnNoProgressTimeout 可选地覆盖 Codex 的"首回合无进展"上限——即在
 	// app-server 上报 turn/started 之后、看门狗判定失败之前，允许一个回合完全静默的
@@ -126,6 +128,19 @@ func runContext(ctx context.Context, timeout time.Duration) (context.Context, co
 
 // Session 表示一次正在运行中的 agent 执行，由两条只读通道构成。
 type Session struct {
+	// Supplement delivers an additional human instruction to the currently
+	// active provider turn. Nil means the backend cannot safely do so.
+	// Adapters bound their own transport calls; a hook-based adapter may wait
+	// for the next provider boundary until ctx or the execution is cancelled.
+	Supplement func(context.Context, string) error
+	// SupplementReady reports whether Supplement currently targets a live,
+	// provider-confirmed turn. The daemon must not claim durable input before
+	// this becomes true: claiming during provider initialization would convert
+	// a transient startup window into a user-visible delivery failure. Nil is
+	// fail-closed and means no run-scoped input may be claimed.
+	SupplementReady func() bool
+	// Messages streams events as the agent works. The channel is closed
+	// when the agent finishes (before Result is sent).
 	// Messages 流式推送 agent 工作过程中的事件。agent 结束（Result 发出之前）
 	// 时该通道会被关闭。
 	Messages <-chan Message
@@ -251,7 +266,7 @@ type Result struct {
 // Config 配置一个 Backend 实例。
 type Config struct {
 	ExecutablePath string            // CLI 可执行文件路径
-	CLIVersion     string            // 与 ExecutablePath 配套检测到的版本；仅作观测用途，绝不用于决定行为
+	CLIVersion     string            // 与 ExecutablePath 配套检测到的版本；内置提供方按已发布协议归一化用量
 	Env            map[string]string // 额外的环境变量
 	Logger         *slog.Logger
 	TaskID         string

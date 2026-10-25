@@ -96,7 +96,7 @@ func deferredBatchFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 	var issueID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'deferred issue', 'in_progress', 'none', $2, 'member', 700001, 0)
+		VALUES ($1, 'deferred issue', 'in_progress', 'not_important_not_urgent', $2, 'member', 700001, 0)
 		RETURNING id`, workspaceID, userID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}

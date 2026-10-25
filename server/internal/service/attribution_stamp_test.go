@@ -598,7 +598,7 @@ func TestEnqueueTaskForIssueAutopilotOriginStampsRuleOwner(t *testing.T) {
 	var issueID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority, number, origin_type, origin_id)
-		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'medium', 9001, 'autopilot', $3) RETURNING id`,
+		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'not_important_not_urgent', 9001, 'autopilot', $3) RETURNING id`,
 		workspaceID, agentID, autopilotID).Scan(&issueID); err != nil {
 		t.Fatalf("seed autopilot-origin issue: %v", err)
 	}
@@ -659,7 +659,7 @@ func TestEnqueueTaskForIssueAutopilotOriginWithoutVersionOwnerFallback(t *testin
 	var issueID, autopilotID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority, number, origin_type, origin_id)
-		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'medium', 9002, 'autopilot', gen_random_uuid()) RETURNING id, origin_id`,
+		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'not_important_not_urgent', 9002, 'autopilot', gen_random_uuid()) RETURNING id, origin_id`,
 		workspaceID, agentID).Scan(&issueID, &autopilotID); err != nil {
 		t.Fatalf("seed autopilot-origin issue: %v", err)
 	}
@@ -715,7 +715,7 @@ func TestEnqueueTaskFailClosedRefusesUnattributed(t *testing.T) {
 	var issueID, autopilotID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority, number, origin_type, origin_id)
-		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'medium', 9003, 'autopilot', gen_random_uuid()) RETURNING id, origin_id`,
+		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'not_important_not_urgent', 9003, 'autopilot', gen_random_uuid()) RETURNING id, origin_id`,
 		workspaceID, agentID).Scan(&issueID, &autopilotID); err != nil {
 		t.Fatalf("seed autopilot-origin issue: %v", err)
 	}
@@ -985,7 +985,7 @@ func TestEnqueueTaskForIssueAutopilotManualStampsDirectHuman(t *testing.T) {
 	var issueID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_type, creator_id, assignee_type, assignee_id, priority, number, origin_type, origin_id)
-		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'medium', 9101, 'autopilot', $3) RETURNING id`,
+		VALUES ($1, 'autopilot issue', 'agent', $2, 'agent', $2, 'not_important_not_urgent', 9101, 'autopilot', $3) RETURNING id`,
 		workspaceID, agentID, autopilotID).Scan(&issueID); err != nil {
 		t.Fatalf("seed autopilot-origin issue: %v", err)
 	}

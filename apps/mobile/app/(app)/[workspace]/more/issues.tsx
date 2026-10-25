@@ -94,7 +94,7 @@ export default function IssuesPage() {
   // category the server already resolved onto each issue. (MUL-6243)
   const catalog = useIssueStatuses();
 
-  const allIssues = data ?? [];
+  const allIssues = useMemo(() => data ?? [], [data]);
 
   // Scope pre-filter — mirrors web `issues-page.tsx:90-94`. Applied before
   // status/priority filtering so chip filters operate on the visible slice.

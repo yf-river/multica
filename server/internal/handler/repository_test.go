@@ -121,3 +121,24 @@ func testRepositoryBinding(t *testing.T, ws, url, ref string) string {
 	}
 	return string(raw)
 }
+
+func TestRepositoryRefValidationAcrossConfigurationLayers(t *testing.T) {
+	for _, ref := range []string{"bad ref", "../escape", "--help", "a@{b", "a.lock", "a\x00b"} {
+		t.Run(ref, func(t *testing.T) {
+			if _, err := normalizeRepositoryConfig(map[string]any{"url": "https://github.com/test/validation", "ref": ref}); err == nil {
+				t.Fatal("workspace accepted invalid ref")
+			}
+			for _, kind := range []string{"github_repo", "gongfeng_repo"} {
+				raw, _ := json.Marshal(map[string]any{"url": "https://github.com/test/validation", "ref": ref})
+				if _, err := bindRepository(context.Background(), testHandler.Queries, parseUUID(testWorkspaceID), kind, raw); err == nil {
+					t.Fatalf("%s accepted invalid ref", kind)
+				}
+			}
+		})
+	}
+	for _, ref := range []string{"", "main", "release/2026-10", "版本/修复"} {
+		if _, err := normalizeRepositoryConfig(map[string]any{"url": "https://github.com/test/validation", "ref": ref}); err != nil {
+			t.Fatalf("valid ref %q rejected: %v", ref, err)
+		}
+	}
+}

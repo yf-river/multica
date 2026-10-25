@@ -11,6 +11,8 @@ import { environmentCookieName } from "../platform/environment";
 // 统一处理鉴权头（token / workspace / CSRF / 客户端身份）、请求 ID、401 未授权回调、
 // 结构化错误（ApiError）解析与日志；业务方法拿到响应后大多用 zod schema 校验，
 // 校验失败时降级为空值/兜底数据而不是直接抛错，让 UI 不至于白屏。
+import type { InboxFilters } from "../inbox/filter-store";
+import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import { configStore } from "../config";
 import type {
   Issue,
@@ -259,6 +261,8 @@ import {
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListSchema,
   TestExternalCredentialProfileResponseSchema,
+  AgentTaskPageSchema,
+  AgentActivityBucketListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChatDraftRestoresResponseSchema,
@@ -313,6 +317,9 @@ import {
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
+  type RefreshSessionResponse,
+  RefreshSessionResponseSchema,
+  EMPTY_REFRESH_SESSION_RESPONSE,
   GroupedIssuesResponseSchema,
   IssueTableFacetsResponseSchema,
   IssueTableGroupsResponseSchema,
@@ -376,6 +383,8 @@ import {
   InboxUnreadSummarySchema,
   EMPTY_INBOX_UNREAD_SUMMARY,
   InboxItemListSchema,
+  ArchivedInboxPageSchema,
+  ArchivedInboxFacetsSchema,
   EMPTY_INBOX_ITEMS,
   NotificationPreferenceResponseSchema,
   EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
@@ -517,6 +526,18 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
   /** 标识客户端身份，会作为 X-Client-* 请求头发送。 */
   identity?: ApiClientIdentity;
+  /**
+   * Reads the bearer token from shared storage at request time (token mode
+   * only; omit in cookie mode).
+   *
+   * Without it the token is per-instance, and Desktop runs one ApiClient per
+   * window over one shared localStorage: a session renewed in window A would
+   * leave every other window still sending the token it happened to be
+   * holding, until that one expired and took the whole session down with it
+   * (MUL-7436). Reading through means there is one current credential, not one
+   * per window.
+   */
+  getToken?: () => string | null;
 }
 
 /** 客户端运行环境快照：记录调用者机器上探测到的 runtime 汇总信息。 */
@@ -575,11 +596,36 @@ function assertAgentConversationStartersWriteSupported(data: {
   }
 }
 
-// errorCode 从错误的响应体里提取处理器挂在失败上的稳定 `code`
-// （服务端 writeErrorCode 写入），调用方据此渲染自己本地化的提示句，
-// 而不是直接弹服务端的英文文案。对非 ApiError 或没带 code 的旧服务器返回
-// undefined，调用方会退回到 err.message——那是目前尚未采用此机制的端点
-// 产生的错误信息。
+function requestedIssueCreateProperties(
+  data: CreateIssueRequest,
+): NonNullable<CreateIssueRequest["properties"]> | undefined {
+  const properties = data.properties;
+  return properties && Object.keys(properties).length > 0 ? properties : undefined;
+}
+
+function assertIssueCreatePropertiesSnapshot(
+  requested: NonNullable<CreateIssueRequest["properties"]> | undefined,
+  issue: Issue,
+): void {
+  if (!requested) return;
+  for (const propertyId of Object.keys(requested)) {
+    // The server may canonicalize a valid request (trim a URL, order and
+    // de-duplicate a multi-select, normalize an actor UUID). Presence is the
+    // integrity signal here; IssueSchema has already validated the value type.
+    if (!Object.prototype.hasOwnProperty.call(issue.properties, propertyId)) {
+      throw new Error(
+        `Issue ${issue.identifier || issue.id} was created, but the server did not confirm its custom properties. Review the issue before retrying.`,
+      );
+    }
+  }
+}
+
+// errorCode extracts the stable `code` a handler attaches to a failure
+// (writeErrorCode), so a caller can render its own localized sentence instead
+// of toasting the server's English one. Returns undefined for a non-ApiError,
+// or a server that did not send one — the caller then falls back to
+// err.message, which is what every endpoint that has not adopted this yet
+// produces.
 export function errorCode(err: unknown): string | undefined {
   if (err instanceof ApiError && err.body && typeof err.body === "object") {
     const code = (err.body as { code?: unknown }).code;
@@ -710,14 +756,31 @@ function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
   return encoded ? `?${encoded}` : "";
 }
 
+// The server's exact wording for a rejected CSRF token
+// (server/internal/middleware/auth.go). Matched rather than inferred from the
+// status, because 403 also covers real authorization failures that must not
+// be retried.
+const CSRF_REJECTED_ERROR = "CSRF validation failed";
+
+// One header, two possible values — see ApiClient.readCsrfValue.
+const CSRF_HEADER = "X-CSRF-Token";
+const CSRF_COOKIE = "multica_csrf";
+const SESSION_CSRF_COOKIE = "multica_csrf_session";
+
 /**
- * 业务 API 客户端。
- *
- * 职责：基于一个 baseUrl 发起各类 HTTP 请求，自动带上鉴权头与请求 ID，
- * 统一处理 401 跳转、结构化 ApiError、响应日志；多数业务方法会用 zod schema
- * 校验响应并在解析失败时降级为空数据。通常不直接 new，而是通过
- * index.ts 暴露的全局单例使用。
+ * Whether a request body can be sent a second time. Strings and multipart
+ * forms can; a stream cannot, and silently replaying a half-consumed one
+ * would send a truncated request.
  */
+function isReplayableBody(body: BodyInit | null | undefined): boolean {
+  if (body === undefined || body === null) return true;
+  if (typeof body === "string") return true;
+  if (typeof FormData !== "undefined" && body instanceof FormData) return true;
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams)
+    return true;
+  return false;
+}
+
 export class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
@@ -744,23 +807,63 @@ export class ApiClient {
     this.token = token;
   }
 
-  // 从浏览器 cookie 中读取 CSRF token（名 multica_csrf）；非浏览器环境返回 null。
-  private readCsrfToken(): string | null {
+  /**
+   * The bearer token this client is currently using, or null in cookie mode.
+   *
+   * Prefers the shared-storage reader when one is configured, so every window
+   * agrees on the current credential rather than each trusting its own copy.
+   */
+  getToken(): string | null {
+    const shared = this.options.getToken?.();
+    if (shared !== undefined) return shared;
+    return this.token;
+  }
+
+  /**
+   * Which of the two CSRF cookies to echo (MUL-7436).
+   *
+   * The session-bound value is preferred: it survives a sliding renewal, so a
+   * request another tab built before a renewal still validates after it. The
+   * token-bound value is the fallback, and it is what a server running the
+   * PREVIOUS release can verify — after a rollback the session-bound value is
+   * meaningless to it.
+   *
+   * Both travel in the same header. A second header name would have to be in
+   * that server's CORS allowlist, and a rolled-back server allowlists only the
+   * names it shipped with: the preflight would fail and no retry could help.
+   *
+   * `csrfSessionValueRejected` records the exact session-bound value a server
+   * refused, so the fallback is used for as long as that value is current and
+   * no longer — a renewal or a new login replaces the cookie and the preferred
+   * binding is tried again. Keying on the value rather than a boolean is what
+   * stops this from oscillating once per renewal against a current server.
+   */
+  private csrfSessionValueRejected: string | null = null;
+
+  private readCsrfValue(): string | null {
+    const sessionBound = this.readCookie(SESSION_CSRF_COOKIE);
+    if (sessionBound && sessionBound !== this.csrfSessionValueRejected) {
+      return sessionBound;
+    }
+    return this.readCookie(CSRF_COOKIE) ?? sessionBound;
+  }
+
+  private readCookie(name: string): string | null {
     if (typeof document === "undefined") return null;
-    const match = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith(`${environmentCookieName("multica_csrf", this.options.environmentId)}=`));
-    return match ? match.split("=")[1] ?? null : null;
+    const prefix = `${environmentCookieName(name, this.options.environmentId)}=`;
+    const match = document.cookie.split("; ").find((c) => c.startsWith(prefix));
+    return match ? match.slice(prefix.length) || null : null;
   }
 
   // 组装标准请求头：鉴权 token、当前 workspace slug、CSRF、客户端身份标识。
   private authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {};
-    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    const token = this.getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const slug = getCurrentSlug();
     if (slug) headers["X-Workspace-Slug"] = slug;
-    const csrf = this.readCsrfToken();
-    if (csrf) headers["X-CSRF-Token"] = csrf;
+    const csrf = this.readCsrfValue();
+    if (csrf) headers[CSRF_HEADER] = csrf;
     const id = this.options.identity;
     if (id?.platform) headers["X-Client-Platform"] = id.platform;
     if (id?.version) headers["X-Client-Version"] = id.version;
@@ -768,9 +871,23 @@ export class ApiClient {
     return headers;
   }
 
-  // 401 处理：清空本地 token，然后交给调用方配置的 onUnauthorized 回调
-  //（通常是跳转登录页）。
-  private handleUnauthorized() {
+  /**
+   * A 401 ends the session — unless the credential it answered has already
+   * been replaced.
+   *
+   * A request that went out just before a renewal (or from another window
+   * still finishing one) carries the previous token, and its 401 arrives
+   * AFTER the new one is in storage. Treating that as expiry would tear down
+   * a session that is demonstrably alive, clearing drafts and tabs with it
+   * (MUL-7028). Comparing against the credential in use now is what tells the
+   * two apart: a genuinely expired session still has the same token stored,
+   * so the real case is unaffected.
+   */
+  private handleUnauthorized(credentialUsed: string | null) {
+    if (credentialUsed !== null && this.getToken() !== credentialUsed) {
+      this.logger.info("ignoring 401 for a credential that has since been replaced");
+      return;
+    }
     this.token = null;
     // Workspace id 归 URL 驱动的 workspace-storage 单例管
     //（由 [workspaceSlug]/layout.tsx 写入）。收到 401 后，鉴权流程会跳到
@@ -906,23 +1023,55 @@ export class ApiClient {
     const start = Date.now();
     const method = init?.method ?? "GET";
 
-    const headers: Record<string, string> = {
+    // Rebuilt per attempt rather than captured once: authHeaders() reads the
+    // CSRF cookie at call time, and the retry below exists precisely because
+    // that cookie may have just been replaced.
+    const buildHeaders = (): Record<string, string> => ({
       "X-Request-ID": rid,
       ...this.authHeaders(),
       ...(init?.extraHeaders ?? {}),
       ...((init?.headers as Record<string, string>) ?? {}),
-    };
+    });
+
+    // Captured before the request so a late 401 can be matched against the
+    // credential it actually used, not whatever is current when it lands.
+    const credentialUsed = this.getToken();
 
     this.logger.info(`→ ${method} ${path}`, { rid });
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers,
-      credentials: "include",
-    });
+    const send = () =>
+      fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers: buildHeaders(),
+        credentials: "include",
+      });
+
+    let res = await send();
+
+    // Two things can make a CSRF value the server refuses, and one retry
+    // covers both (MUL-7436):
+    //
+    //   - It went stale. The first renewal of a session that predates the
+    //     session-bound binding rotates the cookie the old value was keyed to,
+    //     and a request another tab had already built carries the previous
+    //     one. Rebuilding the headers re-reads the cookie.
+    //   - The server does not understand it. After a rollback, the previous
+    //     release can only verify the token-bound binding. Recording the
+    //     rejected value switches this client to that binding until the cookie
+    //     changes again.
+    //
+    // Neither is an attack, and neither should surface as a failed write.
+    if (res.status === 403 && isReplayableBody(init?.body)) {
+      const { message } = await this.parseErrorBody(res.clone(), "");
+      if (message === CSRF_REJECTED_ERROR) {
+        this.csrfSessionValueRejected = this.readCookie(SESSION_CSRF_COOKIE);
+        this.logger.info(`↻ ${method} ${path} (CSRF token rejected, retrying once)`, { rid });
+        res = await send();
+      }
+    }
 
     if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
+      if (res.status === 401) this.handleUnauthorized(credentialUsed);
       const { message, body } = await this.parseErrorBody(res, `API error: ${res.status} ${res.statusText}`);
       const logLevel = res.status === 404 ? "warn" : "error";
       this.logger[logLevel](`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms`, error: message });
@@ -998,7 +1147,27 @@ export class ApiClient {
     return this.fetch("/api/cli-token", { method: "POST" });
   }
 
-  /** 获取当前登录用户信息（schema 校验 + EMPTY_USER 兜底）。 */
+  /**
+   * Ask the server to extend this session if it has entered its renewal
+   * window. The server owns that decision — no client reads `exp` or
+   * compares it against a local clock, which is what keeps clock skew out of
+   * the picture entirely.
+   *
+   * Cookie-mode callers never need this: middleware.Auth re-issues their
+   * cookie inline on any authenticated safe request.
+   */
+  async refreshSession(): Promise<RefreshSessionResponse> {
+    const raw = await this.fetch<unknown>("/api/auth/refresh", {
+      method: "POST",
+    });
+    return parseWithFallback<RefreshSessionResponse>(
+      raw,
+      RefreshSessionResponseSchema,
+      EMPTY_REFRESH_SESSION_RESPONSE,
+      { endpoint: "POST /api/auth/refresh" },
+    );
+  }
+
   async getMe(): Promise<User> {
     const raw = await this.fetch<unknown>("/api/me");
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
@@ -1283,12 +1452,24 @@ export class ApiClient {
    * @returns 创建成功的议题；响应体不可用时会抛错，让弹窗保留草稿并提示失败
    */
   async createIssue(data: CreateIssueRequest): Promise<Issue> {
-    // 经 schema 校验而非裸强转：创建弹窗根据 `labels` 是缺失还是已校验的
-    // Label[] 来决定标签附加的兼容回退逻辑，未校验的错误形状不能溜进来。
-    // 与列表接口不同，创建返回不可用响应体是「失败的写操作」而非「安全空读」：
-    // 回退 null 并抛错，让弹窗保留草稿并展示失败 toast，而不是显示一张指向
-    // 空 issue id 的空白「已创建」卡片。parseWithFallback 已记录 schema 报错和
-    // 原始响应体；空 message 让弹窗渲染本地化的「创建失败」提示。
+    const requestedProperties = requestedIssueCreateProperties(data);
+    if (requestedProperties) {
+      const config = await this.getConfig();
+      if (config.issue_create_properties_supported !== true) {
+        throw new Error(
+          "This server version does not support atomic custom properties on issue creation. Update the server before creating this issue.",
+        );
+      }
+    }
+    // Parse through a schema (not a raw cast): the create modal keys its
+    // label-attach compatibility fallback off `labels` being absent vs a
+    // validated Label[], so an unvalidated wrong shape must not slip through.
+    // Unlike list endpoints, a create that returns an unusable body is a
+    // FAILED mutation, not a safe-empty read: fall back to null and reject so
+    // the modal keeps the draft and shows a failure toast instead of a blank
+    // "created" card pointing at an empty issue id. parseWithFallback already
+    // logged the schema issues + raw payload; the empty message lets the modal
+    // render its localized "failed to create" toast.
     const raw = await this.fetch<unknown>("/api/issues", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1299,6 +1480,7 @@ export class ApiClient {
     if (!issue) {
       throw new Error();
     }
+    assertIssueCreatePropertiesSnapshot(requestedProperties, issue);
     return issue;
   }
 
@@ -1351,6 +1533,16 @@ export class ApiClient {
     data: CreateCommentSubIssueRequest,
   ): Promise<Issue | { task_id: string }> {
     try {
+      const requestedProperties =
+        data.mode === "manual" ? requestedIssueCreateProperties(data.issue) : undefined;
+      if (requestedProperties) {
+        const config = await this.getConfig();
+        if (config.issue_create_properties_supported !== true) {
+          throw new Error(
+            "This server version does not support atomic custom properties on issue creation. Update the server before creating this issue.",
+          );
+        }
+      }
       const raw = await this.fetch<unknown>(`/api/comments/${anchorCommentId}/sub-issues`, {
         method: "POST",
         body: JSON.stringify(data),
@@ -1360,6 +1552,7 @@ export class ApiClient {
           endpoint: "POST /api/comments/:id/sub-issues (manual)",
         });
         if (!issue) throw new Error("Invalid sub-issue response");
+        assertIssueCreatePropertiesSnapshot(requestedProperties, issue);
         return issue;
       }
       const task = parseWithFallback<{ task_id: string } | null>(
@@ -1566,9 +1759,17 @@ export class ApiClient {
     });
   }
 
-  /** 删除评论。 */
-  async deleteComment(commentId: string): Promise<void> {
-    await this.fetch(`/api/comments/${commentId}`, { method: "DELETE" });
+  /**
+   * `keepReplies` calls the route only servers that keep a deleted comment's
+   * replies expose (#8296): if the request reaches an older server it fails
+   * instead of deleting the replies too. Pass it only when the server declared
+   * `comment_delete_keep_replies_supported`.
+   */
+  async deleteComment(commentId: string, opts: { keepReplies?: boolean } = {}): Promise<void> {
+    const path = opts.keepReplies === true
+      ? `/api/comments/${commentId}/keep-replies`
+      : `/api/comments/${commentId}`;
+    await this.fetch(path, { method: "DELETE" });
   }
 
   /** 把评论标记为已解决。 */
@@ -1956,10 +2157,26 @@ export class ApiClient {
     });
   }
 
-  // ---------------------------------------------------------------------
-  // 自定义 runtime 配置档（MUL-3284）。全部按 workspace 隔离：调用方传
-  // workspace id 的方式与 runtimes 列表解析方式一致。
-  // ---------------------------------------------------------------------
+  // Confirmed counterpart to a public→private visibility PATCH. The PATCH
+  // returns a structured 409 when teammates still have bound agents or active
+  // tasks on the runtime; callers present that plan, then submit its exact
+  // agent/task ID sets here. The server rechecks both sets in one transaction.
+  async revokeRuntimeWorkspaceAccess(
+    runtimeId: string,
+    expectedNonownerAgentIds: string[],
+    expectedTaskIds: string[],
+  ): Promise<void> {
+    await this.fetch(`/api/runtimes/${runtimeId}/revoke-workspace-access`, {
+      method: "POST",
+      body: JSON.stringify({
+        expected_nonowner_agent_ids: expectedNonownerAgentIds,
+        expected_task_ids: expectedTaskIds,
+      }),
+    });
+  }
+
+  // Custom runtime profiles (MUL-3284). All workspace-scoped: the caller
+  // passes the workspace id the same way the runtimes list resolves it.
 
   /** 列出某 workspace 的 runtime 配置档。 */
   async listRuntimeProfiles(workspaceId: string): Promise<RuntimeProfile[]> {
@@ -2223,15 +2440,22 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/update/${updateId}`);
   }
 
-  // 两个「发现类」端点都喂给同一个 UI 状态机（pending/running 时轮询，
-  // 然后渲染或失败），所以响应要校验而非强转：解析失败的响应体降级为一条
-  // 显式的 "failed" 记录——它展示发现错误、保留手动录入模型的入口，
-  // 而不是一个凭空捏造的空目录或无限转圈（MUL-5444）。
-  /** 发起一次「拉取 runtime 支持的模型列表」的异步任务（结果另行查询）。 */
-  async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
-    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
-      method: "POST",
-    });
+  // Both discovery endpoints feed a UI state machine (poll while
+  // pending/running, then render or fail), so the response is validated rather
+  // than cast: an unparseable body degrades to an explicit "failed" record that
+  // shows the discovery error and keeps manual model entry usable, instead of a
+  // fabricated empty catalog or an endless spinner (MUL-5444).
+  async initiateListModels(
+    runtimeId: string,
+    options: { force?: boolean } = {},
+  ): Promise<RuntimeModelListRequest> {
+    const query = options.force === true ? "?force=true" : "";
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/${runtimeId}/models${query}`,
+      {
+        method: "POST",
+      },
+    );
     return parseWithFallback<RuntimeModelListRequest>(
       raw,
       RuntimeModelListRequestSchema,
@@ -2296,9 +2520,22 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
   }
 
-  /** 列出某 agent 的全部历史任务。 */
-  async listAgentTasks(agentId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/agents/${agentId}/tasks`);
+  async listAgentTasksPage(
+    agentId: string,
+    options: { limit?: number; before?: string; signal?: AbortSignal } = {},
+  ): Promise<{ tasks: AgentTask[]; nextCursor: string | null }> {
+    const search = new URLSearchParams({ limit: String(options.limit ?? 200) });
+    if (options.before) search.set("before", options.before);
+    const response = await this.fetchRaw(`/api/agents/${agentId}/tasks?${search}`, {
+      signal: options.signal,
+    });
+    const tasks: unknown = await response.json();
+    return parseWithFallback(
+      { tasks, nextCursor: response.headers.get("X-Agent-Tasks-Next-Cursor") },
+      AgentTaskPageSchema,
+      { tasks: [], nextCursor: null },
+      { endpoint: "GET /api/agents/:id/tasks" },
+    );
   }
 
   // workspace 级 agent 任务快照：每个进行中任务（排队/已派发/运行中）加上
@@ -2336,7 +2573,10 @@ export class ApiClient {
   // 拉取同时支撑：Agent 列表迷你折线图（用最近 7 个桶）和 agent 详情页的
   //「最近 30 天」面板（用全部 30 个桶）。
   async getWorkspaceAgentActivity30d(): Promise<AgentActivityBucket[]> {
-    return this.fetch(`/api/agent-activity-30d`);
+    const raw = await this.fetch<unknown>(`/api/agent-activity-30d`);
+    return parseWithFallback<AgentActivityBucket[]>(raw, AgentActivityBucketListSchema, [], {
+      endpoint: "GET /api/agent-activity-30d",
+    });
   }
 
   // 每个 agent 的 30 天运行总次数，供 Agent 列表的 RUNS 列使用。
@@ -2435,7 +2675,25 @@ export class ApiClient {
   /** 删除外部凭证配置。 */
   async deleteExternalCredentialProfile(id: string): Promise<void> { await this.fetch(`/api/external-credential-profiles/${id}`, { method: "DELETE" }); }
 
-  /** 查询单议题的用量汇总。 */
+  /** 向指定的运行中执行发送补充指令。 */
+  async createTaskSupplement(issueId: string, taskId: string, content: string, clientRequestId: string): Promise<Comment> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/tasks/${taskId}/supplements`, {
+      method: "POST",
+      body: JSON.stringify({ content, client_request_id: clientRequestId }),
+    });
+    const comment = parseWithFallback<Comment>(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "POST /api/issues/:id/tasks/:taskId/supplements",
+    });
+    if (!comment.id) throw new Error("Invalid additional-message response");
+    return comment;
+  }
+
+  async retryTaskSupplement(issueId: string, taskId: string, commentId: string): Promise<void> {
+    await this.fetch(`/api/issues/${issueId}/tasks/${taskId}/supplements/${commentId}/retry`, {
+      method: "POST",
+    });
+  }
+
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
     return this.fetch(`/api/issues/${issueId}/usage`);
   }
@@ -2500,7 +2758,39 @@ export class ApiClient {
     });
   }
 
-  /** 把某条消息从归档中恢复。 */
+  private archivedInboxParams(filters: InboxFilters): URLSearchParams {
+    const params = new URLSearchParams();
+    if (filters.statuses.length) params.set("statuses", [...filters.statuses].sort().join(","));
+    if (filters.priorities.length) params.set("priorities", [...filters.priorities].sort().join(","));
+    if (filters.actors.length) params.set("actors", [...filters.actors].sort().join(","));
+    if (filters.unreadOnly) params.set("unread_only", "true");
+    return params;
+  }
+
+  async listArchivedInboxPage(filters: InboxFilters, options: {
+    cursor?: string | null; groupId?: string; signal?: AbortSignal;
+  } = {}): Promise<ArchivedInboxPage> {
+    const params = this.archivedInboxParams(filters);
+    params.set("limit", "50");
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (options.groupId) params.set("group_id", options.groupId);
+    const raw = await this.fetch<unknown>(`/api/inbox/archived/page?${params}`, { signal: options.signal });
+    const page = parseWithFallback<ArchivedInboxPage | null>(raw, ArchivedInboxPageSchema, null, {
+      endpoint: "GET /api/inbox/archived/page",
+    });
+    if (!page) throw new Error("Invalid archived inbox page response");
+    return page;
+  }
+
+  async getArchivedInboxFacets(filters: InboxFilters, signal?: AbortSignal): Promise<ArchivedInboxFacets> {
+    const raw = await this.fetch<unknown>(`/api/inbox/archived/facets?${this.archivedInboxParams(filters)}`, { signal });
+    const facets = parseWithFallback<ArchivedInboxFacets | null>(raw, ArchivedInboxFacetsSchema, null, {
+      endpoint: "GET /api/inbox/archived/facets",
+    });
+    if (!facets) throw new Error("Invalid archived inbox facets response");
+    return facets;
+  }
+
   async unarchiveInbox(id: string): Promise<InboxItem> {
     return this.fetch(`/api/inbox/${id}/unarchive`, { method: "POST" });
   }
@@ -2808,6 +3098,7 @@ export class ApiClient {
     const formData = new FormData();
     formData.append("bundle", bundle);
 
+    const credentialUsed = this.getToken();
     const res = await fetch(`${this.baseUrl}/api/workspaces/${workspaceId}/plugins/packages`, {
       method: "POST",
       headers: this.authHeaders(),
@@ -2815,7 +3106,7 @@ export class ApiClient {
       credentials: "include",
     });
     if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
+      if (res.status === 401) this.handleUnauthorized(credentialUsed);
       throw new Error(await this.parseErrorMessage(res, `Publishing failed: ${res.status}`));
     }
     const raw = (await res.json()) as unknown;
@@ -3313,6 +3604,7 @@ export class ApiClient {
     const start = Date.now();
     this.logger.info("→ POST /api/upload-file", { rid });
 
+    const credentialUsed = this.getToken();
     const res = await fetch(`${this.baseUrl}/api/upload-file`, {
       method: "POST",
       headers: this.authHeaders(),
@@ -3322,7 +3614,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
+      if (res.status === 401) this.handleUnauthorized(credentialUsed);
       const message = await this.parseErrorMessage(res, `Upload failed: ${res.status}`);
       this.logger.error(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms`, error: message });
       throw new Error(message);
@@ -3780,7 +4072,15 @@ export class ApiClient {
     });
   }
 
-  /** 删除附件。 */
+  // The Markdown download path resolves the attachment's own workspace and
+  // checks membership there. Its link may be pasted into another workspace.
+  async getAttachmentForDownload(id: string): Promise<Attachment> {
+    const raw = await this.fetch<unknown>(`/api/attachments/${id}/download-metadata`);
+    return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
+      endpoint: "GET /api/attachments/{id}/download-metadata",
+    });
+  }
+
   async deleteAttachment(id: string): Promise<void> {
     await this.fetch(`/api/attachments/${id}`, { method: "DELETE" });
   }

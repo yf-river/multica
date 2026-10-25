@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -767,6 +768,7 @@ func TestDelegatedFailurePlannedBehindDispatchedCoordinatorGetsFollowUp(t *testi
 		t.Fatal("active coordinator task did not record planned recovery input")
 	}
 	reconcilable, err := svc.Queries.ListReconcilableCommentsForIssueSince(ctx, db.ListReconcilableCommentsForIssueSinceParams{
+		AgentID:           util.MustParseUUID(f.coordinator),
 		IssueID:           util.MustParseUUID(f.issueID),
 		Since:             pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		PlannedCommentIds: []pgtype.UUID{comment.ID},
@@ -811,5 +813,137 @@ func TestDelegatedFailureRecoveryTaskDoesNotRecursivelyWake(t *testing.T) {
 	}
 	if comments != 0 {
 		t.Fatalf("recursive recovery comments = %d, want 0", comments)
+	}
+}
+
+// insertOrphanedWorkerTask seeds a non-delegated task on the worker's issue
+// that orphan recovery has just failed with runtime_recovery.
+func (f *delegatedFailureFixture) insertOrphanedWorkerTask(t *testing.T, attempt, maxAttempts int32) db.AgentTaskQueue {
+	t.Helper()
+	taskID := testutil.New(f.pool, f.workspaceID, f.userID).Task(t, f.worker, testutil.Cols{
+		"runtime_id":          f.runtimeID,
+		"issue_id":            f.workerIssue,
+		"status":              "failed",
+		"attempt":             attempt,
+		"max_attempts":        maxAttempts,
+		"originator_user_id":  f.userID,
+		"accountable_user_id": f.userID,
+		"originator_source":   "direct_human",
+		"failure_reason":      "runtime_recovery",
+		"error":               "daemon restarted while task was in flight",
+		"completed_at":        testutil.Raw("now()"),
+	})
+	task, err := db.New(f.pool).GetAgentTask(context.Background(), util.MustParseUUID(taskID))
+	if err != nil {
+		t.Fatalf("load orphaned task: %v", err)
+	}
+	return task
+}
+
+func TestHandleFailedTasksTerminalFailureCommentsOnTaskIssue(t *testing.T) {
+	f, svc := seedDelegatedFailureFixture(t)
+	ctx := context.Background()
+	failed := f.insertOrphanedWorkerTask(t, 2, 2)
+
+	if retried := svc.HandleFailedTasks(ctx, []db.AgentTaskQueue{failed}); retried != 0 {
+		t.Fatalf("HandleFailedTasks retried = %d, want 0", retried)
+	}
+
+	var comments int
+	var content string
+	if err := f.pool.QueryRow(ctx, `
+		SELECT count(*), COALESCE(max(content), '')
+		FROM comment
+		WHERE issue_id = $1 AND type = 'system' AND source_task_id = $2`, f.workerIssue, failed.ID).
+		Scan(&comments, &content); err != nil {
+		t.Fatalf("read failure comment: %v", err)
+	}
+	if comments != 1 || content != "daemon restarted while task was in flight" {
+		t.Fatalf("terminal failure comments = %d content %q, want one system comment with the task error", comments, content)
+	}
+}
+
+func TestHandleFailedTasksRetryPendingDoesNotCommentOnTaskIssue(t *testing.T) {
+	f, svc := seedDelegatedFailureFixture(t)
+	ctx := context.Background()
+	failed := f.insertOrphanedWorkerTask(t, 1, 2)
+
+	if retried := svc.HandleFailedTasks(ctx, []db.AgentTaskQueue{failed}); retried != 1 {
+		t.Fatalf("HandleFailedTasks retried = %d, want 1", retried)
+	}
+
+	var comments int
+	if err := f.pool.QueryRow(ctx, `
+		SELECT count(*) FROM comment WHERE issue_id = $1 AND type = 'system' AND source_task_id = $2`,
+		f.workerIssue, failed.ID).Scan(&comments); err != nil {
+		t.Fatalf("count failure comments: %v", err)
+	}
+	if comments != 0 {
+		t.Fatalf("retry-pending failure comments = %d, want 0", comments)
+	}
+}
+
+// 暂停、未知状态的信号不能占满扫描窗口；恢复状态后仍可派发原有信号。
+func TestDelegatedRecoverySkipsPausedBeforeLimitAndResumes(t *testing.T) {
+	ctx := context.Background()
+	paused, svc := seedDelegatedFailureFixture(t)
+	failed := paused.insertWorkerTask(t, "failed", "comment", 1, 2)
+	if _, err := paused.pool.Exec(ctx, `UPDATE issue SET status='backlog' WHERE id=$1`, paused.issueID); err != nil {
+		t.Fatal(err)
+	}
+	target, created, err := svc.ensureDelegatedFailureRecoveryComment(ctx, failed)
+	if err != nil || !created || target == nil {
+		t.Fatalf("durable paused signal: target=%v created=%v err=%v", target != nil, created, err)
+	}
+	if _, err = svc.dispatchDelegatedFailureRecovery(ctx, target, pgtype.UUID{}); err != nil {
+		t.Fatal(err)
+	}
+	live, liveSvc := seedDelegatedFailureFixture(t)
+	liveFailed := live.insertWorkerTask(t, "failed", "comment", 1, 2)
+	if _, _, err = liveSvc.ensureDelegatedFailureRecoveryComment(ctx, liveFailed); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"backlog", "unknown_recovery_status"} {
+		if _, err = paused.pool.Exec(ctx, `UPDATE issue SET status=$2 WHERE id=$1`, paused.issueID, state); err != nil {
+			t.Fatal(err)
+		}
+		selected, err := svc.Queries.ListPendingDelegatedFailureRecoveries(ctx, 1)
+		if err != nil || len(selected) != 1 || selected[0].SourceTaskID != liveFailed {
+			t.Fatalf("selection with %s: %+v, %v", state, selected, err)
+		}
+	}
+	if _, err = paused.pool.Exec(ctx, `UPDATE issue SET status='todo' WHERE id=$1`, paused.issueID); err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := svc.dispatchDelegatedFailureRecovery(ctx, target, pgtype.UUID{})
+	if err != nil || outcome != delegatedFailureRecoveryReplayed {
+		t.Fatalf("resumed signal: %v, %v", outcome, err)
+	}
+}
+
+func TestPromotionRetiresUnusedLegacyAssigneeFallback(t *testing.T) {
+	f, svc := seedDelegatedFailureFixture(t)
+	ctx := context.Background()
+	var id pgtype.UUID
+	if err := f.pool.QueryRow(ctx, `INSERT INTO agent_task_queue(agent_id,runtime_id,issue_id,status,priority,escalation_for_task_id,fire_at) VALUES($1,$2,$3,'deferred',0,$4,now()+interval '1 hour') RETURNING id`, f.worker, f.runtimeID, f.workerIssue, f.sourceTask).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	var cancellations int
+	svc.Bus.Subscribe("task:cancelled", func(e events.Event) { cancellations++ })
+	if err := svc.PromoteDueDeferredTasksForRuntime(ctx, util.MustParseUUID(f.runtimeID)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := svc.Queries.GetAgentTask(ctx, id)
+	if err != nil || stored.Status != "cancelled" || stored.FailureReason.String != "assignee_fallback_retired" || stored.StartedAt.Valid {
+		t.Fatalf("retirement: %+v, %v", stored, err)
+	}
+	if cancellations != 1 {
+		t.Fatalf("cancellation events=%d, want 1", cancellations)
+	}
+	if err := svc.PromoteDueDeferredTasksForRuntime(ctx, util.MustParseUUID(f.runtimeID)); err != nil {
+		t.Fatal(err)
+	}
+	if cancellations != 1 {
+		t.Fatalf("repeat promotion duplicated cancellation: %d", cancellations)
 	}
 }

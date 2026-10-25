@@ -658,10 +658,35 @@ type SquadMemberStatusListResponse struct {
 	Members []SquadMemberStatusResponse `json:"members"`
 }
 
-// deriveSquadMemberStatus 把 runtime + 任务信号压成 squad UI 用的五档状态。镜像
-// packages/core/agents/derive-presence.ts 里的 workload+availability 划分：working 优先于
-// runtime 健康（正处在派发/运行中的 Agent 即使 runtime 短暂掉线也算 working），然后按
-// availability 桶在 idle / unstable / offline 之间取舍。
+// deriveRuntimeAvailability owns the shared three-state runtime reachability
+// policy. Agent projections use these values directly; squad presence maps an
+// online runtime to its user-facing "idle" bucket after workload precedence.
+func deriveRuntimeAvailability(
+	runtimeStatus pgtype.Text,
+	lastSeen pgtype.Timestamptz,
+	now time.Time,
+) string {
+	if !runtimeStatus.Valid {
+		return "offline"
+	}
+	if runtimeStatus.String == "online" {
+		return "online"
+	}
+	if !lastSeen.Valid {
+		return "offline"
+	}
+	if now.Sub(lastSeen.Time) < 5*time.Minute {
+		return "unstable"
+	}
+	return "offline"
+}
+
+// deriveSquadMemberStatus collapses runtime + task signals into the five
+// status buckets used by the squad UI. Mirrors the workload+availability
+// split in packages/core/agents/derive-presence.ts: working wins over
+// runtime health (an agent that is in the middle of dispatched/running
+// work counts as working even if the runtime briefly drops), then
+// availability buckets decide between idle / unstable / offline.
 //
 // 阈值与 deriveRuntimeHealth 一致：任何 offline runtime 只要 last_seen_at 在过去 5 分钟内，
 // 就报 "unstable"，让 squad UI 与 agent 圆点用同样方式呈现瞬态掉线。
@@ -683,19 +708,11 @@ func deriveSquadMemberStatus(
 	if hasWorkingTask {
 		return "working"
 	}
-	if !runtimeStatus.Valid {
-		return "offline"
-	}
-	if runtimeStatus.String == "online" {
+	availability := deriveRuntimeAvailability(runtimeStatus, lastSeen, now)
+	if availability == "online" {
 		return "idle"
 	}
-	if !lastSeen.Valid {
-		return "offline"
-	}
-	if now.Sub(lastSeen.Time) < 5*time.Minute {
-		return "unstable"
-	}
-	return "offline"
+	return availability
 }
 
 // ListSquadMemberStatus 返回每个小队成员一行：派生状态、该 Agent 成员当前正在跑/排队等的

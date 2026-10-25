@@ -1,16 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { mockNativeDialog } from "./test-utils/native-dialog";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("../i18n", () => ({
   useT: () => ({
     t: (sel: (s: Record<string, Record<string, string>>) => string) =>
       sel({
+        attachment: { reload: "Reload" },
         code_block: {
           html_preview: "Localized HTML preview",
           copy_code: "Copy code",
           show_preview: "Show preview",
           show_source: "Show source",
-          fullscreen: "Fullscreen",
+          fullscreen: "Fullscreen", close_preview: "Close",
         },
       }),
   }),
@@ -27,7 +29,9 @@ vi.mock("./code-block-static", () => ({
 
 import { HtmlBlockPreview } from "./html-block-preview";
 
-afterEach(() => vi.restoreAllMocks());
+let restoreDialog: () => void;
+beforeEach(() => { restoreDialog = mockNativeDialog(); });
+afterEach(() => { cleanup(); restoreDialog(); vi.restoreAllMocks(); });
 
 describe("HtmlBlockPreview — preview / source toggle", () => {
   it("renders the iframe with sandbox and the fragment-nav shim in srcdoc", () => {
@@ -54,7 +58,7 @@ describe("HtmlBlockPreview — preview / source toggle", () => {
     expect(screen.getByTestId("code-block-static").textContent).toBe("<p>hi</p>");
     // The inline iframe is gone in source mode; the Dialog's iframe stays
     // unmounted because the Dialog is closed.
-    expect(document.querySelector("iframe")).toBeNull();
+    expect(document.querySelector("iframe")).toBeTruthy();
 
     fireEvent.click(screen.getByTitle("Show preview"));
     expect(document.querySelector("iframe")).toBeTruthy();
@@ -70,7 +74,7 @@ describe("HtmlBlockPreview — Maximize → Dialog", () => {
     expect(screen.queryByTitle("Fullscreen")).toBeNull();
   });
 
-  it("opens the fullscreen Dialog with a second iframe carrying the same srcdoc", () => {
+  it("opens the fullscreen Dialog with the same mounted iframe", () => {
     render(<HtmlBlockPreview html="<p>hi</p>" />);
     // Before clicking Fullscreen, the Dialog has not mounted its content
     // (base-ui dialog renders Popup lazily).
@@ -79,7 +83,7 @@ describe("HtmlBlockPreview — Maximize → Dialog", () => {
     fireEvent.click(screen.getByTitle("Fullscreen"));
 
     const frames = document.querySelectorAll("iframe");
-    expect(frames.length).toBe(2);
+    expect(frames.length).toBe(1);
     // Both iframes wrap the same body via the fragment-nav shim.
     for (const f of frames) {
       const srcdoc = f.getAttribute("srcdoc") ?? "";

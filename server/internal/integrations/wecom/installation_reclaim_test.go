@@ -10,6 +10,7 @@ package wecom
 import (
 	"context"
 	"errors"
+	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"os"
 	"testing"
 
@@ -37,9 +38,12 @@ const (
 
 func reclaimTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
+	if os.Getenv("DATABASE_URL") == "" && os.Getenv("MULTICA_TEST_DATABASE_URL") == "" {
+		t.Skip("需要显式的隔离测试数据库")
+	}
+	dsn, targetErr := dbfx.TestDatabaseURL()
+	if targetErr != nil {
+		t.Fatal(targetErr)
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)

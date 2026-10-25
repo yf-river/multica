@@ -602,7 +602,7 @@ type RegisterDingTalkBYORequest struct {
 // （DingTalkInstall != nil）。
 func (h *Handler) RegisterDingTalkBYO(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not enabled")
+		writeFeatureDisabled(w, "dingtalk_not_configured", "dingtalk integration not enabled")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -692,7 +692,7 @@ func (h *Handler) publishDingTalkInstallationCreated(row db.ChannelInstallation,
 // 仅 workspace owner/admin 可清理。
 func (h *Handler) RevokeDingTalkInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not configured")
+		writeFeatureDisabled(w, "dingtalk_not_configured", "dingtalk integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -761,7 +761,7 @@ type RedeemDingTalkBindingTokenResponse struct {
 //   - 403 Forbidden: 兑换者不是 workspace 成员
 func (h *Handler) RedeemDingTalkBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkBindingTokens == nil {
-		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not configured")
+		writeFeatureDisabled(w, "dingtalk_not_configured", "dingtalk integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)

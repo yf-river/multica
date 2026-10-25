@@ -545,7 +545,7 @@ func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
 		AgentID:     "agent-test",
 		WorkspaceID: "workspace-test",
 	}
-	env := taskMulticaEnvironment(task, "agent-name", fakeToken, taskRoot, workspacesRoot, "https://task.example", 19514, 3, "/task/tmp")
+	env := taskMulticaEnvironment(task, "codex", "agent-name", fakeToken, taskRoot, workspacesRoot, "https://task.example", 19514, 3, "/task/tmp")
 
 	want := map[string]string{
 		"MULTICA_TOKEN":                fakeToken,
@@ -561,6 +561,11 @@ func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
 		"TMPDIR":                       "/task/tmp",
 		"TMP":                          "/task/tmp",
 		"TEMP":                         "/task/tmp",
+	}
+	if runtime.GOOS == "windows" {
+		// Windows tasks inherit host TMP/TEMP; see TestTaskMulticaEnvironmentTempPolicy.
+		delete(want, "TMP")
+		delete(want, "TEMP")
 	}
 	if !maps.Equal(env, want) {
 		t.Fatalf("taskMulticaEnvironment() = %#v, want %#v", env, want)
@@ -579,6 +584,62 @@ func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
 	}
 	if env["MULTICA_TOKEN"] != fakeToken {
 		t.Fatal("custom env replaced task-scoped token")
+	}
+}
+
+func TestTaskMulticaEnvironmentTempPolicy(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_TMPDIR", "")
+	for _, provider := range []string{"claude", "codex", "pi", "opencode", "cursor"} {
+		t.Run(provider, func(t *testing.T) {
+			env := taskMulticaEnvironment(Task{}, provider, "", "", "", "", "", 0, 0, "/task/tmp")
+			if env["TMPDIR"] != "/task/tmp" {
+				t.Fatalf("TMPDIR = %q, want private task temp", env["TMPDIR"])
+			}
+			if runtime.GOOS == "windows" {
+				// Every provider can start Git Bash, whose /tmp mount is shared.
+				for _, key := range []string{"TMP", "TEMP"} {
+					if _, overridden := env[key]; overridden {
+						t.Errorf("%s must inherit the host path for Git Bash's shared /tmp", key)
+					}
+				}
+			} else {
+				for _, key := range []string{"TMP", "TEMP"} {
+					if env[key] != "/task/tmp" {
+						t.Errorf("%s = %q, want existing private task temp", key, env[key])
+					}
+				}
+			}
+			wantClaudeTemp := runtime.GOOS == "windows" && provider == "claude"
+			if got, ok := env["CLAUDE_CODE_TMPDIR"]; wantClaudeTemp && got != "/task/tmp" {
+				t.Errorf("CLAUDE_CODE_TMPDIR = %q, want private task temp", got)
+			} else if !wantClaudeTemp && ok {
+				t.Error("only Windows Claude gets a CLAUDE_CODE_TMPDIR default")
+			}
+		})
+	}
+}
+
+func TestTaskMulticaEnvironmentRespectsClaudeTempOverride(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_TMPDIR", "/user/claude-temp")
+	env := taskMulticaEnvironment(Task{}, "claude", "", "", "", "", "", 0, 0, "/task/tmp")
+	if _, overridden := env["CLAUDE_CODE_TMPDIR"]; overridden {
+		t.Fatal("inherited user CLAUDE_CODE_TMPDIR must remain authoritative")
+	}
+	t.Setenv("CLAUDE_CODE_TMPDIR", "")
+	for _, key := range []string{"CLAUDE_CODE_TMPDIR", "claude_code_tmpdir"} {
+		for _, value := range []string{"/custom/claude-temp", ""} {
+			custom := map[string]string{key: value}
+			env = taskMulticaEnvironment(Task{Agent: &AgentData{CustomEnv: custom}}, "claude", "", "", "", "", "", 0, 0, "/task/tmp")
+			layerCustomEnvAndHermesHome(env, custom, "", nil)
+			if env[key] != value {
+				t.Fatalf("custom %s = %q, want user's %q", key, env[key], value)
+			}
+			for name := range env {
+				if strings.EqualFold(name, key) && name != key {
+					t.Errorf("duplicate Windows temp key %q conflicts with user's %q", name, key)
+				}
+			}
+		}
 	}
 }
 
@@ -2029,7 +2090,7 @@ func TestGateResumeToReachableSession(t *testing.T) {
 			task := Task{PriorSessionID: tt.sessionID, PriorWorkDir: priorDir}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: tt.sessionID != ""}
 
-			reachable := gateResumeToReachableSession(&task, &taskCtx, "claude", envDir, !tt.sessionHomeUnreachable, slog.Default())
+			reachable := gateResumeToReachableSession(&task, &taskCtx, "claude", envDir, !tt.sessionHomeUnreachable, false, slog.Default())
 
 			if reachable != tt.wantReused {
 				t.Fatalf("reachable = %v, want %v", reachable, tt.wantReused)
@@ -2045,6 +2106,68 @@ func TestGateResumeToReachableSession(t *testing.T) {
 			wantUnavailable := tt.sessionID != "" && tt.wantSession == ""
 			if taskCtx.PriorSessionResumeUnavailable != wantUnavailable {
 				t.Fatalf("PriorSessionResumeUnavailable = %v, want %v", taskCtx.PriorSessionResumeUnavailable, wantUnavailable)
+			}
+		})
+	}
+}
+
+func TestGateCodexResumeAcrossLocalWorktrees(t *testing.T) {
+	priorDir, workDir, codexHome := t.TempDir(), t.TempDir(), t.TempDir()
+	rollout := filepath.Join(codexHome, "sessions", "2026", "10", "13", "rollout-2026-10-13T00-00-00-session-1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(rollout), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rollout, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name           string
+		provider       string
+		localWorktree  *execenv.LocalWorktree
+		localDirectory bool
+		stableStore    bool
+		codexHome      bool
+		sameWorkdir    bool
+		rolloutPresent bool
+		wantResume     bool
+	}{
+		{name: "continued branch and rollout", provider: "codex", localWorktree: &execenv.LocalWorktree{Continued: true}, stableStore: true, codexHome: true, rolloutPresent: true, wantResume: true},
+		{name: "new branch", provider: "codex", localWorktree: &execenv.LocalWorktree{}, stableStore: true, codexHome: true, rolloutPresent: true},
+		{name: "missing conversation key", provider: "codex", localWorktree: &execenv.LocalWorktree{Continued: true}, codexHome: true, rolloutPresent: true},
+		{name: "missing Codex home", provider: "codex", localWorktree: &execenv.LocalWorktree{Continued: true}, stableStore: true, rolloutPresent: true},
+		{name: "missing rollout", provider: "codex", localWorktree: &execenv.LocalWorktree{Continued: true}, stableStore: true, codexHome: true},
+		{name: "managed workdir", provider: "codex", stableStore: true, codexHome: true, rolloutPresent: true},
+		{name: "in-place changed workdir", provider: "codex", localDirectory: true, stableStore: true, codexHome: true, rolloutPresent: true},
+		{name: "in-place same workdir", provider: "codex", localDirectory: true, stableStore: true, codexHome: true, sameWorkdir: true, rolloutPresent: true, wantResume: true},
+		{name: "other provider", provider: "claude", localWorktree: &execenv.LocalWorktree{Continued: true}, stableStore: true, codexHome: true, rolloutPresent: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			task := Task{PriorSessionID: "session-1", PriorWorkDir: priorDir}
+			taskCtx := execenv.TaskContextForEnv{AgentID: "agent-1", PriorSessionResumed: true}
+			if tt.stableStore {
+				taskCtx.IssueID = "issue-1"
+			}
+			env := &execenv.Environment{WorkDir: workDir, LocalDirectory: tt.localDirectory, LocalWorktree: tt.localWorktree}
+			if tt.codexHome {
+				env.CodexHome = codexHome
+			}
+			if tt.sameWorkdir {
+				env.WorkDir = priorDir
+			}
+			store := execenv.CodexSessionStorePath("test", taskCtx)
+			eligible := codexWorktreeResumeEligible(env, store)
+			if got := gateResumeToReachableSession(&task, &taskCtx, tt.provider, env.WorkDir, true, eligible, slog.Default()); got {
+				if tt.provider == "codex" && !tt.rolloutPresent {
+					gateCodexResumeToRolloutPresence(&task, &taskCtx, tt.provider, t.TempDir(), slog.Default())
+				} else {
+					gateCodexResumeToRolloutPresence(&task, &taskCtx, tt.provider, env.CodexHome, slog.Default())
+				}
+			}
+			if got := task.PriorSessionID != ""; got != tt.wantResume {
+				t.Fatalf("resume=%v, want %v", got, tt.wantResume)
+			}
+			if taskCtx.PriorSessionResumed != tt.wantResume || task.PriorSessionResumeUnavailable == tt.wantResume || taskCtx.PriorSessionResumeUnavailable == tt.wantResume {
+				t.Fatalf("inconsistent resume state: task=%+v taskCtx=%+v", task, taskCtx)
 			}
 		})
 	}
@@ -2074,7 +2197,7 @@ func TestGatePiResumeToSessionFile(t *testing.T) {
 			task := Task{PriorSessionID: sessionFile, PriorWorkDir: priorDir}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
 
-			reachable := gateResumeToReachableSession(&task, &taskCtx, provider, envDir, true, slog.Default())
+			reachable := gateResumeToReachableSession(&task, &taskCtx, provider, envDir, true, false, slog.Default())
 
 			if !reachable {
 				t.Fatal("Pi-family session file should remain reachable across workdirs")
@@ -2134,7 +2257,7 @@ func TestGatePiResumeDropsUnusableSessionFile(t *testing.T) {
 			task := Task{PriorSessionID: sessionPath, PriorWorkDir: workDir}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
 
-			reachable := gateResumeToReachableSession(&task, &taskCtx, "pi", workDir, true, slog.Default())
+			reachable := gateResumeToReachableSession(&task, &taskCtx, "pi", workDir, true, false, slog.Default())
 
 			if reachable {
 				t.Fatalf("%s Pi session was treated as reachable", test.name)
@@ -2335,7 +2458,9 @@ func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 	t.Parallel()
 
 	d := newTestDaemon(t)
-	ctx := context.Background()
+	capture := newTaskPhaseCaptureHandler()
+	recorder := newTaskPhaseRecorder(slog.New(capture), time.Now)
+	ctx := withTaskPhaseRecorder(context.Background(), recorder)
 	taskLog := slog.Default()
 
 	fb := &fakeBackend{
@@ -2358,6 +2483,9 @@ func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 	}
 	if result.Status != "failed" || result.SessionID != "" {
 		t.Fatalf("expected failed result with empty SessionID, got %+v", result)
+	}
+	if slices.Contains(capture.phasesSnapshot(), taskPhaseTurnCompleted) {
+		t.Fatal("turn_completed was recorded for the discarded resume attempt")
 	}
 
 	// Mirrors the retry in runTask, gated on the same production predicate.
@@ -2385,6 +2513,13 @@ func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 	// Second call should NOT have ResumeSessionID.
 	if fb.calls[1].ResumeSessionID != "" {
 		t.Fatal("retry should not have ResumeSessionID")
+	}
+	if slices.Contains(capture.phasesSnapshot(), taskPhaseTurnCompleted) {
+		t.Fatal("executeAndDrain recorded turn_completed before runTask reconciled the final attempt")
+	}
+	recorder.Mark(taskPhaseTurnCompleted) // Mirrors runTask after fresh-retry reconciliation.
+	if got, want := capture.phasesSnapshot(), []taskPhase{taskPhaseRuntimeStarted, taskPhaseTurnCompleted}; !slices.Equal(got, want) {
+		t.Fatalf("task phases = %v, want %v", got, want)
 	}
 }
 
@@ -2463,6 +2598,97 @@ func TestExecuteAndDrain_FlushesTranscriptBeforeReturningResult(t *testing.T) {
 
 	if got := rec.snapshot(); len(got) != 2 {
 		t.Fatalf("expected the transcript flushed before the result hand-off, got %d messages: %+v", len(got), got)
+	}
+}
+
+// timedTranscriptBackend keeps a tool open long enough to prove the daemon
+// records event occurrence time rather than giving a whole flush batch one
+// server insertion time.
+type timedTranscriptBackend struct{}
+
+func (timedTranscriptBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		msgCh <- agent.Message{Type: agent.MessageToolUse, Tool: "bash", CallID: "timed"}
+		time.Sleep(10 * time.Millisecond)
+		msgCh <- agent.Message{Type: agent.MessageToolResult, Tool: "bash", CallID: "timed", Output: "ok"}
+		close(msgCh)
+		resCh <- agent.Result{Status: "completed", Output: "done"}
+		close(resCh)
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func TestExecuteAndDrain_ReportsPerEventTimestamps(t *testing.T) {
+	t.Parallel()
+
+	d, rec := newTranscriptRecorder(t)
+	if _, _, err := d.executeAndDrain(context.Background(), timedTranscriptBackend{}, "p", agent.ExecOptions{}, slog.Default(), "task-timing", "", new(atomic.Int32)); err != nil {
+		t.Fatalf("executeAndDrain: %v", err)
+	}
+
+	got := rec.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("reported %d messages, want tool use and result: %+v", len(got), got)
+	}
+	if got[0].CreatedAt.IsZero() || !got[1].CreatedAt.After(got[0].CreatedAt) {
+		t.Fatalf("event timestamps = [%s, %s], want distinct ordered times", got[0].CreatedAt, got[1].CreatedAt)
+	}
+}
+
+type chunkedTranscriptBackend struct {
+	thinkingSecondStartedAt chan time.Time
+	textSecondStartedAt     chan time.Time
+}
+
+func (b *chunkedTranscriptBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		msgCh <- agent.Message{Type: agent.MessageThinking, Content: "think one "}
+		time.Sleep(20 * time.Millisecond)
+		b.thinkingSecondStartedAt <- time.Now()
+		msgCh <- agent.Message{Type: agent.MessageThinking, Content: "think two"}
+
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "text one "}
+		time.Sleep(20 * time.Millisecond)
+		b.textSecondStartedAt <- time.Now()
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "text two"}
+		close(msgCh)
+		resCh <- agent.Result{Status: "completed", Output: "done"}
+		close(resCh)
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func TestExecuteAndDrain_ReportsFirstBufferedChunkTimestamp(t *testing.T) {
+	t.Parallel()
+
+	backend := &chunkedTranscriptBackend{
+		thinkingSecondStartedAt: make(chan time.Time, 1),
+		textSecondStartedAt:     make(chan time.Time, 1),
+	}
+	d, rec := newTranscriptRecorder(t)
+	if _, _, err := d.executeAndDrain(context.Background(), backend, "p", agent.ExecOptions{}, slog.Default(), "task-chunks", "", new(atomic.Int32)); err != nil {
+		t.Fatalf("executeAndDrain: %v", err)
+	}
+
+	got := rec.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("reported %d messages, want thinking and text: %+v", len(got), got)
+	}
+	if got[0].Type != "thinking" || got[0].Content != "think one think two" {
+		t.Fatalf("thinking message = %+v", got[0])
+	}
+	if boundary := <-backend.thinkingSecondStartedAt; !got[0].CreatedAt.Before(boundary) {
+		t.Fatalf("thinking created_at = %s, want before second chunk started at %s", got[0].CreatedAt, boundary)
+	}
+	if got[1].Type != "text" || got[1].Content != "text one text two" {
+		t.Fatalf("text message = %+v", got[1])
+	}
+	if boundary := <-backend.textSecondStartedAt; !got[1].CreatedAt.Before(boundary) {
+		t.Fatalf("text created_at = %s, want before second chunk started at %s", got[1].CreatedAt, boundary)
 	}
 }
 
@@ -4468,10 +4694,10 @@ func TestReportTaskResult_TransientCompleteExhaustedDoesNotFallback(t *testing.T
 	}
 }
 
-// On permanent 4xx from /complete (e.g. 400 bad body, 404 task not found)
-// the helper bails immediately and the daemon falls back to /fail so the
-// UI shows a concrete failure rather than a perpetually-running task.
-func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
+// A permanent response can become recoverable after a daemon/server upgrade
+// or credential refresh. Preserve the successful result instead of replacing
+// it with a synthetic failure payload.
+func TestReportTaskResult_PermanentCompleteDoesNotReplaceOriginal(t *testing.T) {
 	defer noSleepRetry(t)()
 
 	var completeCalls, failCalls atomic.Int32
@@ -4498,12 +4724,12 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 	if got := completeCalls.Load(); got != 1 {
 		t.Fatalf("permanent 400 should not retry, got %d complete attempts", got)
 	}
-	if got := failCalls.Load(); got != 1 {
-		t.Fatalf("permanent /complete should fall back to /fail exactly once, got %d", got)
+	if got := failCalls.Load(); got != 0 {
+		t.Fatalf("permanent /complete must not replace the original with /fail, got %d calls", got)
 	}
 }
 
-func TestReportTaskResult_CancelledParentStillRunsPermanentFailureFallback(t *testing.T) {
+func TestReportTaskResult_CancelledParentStillPreservesPermanentCompletion(t *testing.T) {
 	defer noSleepRetry(t)()
 
 	var completeCalls, failCalls atomic.Int32
@@ -4533,8 +4759,8 @@ func TestReportTaskResult_CancelledParentStillRunsPermanentFailureFallback(t *te
 	if got := completeCalls.Load(); got != 1 {
 		t.Fatalf("complete calls = %d, want 1", got)
 	}
-	if got := failCalls.Load(); got != 1 {
-		t.Fatalf("fallback fail calls = %d, want 1", got)
+	if got := failCalls.Load(); got != 0 {
+		t.Fatalf("fallback fail calls = %d, want 0", got)
 	}
 }
 
@@ -5851,5 +6077,83 @@ func TestBuildTaskTraceEntriesMarshalMatchesAPI(t *testing.T) {
 	}
 	if len(got.SDKTraceID) != 32 || len(got.SDKTraceSourceSHA256) != 64 {
 		t.Fatalf("payload lengths wrong: %s", raw)
+	}
+}
+
+type firstVisibleTranscriptBackend struct {
+	emitted chan time.Time
+	release chan struct{}
+}
+
+func (b firstVisibleTranscriptBackend) Execute(ctx context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		defer close(msgCh)
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "first visible text"}
+		b.emitted <- time.Now()
+		select {
+		case <-b.release:
+			resCh <- agent.Result{Status: "completed", Output: "done"}
+		case <-ctx.Done():
+			resCh <- agent.Result{Status: "cancelled", Error: ctx.Err().Error()}
+		}
+		close(resCh)
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+// TestExecuteAndDrain_ReportsFirstVisibleMessageWithoutTickerDelay pins the
+// leading edge of the daemon-to-server path. Later chunks remain batched, but
+// the first user-visible content must not sit behind the 500 ms periodic flush.
+func TestExecuteAndDrain_ReportsFirstVisibleMessageWithoutTickerDelay(t *testing.T) {
+	emitted := make(chan time.Time, 1)
+	release := make(chan struct{})
+	reported := make(chan time.Time, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/messages") {
+			var body struct {
+				Messages []TaskMessageData `json:"messages"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode messages: %v", err)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if len(body.Messages) > 0 {
+				select {
+				case reported <- time.Now():
+				default:
+				}
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := d.executeAndDrain(context.Background(), firstVisibleTranscriptBackend{
+			emitted: emitted,
+			release: release,
+		}, "p", agent.ExecOptions{}, slog.Default(), "task-first-visible", "", new(atomic.Int32))
+		done <- err
+	}()
+
+	emittedAt := <-emitted
+	select {
+	case reportedAt := <-reported:
+		delay := reportedAt.Sub(emittedAt)
+		t.Logf("first visible message reached the server in %s", delay.Round(time.Millisecond))
+		if delay >= 300*time.Millisecond {
+			t.Fatalf("first visible message report delay = %s, want <300ms", delay.Round(time.Millisecond))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first visible message report")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("executeAndDrain: %v", err)
 	}
 }

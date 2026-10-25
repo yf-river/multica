@@ -107,7 +107,7 @@ func dispatchedCommentTaskFixture(t *testing.T, ctx context.Context, pool *pgxpo
 	var issueID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'ff issue', 'in_progress', 'none', $2, 'member', 600001, 0)
+		VALUES ($1, 'ff issue', 'in_progress', 'not_important_not_urgent', $2, 'member', 600001, 0)
 		RETURNING id`, workspaceID, userID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
@@ -138,4 +138,54 @@ func dispatchedCommentTaskFixture(t *testing.T, ctx context.Context, pool *pgxpo
 		pool.Exec(c, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 	return taskID, userID, workspaceID
+}
+
+func TestFinalizeTaskClaimRechecksOwnershipAndBindingBeforeTokenMint(t *testing.T) {
+	for _, change := range []string{"owner", "binding", "private access"} {
+		t.Run(change, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newTaskClaimRacePool(t)
+			svc := NewTaskService(db.New(pool), pool, nil, events.New())
+			taskID, userID, workspaceID := dispatchedCommentTaskFixture(t, ctx, pool)
+			task, err := svc.Queries.GetAgentTask(ctx, util.MustParseUUID(taskID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var other string
+			if err := pool.QueryRow(ctx, `INSERT INTO "user" (name,email) VALUES ('other',$1) RETURNING id`, fmt.Sprintf("other-%d@test.local", time.Now().UnixNano())).Scan(&other); err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "owner":
+				_, err = pool.Exec(ctx, `UPDATE agent_runtime SET owner_id=$2 WHERE id=$1`, task.RuntimeID, other)
+			case "binding":
+				_, err = pool.Exec(ctx, `UPDATE agent SET runtime_id=NULL WHERE id=$1`, task.AgentID)
+			case "private access":
+				_, err = pool.Exec(ctx, `UPDATE agent SET owner_id=$2 WHERE id=$1`, task.AgentID, other)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := db.CreateTaskTokenParams{TokenHash: fmt.Sprintf("fence-%d", time.Now().UnixNano()), TaskID: task.ID, AgentID: task.AgentID, WorkspaceID: util.MustParseUUID(workspaceID), UserID: util.MustParseUUID(userID), ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}}
+			if _, err := svc.FinalizeTaskClaim(ctx, task, token, nil, false); err == nil {
+				t.Fatal("stale authorization minted a token")
+			}
+			var count int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM task_token WHERE task_id=$1`, task.ID).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 0 {
+				t.Fatalf("rejected claim left %d tokens", count)
+			}
+			if _, err := pool.Exec(ctx, `UPDATE agent_runtime SET owner_id=$2 WHERE id=$1`, task.RuntimeID, userID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `UPDATE agent SET runtime_id=$2,owner_id=$3 WHERE id=$1`, task.AgentID, task.RuntimeID, userID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.FinalizeTaskClaim(ctx, task, token, nil, false); err != nil {
+				t.Fatalf("restored valid binding rejected: %v", err)
+			}
+		})
+	}
 }

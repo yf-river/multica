@@ -76,9 +76,8 @@ export interface ScheduleEditorProps {
   wsId: string;
   /** 是否整体禁用（如无权限）。 */
   disabled?: boolean;
-  /** 禁用时展示的原因文案。 */
-  disabledReason?: string;
-  /** 服务器接受/拒绝当前表达式时触发，让宿主弹窗的提交按钮与行内报错保持同步。 */
+  /** Fires when the server accepts or rejects the current expression, so the
+   *  owning dialog can keep its submit button in step with the inline error. */
   onValidityChange?: (valid: boolean) => void;
 }
 
@@ -250,7 +249,6 @@ export function ScheduleEditor({
   onChange,
   wsId,
   disabled,
-  disabledReason,
   onValidityChange,
 }: ScheduleEditorProps) {
   const { t, i18n } = useT("autopilots");
@@ -801,9 +799,6 @@ export function ScheduleEditor({
         </div>
         )}
       </div>
-      {disabled === true && disabledReason !== undefined && (
-        <p className="mt-2 text-micro text-muted-foreground">{disabledReason}</p>
-      )}
     </div>
   );
 }

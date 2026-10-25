@@ -12,7 +12,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
  * 自然宽度从镜像行读取，所以适配结果从不依赖当前真实挂载的内容——测量与渲染
  * 之间没有反馈环。
  *
- * 规则：能与 `reserve` px 尾部外框并排放下的最长前缀获胜。`reserve` 必须覆盖
+ * 规则：能与 `reserve(fitCount)` px 尾部外框并排放下的最长前缀获胜。`reserve(fitCount)` 必须覆盖
  * 所有始终在条目之后渲染的内容（触发器、菜单）——即使所有条目都放得下也会被
  * 减去，否则一行刚好放下全部条目时会把尾部外框挤出可视范围。
  *
@@ -33,7 +33,7 @@ export function useSingleRowFit({
   /** 条目间水平间距（px，即容器的 `gap`）。 */
   gap: number;
   /** 为溢出触发器预留的宽度（px）。 */
-  reserve: number;
+  reserve: (fitCount: number) => number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const measureRef = useRef<HTMLDivElement | null>(null);
@@ -48,13 +48,11 @@ export function useSingleRowFit({
       (child) => (child as HTMLElement).offsetWidth,
     );
 
-    let used = 0;
-    let next = 0;
-    for (let i = 0; i < widths.length; i++) {
-      const withItem = used + (i > 0 ? gap : 0) + widths[i]!;
-      if (withItem + gap + reserve > available) break;
-      used = withItem;
-      next = i + 1;
+    let next = widths.length;
+    let used = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, next - 1) * gap;
+    while (next > 0 && used + gap + reserve(next) > available) {
+      next--;
+      used -= widths[next]! + (next > 0 ? gap : 0);
     }
     setFitCount((current) => (current === next ? current : next));
   }, [gap, reserve]);

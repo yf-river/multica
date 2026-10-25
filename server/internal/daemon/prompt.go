@@ -55,7 +55,6 @@ func backendResumeContinuityNotice(task Task) string {
 // 没有任何块适用时返回 ""。
 func perTurnContextBlocks(task Task, opts promptOpts) string {
 	var b strings.Builder
-	b.WriteString(buildActiveSiblingRunsBlock(task.IssueID, task.ActiveSiblingRuns))
 	if task.DeliveryContext != nil {
 		b.WriteString(buildDeliveryContextBlock(*task.DeliveryContext))
 	}
@@ -97,10 +96,12 @@ func WithWorktreeReplayConflicts(files []string) PromptOption {
 	return func(o *promptOpts) { o.worktreeReplayConflicts = files }
 }
 
-// buildSharedLocalDirectoryBlock 警告“未加锁的回合”：它的工作目录正被实时共享。
-// 刻意是引导而非禁止：互斥锁本来也没盖住用户自己的编辑器，在这里禁写只会买回一个“外
-// 围系统并不真执行”的限制。回合自己推断不出的是“同树的兄弟任务可能正编辑到一半”——
-// 所以点明这一点，让它据此掂量写入的规模。
+// buildSharedLocalDirectoryBlock warns an unlocked turn that its working
+// directory is shared live. Deliberately guidance and not a prohibition: the
+// mutex never covered the user's own editor either, so refusing writes here
+// would buy a restriction the surrounding system does not actually enforce.
+// What the turn cannot infer on its own is that a sibling task may be mid-edit
+// in the same tree — so state that, and let it size its writes accordingly.
 func buildSharedLocalDirectoryBlock(shared bool) string {
 	if !shared {
 		return ""
@@ -112,11 +113,14 @@ func buildSharedLocalDirectoryBlock(shared bool) string {
 	return b.String()
 }
 
-// maxConflictListBytes 限制*渲染后的*文件列表长度——按转义输出的字节数而非条目数：
-// git 路径可以长到文件系统允许的程度，按条计数等于没限制。4 KiB 大约一千个 token——
-// 相对任何 provider 的上下文都很小，对真实合并冲突覆盖的几十条路径又足够大，余下的在
-// worktree 里一条 `git status` 就能看到。它是整块文本在这轮里的配额：只要合并还开着，
-// 这段文字每轮都重发，病态仓库绝不能把那一轮全花在文件名上。
+// maxConflictListBytes bounds the RENDERED file list, in bytes of the escaped
+// output rather than in entries: a git path can be as long as the filesystem
+// allows, so a per-entry count bounds nothing. 4 KiB is roughly a thousand
+// tokens — small next to any provider's context, large enough for the tens of
+// paths a real merge conflict spans, and the remainder is one `git status` away
+// inside the worktree. It is the whole block's share of the turn: this text is
+// re-sent every turn the merge stays open, and a pathological repository must
+// not be able to spend that turn on filenames.
 const maxConflictListBytes = 4 << 10
 
 // buildWorktreeReplayConflictBlock 告诉本轮：它自己的工作树是从“合并进行到一半”开始
@@ -216,39 +220,6 @@ func buildDeliveryContextBlock(d DeliveryContextData) string {
 		fmt.Fprintf(&b, "- Released as part of batch `%s` (state `%s`, %d member(s))\n", d.BatchID, d.BatchStatus, d.BatchMembers)
 	}
 	b.WriteString("\nThe environment, seed and stage are assigned by the platform: do not switch environments, reset its data, or move the delivery forward yourself. Finishing verification is not the same as releasing this task.\n\n")
-	return b.String()
-}
-
-func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunData) string {
-	// 兄弟 issue 的工作只对“另一个 issue 任务”是有用上下文。chat、autopilot 与
-	// quick-create 任务没有“可查 claim 历史的当前目标 issue”，在那里渲染这块只会造出
-	// 一条无法行动的警告。
-	if currentIssueID == "" || len(runs) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("## Active sibling runs\n\n")
-	b.WriteString("This agent has other in-flight issue tasks. Before starting overlapping code or PR work, check this issue's comment history for a claim or handoff")
-	fmt.Fprintf(&b, " (`multica issue comment list %s --roots-only --summary --compact --output json`)", currentIssueID)
-	b.WriteString(" and inspect relevant siblings with the `run-messages` commands below — coordinate with existing work instead of opening a second PR. For writes that only record ownership or status of work already underway, use `--no-start` on `multica issue assign`/`update`/`status`.\n\n")
-	for _, run := range runs {
-		issueLabel := run.IssueIdentifier
-		if issueLabel == "" {
-			issueLabel = run.IssueID
-		}
-		fmt.Fprintf(&b, "- %s — task `%s`, status `%s`", issueLabel, run.TaskID, run.Status)
-		if run.StartedAt != "" {
-			fmt.Fprintf(&b, ", started %s", run.StartedAt)
-		} else if run.CreatedAt != "" {
-			fmt.Fprintf(&b, ", created %s", run.CreatedAt)
-		}
-		title := strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(run.IssueTitle))
-		if title != "" {
-			fmt.Fprintf(&b, ": %s", title)
-		}
-		fmt.Fprintf(&b, "; inspect: `multica issue run-messages %s`\n", run.TaskID)
-	}
-	b.WriteString("\n")
 	return b.String()
 }
 

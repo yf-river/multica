@@ -43,25 +43,10 @@ type mediaObjectStore interface {
 	GetReader(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
-// 告诉用户的话。有三条是因为有三件可能为真的事——把它们分开正是要点（见
-// deliveryState）。硬编码中文，和本适配器发出去的每个面向用户字符串一样
-// （replier.go）——企微部署只在中国。
-const (
-	// mediaSendFailedText —— 我们知道它没到。确凿的，因为把一个确凿的失败说成
-	// 「可能送达了」，正是让用户从此无视通知的做法。
-	mediaSendFailedText = "⚠️ 有文件没能发出来，我这边保留着，需要的话我再试一次。"
-
-	// mediaSendUnknownText —— 帧已发出、裁定没回来，所以文件可能已在会话里。措
-	// 辞要能扛住两种结局：不能对正看着文件的人说「失败了」，也不能对始终没收到
-	// 的人说「已发送」。它还要解释为什么不自动重发——那是显而易见的下一步问题，
-	// 答案是「重了没法撤回」。
-	mediaSendUnknownText = "⚠️ 有文件我没收到企业微信的送达回执，可能已经发到了、也可能没有。我不会自动重发，免得发重了；你那边没看到的话说一声，我再发一次。"
-
-	// mediaLookupFailedText —— 失败在我们这一侧、而且发生在「问题都还没被回答」之
-	// 前：我们读不了绑在这条回答上的东西，所以根本不知道有没有文件。这里不说话，
-	// 正是让用户干等一件「从未被尝试过」的事的做法。
-	mediaLookupFailedText = "⚠️ 我这边没查到这条回答带没带文件，所以要是有，这次没发出来。需要的话我再试一次。"
-)
+// What the user is told, and there are three of these because there are three
+// things that can be true — telling them apart is the point (see deliveryState).
+// Hardcoded Chinese, like every other user-facing string this adapter sends
+// (replier.go) — WeCom deployments are China-only.
 
 // attachmentBudget 约束一条回答的整个附件投递——读每个对象、上传、发送。宽松是
 // 因为一个 20 MiB 文件按 40 片 ack、一次两片并不快，而没有任何人等着它。
@@ -121,6 +106,9 @@ type attachmentTarget struct {
 	// SessionID 只为了在「几分钟后失败」的投递里，仍能在日志与计数器上点出它属
 	// 于哪场会话。
 	SessionID string
+	// Locale is the reader's, resolved on the request path — see the call
+	// site in outbound.go for why it cannot be read at the failure.
+	Locale Locale
 }
 
 // OutboundOption 在构造时配置会话完成订阅者。
@@ -202,8 +190,16 @@ func (o *Outbound) deliverAttachmentsByID(rawMessageID, rawWorkspaceID string, t
 // 知道有个文件在等」的东西诚实地报出来。在查询前限量这个阶段，要么对「被丢的文
 // 件」保持沉默，要么对「从不存在的文件」报警。
 func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID pgtype.UUID, to attachmentTarget, carriesTheReply bool) {
-	// replyFailed 记录这条回复的唯一结局，但只在「文件就是回复」时。话已落地时
-	// 回复已定，只动逐文件计数器。
+	// Everything this function writes — every frame of every file, and every
+	// sentence to the user about one — is put to the installation's permission
+	// at the moment it is written. A revocation is a person withdrawing the
+	// connection; the object reads, the upload, the chat's turn and a retry's
+	// backoff can each take long enough for it to land, and the failure notice
+	// is a write into that chat like any other.
+	ctx = withWriteGuard(ctx, o.attachmentWriteGuard(to.InstallationID))
+	// replyFailed records this reply's single outcome, but only when the files
+	// ARE the reply. When words already landed the reply is settled and only
+	// the per-file counters move.
 	replyFailed := func(reason dropReason, err error) {
 		if carriesTheReply {
 			o.droppedFor(ctx, to.SessionID, "chat:done", reason, err)
@@ -216,7 +212,7 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 	if err != nil {
 		o.logger.WarnContext(ctx, "wecom outbound: attachment lookup failed",
 			"error", err, "chat_message_id", uuidStringPub(messageID))
-		o.tellUser(ctx, to, mediaLookupFailedText)
+		o.tellUser(ctx, to, copyFor(to.Locale).MediaLookupFailed)
 		replyFailed(dropTransport, err)
 		return
 	}
@@ -244,7 +240,7 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 			"installation_id", uuidStringPub(to.InstallationID),
 			"attachments", len(rows),
 			"pending", maxPendingAttachmentDeliveries)
-		o.tellUser(ctx, to, mediaSendFailedText)
+		o.tellUser(ctx, to, copyFor(to.Locale).MediaSendFailed)
 		return
 	}
 	defer o.releaseAttachmentSlot()
@@ -263,9 +259,9 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 		}
 		o.logger.WarnContext(ctx, "wecom outbound: attachment delivery gave up waiting for a slot",
 			"installation_id", uuidStringPub(to.InstallationID), "attachments", len(rows))
-		// 刻意用新 context：已经过期的那把正是我们到这里的理由，复用它连那句话
-		// 也一起丢了。
-		o.tellUser(context.WithoutCancel(ctx), to, mediaSendFailedText)
+		// Deliberately on a fresh context: the one that expired is the reason
+		// we are here, and reusing it would drop the sentence too.
+		o.tellUser(context.WithoutCancel(ctx), to, copyFor(to.Locale).MediaSendFailed)
 		replyFailed(dropTransport, ctx.Err())
 		return
 	}
@@ -341,10 +337,10 @@ func (o *Outbound) sendAttachments(ctx context.Context, messageID, workspaceID p
 	// 说话，未确认的发送绝不借用「确凿」的措辞。
 	var lines []string
 	if failed > 0 {
-		lines = append(lines, mediaSendFailedText)
+		lines = append(lines, copyFor(to.Locale).MediaSendFailed)
 	}
 	if unknown > 0 {
-		lines = append(lines, mediaSendUnknownText)
+		lines = append(lines, copyFor(to.Locale).MediaSendUnknown)
 	}
 	if len(lines) > 0 {
 		o.tellUser(ctx, to, strings.Join(lines, "\n"))
@@ -362,13 +358,56 @@ func (o *Outbound) tellUser(ctx context.Context, to attachmentTarget, text strin
 		return
 	}
 	if err := sender.sendTextCtx(ctx, to.ChatID, to.ChatType, text); err != nil {
+		if errors.Is(err, errMediaPermissionWithdrawn) {
+			// Silence is the intended outcome: the connection was withdrawn
+			// (or cannot be confirmed), and a notice is a write into that chat.
+			o.logger.InfoContext(ctx, "wecom outbound: notice about the file not sent, permission withdrawn",
+				"error", err, "installation_id", uuidStringPub(to.InstallationID))
+			return
+		}
 		o.logger.WarnContext(ctx, "wecom outbound: could not tell the user about the file",
 			"error", err, "installation_id", uuidStringPub(to.InstallationID))
 	}
 }
 
-// sendAttachment 把一个文件从对象存储送进会话，并报告对它归宿的已知程度。错误是
-// 给日志的；状态是告诉用户的东西。
+// errMediaPermissionWithdrawn marks a write the attachment path refused because
+// the installation was revoked, or could not be read, after the delivery began.
+var errMediaPermissionWithdrawn = errors.New("wecom: media delivery stopped, permission withdrawn")
+
+// permissionReadBudget bounds one permission read. The read runs while the
+// socket's writer is held (see attachmentWriteGuard), so a database that has
+// stopped answering must cost a refused frame and not a socket that nobody can
+// ping.
+const permissionReadBudget = 3 * time.Second
+
+// attachmentWriteGuard is the permission check for every frame the attachment
+// path writes — upload init, each chunk and its retry, finish, the file
+// message and any retry of it, and the notices to the user. It is installed in
+// the context (withWriteGuard) and run by the ws layer with the writer in
+// hand, so it is asked at the last moment before a byte leaves and not at the
+// moment a stage began waiting.
+//
+// The three outcomes of mayStillWrite collapse to one refusal here, which is
+// right for a write: revoked, gone and unreadable are all "do not write now".
+// What differs is only what is owed afterwards, and an attachment owes nothing
+// — the file stays in object storage, and the user can ask again.
+func (o *Outbound) attachmentWriteGuard(id pgtype.UUID) func(context.Context) error {
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, permissionReadBudget)
+		defer cancel()
+		if check := o.mayStillWrite(ctx, id); check != installationOK {
+			return fmt.Errorf("wecom: installation may no longer be written to (%s): %w", check, errMediaPermissionWithdrawn)
+		}
+		return nil
+	}
+}
+
+// sendAttachment carries one file from object storage into the chat, and
+// reports what is known about where it ended up. The error is for the log; the
+// state is what the user is told.
+//
+// ctx must carry attachmentWriteGuard (sendAttachments puts it there): that is
+// what keeps a revoked installation from being written to.
 func (o *Outbound) sendAttachment(ctx context.Context, sender *wsSender, row db.Attachment, to attachmentTarget) (deliveryState, error) {
 	// 记录下来的尺寸在取任何字节之前先查。超大附件无论如何都会被拒——
 	// readObject 会复查实际读到的量，因为列是元数据、对象才是真相——但先把 40 MB
@@ -423,6 +462,13 @@ func sendOutcome(err error) deliveryState {
 	switch {
 	case err == nil:
 		return deliveryDelivered
+	case errors.Is(err, errNotAttempted):
+		// AHEAD of the context arm below, which this also matches: every
+		// not-attempted failure wraps the ctx.Err() that ended it. A push that
+		// never got the chat's turn, or whose context was already over when
+		// request was entered, was never built let alone written — so the file
+		// is definitely not there, and the person can be told so plainly.
+		return deliveryDefinitelyFailed
 	case errors.Is(err, errAckTimeout),
 		errors.Is(err, errWriteAttempted),
 		errors.Is(err, context.Canceled),

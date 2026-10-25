@@ -13,9 +13,10 @@ import { useStore } from "zustand";
  */
 interface ConfigState {
   cdnDomain: string;
-  // 为 true 表示 cdnDomain 上的内容是带时限的签名 URL（服务端开启了
-  // CloudFront 签名）。渲染器不能把该域名下的裸存储地址当成可直接加载的
-  // 媒体源（MUL-3254）。
+  attachmentPublicUrl: string;
+  // True when cdnDomain serves private content via time-bounded signed URLs
+  // (CloudFront signing enabled server-side). Renderers must not treat a raw
+  // storage URL on that domain as a loadable media source (MUL-3254).
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
@@ -42,7 +43,13 @@ interface ConfigState {
   // 老处理器会接受这个未知字段并返回成功却把它丢掉，所以字段缺失必须按
   // 「不支持」处理（fail closed）。
   agentConversationStartersSupported: boolean;
+  issueCreatePropertiesSupported: boolean;
+  // Whether deleting a comment keeps its replies (#8296). Older servers
+  // deleted the replies too, so absent must fail closed: the client then
+  // promises nothing about replies and uses the legacy delete route.
+  commentDeleteKeepRepliesSupported: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
+  setAttachmentPublicUrl: (url?: string) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
@@ -58,11 +65,14 @@ interface ConfigState {
   setEnvironmentName: (name?: string) => void;
   setLocalWorktreeSupported: (supported?: boolean) => void;
   setAgentConversationStartersSupported: (supported?: boolean) => void;
+  setIssueCreatePropertiesSupported: (supported?: boolean) => void;
+  setCommentDeleteKeepRepliesSupported: (supported?: boolean) => void;
 }
 
 /** 底层的原生 Zustand store，宿主的启动代码往这里写入运行时配置。 */
 export const configStore = createStore<ConfigState>((set) => ({
   cdnDomain: "",
+  attachmentPublicUrl: "",
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
@@ -75,7 +85,10 @@ export const configStore = createStore<ConfigState>((set) => ({
   environmentName: "",
   localWorktreeSupported: false,
   agentConversationStartersSupported: false,
+  issueCreatePropertiesSupported: false,
+  commentDeleteKeepRepliesSupported: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
+  setAttachmentPublicUrl: (url = "") => set({ attachmentPublicUrl: url }),
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",
@@ -91,6 +104,10 @@ export const configStore = createStore<ConfigState>((set) => ({
     set({ localWorktreeSupported: supported === true }),
   setAgentConversationStartersSupported: (supported = false) =>
     set({ agentConversationStartersSupported: supported === true }),
+  setIssueCreatePropertiesSupported: (supported = false) =>
+    set({ issueCreatePropertiesSupported: supported === true }),
+  setCommentDeleteKeepRepliesSupported: (supported = false) =>
+    set({ commentDeleteKeepRepliesSupported: supported === true }),
 }));
 
 /** React 侧读取配置 store 的 Hook，可传 selector 只订阅需要的片段。 */

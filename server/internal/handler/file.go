@@ -387,7 +387,7 @@ func (h *Handler) groupChatMessageAttachments(ctx context.Context, workspaceID s
 // 扩展名纠正，不信任客户端头。上传者解析为实际执行者（member 或 agent）。
 func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	if h.Storage == nil {
-		writeError(w, http.StatusServiceUnavailable, "file upload not configured")
+		writeFeatureDisabled(w, "file_upload_not_configured", "file upload not configured")
 		return
 	}
 
@@ -492,7 +492,8 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			comment, err := h.Queries.GetComment(r.Context(), commentUUID)
-			if err != nil || uuidToString(comment.WorkspaceID) != workspaceID {
+			// A deleted comment's tombstone takes no attachments.
+			if err != nil || uuidToString(comment.WorkspaceID) != workspaceID || comment.DeletedAt.Valid {
 				writeError(w, http.StatusForbidden, "invalid comment_id")
 				return
 			}
@@ -578,6 +579,13 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		qtx := h.Queries.WithTx(tx)
+		if params.CommentID.Valid {
+			if _, lockErr := qtx.LockLiveComment(r.Context(), db.LockLiveCommentParams{ID: params.CommentID, WorkspaceID: params.WorkspaceID}); lockErr != nil {
+				h.deleteS3Objects(r.Context(), []string{link})
+				writeError(w, http.StatusForbidden, "invalid comment_id")
+				return
+			}
+		}
 		att, err := qtx.CreateAttachment(r.Context(), params)
 		if err != nil {
 			slog.Error("failed to create attachment record", "error", err)
@@ -697,6 +705,22 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.writeSignedAttachmentMetadata(w, r, att)
+}
+
+// GetAttachmentForDownload resolves the workspace from the attachment, as the
+// durable Markdown download URL does. A link can be pasted into a different
+// workspace; the current workspace header must not change its target. The
+// membership check is the same one used by the protected download endpoint.
+func (h *Handler) GetAttachmentForDownload(w http.ResponseWriter, r *http.Request) {
+	att, ok := h.loadAttachmentForDownload(w, r)
+	if !ok {
+		return
+	}
+	h.writeSignedAttachmentMetadata(w, r, att)
+}
+
+func (h *Handler) writeSignedAttachmentMetadata(w http.ResponseWriter, r *http.Request, att db.Attachment) {
 
 	// 无论调用方声明了什么模式都签（除非代理/预签名），走签名：这个接口是"新鲜
 	// 的、可原生加载的 URL"的唯一来源。stable 模式调用方（CLI `attachment
@@ -864,7 +888,7 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Storage == nil {
-		writeError(w, http.StatusServiceUnavailable, "storage not configured")
+		writeFeatureDisabled(w, "storage_not_configured", "storage not configured")
 		return
 	}
 
@@ -1294,7 +1318,7 @@ func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.Storage == nil {
-		writeError(w, http.StatusServiceUnavailable, "storage not configured")
+		writeFeatureDisabled(w, "storage_not_configured", "storage not configured")
 		return
 	}
 	key := h.Storage.KeyFromURL(att.Url)
@@ -1454,55 +1478,50 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
-		return
-	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-	deleted, err := qtx.DeleteAttachment(r.Context(), db.DeleteAttachmentParams{
-		ID:          att.ID,
-		WorkspaceID: att.WorkspaceID,
-	})
-	if err != nil {
-		slog.Error("failed to delete attachment", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
-		return
-	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	persistedEvents := make([]events.Event, 0, 2)
-	if deleted.Changed && att.IssueID.Valid {
-		issue, loadErr := qtx.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: att.IssueID, WorkspaceID: att.WorkspaceID})
+	var deleted db.DeleteAttachmentRow
+	var persistedEvents []events.Event
+	err = h.withAttachmentOwnerLock(r.Context(), att, func(qtx *db.Queries) error {
+		// 关联可能在等锁期间变化；取持锁后的所有者用于事件与版本更新。
+		var loadErr error
+		att, loadErr = qtx.GetAttachment(r.Context(), db.GetAttachmentParams{ID: att.ID, WorkspaceID: att.WorkspaceID})
 		if loadErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to delete attachment")
-			return
+			return loadErr
 		}
-		event, eventErr := eventoutbox.Enqueue(r.Context(), qtx, buildIssueAttachmentsChangedEvent(issue, actorType, actorID))
-		if eventErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to delete attachment")
-			return
+		var deleteErr error
+		deleted, deleteErr = qtx.DeleteAttachment(r.Context(), db.DeleteAttachmentParams{ID: att.ID, WorkspaceID: att.WorkspaceID})
+		if deleteErr != nil {
+			return deleteErr
 		}
-		persistedEvents = append(persistedEvents, event)
-	}
-	if deleted.Changed && att.CommentID.Valid {
-		if comment, loadErr := qtx.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
-			ID:          att.CommentID,
-			WorkspaceID: att.WorkspaceID,
-		}); loadErr == nil {
-			event, eventErr := eventoutbox.Enqueue(r.Context(), qtx,
-				buildCommentMutationEvent(comment, protocol.EventCommentUpdated, actorType, actorID, deleted.CommentRevision))
-			if eventErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to delete attachment")
-				return
+		if deleted.Changed && att.IssueID.Valid {
+			issue, err := qtx.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: att.IssueID, WorkspaceID: att.WorkspaceID})
+			if err != nil {
+				return err
+			}
+			event, err := eventoutbox.Enqueue(r.Context(), qtx, buildIssueAttachmentsChangedEvent(issue, actorType, actorID))
+			if err != nil {
+				return err
 			}
 			persistedEvents = append(persistedEvents, event)
-		} else if !errors.Is(loadErr, pgx.ErrNoRows) {
-			writeError(w, http.StatusInternalServerError, "failed to delete attachment")
-			return
 		}
+		if deleted.Changed && att.CommentID.Valid {
+			comment, err := qtx.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{ID: att.CommentID, WorkspaceID: att.WorkspaceID})
+			if err != nil {
+				return err
+			}
+			event, err := eventoutbox.Enqueue(r.Context(), qtx, buildCommentMutationEvent(comment, protocol.EventCommentUpdated, actorType, actorID, deleted.CommentRevision))
+			if err != nil {
+				return err
+			}
+			persistedEvents = append(persistedEvents, event)
+		}
+		return nil
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
 		return
 	}
@@ -1529,16 +1548,85 @@ func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, worksp
 	})
 }
 
-// linkAttachmentsByIDs 把给定附件 id 挂到某条评论上。只更新属于同一 issue 且
-// 还没有 comment_id 的附件。
-func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID pgtype.UUID, ids []pgtype.UUID) {
-	if err := h.Queries.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
-		CommentID: commentID,
-		IssueID:   issueID,
-		Column3:   ids,
-	}); err != nil {
-		slog.Error("failed to link attachments to comment", "error", err)
+// attachmentOwnerLockAttempts bounds the re-read below. An attachment gains an
+// owner once, when the issue or comment it was uploaded for links it, so one
+// retry is enough in practice; the bound is what keeps a pathological
+// interleaving from looping.
+const attachmentOwnerLockAttempts = 3
+
+// withAttachmentOwnerLock runs write in a transaction that locks the
+// attachment's owners first — the issue, then the comment when it has one —
+// which is the issue -> comment -> child order LockIssueForDelete,
+// UpdateComment, LockLiveComment and CreateComment all take. Locking the
+// attachment row and then touching its issue is the opposite order, and closes
+// a deadlock cycle with issue teardown: teardown holds the issue and reaches
+// the same attachment through the issue_id cascade.
+//
+// The row is re-read under those locks, so a link that committed while this
+// waited is seen before the write; an attachment that gained an owner is
+// retried with that owner locked. Returns pgx.ErrNoRows when the attachment,
+// or the comment owning it, is gone.
+func (h *Handler) withAttachmentOwnerLock(ctx context.Context, att db.Attachment, write func(*db.Queries) error) error {
+	for attempt := 0; ; attempt++ {
+		fresh, err := h.attachmentOwnerLockAttempt(ctx, att, write)
+		if !errors.Is(err, errAttachmentOwnerChanged) {
+			return err
+		}
+		if attempt+1 >= attachmentOwnerLockAttempts {
+			return errors.New("attachment owner kept changing under the lock")
+		}
+		att = fresh
 	}
+}
+
+// errAttachmentOwnerChanged reports that the attachment gained or changed an
+// owner while the transaction was waiting, so the locks it took are the wrong
+// ones and the attempt must be retried against the new owner.
+var errAttachmentOwnerChanged = errors.New("attachment owner changed")
+
+func (h *Handler) attachmentOwnerLockAttempt(ctx context.Context, att db.Attachment, write func(*db.Queries) error) (db.Attachment, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.Attachment{}, err
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	if att.IssueID.Valid {
+		// A missing issue is not an error here: its cascade took the attachment
+		// with it, which the re-read below reports as pgx.ErrNoRows.
+		if _, err := qtx.LockIssueForAttachmentWrite(ctx, db.LockIssueForAttachmentWriteParams{
+			ID:          att.IssueID,
+			WorkspaceID: att.WorkspaceID,
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return db.Attachment{}, err
+		}
+	}
+	if att.CommentID.Valid {
+		if _, err := qtx.LockLiveComment(ctx, db.LockLiveCommentParams{
+			ID:          att.CommentID,
+			WorkspaceID: att.WorkspaceID,
+		}); err != nil {
+			return db.Attachment{}, err
+		}
+	}
+	var fresh db.Attachment
+	if att.IssueID.Valid || att.CommentID.Valid {
+		fresh, err = qtx.GetAttachment(ctx, db.GetAttachmentParams{ID: att.ID, WorkspaceID: att.WorkspaceID})
+	} else {
+		// Nothing to lock above: take the row itself so it cannot gain an owner
+		// between this read and the write.
+		fresh, err = qtx.LockAttachmentRow(ctx, db.LockAttachmentRowParams{ID: att.ID, WorkspaceID: att.WorkspaceID})
+	}
+	if err != nil {
+		return db.Attachment{}, err
+	}
+	if fresh.IssueID != att.IssueID || fresh.CommentID != att.CommentID {
+		return fresh, errAttachmentOwnerChanged
+	}
+	if err := write(qtx); err != nil {
+		return db.Attachment{}, err
+	}
+	return fresh, tx.Commit(ctx)
 }
 
 // deleteS3Object 按 CDN URL 从存储里删除单个文件。

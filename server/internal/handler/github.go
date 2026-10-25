@@ -762,7 +762,7 @@ func (h *Handler) ListGitHubInstallationRepositories(w http.ResponseWriter, r *h
 		return
 	}
 	if !isGitHubRepositoryBrowseConfigured() {
-		writeError(w, http.StatusServiceUnavailable, "github repository browsing is not configured")
+		writeFeatureDisabled(w, "github_repository_browsing_not_configured", "github repository browsing is not configured")
 		return
 	}
 	page, ok := parseGitHubPageParam(w, r, "page", 1, 1, 100000)
@@ -1026,8 +1026,9 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	secret := githubWebhookSecret()
 	if secret == "" {
-		// 干脆拒绝处理 webhook 比把未配置部署当"所有签名都有效"更安全。
-		writeError(w, http.StatusServiceUnavailable, "github webhooks not configured")
+		// Refusing to process webhooks at all is safer than treating an
+		// unconfigured deployment as "all signatures valid".
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	sigHeader := r.Header.Get("X-Hub-Signature-256")
@@ -1813,6 +1814,16 @@ func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtyp
 // advanceIssueToDone 在 PR 合并自动推进场景里把 issue 状态置为 done，并沿平台
 // 的"子 issue 完成通知父 issue"路径发事件。只在本文件关闭意图闸通过后调用。
 func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
+	hasDelivery, err := h.Queries.IssueHasDelivery(ctx, db.IssueHasDeliveryParams{WorkspaceID: issue.WorkspaceID, IssueID: issue.ID})
+	if err != nil {
+		slog.Warn("github: delivery ownership check failed", "error", err, "issue_id", uuidToString(issue.ID))
+		return
+	}
+	if hasDelivery {
+		slog.Info("github: completion belongs to delivery acceptance", "issue_id", uuidToString(issue.ID))
+		return
+	}
+
 	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 		ID:          issue.ID,
 		Status:      "done",

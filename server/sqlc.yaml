@@ -15,6 +15,10 @@ sql:
       - "migrations/636_run_text_change.up.sql"
       - "migrations/632_task_provider_trace.up.sql"
       - "migrations/633_task_provider_trace_unique.up.sql"
+      - "migrations/654_daemon_token_owner.up.sql"
+      - "migrations/656_comment_deleted_at.up.sql"
+      - "migrations/667_task_message_call_id.up.sql"
+      - "migrations/668_task_supplements.up.sql"
     gen:
       go:
         package: "db"

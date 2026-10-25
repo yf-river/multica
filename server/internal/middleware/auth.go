@@ -55,10 +55,20 @@ func rejectTemporarilyDisabledUser(w http.ResponseWriter, r *http.Request, userI
 // 中间件会跳过 DB SELECT 和 last_used_at 的 UPDATE——因此 last_used_at 每个 TTL
 // 窗口最多刷一次，而不是每请求一次。
 //
-// cloudPAT 可选：非 nil 时，mcn_ 前缀的 token 通过调用 Multica Cloud Fleet 服务校验，
-// 而不是查本地库。为 nil（未配置 Fleet URL）时 mcn_ 在前缀分支就直接被拒——不会落到
-// mul_/JWT 路径，因为 mcn_ 串按构造就不可能是合法的 mul_ PAT 或 JWT。
-func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+// cfSigner is optional; when non-nil, a session renewed here also gets fresh
+// CloudFront cookies. It is wired into THIS middleware rather than left to
+// RefreshCloudFrontCookies because renewal is what makes the two clocks
+// diverge: every route group that can renew must re-sign, and only the
+// renewer knows it renewed. A group that mounts Auth without the CDN
+// middleware (the plugin bridge) would otherwise slide the session forward
+// while leaving the CDN policy pinned to the original login.
+//
+// cloudPAT is optional; when non-nil, tokens with the mcn_ prefix are
+// validated by calling the Multica Cloud Fleet service rather than the
+// local DB. When nil (Fleet URL unset) mcn_ tokens are rejected at the
+// prefix branch — we don't fall through to the mul_ / JWT paths, since
+// an mcn_ string is by construction not a valid mul_ PAT or JWT.
+func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, cfSigner *auth.CloudFrontSigner) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source 只允许服务端设置——客户端带来的任何值都不可信，在下面
@@ -66,6 +76,21 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			// 拿一个普通 mul_ PAT 再伪造 `X-Actor-Source: member`（或任何值），骗下游
 			// handler 以为请求来自非 task-token 路径。
 			r.Header.Del("X-Actor-Source")
+
+			// Agent identity is server-set for exactly the same reason,
+			// and the rest of the codebase already assumes it (see
+			// resolveActor, actor_guards.go, CreateIssue). Only the mat_
+			// branch below re-stamps these from the token row.
+			//
+			// Without the strip, resolveActor's pair requirement was not a
+			// boundary: BOTH ids are readable by any workspace member
+			// (GET /api/issues/{id}/task-runs returns agent_id + task_id),
+			// so a member could replay a live pair on their own JWT/PAT and
+			// be resolved as that agent — and, since MUL-6951, act with the
+			// authority of that run's originator. MUL-3428, reported and
+			// fixed in #4313.
+			r.Header.Del("X-Agent-ID")
+			r.Header.Del("X-Task-ID")
 
 			tokenString, fromCookie := extractToken(r)
 			if tokenString == "" {
@@ -104,13 +129,24 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				if rejectTemporarilyDisabledUser(w, r, userID, "", "task_token") {
 					return
 				}
+				boundWorkspaceID := uuidToString(tt.WorkspaceID)
+				// An explicit workspace selector that disagrees with the
+				// token's binding is rejected here, BEFORE the overwrite
+				// below erases what the client asked for. Silently
+				// swapping the target let a request for workspace B run
+				// against A (GitHub #9403).
+				if checkTaskTokenWorkspaceTarget(w, r, queries, boundWorkspaceID) {
+					return
+				}
 				r.Header.Set("X-User-ID", userID)
 				r.Header.Set("X-Agent-ID", uuidToString(tt.AgentID))
 				r.Header.Set("X-Task-ID", uuidToString(tt.TaskID))
-				r.Header.Set("X-Workspace-ID", uuidToString(tt.WorkspaceID))
-				// X-Actor-Source 标记鉴权路径，使 resolveActor 与任何仅限 owner 的 handler
-				// 无需再查 token 表就能直接拒绝。这个头只允许携带 "task_token" 一个值——
-				// 客户端试图塞的任何其它内容都已在上方被剥掉。
+				r.Header.Set("X-Workspace-ID", boundWorkspaceID)
+				// X-Actor-Source flags the auth path so resolveActor and
+				// any owner-only handler can deny without re-querying the
+				// token table. The value "task_token" is the only signal
+				// this header is allowed to carry — strip anything else a
+				// client tried to send.
 				r.Header.Set("X-Actor-Source", "task_token")
 				next.ServeHTTP(w, r)
 				return
@@ -245,6 +281,12 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			if email != "" {
 				r.Header.Set("X-User-Email", email)
 			}
+
+			// Sliding session: a browser that keeps using the app keeps its
+			// cookie, instead of being logged out on the anniversary of its
+			// login. No-op until the session drops below half its TTL
+			// (MUL-7436).
+			r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
 
 			next.ServeHTTP(w, r)
 		})

@@ -17,9 +17,11 @@ import (
 
 // AppConfig 是 GET /api/config 的响应：web 应用启动时读取的实例级公开配置。
 type AppConfig struct {
-	EnvironmentID   string `json:"environment_id,omitempty"`
-	EnvironmentName string `json:"environment_name,omitempty"`
-	CdnDomain       string `json:"cdn_domain"`
+	// 用于识别本部署的持久附件链接。
+	AttachmentPublicURL string `json:"attachment_public_url,omitempty"`
+	EnvironmentID       string `json:"environment_id,omitempty"`
+	EnvironmentName     string `json:"environment_name,omitempty"`
+	CdnDomain           string `json:"cdn_domain"`
 	// CdnSigned 告知客户端上面的 CDN 域名伺服的是「私有内容、经带时限的签名 URL 访问」
 	// （即开了 CloudFront 签名）。为 true 时，CDN 域名上的原始存储 URL 无法公开拉取——
 	// 渲染器不能把它当原生 <img>/<video> 源，应退回按附件的 API 端点或新签发的
@@ -71,6 +73,10 @@ type AppConfig struct {
 	// 声明缺省时客户端必须 fail closed。
 	AgentConversationStartersSupported bool `json:"agent_conversation_starters_supported"`
 
+	// 只删除所选评论并保留回复，客户端可使用专用路由。
+	CommentDeleteKeepRepliesSupported bool `json:"comment_delete_keep_replies_supported"`
+	// POST /api/issues 支持在同一事务内写入自定义属性。
+	IssueCreatePropertiesSupported bool `json:"issue_create_properties_supported"`
 	// ServerVersion 是运行中的 API 构建版本，自助托管运维可据此确认部署内容并在 bug 报告
 	// 中带上它。只在自助托管部署上返回——托管云持续部署、用户无法对其版本做动作，因此省略
 	// ——没有用 -X main.version 打戳的 dev 构建则为空。
@@ -86,6 +92,8 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		// 这是本构建的属性，不是部署的属性：只要这段代码在跑，保存闸就跟它一起在跑。
 		LocalWorktreeSupported:             true,
 		AgentConversationStartersSupported: true,
+		IssueCreatePropertiesSupported:     true,
+		CommentDeleteKeepRepliesSupported:  true,
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
@@ -99,6 +107,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()
 	}
+	config.AttachmentPublicURL = h.cfg.PublicURL
 	config.CdnSigned = h.CFSigner != nil
 	config.DaemonServerURL, config.DaemonAppURL = daemonSetupURLsFromEnv()
 	config.VCSIntegrationAvailable = h.cfg.VCSIntegrationEnabled

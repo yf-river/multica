@@ -62,8 +62,32 @@ type Model struct {
 	Thinking *ModelThinking `json:"thinking,omitempty"`
 }
 
-// ModelServiceTier 是某运行时为模型宣传的一种“原生执行档位”（对应前端的速度/speed 选择器）。
-// ID 会原样送回提供方协议；Name/Description 是该运行时目录自带的展示文案。
+// UnavailableModel is a model the runtime named but will not run on this host —
+// today only Claude Code, reporting one that needs a newer CLI than the
+// installed one. Reason is the runtime's own remedy ("Update to 2.1.255+ to use
+// Fable 5.1"), forwarded verbatim so the copy stays right without Multica
+// tracking upstream version floors.
+//
+// It is a distinct type, and travels in a distinct list, precisely so it can
+// never be mistaken for something selectable. Marking such a row with a flag
+// inside the models list was the first attempt and it was wrong twice over:
+// every consumer that did not learn the flag (the inspector picker, the agent
+// builder) kept offering it, and — the part a flag cannot fix — an already
+// installed desktop client does not know the field at all, so it would render
+// the row as an ordinary model and persist a model id the CLI rejects. Keeping
+// the two lists separate makes old clients correct by construction, since they
+// only ever read `models` (MUL-6961).
+type UnavailableModel struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Reason is display copy, not a machine contract: it comes from the
+	// runtime and may be empty when it offered none.
+	Reason string `json:"reason,omitempty"`
+}
+
+// ModelServiceTier is one runtime-native execution tier advertised for a
+// model. ID is sent back to the provider protocol unchanged; Name and
+// Description are display copy owned by the runtime catalog.
 type ModelServiceTier struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -94,7 +118,13 @@ type ThinkingLevel struct {
 // Catalog 是一轮模型发现的结果：要展示的模型列表，以及它们是否真的是动态发现到的。
 type Catalog struct {
 	Models []Model
-	// Fallback 表示这次发现并未成功，Models 只是静态替身，不是运行时的真实目录。
+	// Unavailable carries models the runtime named but will not run here. It is
+	// deliberately NOT part of Models: every capability lookup in this package
+	// walks Models, so keeping these out is what makes an unrunnable model fail
+	// closed everywhere without each lookup having to remember a flag.
+	Unavailable []UnavailableModel
+	// Fallback reports that discovery did not succeed and Models is a static
+	// stand-in rather than the runtime's real catalog.
 	//
 	// 背景：若干提供方（codebuddy、copilot、cursor、grok）在发现失败时会退一份内置列表，好让
 	// 下拉框仍有内容可展示。作为 UI 兜底说得通，但拿去持久化就是灾难：它不是运行时真正支持的
@@ -102,6 +132,27 @@ type Catalog struct {
 	// ID。因此调用方绝不能把 fallback 目录当权威——尤其不能让它进入服务端按天粒度的模型目录
 	// 缓存，那会把一次瞬时失败固化成 24 小时的答案（MUL-5549）。
 	Fallback bool
+	// CLIThinkingLevels is the effort vocabulary the installed binary itself
+	// accepts, read from the binary (claude's `--help`) rather than from any
+	// model list. nil means it is unknown; a non-nil empty slice means the
+	// binary has no effort flag at all.
+	//
+	// It is the one capability an unverified catalog still enforces: it
+	// describes the executable, not a guess about models, so it holds whether
+	// or not discovery succeeded (MUL-7691).
+	CLIThinkingLevels []string
+}
+
+// Verified reports whether the catalog is the runtime's own answer, and so may
+// be used to reject, rewrite, or drop a saved model, thinking level, or
+// service tier.
+//
+// A fallback is a static stand-in for a discovery that failed, and an empty
+// catalog is what the providers without one return in the same situation.
+// Both mean "unknown", not "unsupported": the saved value goes to the CLI
+// as-is and the CLI is the judge (MUL-7691).
+func (c Catalog) Verified() bool {
+	return !c.Fallback && len(c.Models) > 0
 }
 
 // discovered 把朴素的 `([]Model, error)` 发现函数适配成 Catalog——供那些没有静态兜底的提供方
@@ -113,8 +164,9 @@ func discovered(models []Model, err error) (Catalog, error) {
 // modelCacheEntry 是 modelCache 里的一条记忆化记录：本次发现到的模型列表 + 过期时间。
 // 见 ListModels 文件导读里“短 TTL 缓存”约定。
 type modelCacheEntry struct {
-	models    []Model
-	expiresAt time.Time
+	models      []Model
+	unavailable []UnavailableModel
+	expiresAt   time.Time
 }
 
 // modelCacheMu 保护下面的 modelCache 全局 map（ListModels 可能被并发请求同时调用）。
@@ -155,14 +207,12 @@ func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (C
 	}
 	switch providerType {
 	case "claude":
-		models := claudeStaticModels()
-		annotateClaudeThinking(ctx, models, runtimeCmd)
-		// Claude 的目录是“设计上就是静态”，而非“发现失败退回静态”：根本没有发现步骤可回退，
-		// 所以这里的结果是权威的。
-		return Catalog{Models: models}, nil
+		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
+			return discoverClaudeCatalog(ctx, runtimeCmd), nil
+		})
 	case "codex":
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverCodexModels(ctx, runtimeCmd), nil)
+			return discoverCodexCatalog(ctx, runtimeCmd), nil
 		})
 	case "antigravity":
 		// agy 1.0.6 起新增了 `--model` 参数和 `agy models` 目录命令（MUL-3125）。和其余
@@ -308,9 +358,10 @@ func ModelSelectorMustBeProviderQualified(providerType string) bool {
 // 把握定位的值必须逐字到达 CLI；CLI 自己的解析器比这里的猜测判断得更准。
 func QualifyModelID(catalog Catalog, model string) (string, bool) {
 	model = strings.TrimSpace(model)
-	// fallback 目录是静态替身，不是运行时真正支持的列表（见 Catalog.Fallback）——拿它做限定
-	// 会把一个能正常工作的 ID 改写成 CLI 从未宣传过的值。
-	if model == "" || catalog.Fallback {
+	// A fallback catalog is a static stand-in, not what the runtime actually
+	// supports (see Catalog.Verified) — qualifying against it would rewrite a
+	// working id into one the CLI never advertised.
+	if model == "" || !catalog.Verified() {
 		return model, false
 	}
 	for _, m := range catalog.Models {
@@ -371,11 +422,17 @@ func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 		return false
 	}
 
-	accepted, ok := acceptedModelIDsForProvider(providerType)
-	if !ok {
-		return false
-	}
-	if accepted[modelIDForCapabilityLookup(providerType, model)] {
+	lookupID := modelIDForCapabilityLookup(providerType, model)
+	switch providerType {
+	case "claude":
+		if strings.HasPrefix(lookupID, "claude-") && !strings.ContainsAny(lookupID, "[]") {
+			return false
+		}
+	case "codex":
+		if strings.HasPrefix(lookupID, "gpt-") || isOpenAIReasoningSeriesID(lookupID) {
+			return false
+		}
+	default:
 		return false
 	}
 	return isRuntimeSpecificModelID(model)
@@ -396,39 +453,11 @@ func modelIDForCapabilityLookup(providerType, model string) string {
 	return claudeContextWindowTagRe.ReplaceAllString(model, "")
 }
 
-// acceptedModelIDsForProvider 返回该 provider“静态目录里可接受的模型 ID”集合；第二个返回值
-// 表示该 provider 是否在“已知兼容性精确判断”的名单里（目前只有 claude/codex 有维护中的静态
-// 目录，其余 provider 一律 ok=false）。
-func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {
-	switch {
-	case providerType == "claude":
-		return modelIDSet(claudeStaticModels()), true
-	case providerType == "codex":
-		return modelIDSet(codexStaticModels()), true
-	default:
-		return nil, false
-	}
-}
-
-// modelIDSet 把模型列表压成一个以 ID 为键的集合，方便 O(1) 查成员。
-func modelIDSet(models []Model) map[string]bool {
-	out := make(map[string]bool, len(models))
-	for _, m := range models {
-		out[m.ID] = true
-	}
-	return out
-}
-
-// isRuntimeSpecificModelID 判断一个模型 ID 是否明显属于“某个运行时专属 ID”而不是用户自定义
-// 自由文本：带 `/`（provider 限定）、命中已知前缀（claude-/gpt-/gemini-…）或正好落在
-// claude/codex 静态目录里都算。
 func isRuntimeSpecificModelID(model string) bool {
 	if strings.Contains(model, "/") {
 		return true
 	}
-	return modelHasKnownPrefix(model) ||
-		modelIDSet(claudeStaticModels())[model] ||
-		modelIDSet(codexStaticModels())[model]
+	return modelHasKnownPrefix(model)
 }
 
 // modelHasKnownPrefix 判断 ID 是否命中已知的模型厂商前缀。命中即认为“眼熟”，用于区分用户随手
@@ -446,9 +475,9 @@ func modelHasKnownPrefix(model string) bool {
 func cachedDiscovery(key string, fn func() (Catalog, error)) (Catalog, error) {
 	modelCacheMu.Lock()
 	if entry, ok := modelCache[key]; ok && time.Now().Before(entry.expiresAt) {
-		out := entry.models
+		out, unavailable := entry.models, entry.unavailable
 		modelCacheMu.Unlock()
-		return Catalog{Models: out}, nil
+		return Catalog{Models: out, Unavailable: unavailable}, nil
 	}
 	modelCacheMu.Unlock()
 
@@ -469,7 +498,11 @@ func cachedDiscovery(key string, fn func() (Catalog, error)) (Catalog, error) {
 	}
 
 	modelCacheMu.Lock()
-	modelCache[key] = modelCacheEntry{models: catalog.Models, expiresAt: time.Now().Add(modelCacheTTL)}
+	modelCache[key] = modelCacheEntry{
+		models:      catalog.Models,
+		unavailable: catalog.Unavailable,
+		expiresAt:   time.Now().Add(modelCacheTTL),
+	}
 	modelCacheMu.Unlock()
 	return catalog, nil
 }

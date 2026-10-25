@@ -36,17 +36,15 @@ export function useScrollFade(
 
     // 没有溢出就不需要遮罩
     if (scrollable <= 0) {
-      setFade("none");
+      setFade((current) => current === "none" ? current : "none");
       return;
     }
 
     const atStart = position <= 1;
     const atEnd = position >= scrollable - 1;
 
-    if (atStart && atEnd) setFade("none");
-    else if (atStart) setFade("end");
-    else if (atEnd) setFade("start");
-    else setFade("both");
+    const next = atStart && atEnd ? "none" : atStart ? "end" : atEnd ? "start" : "both";
+    setFade((current) => current === next ? current : next);
   }, [axis, ref]);
 
   useEffect(() => {
@@ -54,20 +52,25 @@ export function useScrollFade(
     if (!el) return;
 
     // 下一帧先同步一次，避免初次进入时遮罩缺位
-    const frame = requestAnimationFrame(update);
+    let frame: number | null = null;
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => { frame = null; update(); });
+    };
+    schedule();
 
     el.addEventListener("scroll", update, { passive: true });
-    const ro = new ResizeObserver(update);
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
     // ResizeObserver 只在容器自身尺寸变化时触发。当子内容在 flex / 自适应
     // 高度的父级里变高时，滚动范围会变大但视口不变——遮罩会一直是 "none"
     // 直到用户滚动一下。MutationObserver 监听 childList 可以捕获这类内容
     // 插入。
-    const mo = new MutationObserver(update);
+    const mo = new MutationObserver(schedule);
     mo.observe(el, { childList: true, subtree: true });
 
     return () => {
-      cancelAnimationFrame(frame);
+      if (frame !== null) cancelAnimationFrame(frame);
       el.removeEventListener("scroll", update);
       ro.disconnect();
       mo.disconnect();

@@ -129,6 +129,12 @@ describe("Settings IntegrationsTab", () => {
     expect(new Set(shapes).size).toBe(shapes.length);
   });
 
+  it("hides Composio when its configured capability is unavailable", () => {
+    composioErrorRef.current = new ApiError("unavailable",403,"Forbidden",{code:"composio_not_configured"});
+    renderTab();
+    expect(screen.queryByTestId("composio-tab")).toBeNull();
+  });
+
   it("hides Composio when the feature flag is on but the server reports 503", () => {
     composioErrorRef.current = new ApiError("unavailable", 503, "Service Unavailable");
 

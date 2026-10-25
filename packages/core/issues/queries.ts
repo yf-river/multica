@@ -438,9 +438,11 @@ export function issueDetailOptions(wsId: string, id: string) {
 export function issueIdentifierOptions(wsId: string, identifier: string) {
   return queryOptions({
     queryKey: issueKeys.identifier(wsId, identifier),
-    queryFn: async ({ signal }) => {
+    // Keep this small, cacheable lookup alive when the last mention unmounts.
+    // A remount can then share its request instead of aborting and restarting it.
+    queryFn: async () => {
       try {
-        return await api.getIssue(identifier, { signal });
+        return await api.getIssue(identifier);
       } catch (err) {
         // 标识符不存在或工作区前缀不对（404）→ 当作纯文本渲染，不报错。
         // 其它任何失败（401/5xx/取消）都必须继续向上抛，让查询被重试或取消，

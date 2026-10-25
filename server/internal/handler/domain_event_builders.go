@@ -333,6 +333,10 @@ func buildInvitationDomainEvent(eventType string, invitation db.WorkspaceInvitat
 // 使用的响应形状一致。keySuffix 携带被改动行的版本或子行 id：两个不同的改动即使类型与
 // action 相同，也会因 keySuffix 不同而成为两条独立事件，不会并成一条 outbox 记录。
 func buildAutopilotDomainEvent(eventType string, autopilot db.Autopilot, actorType, actorID, action, keySuffix string, payload map[string]any) events.Event {
+	// 持久事件会推送整个工作区，webhook 凭据只可经鉴权后的 HTTP 响应返回。
+	if trigger, ok := payload["trigger"].(AutopilotTriggerResponse); ok {
+		payload["trigger"] = broadcastAutopilotTriggerResponse(trigger)
+	}
 	if payload == nil {
 		payload = map[string]any{}
 	}

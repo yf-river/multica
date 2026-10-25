@@ -150,6 +150,8 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 
 	d.logger.Info("task wakeup websocket connected", "runtimes", len(runtimeIDs))
 	signalTaskWakeup(taskWakeups, "")
+	// 连接恢复后唤醒持久化回传队列。
+	d.signalTerminalReportReplay()
 	// signalTaskWakeup 只唤醒空闲的 ClaimTask 轮询器。在途任务与 workspace 同步循环
 	// 是挂在粗粒度 ticker（5s 与 30s）上、观察不到唤醒 channel 的，因此 WS 断线期间
 	// 服务器改了什么——任务取消或 runtime 更新——在下一 tick 前对它们都不可见。
@@ -393,6 +395,17 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 				d.logger.Debug("task wakeup received", "runtime_id", payload.RuntimeID, "task_id", payload.TaskID)
 			}
 			signalTaskWakeup(taskWakeups, payload.RuntimeID)
+		case protocol.EventDaemonTaskSupplementAvailable:
+			var payload protocol.TaskAvailablePayload
+			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+				d.logger.Debug("task supplement websocket invalid payload", "error", err)
+				continue
+			}
+			if payload.TaskID == "" {
+				d.logger.Debug("task supplement websocket missing task_id")
+				continue
+			}
+			d.taskSupplementSignals.notify(payload.TaskID)
 		case protocol.EventDaemonRuntimeProfilesChanged:
 			var payload protocol.RuntimeProfilesChangedPayload
 			if err := json.Unmarshal(msg.Payload, &payload); err != nil {

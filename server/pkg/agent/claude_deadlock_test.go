@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 	switch mode := os.Getenv("CLAUDE_FAKE_MODE"); mode {
 	case "":
 		os.Exit(m.Run())
+	case "usage_fixture":
+		runFakeClaudeUsageFixture()
+		os.Exit(0)
 	case "startup_stdout_burst":
 		runFakeClaudeStartupStdoutBurst()
 		os.Exit(0)

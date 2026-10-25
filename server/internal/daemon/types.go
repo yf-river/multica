@@ -62,18 +62,6 @@ type ProjectResourceData struct {
 // runtime 应用元数据包共用同一份权威 JSON 形状。
 type ConnectedAppData = runtimeapps.ConnectedApp
 
-// ActiveSiblingRunData 镜像服务器在 claim 时返回的告警上下文：同一个 agent 名下
-// 另一个正在执行中的 issue 任务。排队中的任务被有意排除在这个上下文之外。
-type ActiveSiblingRunData struct {
-	TaskID          string `json:"task_id"`
-	IssueID         string `json:"issue_id"`
-	IssueIdentifier string `json:"issue_identifier"`
-	IssueTitle      string `json:"issue_title"`
-	Status          string `json:"status"`
-	CreatedAt       string `json:"created_at"`
-	StartedAt       string `json:"started_at,omitempty"`
-}
-
 // DeliveryContextData 镜像 claim 载荷里的交付上下文：阶段、候选、分配到的验收环境、
 // 当前种子和所在批次。镜像字段：internal/handler/agent.go 的同名结构。
 type DeliveryContextData struct {
@@ -105,17 +93,20 @@ type IssueStatusData struct {
 type Task struct {
 	ReviewCommit string `json:"review_commit,omitempty"`
 	// 工作区调查开关控制额外会话证据提取。
-	CaptureExecutionEvidence bool                   `json:"capture_execution_evidence,omitempty"`
-	ReleaseResumeTaskID      string                 `json:"release_resume_task_id,omitempty"`
-	ReleaseResumeRoot        string                 `json:"release_resume_root,omitempty"`
-	ID                       string                 `json:"id"`
-	AgentID                  string                 `json:"agent_id"`
-	RuntimeID                string                 `json:"runtime_id"`
-	IssueID                  string                 `json:"issue_id"`
-	WorkspaceID              string                 `json:"workspace_id"`
-	WorkspaceSlug            string                 `json:"workspace_slug,omitempty"`
-	IssueIdentifier          string                 `json:"issue_identifier,omitempty"`
-	RemoteMCPConnections     []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
+	CaptureExecutionEvidence bool   `json:"capture_execution_evidence,omitempty"`
+	ReleaseResumeTaskID      string `json:"release_resume_task_id,omitempty"`
+	ReleaseResumeRoot        string `json:"release_resume_root,omitempty"`
+	// StartClaimSupported gates retries when talking to older servers.
+	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
+	DispatchedAt         string                 `json:"dispatched_at,omitempty"`
+	ID                   string                 `json:"id"`
+	AgentID              string                 `json:"agent_id"`
+	RuntimeID            string                 `json:"runtime_id"`
+	IssueID              string                 `json:"issue_id"`
+	WorkspaceID          string                 `json:"workspace_id"`
+	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
+	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
+	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
 	// RemoteMCPDaemonToken 只留在 daemon 内部，用于给本地 broker 的凭证解析调用
 	// 做鉴权。它绝不能进入 agent 的环境变量或配置。
 	RemoteMCPDaemonToken string `json:"remote_mcp_daemon_token,omitempty"`
@@ -132,18 +123,17 @@ type Task struct {
 	// 每个状态的 key/name/category/description，已按目录顺序排好。会被渲染进
 	// brief 的状态命令那几行；为空时（包括从没发过该字段的老服务器）brief 仍与
 	// 只用内置状态的形态逐字节一致。IssueStatusesOmitted 是超出容量被丢弃的个数。
-	IssueStatuses        []IssueStatusData      `json:"issue_statuses,omitempty"`
-	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
-	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
-	DeliveryContext      *DeliveryContextData   `json:"delivery_context,omitempty"`
-	ThreadName           string                 `json:"thread_name,omitempty"` // 给 provider 原生会话/线程历史用的语义化标题
-	Agent                *AgentData             `json:"agent,omitempty"`
-	ConnectedApps        []ConnectedAppData     `json:"connected_apps,omitempty"` // 本次运行通过 runtime MCP overlays 挂载的每运行应用能力
-	Repos                []RepoData             `json:"repos,omitempty"`
-	ProjectID            string                 `json:"project_id,omitempty"`          // 本任务所在的活动项目（若有）
-	ProjectTitle         string                 `json:"project_title,omitempty"`       // 人类可读的项目标题，用于注入上下文
-	ProjectDescription   string                 `json:"project_description,omitempty"` // 持久化的项目级上下文，注入 brief
-	ProjectResources     []ProjectResourceData  `json:"project_resources,omitempty"`   // 需要暴露给 agent 的项目级资源
+	IssueStatuses        []IssueStatusData     `json:"issue_statuses,omitempty"`
+	IssueStatusesOmitted int                   `json:"issue_statuses_omitted,omitempty"`
+	DeliveryContext      *DeliveryContextData  `json:"delivery_context,omitempty"`
+	ThreadName           string                `json:"thread_name,omitempty"` // 给 provider 原生会话/线程历史用的语义化标题
+	Agent                *AgentData            `json:"agent,omitempty"`
+	ConnectedApps        []ConnectedAppData    `json:"connected_apps,omitempty"` // 本次运行通过 runtime MCP overlays 挂载的每运行应用能力
+	Repos                []RepoData            `json:"repos,omitempty"`
+	ProjectID            string                `json:"project_id,omitempty"`          // 本任务所在的活动项目（若有）
+	ProjectTitle         string                `json:"project_title,omitempty"`       // 人类可读的项目标题，用于注入上下文
+	ProjectDescription   string                `json:"project_description,omitempty"` // 持久化的项目级上下文，注入 brief
+	ProjectResources     []ProjectResourceData `json:"project_resources,omitempty"`   // 需要暴露给 agent 的项目级资源
 	// WorkspaceRepos 是 workspace 级本地目录（与项目无关），用于在运行结束后发现
 	// agent 在任务目录之外新建的 worktree。镜像 handler.WorkspaceRepoData。
 	WorkspaceRepos []WorkspaceRepoData `json:"workspace_repos,omitempty"`

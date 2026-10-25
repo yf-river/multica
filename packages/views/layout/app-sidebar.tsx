@@ -65,7 +65,7 @@ import { useCurrentWorkspace, useWorkspacePaths, paths } from "@multica/core/pat
 import { workspaceListOptions, myInvitationListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { inboxKeys, deduplicateInboxItems, inboxUnreadSummaryOptions, hasOtherWorkspaceUnread, unreadWorkspaceIds } from "@multica/core/inbox/queries";
+import { inboxUnreadSummaryEnabled, useInboxUnreadCount, inboxUnreadSummaryOptions, hasOtherWorkspaceUnread, unreadWorkspaceIds } from "@multica/core/inbox/queries";
 import { api, ApiError } from "@multica/core/api";
 import { useConfigStore } from "@multica/core/config";
 import { pinListOptions } from "@multica/core/pins/queries";
@@ -104,7 +104,6 @@ function isNavActive(pathname: string, href: string): boolean {
 const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INVITATIONS: Awaited<ReturnType<typeof api.listMyInvitations>> = [];
-const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 const EMPTY_INBOX_SUMMARY: Awaited<ReturnType<typeof api.getInboxUnreadSummary>> = [];
 
 // 导航项引用 WorkspacePaths 的方法名，以便在渲染时针对当前工作区 slug 解析
@@ -466,20 +465,12 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   }, [pathname, setOpenMobile]);
 
   const wsId = workspace?.id;
-  const { data: inboxItems = EMPTY_INBOX } = useQuery({
-    queryKey: wsId ? inboxKeys.list(wsId) : ["inbox", "disabled"],
-    queryFn: () => api.listInbox(),
-    enabled: !!wsId,
-  });
-  const unreadCount = React.useMemo(
-    () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
-    [inboxItems],
-  );
+  const unreadCount = useInboxUnreadCount(wsId);
   // 跨工作区未读汇总支撑工作区切换器上的红点。所有工作区共用一个缓存条目；
   // 以「存在活动工作区」为门控，因为该端点要经过工作区成员中间件解析。
   const { data: unreadSummary = EMPTY_INBOX_SUMMARY } = useQuery({
     ...inboxUnreadSummaryOptions(),
-    enabled: !!wsId,
+    enabled: inboxUnreadSummaryEnabled(wsId),
   });
   const otherWorkspaceUnread = React.useMemo(
     () => hasOtherWorkspaceUnread(unreadSummary, wsId),
@@ -568,10 +559,20 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
         push(paths.workspace(joined.slug).issues());
       }
     },
+    onError: () => {
+      // "invitation is not pending" means the invite was concluded from
+      // another surface while this row was on screen. Refetch so the stale
+      // row drops instead of sticking around until restart — a silent
+      // failure here reads as "the button does nothing".
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
+    },
   });
   const declineInvitationMut = useMutation({
     mutationFn: (id: string) => api.declineInvitation(id),
-    onSuccess: () => {
+    // Either outcome must refresh the list: success drops the declined row,
+    // and a failure ("invitation is not pending") means the invite was
+    // concluded from another surface — refetch drops the stale row.
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
     },
   });

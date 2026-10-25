@@ -762,9 +762,11 @@ export const EMPTY_ISSUE_PROPERTIES_RESPONSE: IssuePropertiesResponse = {
 /** 应用级配置（CDN、登录、遥测、daemon 地址、功能开关、能力信号等）。 */
 export interface AppConfigResponse {
   cdn_domain: string;
-  // 为 true 表示 CDN 域名通过限时签名 URL（CloudFront 签名）提供私密内容——
-  // 该域名下的裸存储 URL 不能公开访问，绝不能用作原生媒体源（MUL-3254）。
-  // 旧服务器会省略该字段；按 false 处理。
+  attachment_public_url?: string;
+  // True when the CDN domain serves private content via time-bounded signed
+  // URLs (CloudFront signing) — raw storage URLs on that domain are NOT
+  // publicly fetchable and must not be used as native media sources
+  // (MUL-3254). Older servers omit the field; treat that as false.
   cdn_signed?: boolean;
   allow_signup: boolean;
   google_client_id?: string;
@@ -787,6 +789,11 @@ export interface AppConfigResponse {
   /** 服务器是否在创建/更新 agent 时持久化 `conversation_starters`。旧服务器会静默
    * 忽略未知字段，所以字段缺失必须当作 false。 */
   agent_conversation_starters_supported?: boolean;
+  issue_create_properties_supported?: boolean;
+  /** Whether deleting a comment keeps its replies and the server routes
+   * DELETE /api/comments/{id}/keep-replies. Older servers deleted the replies
+   * too, so absent must be treated as false (#8296). */
+  comment_delete_keep_replies_supported?: boolean;
   server_version?: string;
   environment_name?: string;
   environment_id?: string;
@@ -926,6 +933,8 @@ const TimelineEntrySchema = z.object({
   actor_type: z.string(),
   actor_id: z.string(),
   created_at: z.string(),
+  actor_name: z.string().optional(),
+  actor_avatar_url: z.string().optional(),
   action: z.string().optional(),
   details: z.record(z.string(), z.unknown()).optional(),
   content: z.string().optional(),
@@ -936,6 +945,13 @@ const TimelineEntrySchema = z.object({
   reactions: z.array(ReactionSchema).optional(),
   attachments: z.array(AttachmentSchema).optional(),
   source_task_id: z.string().nullable().optional(),
+  supplement_task_id: z.string().optional().catch(undefined),
+  supplement_status: z.enum(["pending", "delivering", "delivered", "failed"]).optional().catch(undefined),
+  supplement_failure_reason: z.string().optional().catch(undefined),
+  supplement_delivered_at: z.string().optional().catch(undefined),
+  // Tombstone marker (#8296). Lenient: a malformed value reads as a live
+  // comment instead of failing the whole timeline.
+  deleted_at: z.string().nullable().optional().catch(undefined),
   coalesced_count: z.number().optional(),
 }).loose();
 
@@ -969,9 +985,45 @@ const FeatureFlagsSchema = z.preprocess(
   z.record(z.string(), BooleanWithDefaultSchema(false)).default({}),
 );
 
-/** 校验应用级配置响应（与上方 AppConfigResponse 接口同形状的运行时版本）。 */
+/**
+ * POST /api/auth/refresh — sliding session renewal (MUL-7436).
+ *
+ * `token` is present only for clients that carry the session as a string
+ * (Desktop, mobile). A cookie-authenticated browser gets the renewed session
+ * as a Set-Cookie and must never be handed a readable JWT, so the field is
+ * absent there rather than empty.
+ *
+ * `renewed: false` is the normal answer to asking early, not an error —
+ * clients poll on a cadence and most calls land outside the renewal window.
+ * `check_again_in_seconds` is that cadence: the server derives it from the
+ * deployment's configured TTL, so no client hardcodes one.
+ */
+export interface RefreshSessionResponse {
+  token?: string;
+  expires_at: string;
+  renewed: boolean;
+  check_again_in_seconds: number;
+}
+
+export const RefreshSessionResponseSchema = z.object({
+  token: OptionalStringSchema,
+  expires_at: OptionalStringSchema,
+  renewed: BooleanWithDefaultSchema(false),
+  check_again_in_seconds: z.number().int().nonnegative().default(0),
+}).loose();
+
+// Fail closed: an unreadable response means "nothing was renewed", so the
+// client keeps the session it already has and retries later. A fallback that
+// claimed renewal would drop a working session on the floor.
+export const EMPTY_REFRESH_SESSION_RESPONSE: RefreshSessionResponse = {
+  expires_at: "",
+  renewed: false,
+  check_again_in_seconds: 0,
+};
+
 export const AppConfigSchema = z.object({
   cdn_domain: z.string().default(""),
+  attachment_public_url: OptionalStringSchema,
   cdn_signed: BooleanWithDefaultSchema(false),
   allow_signup: BooleanWithDefaultSchema(true),
   google_client_id: OptionalStringSchema,
@@ -985,6 +1037,8 @@ export const AppConfigSchema = z.object({
   feature_flags: FeatureFlagsSchema,
   local_worktree_supported: BooleanWithDefaultSchema(false),
   agent_conversation_starters_supported: BooleanWithDefaultSchema(false),
+  issue_create_properties_supported: BooleanWithDefaultSchema(false),
+  comment_delete_keep_replies_supported: BooleanWithDefaultSchema(false),
   server_version: OptionalStringSchema,
   environment_name: OptionalStringSchema,
   environment_id: OptionalStringSchema,
@@ -993,6 +1047,7 @@ export const AppConfigSchema = z.object({
 /** 应用级配置的空值兜底。 */
 export const EMPTY_APP_CONFIG: AppConfigResponse = {
   cdn_domain: "",
+  attachment_public_url: "",
   cdn_signed: false,
   allow_signup: true,
   google_client_id: "",
@@ -1004,6 +1059,9 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   local_worktree_supported: false,
   // 失败时闭锁：旧服务器当年是丢弃该字段却返回成功。
   agent_conversation_starters_supported: false,
+  issue_create_properties_supported: false,
+  // Fail closed: old servers delete a comment's replies with it.
+  comment_delete_keep_replies_supported: false,
   feature_flags: {},
 };
 
@@ -1035,8 +1093,13 @@ export const CommentSchema = z.object({
   updated_at: z.string(),
   revision: z.number().int().positive().optional(),
   source_task_id: z.string().nullable().optional(),
-  // 仅快捷指令产出的评论才设置（MUL-5465）。服务端专属，前端只读不回写。
+  supplement_task_id: z.string().optional().catch(undefined),
+  supplement_status: z.enum(["pending", "delivering", "delivered", "failed"]).optional().catch(undefined),
+  supplement_failure_reason: z.string().optional().catch(undefined),
+  supplement_delivered_at: z.string().optional().catch(undefined),
+  // Set only on comments a quick action produced (MUL-5465). Server-only.
   quick_action_id: z.string().nullable().optional(),
+  deleted_at: z.string().nullable().optional().catch(undefined),
 }).loose();
 
 /** 校验评论列表（直接是评论数组）。 */
@@ -1172,6 +1235,7 @@ const SourceContextCommentSnapshotSchema = z.object({
   updated_at: z.string(),
   revision: z.number(),
   attachments: SourceContextAttachmentsSchema,
+  deleted: z.boolean().optional().catch(undefined),
 }).loose();
 
 /** 校验「来源上下文」快照：被引用 issue/评论线程的只读副本 + 锚点。 */
@@ -1654,6 +1718,7 @@ const DashboardAgentRunTimeSchema = z.object({
   agent_id: z.string().default(""),
   total_seconds: z.number().default(0),
   task_count: z.number().default(0),
+  metered_task_count: z.number().optional().catch(undefined),
   failed_count: z.number().default(0),
   cancelled_count: z.number().default(0),
 }).loose();
@@ -1844,6 +1909,9 @@ export const AgentTaskSchema = z.object({
   // 抹掉整条执行日志，所以让该字段独立降级为「缺失」。
   coalesced_comment_ids: OptionalStringArraySchema,
   delivered_comment_ids: OptionalStringArraySchema,
+  supplement_capability: z.string().optional().catch(undefined),
+  supplement_comment_ids: OptionalStringArraySchema,
+  can_supplement: z.boolean().optional().catch(undefined),
   trigger_summary: z.string().optional(),
   handoff_note: z.string().optional(),
   kind: z.string().optional(),
@@ -1859,16 +1927,44 @@ export const AgentTaskSchema = z.object({
   usage: z.array(TaskUsageSchema).optional().catch(undefined),
 }).loose();
 
-/** 校验 agent 任务列表（直接是数组）。 */
+// Outcome counts are required: every backend that serves this endpoint
+// reports them, so a response missing them is a contract drift, not an
+// older peer. `parseWithFallback` then degrades the whole list to `[]`
+// rather than letting a partial window masquerade as measured outcomes.
+export const AgentActivityBucketListSchema = z.array(z.object({
+  agent_id: z.string(),
+  bucket_at: z.string(),
+  task_count: z.number().int().nonnegative(),
+  failed_count: z.number().int().nonnegative(),
+  completed_count: z.number().int().nonnegative(),
+  cancelled_count: z.number().int().nonnegative(),
+  duration_ms: z.number().nonnegative().optional().catch(undefined),
+  duration_count: z.number().int().nonnegative().optional().catch(undefined),
+}).loose());
+
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
-// 任务消息负载：任务执行过程中产生的一则消息（文本/思考/工具调用等）。
+export const AgentTaskPageSchema = z.object({
+  tasks: AgentTaskListSchema,
+  nextCursor: z.string().min(1).nullable(),
+});
+
+// One row of a run transcript. `output_truncated` gates a completeness claim
+// the UI makes about a tool's output, so it stays `.optional()` with no
+// default: a server that does not send it means "unknown", and defaulting it
+// to false would turn a missing field into an assertion that the record is
+// complete. `.catch(undefined)` keeps a malformed value that far too — without
+// it a single bad boolean fails its row, the array fails with it, and
+// `parseWithFallback` hands the viewer an empty transcript. Degrading one
+// field to "unknown" is the correct loss; deleting the run is not. Every other
+// field keeps a default for the same reason.
 export const TaskMessagePayloadSchema = z.object({
   id: z.string().optional(),
   output_chars: z.number().optional(),
   output_truncated: z.boolean().optional(),
   task_id: z.string(),
   issue_id: z.string().optional().default(""),
+  call_id: z.string().optional().catch(undefined),
   chat_session_id: z.string().optional(),
   seq: z.number(),
   type: z.enum(["text", "thinking", "tool_use", "tool_result", "error"]),
@@ -2425,7 +2521,17 @@ export const DuplicateIssueErrorBodySchema = z.object({
   }).loose(),
 }).loose();
 
-/** 「创建 issue 撞到活跃重复项」错误体的 TS 类型。 */
+// A destructive confirmation must fail closed on an incomplete plan. Do not
+// default missing arrays to empty or silently discard malformed entries.
+export const RuntimeAccessRevocationPlanSchema = z.object({
+  code: z.enum(["runtime_has_nonowner_dependents", "runtime_access_revocation_plan_changed"]),
+  nonowner_agents: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
+  active_task_ids: z.array(z.string().uuid()),
+}).refine((body) =>
+  new Set(body.nonowner_agents.map((agent) => agent.id)).size === body.nonowner_agents.length &&
+  new Set(body.active_task_ids).size === body.active_task_ids.length,
+).transform((body) => ({ agents: body.nonowner_agents, activeTaskIds: body.active_task_ids }));
+
 export interface DuplicateIssueErrorBody {
   code: "active_duplicate_issue";
   error?: string;
@@ -2703,7 +2809,24 @@ export const InboxItemListSchema = z.array(
     .loose(),
 );
 
-/** 收件箱项列表的空值兜底。 */
+export const ArchivedInboxPageSchema = z.object({
+  items: InboxItemListSchema,
+  next_cursor: z.string().min(1).nullable(),
+  has_more: z.boolean(),
+}).refine((page) => page.has_more === (page.next_cursor !== null) &&
+  (!page.has_more || page.items.length > 0))
+  .transform((page) => ({ items: page.items, nextCursor: page.next_cursor, hasMore: page.has_more }));
+
+export const ArchivedInboxFacetsSchema = z.object({
+  statuses: z.record(z.string(), z.number().int().nonnegative()),
+  priorities: z.record(z.string(), z.number().int().nonnegative()),
+  actors: z.record(z.string(), z.number().int().nonnegative()),
+  unread_count: z.number().int().nonnegative(),
+}).transform((facets) => ({
+  statuses: facets.statuses, priorities: facets.priorities,
+  actors: facets.actors, unreadCount: facets.unread_count,
+}));
+
 export const EMPTY_INBOX_ITEMS: InboxItem[] = [];
 
 // ---------------------------------------------------------------------------
@@ -2756,12 +2879,24 @@ const RuntimeModelSchema = z.object({
   supports_explicit_standard_service_tier: z.boolean().optional(),
 }).loose();
 
-/** 校验模型发现请求记录：状态、可用模型、能力信号与缓存标记。 */
+// A row the runtime named but will not run (MUL-6961). Parsed from its own
+// top-level list, never from `models`, so nothing here can become a selectable
+// value. `id` is required for the same reason it is on RuntimeModelSchema — a
+// row without one cannot even be keyed in a list.
+const RuntimeUnavailableModelSchema = z.object({
+  id: z.string(),
+  label: z.string().default(""),
+  reason: z.string().optional(),
+}).loose();
+
 export const RuntimeModelListRequestSchema = z.object({
   id: z.string().default(""),
   runtime_id: z.string().default(""),
   status: z.string(),
   models: z.array(RuntimeModelSchema).optional(),
+  // Absent on any daemon or server older than the field, which simply means
+  // the picker shows no unavailable section.
+  unavailable_models: z.array(RuntimeUnavailableModelSchema).optional(),
   supported: z.boolean().default(true),
   error: z.string().optional(),
   created_at: z.string().default(""),

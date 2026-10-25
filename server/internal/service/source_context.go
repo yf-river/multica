@@ -156,6 +156,10 @@ type SourceContextCommentSnapshot struct {
 	UpdatedAt   string                    `json:"updated_at"`
 	Revision    int64                     `json:"revision"`
 	Attachments []SourceContextAttachment `json:"attachments"`
+	// Deleted marks a tombstone: a comment deleted while it still had replies,
+	// kept in the thread only so those replies keep their parent. Its Content
+	// is empty. Omitted otherwise, so existing snapshot digests are unchanged.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // SourceContextSnapshot 是完整捕获的不可变 JSON 快照：来源 issue + 锚点评论所在线程 + 元数据。
@@ -358,7 +362,7 @@ func buildSourceContextCommentSnapshots(
 			ID: commentID, ParentID: parentID, Type: row.Type, Content: row.Content,
 			Author:    SourceContextAuthor{Type: row.AuthorType, ID: util.UUIDToString(row.AuthorID), Name: authorName},
 			CreatedAt: sourceContextTime(row.CreatedAt), UpdatedAt: sourceContextTime(row.UpdatedAt), Revision: row.Revision,
-			Attachments: attachments,
+			Attachments: attachments, Deleted: row.DeletedAt.Valid,
 		})
 	}
 	return commentThread, commentAttachments, nil
@@ -425,6 +429,9 @@ func BuildSourceContext(ctx context.Context, q *db.Queries, workspaceID, anchorC
 	}
 	if err != nil {
 		return SourceContextBuild{}, fmt.Errorf("load anchor comment: %w", err)
+	}
+	if anchor.DeletedAt.Valid {
+		return SourceContextBuild{}, ErrAnchorCommentDeleted
 	}
 	if anchor.Type != "comment" {
 		return SourceContextBuild{}, ErrSourceContextInvalid

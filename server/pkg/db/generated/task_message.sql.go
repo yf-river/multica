@@ -12,9 +12,9 @@ import (
 )
 
 const createTaskMessage = `-- name: CreateTaskMessage :one
-INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, task_id, seq, type, tool, content, input, output, created_at
+INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, call_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, task_id, seq, type, tool, content, input, output, created_at, call_id
 `
 
 type CreateTaskMessageParams struct {
@@ -26,6 +26,7 @@ type CreateTaskMessageParams struct {
 	Content pgtype.Text `json:"content"`
 	Input   []byte      `json:"input"`
 	Output  pgtype.Text `json:"output"`
+	CallID  pgtype.Text `json:"call_id"`
 }
 
 func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessageParams) (TaskMessage, error) {
@@ -38,6 +39,7 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		arg.Content,
 		arg.Input,
 		arg.Output,
+		arg.CallID,
 	)
 	var i TaskMessage
 	err := row.Scan(
@@ -50,6 +52,7 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		&i.Input,
 		&i.Output,
 		&i.CreatedAt,
+		&i.CallID,
 	)
 	return i, err
 }
@@ -66,35 +69,41 @@ WITH incoming AS (
         unnest($2::int4[]) AS seq,
         unnest($3::text[]) AS type,
         unnest($4::text[]) AS tool,
-        unnest($5::text[]) AS content,
-        unnest($6::text[]) AS input,
-        unnest($7::text[]) AS output
+        unnest($5::text[]) AS call_id,
+        unnest($6::text[]) AS content,
+        unnest($7::text[]) AS input,
+        unnest($8::text[]) AS output,
+        unnest($9::text[]) AS created_at
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, call_id)
     SELECT
         m.id,
-        $8::uuid,
+        $10::uuid,
         m.seq,
         m.type,
         NULLIF(m.tool, ''),
         NULLIF(m.content, ''),
         NULLIF(m.input, '')::jsonb,
-        NULLIF(m.output, '')
+        NULLIF(m.output, ''),
+        COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
+        NULLIF(m.call_id, '')
     FROM incoming AS m
-    RETURNING id, task_id, seq, type, tool, content, input, output, created_at
+    RETURNING id, task_id, seq, type, tool, content, input, output, created_at, call_id
 )
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM inserted ORDER BY seq ASC
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, call_id FROM inserted ORDER BY seq ASC
 `
 
 type CreateTaskMessagesParams struct {
-	Ids      []pgtype.UUID `json:"ids"`
-	Seqs     []int32       `json:"seqs"`
-	Types    []string      `json:"types"`
-	Tools    []string      `json:"tools"`
-	Contents []string      `json:"contents"`
-	Inputs   []string      `json:"inputs"`
-	Outputs  []string      `json:"outputs"`
-	TaskID   pgtype.UUID   `json:"task_id"`
+	Ids        []pgtype.UUID `json:"ids"`
+	Seqs       []int32       `json:"seqs"`
+	Types      []string      `json:"types"`
+	Tools      []string      `json:"tools"`
+	CallIds    []string      `json:"call_ids"`
+	Contents   []string      `json:"contents"`
+	Inputs     []string      `json:"inputs"`
+	Outputs    []string      `json:"outputs"`
+	CreatedAts []string      `json:"created_ats"`
+	TaskID     pgtype.UUID   `json:"task_id"`
 }
 
 type CreateTaskMessagesRow struct {
@@ -107,6 +116,7 @@ type CreateTaskMessagesRow struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	CallID    pgtype.Text        `json:"call_id"`
 }
 
 // Batch variant of CreateTaskMessage: persists a whole daemon-reported batch in
@@ -129,7 +139,7 @@ type CreateTaskMessagesRow struct {
 // `pgtype.Text{Valid: x != ""}` mapping the single-row query carries — empty
 // string means SQL NULL. input is passed as text and cast here for the same
 // reason; it is the one column that genuinely has to be parsed as JSON, because
-// it is a jsonb column.
+// it is a jsonb column. created_at 使用可空文本传输；旧 Daemon 回退数据库时间。
 //
 // Callers MUST still run the Postgres text sanitizer first. A NUL anywhere in
 // the batch fails the whole statement (GH #7098) — that is inherent to batching
@@ -154,9 +164,11 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 		arg.Seqs,
 		arg.Types,
 		arg.Tools,
+		arg.CallIds,
 		arg.Contents,
 		arg.Inputs,
 		arg.Outputs,
+		arg.CreatedAts,
 		arg.TaskID,
 	)
 	if err != nil {
@@ -176,6 +188,7 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.CallID,
 		); err != nil {
 			return nil, err
 		}
@@ -214,7 +227,7 @@ func (q *Queries) GetTaskMessageOutput(ctx context.Context, arg GetTaskMessageOu
 }
 
 const listTaskMessages = `-- name: ListTaskMessages :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, call_id FROM task_message
 WHERE task_id = $1
 ORDER BY seq ASC
 `
@@ -238,6 +251,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.CallID,
 		); err != nil {
 			return nil, err
 		}
@@ -250,7 +264,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 }
 
 const listTaskMessagesSince = `-- name: ListTaskMessagesSince :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, call_id FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC
 `
@@ -279,6 +293,7 @@ func (q *Queries) ListTaskMessagesSince(ctx context.Context, arg ListTaskMessage
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.CallID,
 		); err != nil {
 			return nil, err
 		}

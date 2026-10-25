@@ -975,7 +975,7 @@ func (h *Handler) completeLifeCognitionJobInQueries(ctx context.Context, q *db.Q
 				Type: "life_companion", Severity: "info", Title: "搭子想和你聊聊",
 				Body:      pgtype.Text{String: strings.TrimSpace(decision.Message), Valid: true},
 				ActorType: pgtype.Text{String: "agent", Valid: true}, ActorID: scope.agentID, Details: details,
-			}); err != nil {
+			}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return db.LifeCognitionJob{}, err
 			}
 			if err := q.RecordLifeProactiveSpeech(ctx, db.RecordLifeProactiveSpeechParams{WorkspaceID: scope.workspaceID, UserID: scope.userID}); err != nil {

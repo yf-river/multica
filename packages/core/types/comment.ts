@@ -44,13 +44,21 @@ export interface Comment {
   // 打上此 id；折叠卡片按 id 而不是专门的 `type` 判断，因为 `type` 在通用评论
   // 端点上是客户端传入的，会被伪造。
   quick_action_id?: string | null;
-  // 本条评论里每个显式 @agent / @squad 提及的按目标结果（MUL-4525 §2）。
-  // 只在创建/编辑响应里出现；旧服务器省略它。
+  // Set only on a comment deleted while it still had replies (#8296): the
+  // server keeps an empty tombstone so the replies keep their parent. Older
+  // servers omit it.
+  deleted_at?: string | null;
+  // Per-target result of every explicit @agent / @squad mention in this comment
+  // (MUL-4525 §2). Present only on create/edit responses; older servers omit it.
   trigger_outcomes?: CommentTriggerOutcome[];
   // 回复托管审查员时，实际接收这条回复的人及其派发结果（GONG-63）。审查员只接受
   // 系统派发的审查任务，因此回复会转给任务当前负责人。只在创建/编辑响应里出现；
   // 旧服务器省略它。
   review_reply?: CommentReviewReply | null;
+  supplement_task_id?: string;
+  supplement_status?: "pending" | "delivering" | "delivered" | "failed";
+  supplement_failure_reason?: string;
+  supplement_delivered_at?: string;
 }
 
 // 单个被显式提及的触发目标的领域结果。「成功形态」的状态

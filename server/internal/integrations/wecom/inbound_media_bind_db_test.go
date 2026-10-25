@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,9 +43,12 @@ import (
 
 func mediaBindTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
+	if os.Getenv("DATABASE_URL") == "" && os.Getenv("MULTICA_TEST_DATABASE_URL") == "" {
+		t.Skip("需要显式的隔离测试数据库")
+	}
+	dsn, targetErr := dbfx.TestDatabaseURL()
+	if targetErr != nil {
+		t.Fatal(targetErr)
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -183,6 +187,11 @@ func (b *bindTestTasks) PromoteChannelChatTasksIfMediaReady(context.Context, pgt
 	b.promoted++
 	return nil
 }
+func (*bindTestTasks) MemberMayInvokeAgent(context.Context, pgtype.UUID, pgtype.UUID) (bool, error) {
+	// This rig is about media binding, not permission; the sender may run it.
+	return true, nil
+}
+
 func (*bindTestTasks) PromoteDeferredChannelIssueTask(context.Context, pgtype.UUID) error {
 	return nil
 }

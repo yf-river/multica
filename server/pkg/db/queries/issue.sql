@@ -97,6 +97,22 @@ SELECT id FROM issue
 WHERE id = $1 AND workspace_id = $2
 FOR KEY SHARE;
 
+-- name: LockIssueForAttachmentWrite :one
+-- Owner-first guard for a write to one of an issue's attachments: take the
+-- issue before the attachment row, so a writer that reaches the same row
+-- through the issue — teardown's issue_id cascade, or the revision bump this
+-- write itself performs — either waits for this transaction or is waited on,
+-- never both.
+--
+-- FOR NO KEY UPDATE, the mode of that revision bump, is the weakest mode that
+-- actually serializes issue writers. FOR KEY SHARE is NOT enough: it is
+-- compatible with FOR NO KEY UPDATE (see LockLiveComment), so a concurrent
+-- CreateComment would take the issue anyway, wait on the attachment this
+-- transaction holds, and deadlock with its bump.
+SELECT id FROM issue
+WHERE id = $1 AND workspace_id = $2
+FOR NO KEY UPDATE;
+
 -- name: LockIssueForDescriptionUpdate :one
 -- Serialize field-baseline checks and combined attachment binding on the
 -- owner row. The handler merges channel media that landed after the editor's
@@ -154,10 +170,10 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    stage, last_activity_at, id, work_started_at, work_completed_at
+    stage, properties, last_activity_at, id, work_started_at, work_completed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
+    sqlc.narg('stage'), COALESCE(sqlc.narg('properties')::jsonb, '{}'::jsonb), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
     CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
     CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING *;
@@ -313,10 +329,10 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id, stage, last_activity_at, id, work_started_at, work_completed_at
+    origin_type, origin_id, stage, properties, last_activity_at, id, work_started_at, work_completed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
+    sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage'), COALESCE(sqlc.narg('properties')::jsonb, '{}'::jsonb), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
     CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
     CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING *;
@@ -374,6 +390,12 @@ LIMIT 1;
 -- cross-tenant leak the #1661 guard above exists to prevent.
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
+),
+cleared_task_supplements AS (
+ DELETE FROM task_supplement WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_task_supplement_capabilities AS (
+ DELETE FROM task_supplement_capability WHERE issue_id IN (SELECT target.id FROM target)
 ),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)

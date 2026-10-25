@@ -36,6 +36,12 @@ describe("runNowBlockedKey", () => {
     expect(runNowBlockedKey("already_active")).toBe("run_blocked_already_active");
   });
 
+  it("maps runtime_access_denied to its dedicated key (PUCK-89)", () => {
+    expect(runNowBlockedKey("runtime_access_denied")).toBe(
+      "run_blocked_runtime_access_denied",
+    );
+  });
+
   it("degrades an unknown or absent code to the generic message", () => {
     expect(runNowBlockedKey("some_future_code")).toBe("run_blocked_generic");
     expect(runNowBlockedKey(undefined)).toBe("run_blocked_generic");

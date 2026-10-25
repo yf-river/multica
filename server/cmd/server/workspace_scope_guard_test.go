@@ -49,9 +49,11 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 		id := seedComment(t, ctx, issueID)
 		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE id = $1`, util.UUIDToString(id)) })
 
-		deleted, err := queries.DeleteComment(ctx, db.DeleteCommentParams{ID: id, WorkspaceID: wsB})
-		if err != nil || deleted.Changed {
-			t.Fatalf("cross-workspace DeleteComment = (%+v, %v), want unchanged result", deleted, err)
+		if _, err := queries.DeleteLeafComment(ctx, db.DeleteLeafCommentParams{ID: id, WorkspaceID: wsB}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("cross-workspace DeleteLeafComment: expected pgx.ErrNoRows, got %v", err)
+		}
+		if _, err := queries.TombstoneComment(ctx, db.TombstoneCommentParams{ID: id, WorkspaceID: wsB}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("cross-workspace TombstoneComment: expected pgx.ErrNoRows, got %v", err)
 		}
 		assertRowExists(t, ctx, "comment", id)
 	})
@@ -139,7 +141,7 @@ func seedIssue(t *testing.T, ctx context.Context) pgtype.UUID {
 	n := 1_000_000 + rand.IntN(1_000_000)
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, position, number)
-		VALUES ($1, 'scope-guard test issue', 'todo', 'none', 'member', $2, 0, $3)
+		VALUES ($1, 'scope-guard test issue', 'todo', 'not_important_not_urgent', 'member', $2, 0, $3)
 		RETURNING id
 	`, testWorkspaceID, testUserID, n).Scan(&s); err != nil {
 		t.Fatalf("seed issue: %v", err)

@@ -82,7 +82,7 @@ func (h *Handler) ListWecomInstallations(w http.ResponseWriter, r *http.Request)
 	}
 	svc := h.wecomInstallService()
 	if svc == nil {
-		writeError(w, http.StatusServiceUnavailable, "wecom integration not enabled")
+		writeFeatureDisabled(w, "wecom_not_configured", "wecom integration not enabled")
 		return
 	}
 	rows, err := svc.ListByWorkspace(r.Context(), wsUUID)
@@ -118,12 +118,12 @@ type RegisterWecomBYORequest struct {
 // agent 安装用户自备（"bring your own"）的 wecom 智能机器人。路由层限定 admin。
 func (h *Handler) RegisterWecomBYO(w http.ResponseWriter, r *http.Request) {
 	if !h.wecomIntegrationConfigured() {
-		writeError(w, http.StatusServiceUnavailable, "wecom integration not enabled")
+		writeFeatureDisabled(w, "wecom_not_configured", "wecom integration not enabled")
 		return
 	}
 	svc := h.wecomInstallService()
 	if svc == nil {
-		writeError(w, http.StatusServiceUnavailable, "wecom integration not enabled")
+		writeFeatureDisabled(w, "wecom_not_configured", "wecom integration not enabled")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -246,12 +246,12 @@ func writeWecomInstallError(w http.ResponseWriter, err error, wsUUID, agentUUID 
 // 翻回 'active'。
 func (h *Handler) RevokeWecomInstallation(w http.ResponseWriter, r *http.Request) {
 	if !h.wecomIntegrationConfigured() {
-		writeError(w, http.StatusServiceUnavailable, "wecom integration not enabled")
+		writeFeatureDisabled(w, "wecom_not_configured", "wecom integration not enabled")
 		return
 	}
 	svc := h.wecomInstallService()
 	if svc == nil {
-		writeError(w, http.StatusServiceUnavailable, "wecom integration not enabled")
+		writeFeatureDisabled(w, "wecom_not_configured", "wecom integration not enabled")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -334,7 +334,7 @@ type RedeemWecomBindingTokenResponse struct {
 //   - 403 Forbidden: 赎回者不是 workspace 成员
 func (h *Handler) RedeemWecomBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.WecomBindingTokens == nil {
-		writeError(w, http.StatusServiceUnavailable, "wecom integration not configured")
+		writeFeatureDisabled(w, "wecom_not_configured", "wecom integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)

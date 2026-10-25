@@ -6,6 +6,7 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@multica/ui/lib/utils";
 import {
   ContentEditor,
@@ -349,30 +350,6 @@ export function ChatInput({
     editorRef.current?.focus();
   }, [focusRequest]);
 
-  // 开场建议的点击是一次显式替换，不是普通的外部 store 同步。ContentEditor
-  // 在有脏的本地文本时会刻意拒绝外部值，所以在这里 adopt 能防止旧文本待执行的
-  // 防抖赢得竞态、覆盖掉选中的提示词。还要等上传结束：在有上传节点时 adopt
-  // 内容会搁浅它的完成回调。
-  useLayoutEffect(() => {
-    if (!conversationStarterRequest) return;
-    if (appliedConversationStarterIdRef.current === conversationStarterRequest.id) return;
-    if (editorDraftKeyRef.current !== draftKey) return;
-    if (editorRef.current?.hasActiveUploads() === true) return;
-
-    editorRef.current?.flushPendingUpdate();
-    appliedConversationStarterIdRef.current = conversationStarterRequest.id;
-    commitDraft(draftKey, conversationStarterRequest.content);
-    editorRef.current?.adoptContent(conversationStarterRequest.content);
-    setIsEmpty(!conversationStarterRequest.content.trim());
-    onConversationStarterApplied?.();
-  }, [
-    commitDraft,
-    draftKey,
-    onConversationStarterApplied,
-    conversationStarterRequest,
-    uploadGate.uploading,
-  ]);
-
   useEffect(() => {
     if (!restoreDraftRequest) {
       appliedRestoreIdRef.current = null;
@@ -527,6 +504,56 @@ export function ChatInput({
       return true;
     },
   });
+
+  // Consume each click once, including clicks while sending or uploading:
+  // replaying later could send after the user switches session or agent.
+  // Keep existing text and attachments intact. Flush first so the draft check
+  // sees typing still in the debounce window. A rejected send keeps the
+  // starter prompt in the draft for manual retry.
+  useLayoutEffect(() => {
+    if (!conversationStarterRequest) return;
+    if (appliedConversationStarterIdRef.current === conversationStarterRequest.id) return;
+    appliedConversationStarterIdRef.current = conversationStarterRequest.id;
+    onConversationStarterApplied?.();
+    if (
+      submitting || disabled || noAgent ||
+      (isRunning && !allowSubmitWhileRunning) ||
+      editorDraftKeyRef.current !== draftKey
+    ) return;
+    if (gate.isBlocked()) {
+      toast.info(t(($) => $.conversation_starters.uploading));
+      return;
+    }
+
+    const pending = editorRef.current?.flushPendingUpdate();
+    if (pending != null) commitDraft(draftKey, pending);
+    const draft = useChatStore.getState();
+    if (
+      editorRef.current?.getMarkdown().trim() ||
+      (draft.inputDrafts[draftKey] ?? "").trim() ||
+      (draft.inputDraftAttachments[draftKey]?.length ?? 0) > 0
+    ) {
+      toast.info(t(($) => $.conversation_starters.draft_in_progress));
+      return;
+    }
+    commitDraft(draftKey, conversationStarterRequest.content);
+    editorRef.current?.adoptContent(conversationStarterRequest.content);
+    setIsEmpty(!conversationStarterRequest.content.trim());
+    void submit();
+  }, [
+    allowSubmitWhileRunning,
+    commitDraft,
+    conversationStarterRequest,
+    disabled,
+    draftKey,
+    gate,
+    isRunning,
+    noAgent,
+    onConversationStarterApplied,
+    submit,
+    submitting,
+    t,
+  ]);
 
   const placeholder = agentAccessRevoked
     ? t(($) => $.input.placeholder_access_revoked)

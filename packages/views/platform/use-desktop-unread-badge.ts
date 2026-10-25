@@ -18,7 +18,7 @@ function getDesktopAPI(): BadgeCapableAPI | undefined {
  * 上一会话遗留的过期角标）都是空操作。
  */
 export function useDesktopUnreadBadge(wsId: string | null | undefined): void {
-  const count = useInboxUnreadCount(wsId);
+  const count = useInboxUnreadCount(wsId, { whileHidden: true });
   useEffect(() => {
     getDesktopAPI()?.setUnreadBadge?.(count);
   }, [count]);

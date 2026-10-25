@@ -63,7 +63,7 @@ func (h *Handler) composioMCPAppsEnabled(ctx context.Context) bool {
 // （MVP 只接了 Notion）。
 func (h *Handler) ComposioConnectInit(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
-		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
+		writeFeatureDisabled(w, "composio_not_configured", "composio integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -105,7 +105,7 @@ func (h *Handler) ComposioConnectInit(w http.ResponseWriter, r *http.Request) {
 // 一片空白的 API 响应上。
 func (h *Handler) ComposioCallback(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
-		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
+		writeFeatureDisabled(w, "composio_not_configured", "composio integration not configured")
 		return
 	}
 	q := r.URL.Query()
@@ -127,7 +127,7 @@ func (h *Handler) ComposioCallback(w http.ResponseWriter, r *http.Request) {
 // 的活动连接。
 func (h *Handler) ListComposioConnections(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
-		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
+		writeFeatureDisabled(w, "composio_not_configured", "composio integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -163,7 +163,7 @@ func (h *Handler) ListComposioConnections(w http.ResponseWriter, r *http.Request
 // 显示「加载失败」状态，而不是误显示一张空的目录。
 func (h *Handler) ListComposioToolkits(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
-		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
+		writeFeatureDisabled(w, "composio_not_configured", "composio integration not configured")
 		return
 	}
 	if _, ok := requireUserID(w, r); !ok {
@@ -190,7 +190,7 @@ func (h *Handler) ListComposioToolkits(w http.ResponseWriter, r *http.Request) {
 // 断开一条属于当前调用者的连接。服务层幂等；连接不属于该用户时按 404 处理。
 func (h *Handler) DeleteComposioConnection(w http.ResponseWriter, r *http.Request) {
 	if h.Composio == nil || !h.composioMCPAppsEnabled(r.Context()) {
-		writeError(w, http.StatusServiceUnavailable, "composio integration not configured")
+		writeFeatureDisabled(w, "composio_not_configured", "composio integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)

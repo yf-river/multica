@@ -73,6 +73,9 @@ type WecomMetrics struct {
 	OutboundUnconfirmed *prometheus.CounterVec
 	// AttachmentUnconfirmed 投递结果未知的文件，按 reason 拆。按「文件」计，单位与
 	// attachment delivered/dropped 一对一致。
+	StreamOpened          prometheus.Counter
+	StreamFinished        prometheus.Counter
+	StreamFellBack        prometheus.Counter
 	AttachmentUnconfirmed *prometheus.CounterVec
 	// RelayShed 跨副本分发器因分片队列满而拒收的帧数，按帧类型（reply|inbox）标。
 	// 单独成指标是因为 relay 既承载收件箱通知也承载回复，而回复计数器是按回复计的。
@@ -100,15 +103,21 @@ func NewWecomMetrics() *WecomMetrics {
 			"Inbound callbacks handed to the ingest worker. The baseline every other inbound number is read against."),
 		CallbackQueueBlocked: counter("inbound_queue_blocked_total",
 			"Times the read loop had to wait on a full ingest queue. Backpressure by design; a rising rate means the engine is behind and the socket is about to stop being drained."),
+		StreamOpened: counter("stream_opened_total",
+			"Bubbles painted on ingest. The denominator for the two below: opened minus finished minus fell_back is the number nobody ever ended, which is the only failure the finished/fell_back ratio cannot show."),
+		StreamFinished: counter("stream_finished_total",
+			"Answers that landed in the bubble the question opened."),
+		StreamFellBack: counter("stream_fell_back_total",
+			"Answers sent as a new message because the bubble refused the closing frame. The answer is not lost; the experience is the one the bubble was built to replace."),
 		OutboundDelivered: counter("outbound_delivered_total",
 			"Agent replies this adapter put in front of a WeCom user. The denominator the drop breakdown is read against."),
 		OutboundDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "multica", Subsystem: "wecom", Name: "outbound_dropped_total",
-			Help: "Agent replies the adapter owed a WeCom user and did not deliver, by reason. Every reason here means somebody in WeCom is waiting on an answer that is not coming; the completions the adapter was never going to deliver are counted apart, in outbound_skipped_total.",
+			Help: "Agent replies the adapter owed a WeCom user and did not deliver, by reason. Every reason here means somebody in WeCom is waiting on an answer that is not coming; most of them are settled before the frame reaches WeCom, so read this as a count of unpaid obligations rather than of network failures. The completions this adapter did not owe, and the ones nothing here can attribute to a WeCom chat, are counted apart, in outbound_skipped_total.",
 		}, []string{"reason"}),
 		OutboundSkipped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "multica", Subsystem: "wecom", Name: "outbound_skipped_total",
-			Help: "Completions this adapter was never going to deliver to WeCom, by reason. Kept apart from dropped because none of these is a delivery failure: origin_not_channel is a question typed in Multica on a WeCom-bound session, installation_inactive means there is no longer an installation to deliver through, nothing_to_say is an empty completion carrying no file. Counting them as drops would make ordinary web usage read as a WeCom outage.",
+			Help: "Completions this adapter did not send to WeCom, by reason: it did not owe them, or nothing here could attribute them to a WeCom chat. Kept apart from dropped, which counts the replies a WeCom user was owed and did not get; what separates the two is the obligation, not whether a frame was written. Four of these were never owed to WeCom, and counting them as drops would make ordinary usage read as an outage: origin_not_channel is a question typed in Multica on a WeCom-bound session, not_wecom_turn is another platform's turn on the bus this subscriber shares, installation_inactive means there is no longer an installation to deliver through, nothing_to_say is an empty completion carrying no file. The fifth is the one label here worth an alert: no_delivery_row is a turn the channel ingested with no row saying which chat, so a reply may well be owed and nothing left can name the room — in practice a task enqueued before an upgrade and finishing after it. The sixth is neither: route_unattributable is a turn with no row and no batch owner, so nothing here can say whether it was ever a channel's, let alone whether a reply was owed — in practice a row old enough to predate batch owners still finishing, and a rising count says only that such rows remain.",
 		}, []string{"reason"}),
 		AttachmentDelivered: counter("outbound_attachment_delivered_total",
 			"Files put in front of a WeCom user. Counts FILES; the outbound_delivered/dropped/skipped trio counts REPLIES."),
@@ -138,6 +147,7 @@ func (m *WecomMetrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		m.ConnectFailures, m.AuthFailures,
 		m.CallbacksQueued, m.CallbackQueueBlocked,
+		m.StreamOpened, m.StreamFinished, m.StreamFellBack,
 		m.OutboundDelivered, m.OutboundDropped, m.OutboundSkipped,
 		m.AttachmentDelivered, m.AttachmentDropped, m.AttachmentSheds,
 		m.OutboundUnconfirmed, m.AttachmentUnconfirmed,
@@ -197,3 +207,7 @@ func (m *WecomMetrics) RecordAttachmentUnconfirmed(reason string) {
 func (m *WecomMetrics) RecordRelayShed(kind string) {
 	m.RelayShed.WithLabelValues(kind).Inc()
 }
+
+func (m *WecomMetrics) RecordStreamOpened()   { m.StreamOpened.Inc() }
+func (m *WecomMetrics) RecordStreamFinished() { m.StreamFinished.Inc() }
+func (m *WecomMetrics) RecordStreamFellBack() { m.StreamFellBack.Inc() }

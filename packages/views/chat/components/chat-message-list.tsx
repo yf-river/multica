@@ -48,6 +48,7 @@ import type {
 } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { buildTimeline } from "../../common/task-transcript";
+import { traceToolArgSummary } from "../../common/task-transcript/trace-event-presenter";
 import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { FOLLOW_EDGE_THRESHOLD } from "../../common/task-transcript/transcript-follow";
@@ -60,6 +61,8 @@ import { useT } from "../../i18n";
 // ─── 公开组件 ────────────────────────────────────────────────────────────
 
 interface ChatMessageListProps {
+  /** Pause bottom-stick effects while a closing floating window fades out. */
+  active?: boolean;
   messages: ChatMessage[];
   /**
    * 服务端权威的 pending 任务快照。`null` / undefined 表示没有在途任务——
@@ -169,6 +172,7 @@ const LIST_COMPONENTS: Components<ChatRenderItem, ChatListContext> = {
  * 实时/持久化 timeline 的原地交接都在这里编排。详见 Props 各字段。
  */
 export function ChatMessageList({
+  active = true,
   messages,
   pendingTask,
   availability,
@@ -198,6 +202,7 @@ export function ChatMessageList({
   const { isFollowing, onContentHeightChanged, hasReachedLiveEnd } = useStickToBottom(
     scrollContainerEl,
     pinToLiveEnd,
+    active,
   );
   // 上下沿的柔和渐隐提示更多内容。保持很小，几乎不碰边缘的整幅预览
   // （图片 / HTML）。
@@ -942,11 +947,14 @@ function FailureBubble({
     timeout: t(($) => $.message_list.failure.timeout),
     codex_semantic_inactivity: t(($) => $.message_list.failure.codex_semantic_inactivity),
     runtime_offline: t(($) => $.message_list.failure.runtime_offline),
+    runtime_access_denied: t(($) => $.message_list.failure.runtime_access_denied),
+    runtime_access_revoked: t(($) => $.message_list.failure.runtime_access_revoked),
     runtime_recovery: t(($) => $.message_list.failure.runtime_recovery),
     manual: t(($) => $.message_list.failure.manual),
     cancelled: t(($) => $.message_list.failure.manual),
     skill_bundle_unavailable: t(($) => $.message_list.failure.skill_bundle_unavailable),
     runtime_cli_timeout: t(($) => $.message_list.failure.runtime_cli_timeout),
+    environment_prepare_failed: t(($) => $.message_list.failure.environment_prepare_failed),
     "agent_error.provider_network": t(($) => $.message_list.failure.provider_network),
     "agent_error.provider_auth_or_access": t(($) => $.message_list.failure.provider_auth_or_access),
     "agent_error.provider_quota_limit": t(($) => $.message_list.failure.provider_quota_limit),
@@ -1149,38 +1157,15 @@ function ItemRow({ item }: { item: ChatTimelineItem }) {
   }
 }
 
-function shortenPath(p: string): string {
-  const parts = p.split("/");
-  if (parts.length <= 3) return p;
-  return ".../" + parts.slice(-2).join("/");
-}
-
-function getToolSummary(item: ChatTimelineItem): string {
-  if (!item.input) return "";
-  const inp = item.input as Record<string, string>;
-  if (inp.query) return inp.query;
-  if (inp.file_path) return shortenPath(inp.file_path);
-  if (inp.path) return shortenPath(inp.path);
-  if (inp.pattern) return inp.pattern;
-  if (inp.description) return String(inp.description);
-  if (inp.command) {
-    const cmd = String(inp.command);
-    return cmd.length > 100 ? cmd.slice(0, 100) + "..." : cmd;
-  }
-  if (inp.prompt) {
-    const p = String(inp.prompt);
-    return p.length > 100 ? p.slice(0, 100) + "..." : p;
-  }
-  if (inp.skill) return String(inp.skill);
-  for (const v of Object.values(inp)) {
-    if (typeof v === "string" && v.length > 0 && v.length < 120) return v;
-  }
-  return "";
-}
-
 function ToolCallRow({ item }: { item: ChatTimelineItem }) {
+  const { t } = useT("agents");
   const [open, setOpen] = useState(false);
-  const summary = getToolSummary(item);
+  // Tool input is arbitrary JSON: an MCP tool can pass `query` or `path` as an
+  // object (#8835), so the summary must come from the type-checked presenter.
+  const summary = traceToolArgSummary(item.input, {
+    morePaths: (path, extraCount) =>
+      t(($) => $.transcript.patch_summary_more, { path, extra: extraCount }),
+  });
   const hasInput = item.input && Object.keys(item.input).length > 0;
 
   return (

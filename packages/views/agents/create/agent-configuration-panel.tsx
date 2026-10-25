@@ -219,6 +219,7 @@ export function AgentConfigurationPanel({
                 selectedRuntimeId={draft.runtimeId}
                 onSelect={handleRuntimeSelect}
                 disabled={runtimeLocked}
+                autoSelect={!onRuntimeSelect}
               />
               {/* 静默置灰的选择器是这一切里最糟的版本：用户恰恰是在当前运行环境出
                   问题时才去够它——所以告诉他什么能解锁，而不是一味拒绝。 */}

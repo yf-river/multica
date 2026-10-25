@@ -1,5 +1,5 @@
 import type { Issue, IssueMetadata, IssueStatus, IssueStatusCategory, IssuePriority, IssueAssigneeType } from "./issue";
-import type { PropertyFilterValue } from "./property";
+import type { IssuePropertyValues, PropertyFilterValue } from "./property";
 import type { MemberRole } from "./workspace";
 import type { Project } from "./project";
 
@@ -42,6 +42,9 @@ export interface CreateIssueRequest {
   attachment_ids?: string[];
   /** 创建时同事务挂上的议题级标签 id；未知或非议题的 id 会被服务器 400 拒绝。 */
   label_ids?: string[];
+  /** ID-keyed custom-property values validated and persisted atomically with
+   * the issue. */
+  properties?: IssuePropertyValues;
 }
 
 /** 请求体：从评论以"手动模式"创建子议题——用户自己填一份议题表单。 */

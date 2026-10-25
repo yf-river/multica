@@ -80,6 +80,7 @@ func startTaskPluginHookMCP(lifetimeCtx context.Context, taskID string, tools []
 	}
 
 	byName := make(map[string]PluginHookTool, len(tools))
+	acceptedTools := make([]PluginHookTool, 0, len(tools))
 	for _, tool := range tools {
 		// 服务端会做命名空间隔离，但万一还是有重名到达，必须解析到恰好一个钩子，
 		// 而不是“最后写入者胜”。
@@ -90,6 +91,7 @@ func startTaskPluginHookMCP(lifetimeCtx context.Context, taskID string, tools []
 			continue
 		}
 		byName[tool.Name] = tool
+		acceptedTools = append(acceptedTools, tool)
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -103,7 +105,7 @@ func startTaskPluginHookMCP(lifetimeCtx context.Context, taskID string, tools []
 	}
 
 	handler := &pluginHookMCPServer{
-		taskID: taskID, tools: tools, byName: byName,
+		taskID: taskID, tools: acceptedTools, byName: byName,
 		invoke: invoke, path: "/" + pathToken, logger: logger,
 	}
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}

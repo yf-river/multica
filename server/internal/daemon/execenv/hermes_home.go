@@ -28,6 +28,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 // Hermes 只从恰好两个地方发现技能（对照随附 Hermes agent 源码 agent/skill_utils.py
@@ -265,28 +267,11 @@ func hermesRootFromHomeFor(base, native string) string {
 // 跟随 p 的已存在前缀中的每个 symlink、把剩余的不存在尾部原样接回，而不是像
 // filepath.EvalSymlinks 那样在 p 并不完整存在时直接失败。结果绝对。
 func resolvePathBestEffort(p string) string {
-	if p == "" {
+	resolved, err := util.ResolveSymlinksBestEffort(p)
+	if err != nil {
 		return p
 	}
-	if abs, err := filepath.Abs(p); err == nil {
-		p = abs
-	}
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return resolved
-	}
-	dir := p
-	var tail []string
-	for {
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return p // 到达根仍没有已存在的祖先
-		}
-		tail = append([]string{filepath.Base(dir)}, tail...)
-		dir = parent
-		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(append([]string{resolved}, tail...)...)
-		}
-	}
+	return resolved
 }
 
 // isPathUnder 报告 child 是否为 parent 本身或其嵌套后代。

@@ -58,7 +58,8 @@ func PluginToolName(pluginKey, hookKey string) string {
 		readable = "plugin"
 	}
 	digest := sha256.Sum256([]byte(pluginKey))
-	return readable + "_" + hex.EncodeToString(digest[:])[:6] + "__" + clean(hookKey)
+	encodedHook := clean(strings.ReplaceAll(hookKey, "-", "__"))
+	return readable + "_" + hex.EncodeToString(digest[:])[:6] + "__" + encodedHook
 }
 
 // AgentHookTools 列出本工作区运行中的 agent 可以调用的 hook。

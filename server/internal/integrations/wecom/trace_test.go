@@ -265,7 +265,7 @@ func TestTraceNeverLogsABindingToken(t *testing.T) {
 		ChatType: channel.ChatTypeGroup,
 		SenderID: senderID,
 	}}
-	if err := r.sendBindingPrompt(context.Background(), inst, msg, engine.Result{Sender: senderID}); err != nil {
+	if err := r.sendBindingPrompt(context.Background(), inst, msg, engine.Result{Sender: senderID}, copyFor(DefaultLocale)); err != nil {
 		t.Fatalf("sendBindingPrompt: %v", err)
 	}
 
@@ -534,6 +534,7 @@ func TestTraceOutOrderIsTheWireOrder(t *testing.T) {
 	startB := make(chan struct{})
 	bDone := make(chan struct{})
 
+	var s *wsSender
 	h := &hookHandler{}
 	h.after = func(l traceLine) {
 		if l.fields["dir"] != "out" || l.fields["req_id"] != "A" {
@@ -542,6 +543,18 @@ func TestTraceOutOrderIsTheWireOrder(t *testing.T) {
 		// A has just recorded its send attempt and has not written yet.
 		// Give B a whole write() and hold A here while it runs.
 		close(startB)
+		// Unless A is holding the writer mutex as it records: then B can only
+		// queue behind it and there is nothing to wait for, so the passing case
+		// does not pay the budget. The probe cannot hide the defect — with the
+		// mutex free it is released at once and A waits for B as before, and
+		// with B already inside it A still reaches the socket second.
+		// The writer here is a channel semaphore rather than a sync.Mutex —
+		// lockWriter has to be waitable on a context — so the probe asks it
+		// the same question through tryLockWriter.
+		if !s.tryLockWriter() {
+			return
+		}
+		s.unlockWriter()
 		select {
 		case <-bDone:
 		case <-time.After(traceParkBudget):
@@ -549,7 +562,7 @@ func TestTraceOutOrderIsTheWireOrder(t *testing.T) {
 	}
 
 	conn := &wireConn{}
-	s := newWSSender(conn, slog.New(h))
+	s = newWSSender(conn, slog.New(h))
 
 	go func() {
 		<-startB

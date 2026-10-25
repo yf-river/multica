@@ -17,12 +17,26 @@ import type {
   Workload,
 } from "./types";
 
-// AgentAvailability 镜像 RuntimeHealth 的可达性分桶，但把 `long_offline` 并进
-// `offline`——从 Agent 可用性角度看两者都等于"不可达"；持续时长这个细节属于
-// runtime 卡片，不属于 Agent 圆点。
-/** 依据 runtime 推导可用性：无 runtime=offline；recently_lost=unstable；其余离线态并入 offline。 */
+type RuntimeLiveness = Pick<AgentRuntime, "status" | "last_seen_at">;
+
+function runtimeAvailabilityFromAgent(agent: Agent): AgentAvailability | null {
+  const availability = agent.runtime_availability;
+  if (
+    availability !== "online" &&
+    availability !== "unstable" &&
+    availability !== "offline"
+  ) {
+    return null;
+  }
+  return availability;
+}
+
+// AgentAvailability mirrors RuntimeHealth's reachability buckets but folds
+// `long_offline` into `offline` — both mean "unreachable" from the agent
+// availability standpoint; the duration detail belongs to the runtime card,
+// not the agent dot.
 export function deriveAgentAvailability(
-  runtime: AgentRuntime | null,
+  runtime: RuntimeLiveness | null,
   now: number,
 ): AgentAvailability {
   if (!runtime) return "offline";
@@ -80,9 +94,9 @@ export function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetai
 
 interface DerivePresenceInput {
   agent: Agent;
-  runtime: AgentRuntime | null;
-  // 只属于这个 Agent 的任务。调用方（buildPresenceMap、hooks）已按 agent_id
-  // 过滤好——这里不重复检查。
+  runtime: RuntimeLiveness | null;
+  // Tasks for THIS agent only. Callers (buildPresenceMap, hooks) pre-filter
+  // by agent_id — we don't re-check here.
   tasks: readonly AgentTask[];
   // 供 deriveAgentAvailability 分桶 runtime 健康用的墙钟毫秒。作为参数传入保持函数纯净。
   now: number;
@@ -103,7 +117,9 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
     };
   }
 
-  const availability = deriveAgentAvailability(input.runtime, input.now);
+  const availability = input.runtime
+    ? deriveAgentAvailability(input.runtime, input.now)
+    : runtimeAvailabilityFromAgent(input.agent) ?? "offline";
   const detail = deriveWorkloadDetail(input.tasks);
 
   return {

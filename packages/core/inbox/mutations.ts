@@ -2,12 +2,49 @@
 // 批量归档等），每个变更都带乐观更新与失败回滚。
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { inboxKeys } from "./queries";
+import { inboxKeys, mapArchivedInboxCache, patchArchivedInboxCaches, type ArchivedInboxCache } from "./queries";
+import { onInboxInvalidate, onInboxSummaryInvalidate } from "./ws-updaters";
 import { useWorkspaceId } from "../hooks";
 import type { InboxItem } from "../types";
 
-/** 把某条收件箱通知标记为已读，乐观更新主列表与归档列表缓存。 */
+/**
+ * Re-read every inbox cache a write can change: both workspace lists and the
+ * cross-workspace unread summary.
+ *
+ * The unread badge reads that summary (`useInboxUnreadCount`), and it lives
+ * under its own account-level key which `inboxKeys.all(wsId)` does not reach.
+ * Every mutation here can change the number it holds, so each one refreshes it
+ * once the server has confirmed, rather than waiting for the WebSocket echo of
+ * its own action.
+ *
+ * Deliberately the same entry points realtime uses, not local copies: both
+ * refreshes have to cancel any in-flight request first, and a mutation racing
+ * a first load hits exactly the same hole a WS event does. A plain
+ * `invalidateQueries` on the list here would let the list fall behind the
+ * badge — the two are rendered side by side (see `refreshInboxQuery`).
+ *
+ * Not awaited by `onSettled`: the mutation is finished once the server has
+ * answered, and a background refresh should not hold its lifecycle open.
+ *
+ * The rows are patched optimistically but the badge is NOT: it follows the
+ * server's confirmation, which buys a single writer at the cost of the badge
+ * trailing the row. Deriving it locally instead — recomputing the count from
+ * the list cache and writing that back — reads as instant but is unsound: a
+ * list cache proves only that the list was loaded ONCE, never that it is
+ * complete or concurrent with the summary, and the account-level summary
+ * request is not cancelled by the workspace-scoped `cancelQueries` below, so a
+ * response already in flight lands on top of the local value anyway. Under
+ * pagination it would be wrong by construction — one loaded page cannot
+ * produce a global count. If instant feedback is wanted later, it has to be a
+ * per-group delta that handles the race, not a recomputed total.
+ */
+function refreshInboxAfterWrite(qc: QueryClient, wsId: string) {
+  void onInboxInvalidate(qc, wsId);
+  void onInboxSummaryInvalidate(qc);
+}
+
 export function useMarkInboxRead() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -16,21 +53,21 @@ export function useMarkInboxRead() {
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
       const prev = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId));
-      const prevArchived = qc.getQueryData<InboxItem[]>(inboxKeys.archived(wsId));
       const markRead = (old: InboxItem[] | undefined) =>
         old?.map((item) => (item.id === id ? { ...item, read: true } : item));
       qc.setQueryData<InboxItem[]>(inboxKeys.list(wsId), markRead);
-      // 从归档子视图打开通知也会把它标记已读——这份缓存也要同步打补丁，
-      // 否则它的未读圆点会一直挂到下次重新拉取。
-      qc.setQueryData<InboxItem[]>(inboxKeys.archived(wsId), markRead);
+      // Opening a notification from the archived sub-view marks it read too —
+      // patch that cache as well, or its unread dot would sit there until the
+      // next refetch.
+      const prevArchived = patchArchivedInboxCaches(qc, wsId, (items) => markRead(items) ?? items);
       return { prev, prevArchived };
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.prev) qc.setQueryData(inboxKeys.list(wsId), ctx.prev);
-      if (ctx?.prevArchived) qc.setQueryData(inboxKeys.archived(wsId), ctx.prevArchived);
+      for (const [key, data] of ctx?.prevArchived ?? []) qc.setQueryData(key, data);
     },
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -42,7 +79,7 @@ export function useRetrySourceContextQuickCreate() {
   return useMutation({
     mutationFn: (taskId: string) => api.retrySourceContextQuickCreate(taskId),
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -54,9 +91,7 @@ export function useRetrySourceContextQuickCreate() {
  * 同样理由同时给两个缓存打补丁：一条通知可以从任一列表里操作，若另一个列表
  * 保持陈旧，切视图后会看到同一条通知两个不同的已读状态。
  *
- * 未读角标由主列表的缓存派生（`useInboxUnreadCount` 在客户端去重），所以这份
- * 乐观补丁无需等网络往返就能抬高角标；`onSettled` 里会重新拉取跨工作区汇总，
- * 它由服务端计算，无法在这里本地修补。
+ * 已读状态在列表缓存中即时更新；未读角标由服务端跨工作区汇总计算，写入后重新拉取。
  */
 export function useMarkInboxUnread() {
   const qc = useQueryClient();
@@ -66,21 +101,20 @@ export function useMarkInboxUnread() {
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
       const prev = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId));
-      const prevArchived = qc.getQueryData<InboxItem[]>(inboxKeys.archived(wsId));
       const markUnread = (old: InboxItem[] | undefined) =>
         old?.map((item) => (item.id === id ? { ...item, read: false } : item));
       qc.setQueryData<InboxItem[]>(inboxKeys.list(wsId), markUnread);
-      qc.setQueryData<InboxItem[]>(inboxKeys.archived(wsId), markUnread);
+      const prevArchived = patchArchivedInboxCaches(qc, wsId, (items) => markUnread(items) ?? items);
       return { prev, prevArchived };
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.prev) qc.setQueryData(inboxKeys.list(wsId), ctx.prev);
-      if (ctx?.prevArchived) qc.setQueryData(inboxKeys.archived(wsId), ctx.prevArchived);
+      for (const [key, data] of ctx?.prevArchived ?? []) qc.setQueryData(key, data);
     },
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
-      // 工作区重新有未读时，切换器圆点必须再次亮起——那个计数在服务端。
-      qc.invalidateQueries({ queryKey: inboxKeys.unreadSummary() });
+      // The switcher dot must light again when the workspace goes back to
+      // having unread items — that count lives on the server.
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -110,8 +144,8 @@ export function useArchiveInbox() {
       if (ctx?.prev) qc.setQueryData(inboxKeys.list(wsId), ctx.prev);
     },
     onSettled: () => {
-      // 两份列表都要：该条刚从主收件箱移进归档。
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+      // Both lists: the item just moved from the main inbox into the archive.
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -131,28 +165,25 @@ export function useUnarchiveInbox() {
     mutationFn: (id: string) => api.unarchiveInbox(id),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: inboxKeys.archived(wsId) });
-      const prev = qc.getQueryData<InboxItem[]>(inboxKeys.archived(wsId));
-      // 恢复同一个 issue 的全部兄弟条目——服务端取消归档的是整个 issue 组，
-      // 乐观补丁也必须同样处理，否则组里其余条目会一直赖在归档列表直到
-      // 重新拉取落地。
-      const target = prev?.find((i) => i.id === id);
-      const issueId = target?.issue_id;
-      qc.setQueryData<InboxItem[]>(inboxKeys.archived(wsId), (old) =>
-        old?.map((item) =>
-          item.id === id || (issueId && item.issue_id === issueId)
-            ? { ...item, archived: false }
-            : item,
-        ),
-      );
+      // Resolve the group once across every page and deep-link cache.
+      let issueId: string | null | undefined;
+      for (const [, data] of qc.getQueriesData<ArchivedInboxCache>({ queryKey: inboxKeys.archived(wsId) })) {
+        if (data) mapArchivedInboxCache(data, (items) => {
+          issueId ??= items.find((item) => item.id === id)?.issue_id;
+          return items;
+        });
+      }
+      const prev = patchArchivedInboxCaches(qc, wsId, (items) => items.map((item) =>
+        item.id === id || (issueId && item.issue_id === issueId) ? { ...item, archived: false } : item));
       return { prev };
     },
     onError: (_err, _id, ctx) => {
-      if (ctx?.prev) qc.setQueryData(inboxKeys.archived(wsId), ctx.prev);
+      for (const [key, data] of ctx?.prev ?? []) qc.setQueryData(key, data);
     },
     onSettled: () => {
-      // 两份列表都要：条目在两者之间迁移；以未读状态归档时角标也要重新亮起。
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
-      qc.invalidateQueries({ queryKey: inboxKeys.unreadSummary() });
+      // Both lists: the item moves from one to the other, and the unread badge
+      // rises again when it was archived unread.
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -177,7 +208,7 @@ export function useMarkAllInboxRead() {
       if (ctx?.prev) qc.setQueryData(inboxKeys.list(wsId), ctx.prev);
     },
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: inboxKeys.list(wsId) });
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -190,7 +221,7 @@ export function useArchiveAllInbox() {
   return useMutation({
     mutationFn: () => api.archiveAllInbox(),
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -202,7 +233,7 @@ export function useArchiveAllReadInbox() {
   return useMutation({
     mutationFn: () => api.archiveAllReadInbox(),
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }
@@ -214,7 +245,7 @@ export function useArchiveCompletedInbox() {
   return useMutation({
     mutationFn: () => api.archiveCompletedInbox(),
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: inboxKeys.all(wsId) });
+      refreshInboxAfterWrite(qc, wsId);
     },
   });
 }

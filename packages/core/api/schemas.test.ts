@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
+  TaskMessagePayloadSchema,
   WecomInstallationSchema,
   ListWecomInstallationsResponseSchema,
   RedeemWecomBindingTokenResponseSchema,
@@ -22,6 +23,7 @@ import {
   WorkspaceRepoProbeResponseSchema,
   WorkspaceRepoSchema,
   WorkspaceRepositoryCenterSchema,
+  AgentActivityBucketListSchema,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
   CommentTriggerPreviewSchema,
@@ -641,6 +643,26 @@ describe("TimelineEntriesSchema", () => {
 
     expect(parsed[0]?.source_task_id).toBe("task-1");
   });
+
+  it("preserves server-hydrated historical actor identity", () => {
+    const parsed = TimelineEntriesSchema.parse([
+      {
+        type: "comment",
+        id: "comment-1",
+        actor_type: "member",
+        actor_id: "former-user-1",
+        actor_name: "Former Member",
+        actor_avatar_url: "https://profiles.example.com/former.png",
+        created_at: "2026-01-01T00:00:00Z",
+        content: "Authored before leaving",
+      },
+    ]);
+
+    expect(parsed[0]?.actor_name).toBe("Former Member");
+    expect(parsed[0]?.actor_avatar_url).toBe(
+      "https://profiles.example.com/former.png",
+    );
+  });
 });
 
 describe("AgentTaskListSchema", () => {
@@ -1089,6 +1111,34 @@ describe("dashboard + runtime usage schema drift", () => {
     ).toBe(0);
   });
 
+  it("preserves optional usage coverage without rejecting older or malformed rows", () => {
+    const parsed = DashboardAgentRunTimeListSchema.parse([
+      {
+        agent_id: "new-server",
+        total_seconds: 42,
+        task_count: 3,
+        metered_task_count: 2,
+        failed_count: 0,
+      },
+      {
+        agent_id: "old-server",
+        total_seconds: 42,
+        task_count: 3,
+        failed_count: 0,
+      },
+      {
+        agent_id: "drifted-server",
+        total_seconds: 42,
+        task_count: 3,
+        metered_task_count: "not-a-number",
+        failed_count: 0,
+      },
+    ]);
+    expect(parsed[0]?.metered_task_count).toBe(2);
+    expect(parsed[1]?.metered_task_count).toBeUndefined();
+    expect(parsed[2]?.metered_task_count).toBeUndefined();
+  });
+
   it("coerces a missing agent_id key to \"\" for the usage-by-agent panel", () => {
     const parsed = DashboardUsageByAgentListSchema.parse([
       { model: "claude-opus-4-7", input_tokens: 7 },
@@ -1173,6 +1223,23 @@ describe("dashboard + runtime usage schema drift", () => {
 // it does not reject the mode either — it drops execution_mode and answers 201,
 // leaving the task to run in the user's working copy (#7113). So the absent
 // case has to parse as false, not as "unknown, probably fine".
+// An older server deletes a comment's replies with it and omits this field,
+// so absent or malformed must parse as false: the client then promises nothing
+// about replies and keeps the legacy delete route (#8296).
+describe("AppConfigSchema comment_delete_keep_replies_supported drift", () => {
+  it.each([
+    [undefined, false],
+    ["yes", false],
+    [true, true],
+  ])("%j parses as %s", (value, expected) => {
+    const parsed = AppConfigSchema.parse({
+      cdn_domain: "cdn.example.com",
+      comment_delete_keep_replies_supported: value,
+    });
+    expect(parsed.comment_delete_keep_replies_supported).toBe(expected);
+  });
+});
+
 describe("AppConfigSchema local_worktree_supported drift", () => {
   it("defaults to false when the server predates the signal", () => {
     const parsed = AppConfigSchema.parse({ cdn_domain: "cdn.example.com" });
@@ -1212,6 +1279,26 @@ describe("AppConfigSchema agent_conversation_starters_supported drift", () => {
     expect(
       AppConfigSchema.parse({ agent_conversation_starters_supported: true })
         .agent_conversation_starters_supported,
+    ).toBe(true);
+  });
+});
+
+describe("AppConfigSchema issue_create_properties_supported drift", () => {
+  it("defaults to false when the server predates atomic create properties", () => {
+    expect(AppConfigSchema.parse({}).issue_create_properties_supported).toBe(false);
+  });
+
+  it("coerces a malformed declaration to false", () => {
+    expect(
+      AppConfigSchema.parse({ issue_create_properties_supported: "yes" })
+        .issue_create_properties_supported,
+    ).toBe(false);
+  });
+
+  it("carries a genuine declaration through", () => {
+    expect(
+      AppConfigSchema.parse({ issue_create_properties_supported: true })
+        .issue_create_properties_supported,
     ).toBe(true);
   });
 });
@@ -1611,6 +1698,48 @@ describe("RuntimeModelListRequestSchema", () => {
     );
     expect(parsed.supported).toBe(true);
     expect(parsed.cached).toBeUndefined();
+  });
+
+  // MUL-6961: models the runtime cannot run arrive in their OWN list. The
+  // separation is the compatibility contract — a client that never learned the
+  // field reads `models` and therefore cannot offer one — so the schema must
+  // keep them apart rather than folding them together.
+  it("parses unavailable models without letting them into the selectable list", () => {
+    const parsed = parseWithFallback(
+      {
+        ...completed,
+        unavailable_models: [
+          {
+            id: "cc-update-required-1",
+            label: "Fable 5.1 (disabled)",
+            reason: "Update to 2.1.255+ to use Fable 5.1",
+          },
+        ],
+      },
+      RuntimeModelListRequestSchema,
+      MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+    expect(parsed.unavailable_models?.[0]?.id).toBe("cc-update-required-1");
+    expect(parsed.unavailable_models?.[0]?.reason).toBe(
+      "Update to 2.1.255+ to use Fable 5.1",
+    );
+    expect(parsed.models?.map((m) => m.id)).not.toContain(
+      "cc-update-required-1",
+    );
+  });
+
+  // An older daemon or server sends no such key. The picker then shows no
+  // unavailable section, which is exactly the pre-MUL-6961 behaviour.
+  it("tolerates a backend that omits unavailable models entirely", () => {
+    const parsed = parseWithFallback(
+      completed,
+      RuntimeModelListRequestSchema,
+      MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+    expect(parsed.unavailable_models).toBeUndefined();
+    expect(parsed.models?.length).toBe(1);
   });
 
   it("treats an older daemon that omits explicit-standard support as unsupported", () => {
@@ -2066,4 +2195,27 @@ describe("issue status catalog schemas", () => {
     );
     expect(parsed).toEqual(EMPTY_ISSUE_STATUS_ENTRY);
   });
+});
+describe("AgentActivityBucketListSchema duration", () => {
+  const bucket = { agent_id: "a", bucket_at: "2026-09-24T00:00:00Z", task_count: 201,
+    completed_count: 201, failed_count: 0, cancelled_count: 0 };
+  it("accepts optional aggregate duration from new and old servers", () => {
+    expect(AgentActivityBucketListSchema.parse([bucket])[0]?.duration_ms).toBeUndefined();
+    expect(AgentActivityBucketListSchema.parse([{ ...bucket, duration_ms: 12600000, duration_count: 201 }])[0]?.duration_count).toBe(201);
+  });
+  it("does not discard activity counts when duration is malformed", () => {
+    const parsed = AgentActivityBucketListSchema.parse([{ ...bucket, duration_ms: "slow", duration_count: -1 }]);
+    expect(parsed[0]?.task_count).toBe(201);
+    expect(parsed[0]?.duration_ms).toBeUndefined();
+    expect(parsed[0]?.duration_count).toBeUndefined();
+  });
+});
+
+describe("tool call identity compatibility", () => {
+ it("preserves valid identity and keeps legacy or malformed optional values readable", () => {
+  const base={task_id:"task-1",seq:1,type:"tool_result",output:"ok"};
+  const rows=TaskMessagePayloadSchema.array().parse(["execution:A",undefined,null,42,{}].map(call_id=>({...base,call_id})));
+  expect(rows.map(row=>row.call_id)).toEqual(["execution:A",undefined,undefined,undefined,undefined]);
+  expect(rows.every(row=>row.output==="ok")).toBe(true);
+ });
 });

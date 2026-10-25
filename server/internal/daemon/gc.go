@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -213,7 +214,7 @@ func (d *Daemon) gcWorkspace(ctx context.Context, wsDir string, stats *gcStats) 
 			}
 		}
 		action := d.shouldCleanTaskDir(ctx, taskDir)
-		cleanedHere += d.applyGCAction(taskDir, action, stats)
+		cleanedHere += d.applyGCAction(ctx, taskDir, action, stats)
 	}
 	workspaceIDs := make([]string, 0, len(issueCandidatesByWorkspace))
 	for workspaceID := range issueCandidatesByWorkspace {
@@ -292,20 +293,21 @@ func (d *Daemon) gcWorkspaceIssues(ctx context.Context, workspaceID string, cand
 			// 本轮拿不到关于父 issue 的可用答案，任务数据先留着。可再生的 Codex 缓存
 			// 仍是可回收对象——见 applyManagedArtifactFallback。
 			action := d.applyManagedArtifactFallback(candidate.taskDir, candidate.meta, gcActionSkip)
-			cleaned += d.applyGCAction(candidate.taskDir, action, stats)
+			cleaned += d.applyGCAction(ctx, candidate.taskDir, action, stats)
 			continue
 		}
 		action := d.gcDecisionIssueResult(candidate.taskDir, candidate.meta, result)
 		action = d.applyLocalDirectoryGCOverride(candidate.meta, action)
 		action = d.applyManagedArtifactFallback(candidate.taskDir, candidate.meta, action)
-		cleaned += d.applyGCAction(candidate.taskDir, action, stats)
+		cleaned += d.applyGCAction(ctx, candidate.taskDir, action, stats)
 	}
 	return cleaned
 }
 
-// applyGCAction 执行一个决策并更新周期统计。每次变更都会原子地预留 env root，因为
-// 服务器对账请求在途期间可能有一个任务开始。
-func (d *Daemon) applyGCAction(taskDir string, action gcAction, stats *gcStats) int {
+// applyGCAction performs one decision and updates cycle stats. Each mutation
+// atomically reserves the env root because a task can start while the server
+// reconciliation request is in flight.
+func (d *Daemon) applyGCAction(ctx context.Context, taskDir string, action gcAction, stats *gcStats) int {
 	if action != gcActionSkip {
 		if _, err := d.gcTaskDirOwner(taskDir); err != nil {
 			d.logger.Warn("gc: refusing to mutate unowned task directory", "dir", taskDir, "error", err)
@@ -345,7 +347,7 @@ func (d *Daemon) applyGCAction(taskDir string, action gcAction, stats *gcStats) 
 		stats.bytesReclaimed += bytes
 		return 1
 	case gcActionCleanArtifacts:
-		removed, bytes, perPattern := d.cleanTaskArtifacts(taskDir, d.cfg.GCArtifactPatterns)
+		removed, bytes, perPattern := d.cleanTaskArtifacts(ctx, taskDir, d.cfg.GCArtifactPatterns)
 		recordArtifactCleanup(stats, removed, bytes, perPattern)
 		stats.skipped++ // 任务目录本身保留
 	case gcActionCleanManagedArtifacts:
@@ -853,15 +855,24 @@ const linkedDirModes = os.ModeSymlink | os.ModeIrregular
 // cleanTaskArtifacts 遍历 taskDir 删除每个“basename 命中某模式”的目录，外加确切的
 // daemon 受管 artifact 路径。返回 (removedCount, bytesReclaimed, perPattern)。
 //
-// 安全契约：
-//   - 模式只看 basename；带路径分隔符的条目被丢弃。
-//   - 绝不下钻 .git 子树，即使某模式会命中，agent 的 git 历史也保持完好。
-//   - 链接目录整体跳过——链接本身与目标都不碰，恶意或过期链接无法把 GC 引到 workdir
-//     之外。见 linkedDirModes 什么算链接。
-//   - 每个删除目标都验证在 taskDir 内，被篡改的 .gc_meta.json 骗不了 daemon 删到
-//     sandbox 之外。
-func (d *Daemon) cleanTaskArtifacts(taskDir string, patterns []string) (removed int, bytes int64, perPattern map[string]int) {
-	return d.cleanTaskArtifactsMatching(taskDir, newArtifactMatcher(patterns, execenv.ManagedReclaimableArtifactSubpaths()))
+// Safety contract:
+//   - patterns are basename-only; entries with a path separator are dropped.
+//   - .git subtrees are never descended into, so the agent's git history stays
+//     intact even if a pattern would otherwise match.
+//   - a basename-matched directory containing Git-tracked files is retained. Artifact
+//     names are conventions, not proof that the repository treats the content
+//     as regenerable; deleting tracked output mutates the agent's checkout.
+//   - a basename-matched directory that is or contains a Git checkout is retained, even
+//     when its containing repository does not track the nested checkout.
+//     Exact daemon-managed cache paths keep their explicit regenerable contract,
+//     consistent with cleanManagedTaskArtifacts.
+//   - linked directories are skipped entirely — neither the link nor its
+//     target is touched, so a malicious or stale link can't redirect the GC
+//     outside the workdir. See linkedDirModes for what counts as a link.
+//   - every removal target is verified to live inside taskDir, so a tampered
+//     .gc_meta.json can't trick the daemon into deleting outside its sandbox.
+func (d *Daemon) cleanTaskArtifacts(ctx context.Context, taskDir string, patterns []string) (removed int, bytes int64, perPattern map[string]int) {
+	return d.cleanTaskArtifactsMatching(ctx, taskDir, newArtifactMatcher(patterns, execenv.ManagedReclaimableArtifactSubpaths()))
 }
 
 // cleanManagedTaskArtifacts 删除 taskDir 下确切的 daemon 受管 artifact 子路径。
@@ -948,7 +959,7 @@ func hasManagedArtifact(taskDir string) bool {
 	return false
 }
 
-func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatcher) (removed int, bytes int64, perPattern map[string]int) {
+func (d *Daemon) cleanTaskArtifactsMatching(ctx context.Context, taskDir string, matcher artifactMatcher) (removed int, bytes int64, perPattern map[string]int) {
 	perPattern = map[string]int{}
 	if taskDir == "" || (len(matcher.basenames) == 0 && len(matcher.exactPaths) == 0) {
 		return
@@ -960,6 +971,9 @@ func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatc
 	}
 
 	walkErr := filepath.WalkDir(absRoot, func(path string, entry os.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
 		if err != nil {
 			return nil // 尽力而为——继续走
 		}
@@ -985,7 +999,33 @@ func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatc
 		if !ok {
 			return nil
 		}
-		size := dirSize(path)
+		rel, relErr := filepath.Rel(absRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		if _, managed := matcher.exactPaths[rel]; !managed {
+			preserve, preserveErr := artifactDirectoryNeedsPreservation(ctx, absRoot, path)
+			if preserveErr != nil {
+				// Fail closed. A malformed or temporarily unreadable checkout is not
+				// evidence that a matched directory is safe to remove.
+				d.logger.Warn("gc: artifact retained because git tracking could not be determined", "path", path, "error", preserveErr)
+				return filepath.SkipDir
+			}
+			if preserve {
+				if d.logger.Enabled(ctx, slog.LevelDebug) {
+					retainedBytes, _ := dirSizeContext(ctx, path)
+					d.logger.DebugContext(ctx, "gc: artifact directory retained to preserve git content", "path", path, "pattern", pattern, "retained_bytes", retainedBytes)
+				}
+				return filepath.SkipDir
+			}
+		}
+		size, sizeErr := dirSizeContext(ctx, path)
+		if sizeErr != nil {
+			return sizeErr
+		}
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
 		if rmErr := os.RemoveAll(path); rmErr != nil {
 			d.logger.Warn("gc: artifact remove failed", "path", path, "error", rmErr)
 			return filepath.SkipDir
@@ -1003,9 +1043,116 @@ func (d *Daemon) cleanTaskArtifactsMatching(taskDir string, matcher artifactMatc
 	return
 }
 
-// dirSize 返回 root 下所有常规文件的总字节数。链接内容不计入：os.RemoveAll 会丢掉
-// 链接而留下目标，数了它会让“一次删除回收的量”虚高。非致命：遍历中的错误被忽略，
-// 调用方可以报一个尽力而为的字节数而不必中止整个 GC 周期。
+// artifactDirectoryNeedsPreservation protects both tracked content and Git
+// checkout boundaries. The index, not git status, decides whether content is
+// tracked: a clean checkout containing a committed .next directory must stay.
+// A nested checkout's files need not appear in the outer repository's index,
+// so its metadata must also be checked before deleting the entire subtree.
+func artifactDirectoryNeedsPreservation(ctx context.Context, taskRoot, artifactPath string) (bool, error) {
+	if ctx.Err() != nil {
+		return false, context.Cause(ctx)
+	}
+	absRoot, err := filepath.Abs(taskRoot)
+	if err != nil {
+		return false, err
+	}
+	absArtifact, err := filepath.Abs(artifactPath)
+	if err != nil {
+		return false, err
+	}
+	if !isPathWithin(absRoot, absArtifact) {
+		return false, fmt.Errorf("artifact path escapes task root")
+	}
+
+	repoRoot, err := containingGitCheckout(absRoot, absArtifact)
+	if err != nil {
+		return false, err
+	}
+	if repoRoot == absArtifact {
+		return true, nil // the removal target is itself an entire checkout
+	}
+	if repoRoot != "" {
+		rel, err := filepath.Rel(repoRoot, absArtifact)
+		if err != nil {
+			return false, fmt.Errorf("resolve artifact path relative to git checkout: %w", err)
+		}
+		if !isPathWithin(repoRoot, absArtifact) {
+			return false, fmt.Errorf("artifact path is not below git checkout")
+		}
+		// -- ends option parsing, not pathspec magic. These are filesystem
+		// paths, so names such as :(top)fixture must be interpreted literally.
+		// NUL output also makes whitespace-only tracked names unambiguous.
+		out, err := runGitGCCommandContext(ctx, repoRoot, "--literal-pathspecs", "ls-files", "-z", "--", filepath.ToSlash(rel))
+		if err != nil {
+			return false, fmt.Errorf("list tracked files below %s: %w", rel, err)
+		}
+		if out != "" {
+			return true, nil
+		}
+	}
+
+	found := false
+	err = filepath.WalkDir(absArtifact, func(path string, entry os.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+		if err != nil {
+			return err // an unreadable subtree cannot be proven safe to delete
+		}
+		if entry.Name() == ".git" {
+			found = true // includes linked worktrees and damaged metadata
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			info, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			if info.Mode()&linkedDirModes != 0 {
+				return filepath.SkipDir
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("inspect artifact subtree for git checkouts: %w", err)
+	}
+	return found, nil
+}
+
+// containingGitCheckout returns the nearest ancestor carrying Git worktree
+// metadata without walking above taskRoot. Linked worktrees use a .git file;
+// ordinary clones use a .git directory, so either shape is authoritative.
+func containingGitCheckout(taskRoot, start string) (string, error) {
+	current := filepath.Clean(start)
+	for isPathWithin(taskRoot, current) {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return current, nil
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("inspect git metadata: %w", err)
+		}
+		if current == taskRoot {
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return "", nil
+}
+
+func isPathWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// dirSize returns the total size of all regular files under root, in bytes.
+// Linked content is not counted: os.RemoveAll would drop the link and leave
+// the target, so counting it would overstate what a removal reclaims.
+// Non-fatal: errors during the walk are ignored so callers can report a
+// best-effort byte count without aborting the whole GC cycle.
 func dirSize(root string) int64 {
 	total, _ := dirSizeContext(context.Background(), root)
 	return total

@@ -12,13 +12,7 @@ import { PRIORITY_LABEL } from "@/lib/issue-status";
 import { THEME } from "@/lib/theme";
 
 // Display order: severity descending (urgent → none).
-const PRIORITY_OPTIONS: IssuePriority[] = [
-  "urgent",
-  "high",
-  "medium",
-  "low",
-  "none",
-];
+const PRIORITY_OPTIONS: IssuePriority[] = ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"];
 
 interface Props {
   value: IssuePriority;

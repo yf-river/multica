@@ -69,11 +69,10 @@ export const STATUS_LABEL: Record<IssueStatusCategory, string> = {
 };
 
 export const PRIORITY_LABEL: Record<IssuePriority, string> = {
-  none: "无优先级",
-  low: "低",
-  medium: "中",
-  high: "高",
-  urgent: "紧急",
+  important_urgent: "重要且紧急",
+  important_not_urgent: "重要不紧急",
+  not_important_urgent: "不重要但紧急",
+  not_important_not_urgent: "不重要不紧急",
 };
 
 const CATEGORY_SET = new Set<string>(STATUS_CATEGORIES);

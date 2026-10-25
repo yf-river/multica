@@ -11,12 +11,12 @@ import (
 )
 
 // providerHTTP5xxRe 匹配「以 5 开头的三位数（HTTP 5xx 状态码）」且两侧不是
-// 数字。镜像 MUL-1949 里的 SQL 正则 `(^|[^0-9])5[0-9][0-9]([^0-9]|$)`——防止
+// 数字。镜像 MUL-1949 里的 SQL 正则 `(^|[^0-9a-z])5[0-9][0-9]([^0-9a-z]|$)`——防止
 // "1500ms" 或 "1.5.0" 这种词意外落进 provider_server_error。
 //
 // 在包初始化时编译：分类器处于每个失败任务的在途写入路径上，
 // 启动时付一次正则编译成本、而不是每次调用都编，值得。
-var providerHTTP5xxRe = regexp.MustCompile(`(^|[^0-9])5[0-9][0-9]([^0-9]|$)`)
+var providerHTTP5xxRe = regexp.MustCompile(`(^|[^0-9a-z])5[0-9][0-9]([^0-9a-z]|$)`)
 
 // httpAuthCodeRe / httpQuotaCodeRe / httpCapacityCodeRe 只在特定 3 位 HTTP
 // 状态码「没有嵌进更长的数字」时才匹配，用与 providerHTTP5xxRe 相同的数字边界
@@ -29,14 +29,31 @@ var providerHTTP5xxRe = regexp.MustCompile(`(^|[^0-9])5[0-9][0-9]([^0-9]|$)`)
 // provider_network——MUL-4910——而这些正则永远不会路由到它。）5xx 桶当初正是
 // 为此加了锚点（MUL-1949）；这几个码当时没加。
 var (
-	httpAuthCodeRe     = regexp.MustCompile(`(^|[^0-9])(401|403)([^0-9]|$)`)
-	httpQuotaCodeRe    = regexp.MustCompile(`(^|[^0-9])402([^0-9]|$)`)
-	httpCapacityCodeRe = regexp.MustCompile(`(^|[^0-9])(429|529)([^0-9]|$)`)
+	httpAuthCodeRe     = regexp.MustCompile(`(^|[^0-9a-z])(401|403)([^0-9a-z]|$)`)
+	httpQuotaCodeRe    = regexp.MustCompile(`(^|[^0-9a-z])402([^0-9a-z]|$)`)
+	httpCapacityCodeRe = regexp.MustCompile(`(^|[^0-9a-z])(429|529)([^0-9a-z]|$)`)
 )
 
-// Classify 把来自 agent runtime / CLI 的自由文本错误映射到 14 个
-// agent_error.* 子原因之一。永远返回一个合法 Reason；没有任何规则命中或输入
-// 为空时回落到 ReasonAgentUnknown。
+// concurrentRequestLimitWitness is emitted by Anthropic-compatible providers
+// that use HTTP 403 for a transient concurrency rejection. Claude Code may
+// prefix it with an authentication or access-token failure, but credentials
+// remain valid and a later request can succeed. Match the semantic witness
+// before both token-window and generic auth rules so the persisted reason and
+// member-facing recovery guidance describe the actual failure.
+const concurrentRequestLimitWitness = "concurrent request limit"
+
+var httpForbiddenCodeRe = regexp.MustCompile(`(^|[^0-9])403([^0-9]|$)`)
+
+// isUsageLimit403 is shared by Classify and NormalizeDaemonReason so new and
+// old daemons land on the same reason.
+func isUsageLimit403(lower string) bool {
+	return httpForbiddenCodeRe.MatchString(lower) && strings.Contains(lower, "usage limit")
+}
+
+// Classify maps a free-form error string from the agent runtime / CLI
+// to one of the 14 agent_error.* sub-reasons. Always returns a valid
+// Reason; falls back to ReasonAgentUnknown when no rule matches and for
+// empty input.
 //
 // 规则顺序镜像 MUL-1949 的 SQL CASE 表达式（db-boy 的离线回填查询）。SQL 才是
 // 事实来源：两者一旦分叉，错的是这个 Go 分类器，应改它对齐。保持两者同步是
@@ -61,8 +78,22 @@ func Classify(rawError string) Reason {
 	lower := strings.ToLower(trimmed)
 
 	switch {
-	// 1. 上下文 / token 窗口溢出。提前检查，免得 "token limit" 被下面更宽泛
-	//    的 "limit" / "quota" 规则吞掉。
+	// A concurrent-request rejection can contain both "access token" and HTTP
+	// 403. Its specific semantic witness must beat the broader context and auth
+	// rules below; this classification does not itself make the reason retryable.
+	case strings.Contains(lower, concurrentRequestLimitWitness):
+		return ReasonAgentProviderCapacityOrRateLimit
+
+	// Some providers (e.g. Kimi Code) report an exhausted usage window as HTTP
+	// 403, and Claude Code may prefix it with an access-token failure. It must
+	// beat both the token-window rule (the text has "token" and "limit") and
+	// the bare 403 auth rule, or valid credentials get blamed.
+	case isUsageLimit403(lower):
+		return ReasonAgentProviderQuotaLimit
+
+	// 1. Context / token window overflow. Checked early so "token
+	//    limit" doesn't get swallowed by the broader "limit" / "quota"
+	//    rule below.
 	case containsAny(lower,
 		"context length",
 		"context_length_exceeded",
@@ -335,6 +366,16 @@ var legacyContextOverflowReasons = map[string]bool{
 	"agent_error":              true,
 }
 
+// legacyEnvironmentPrepareWitnesses are the two wrappers the daemon puts on a
+// failed execenv.Prepare / execenv.Reuse. Each opens the error at character
+// zero, and no other code path emits them, so the prefix alone establishes
+// that the run died setting up its workspace directory and never reached an
+// agent.
+var legacyEnvironmentPrepareWitnesses = []string{
+	"prepare execution environment:",
+	"reuse execution environment:",
+}
+
 func isPiProviderNetworkError(lower string) bool {
 	for _, message := range []string{"connection error.", "request timed out."} {
 		if lower == message ||
@@ -370,8 +411,30 @@ var legacyOpencodeStreamEndedReasons = map[string]bool{
 	"agent_error":                     true,
 }
 
-// NormalizeDaemonReason 把老版本 daemon 上报的 failure_reason 升级到本 server
-// 理解的分类体系上，用原始错误文本作证人。没有任何规则适用时原样返回原因。
+// legacyConcurrentRequestLimitReasons are the stale buckets emitted by daemons
+// whose classifiers let a generic token/context or HTTP 403 rule win over this
+// more specific wire shape. The raw witness keeps the upgrade narrow; unrelated
+// context overflows and authentication failures retain their original reason.
+var legacyConcurrentRequestLimitReasons = map[string]bool{
+	string(ReasonAgentContextOverflow):      true,
+	string(ReasonAgentProviderAuthOrAccess): true,
+	string(ReasonAgentUnknown):              true,
+	"agent_error":                           true,
+}
+
+// legacyUsageLimit403Reasons are the stale buckets an older daemon lands a
+// 403 usage-limit rejection in: the bare 403 auth rule, the token-window rule
+// when an access-token prefix is present, or the catchalls.
+var legacyUsageLimit403Reasons = map[string]bool{
+	string(ReasonAgentContextOverflow):      true,
+	string(ReasonAgentProviderAuthOrAccess): true,
+	string(ReasonAgentUnknown):              true,
+	"agent_error":                           true,
+}
+
+// NormalizeDaemonReason upgrades a failure_reason reported by an older daemon
+// onto the taxonomy this server understands, using the raw error text as the
+// witness. It returns the reason unchanged when nothing applies.
 //
 // 为什么存在（MUL-5370）：已安装的 daemon 按自己的节奏升级，所以一个只在
 // daemon 侧正确贴标签的修复，要等每台主机都更新才有人受益。daemon 上报了
@@ -382,6 +445,13 @@ var legacyOpencodeStreamEndedReasons = map[string]bool{
 // 这是边界兼容垫片，不是内部兜底逻辑：每条规则一旦等不到还能产出那种线形态
 // 的老 daemon 在报，就可以删除。
 func NormalizeDaemonReason(reason, rawError string) Reason {
+	if legacyConcurrentRequestLimitReasons[reason] &&
+		strings.Contains(strings.ToLower(rawError), concurrentRequestLimitWitness) {
+		return ReasonAgentProviderCapacityOrRateLimit
+	}
+	if legacyUsageLimit403Reasons[reason] && isUsageLimit403(strings.ToLower(rawError)) {
+		return ReasonAgentProviderQuotaLimit
+	}
 	if legacySkillBundleReasons[reason] &&
 		strings.HasPrefix(strings.TrimSpace(rawError), legacySkillBundlePrefix) {
 		return ReasonSkillBundleUnavailable
@@ -408,12 +478,48 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 			strings.HasPrefix(lowerError, codeartsStreamEndedPrefix)) {
 		return ReasonAgentProviderNetwork
 	}
+	// #7913: the same mixed-version gap on environment preparation. A daemon
+	// predating the structural tag classifies the host's own filesystem error
+	// from its text and reports some agent_error.* value — the catchall today,
+	// provider_server_error on the report that opened the issue. Every one of
+	// them is wrong by construction: the prefix proves the task died before an
+	// agent process existed, so the whole agent_error.* namespace is upgraded
+	// here rather than an enumerated subset of it.
+	//
+	// Last, so the openclaw rule above keeps its own preparation failure: that
+	// one names a specific cause inside this same phase and says strictly more.
+	if isAgentSideReason(reason) && hasAnyPrefix(lowerError, legacyEnvironmentPrepareWitnesses...) {
+		return ReasonEnvironmentPrepareFailed
+	}
 	return Reason(reason)
 }
 
-// containsAny 报告 s 是否包含所给子串中的任意一个。
-// 调用方负责提前把 s 小写化，让这个辅助函数在热路径上保持便宜——
-// 预先小写化一次，比每次子串扫描内部都做一次大小写折叠要快。
+// hasAnyPrefix reports whether s starts with any of the supplied prefixes.
+// Used where the witness is the wrapper opening an error rather than a phrase
+// somewhere inside it, which is what makes it unambiguous. Caller
+// pre-lowercases s, same contract as containsAny.
+func hasAnyPrefix(s string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAgentSideReason reports whether a wire value blames the agent process —
+// any refined agent_error.* sub-reason, or the pre-MUL-1949 coarse bucket they
+// were split out of. Used by normalization rules whose witness proves the run
+// never reached an agent, so that every such label is known to be wrong
+// without enumerating them.
+func isAgentSideReason(reason string) bool {
+	return Reason(reason).IsAgentError() || reason == "agent_error"
+}
+
+// containsAny reports whether s contains any of the supplied substrings.
+// Caller is responsible for lowercasing s ahead of time so the helper
+// stays cheap on the hot path — pre-lowercasing once is faster than
+// case-folding inside each substring scan.
 func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if strings.Contains(s, sub) {

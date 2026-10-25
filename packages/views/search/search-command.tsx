@@ -448,7 +448,7 @@ export function SearchCommand() {
     ];
 
     if (currentIssueId && currentIssue) {
-      const identifier = currentIssue.identifier;
+      const { id: issueId, identifier } = currentIssue;
       items.push(
         {
           key: "copy-issue-link",
@@ -484,12 +484,12 @@ export function SearchCommand() {
             // 冷缓存时发请求。若仍加载不出来，说明屏幕上本就没有评论——
             // 隐藏该动作与可见状态一致。
             void queryClient
-              .ensureQueryData(issueTimelineOptions(currentIssueId))
+              .ensureQueryData(issueTimelineOptions(issueId))
               .then((entries) => {
                 useCommentCollapseStore
                   .getState()
-                  .collapseAll(currentIssueId, rootCommentIds(entries));
-                useResolvedExpandStore.getState().collapseAll(currentIssueId);
+                  .collapseAll(issueId, rootCommentIds(entries));
+                useResolvedExpandStore.getState().collapseAll(issueId);
               })
               .catch(() => {});
             setOpen(false);
@@ -502,12 +502,12 @@ export function SearchCommand() {
           keywords: ["unfold", "expand", "comments", "展开", "评论"],
           onSelect: () => {
             void queryClient
-              .ensureQueryData(issueTimelineOptions(currentIssueId))
+              .ensureQueryData(issueTimelineOptions(issueId))
               .then((entries) => {
-                useCommentCollapseStore.getState().expandAll(currentIssueId);
+                useCommentCollapseStore.getState().expandAll(issueId);
                 useResolvedExpandStore
                   .getState()
-                  .expandAll(currentIssueId, resolvedThreadRootIds(entries));
+                  .expandAll(issueId, resolvedThreadRootIds(entries));
               })
               .catch(() => {});
             setOpen(false);

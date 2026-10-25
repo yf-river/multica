@@ -17,7 +17,7 @@ export default function IssuePriorityPickerRoute() {
 
   return (
     <PriorityPickerBody
-      value={issue?.priority ?? "none"}
+      value={issue?.priority ?? "not_important_not_urgent"}
       onChange={(next) => {
         updateIssue.mutate({ priority: next });
         router.back();

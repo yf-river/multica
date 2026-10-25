@@ -21,7 +21,8 @@
 //     queued_expired, runtime_offline, runtime_reconnect_timeout,
 //     runtime_recovery, timeout, iteration_limit, agent_blocked,
 //     api_invalid_request, skill_bundle_unavailable,
-//     runtime_cli_timeout, invalid_task_identity
+//     runtime_cli_timeout, environment_prepare_failed,
+//     invalid_task_identity
 //
 //   - 14 个 agent 侧值（带 `agent_error.` 前缀），由 Classify(rawError) 在 agent
 //     进程给出一个错误字符串时产出。IsAgentError 报告某值是否属于这一组。
@@ -58,9 +59,13 @@ const (
 	// 由 FailTasksForOfflineRuntimes 写入。
 	ReasonRuntimeOffline Reason = "runtime_offline"
 
-	// ReasonRuntimeReconnectTimeout：为等待离线 runtime 而延迟的重试，
-	// 在整个重连宽限期后仍未完成。不可重试：runtime 必须先回来，
-	// 用户才能发起下一次尝试。由 FailExpiredRuntimeReconnectRetries 写入。
+	// 运行时所有者撤回工作区访问权限；属于取消，不触发自动重试。
+	ReasonRuntimeAccessRevoked Reason = "runtime_access_revoked"
+
+	// ReasonRuntimeReconnectTimeout: a retry waiting for an offline runtime
+	// remained deferred for the full reconnect grace. Non-retryable: the
+	// runtime must return before a user starts another attempt. Written by
+	// FailExpiredRuntimeReconnectRetries.
 	ReasonRuntimeReconnectTimeout Reason = "runtime_reconnect_timeout"
 
 	// ReasonRuntimeRecovery：任务在途时 daemon 重启了，之前的会话不可恢复。
@@ -99,14 +104,58 @@ const (
 	// 不可用时重试没有意义。
 	ReasonRuntimeCLITimeout Reason = "runtime_cli_timeout"
 
-	// ReasonInvalidTaskIdentity：daemon 拒绝了一个已认领的任务，因为任务行的
-	// 权威 agent_id 缺失、或与嵌套的 agent payload 不一致。agent 进程从不启动。
-	// 刻意不可重试：重试同一个自相矛盾的认领只会重复一次隔离失败。
+	// ReasonEnvironmentPrepareFailed: the daemon could not build or re-open
+	// the task's execution environment on this host, so the agent process was
+	// never launched.
+	//
+	// That phase is everything execenv.Prepare / Reuse does before launch —
+	// the workspace directory and its overlay homes, AND the per-provider
+	// local config written or validated inside it (Codex home, Hermes
+	// overlay, Cursor MCP, OpenClaw config, which fails closed on a config
+	// the CLI cannot read). So the causes are wider than a disk fault: a full
+	// volume, a read-only or permission-denied workspaces root, a directory
+	// another process still holds open (Windows) and an I/O error all land
+	// here, and so does a malformed local runtime config. What they share is
+	// the machine — every one is fixed on the host running the daemon, and
+	// the raw error is what names which step failed.
+	//
+	// Copy that narrows this to "check your disk" therefore sends the user
+	// past half the real causes, which is the same defect in miniature that
+	// this reason exists to fix. Read the wording in the chat bundles and the
+	// docs failure-reason table as part of the contract.
+	//
+	// Platform-side, and that is the point (#7913). Before this reason
+	// existed the wrapped OS error went through Classify — a classifier
+	// written to read agent and provider output — and landed somewhere in
+	// agent_error.*: today the catchall, historically provider_server_error,
+	// which sent one report's diagnosis at an LLM vendor for hours. The task
+	// never reached an agent, so no value in that namespace can be correct,
+	// and any fleet health read grouping by the agent_error.* prefix
+	// over-reports agent problems by exactly these rows.
+	//
+	// Deliberately NOT retryable: a full disk or a denied permission
+	// reproduces identically on the next attempt, and preparation already
+	// waits out the one transient case it knows about (a prior run still
+	// holding the directory) before it fails. Written by
+	// taskRunFailureReason in daemon/daemon.go; resume-safe, because no
+	// session was touched.
+	ReasonEnvironmentPrepareFailed Reason = "environment_prepare_failed"
+
+	// ReasonInvalidTaskIdentity: the daemon refused a claimed task because
+	// the task row's authoritative agent_id was absent or disagreed with the
+	// nested agent payload. The agent process is never launched. This is
+	// deliberately non-retryable: retrying the same contradictory claim would
+	// only repeat an isolation failure.
 	ReasonInvalidTaskIdentity Reason = "invalid_task_identity"
 
-	// Agent 进程侧：由 agent CLI / SDK 以错误字符串形式浮现的失败。
-	// Classify(rawError) 负责从字符串里挑出正确的子原因。IsAgentError 对
-	// 这些一律返回 true。
+	// 私有运行时拒绝该 Agent，进程尚未启动。需要调整访问权限或重新绑定，
+	// 重试同一绑定无法恢复；与调度阻塞原因使用相同值。
+	ReasonRuntimeAccessDenied Reason = "runtime_access_denied"
+
+	// Agent process side: failure surfaced by the agent CLI / SDK as
+	// an error string. Classify(rawError) is responsible for picking
+	// the right sub-reason from the string. IsAgentError returns true
+	// for all of these.
 
 	// ReasonAgentProviderAuthOrAccess：401 / 403、"Not logged in"、API key 无效、
 	// 无该模型访问权限。不可重试；用户必须重新授权。
@@ -176,6 +225,7 @@ var allReasons = []Reason{
 	// 平台 / 调度器侧。
 	ReasonQueuedExpired,
 	ReasonRuntimeOffline,
+	ReasonRuntimeAccessRevoked,
 	ReasonRuntimeReconnectTimeout,
 	ReasonRuntimeRecovery,
 	ReasonTimeout,
@@ -184,7 +234,9 @@ var allReasons = []Reason{
 	ReasonAPIInvalidRequest,
 	ReasonSkillBundleUnavailable,
 	ReasonRuntimeCLITimeout,
+	ReasonEnvironmentPrepareFailed,
 	ReasonInvalidTaskIdentity,
+	ReasonRuntimeAccessDenied,
 
 	// Agent 进程侧：provider 错误。
 	ReasonAgentProviderAuthOrAccess,

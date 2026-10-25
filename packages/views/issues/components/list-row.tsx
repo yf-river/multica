@@ -119,7 +119,7 @@ function ListRowContent({
           href={p.issueDetail(issue.id)}
           className={`flex flex-1 items-center gap-2 min-w-0 ${isDragging ? "pointer-events-none" : ""}`}
         >
-          <span className="w-16 shrink-0 text-caption text-muted-foreground">
+          <span className="min-w-16 shrink-0 text-caption text-muted-foreground">
             {issue.identifier}
           </span>
           <IssueAgentActivityIndicator issueId={issue.id} />

@@ -1,5 +1,6 @@
 "use client";
 
+import { validateGitRef } from "@multica/core/github";
 import { useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useUpdateProjectResource } from "@multica/core/projects";
@@ -72,6 +73,11 @@ export function RepositoryConfiguration({
         className="space-y-3 rounded-lg border border-surface-border p-3"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!validateGitRef(branch).ok) {
+            setError(t(($) => $.repository_config.invalid_branch));
+            setSaved(false);
+            return;
+          }
           if (repo.id)
             void perform(() =>
               actions.update
@@ -195,6 +201,11 @@ export function RepositoryConfiguration({
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
+          if (!validateGitRef(branch).ok) {
+            setError(t(($) => $.repository_config.invalid_branch));
+            setSaved(false);
+            return;
+          }
             if (repo.id)
               void perform(() =>
                 actions.location.mutateAsync({
@@ -300,6 +311,11 @@ export function ProjectRepositoryBranch({
         className="space-y-2 py-2"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!validateGitRef(branch).ok) {
+            setError(t(($) => $.repository_config.invalid_branch));
+            setSaved(false);
+            return;
+          }
           setError("");
           setSaved(false);
           void actions

@@ -203,6 +203,12 @@ export interface AgentDashboardRow {
   cost: number;
   seconds: number;
   taskCount: number;
+  unreportedTaskCount: number;
+  hasReportedUsage: boolean;
+  // Token/cost totals come from the asynchronous hourly rollup. Keep their
+  // availability separate from real-time task_usage coverage so rollup lag
+  // never turns a reported run into either a fake zero or an unreported run.
+  hasUsageTotals: boolean;
 }
 
 /**
@@ -224,24 +230,43 @@ export function mergeAgentDashboardRows(
   const merged = new Map<string, AgentDashboardRow>();
   for (const r of tokenRows) {
     const rt = runTimeByAgent.get(r.agentId);
+    const taskCount = rt ? rt.task_count : r.taskCount;
+    // An older server omits metered_task_count. A token row proves that some
+    // usage exists but cannot tell which of several runs produced it, so keep
+    // the old all-reported presentation until the exact coverage field is
+    // available. This avoids a new client inventing partial coverage while
+    // connected to an old backend.
+    const meteredTaskCount = rt?.metered_task_count ?? taskCount;
     merged.set(r.agentId, {
       agentId: r.agentId,
       tokens: r.tokens,
       cost: r.cost,
       seconds: rt?.total_seconds ?? 0,
-      taskCount: rt ? rt.task_count : r.taskCount,
+      taskCount,
+      unreportedTaskCount: Math.max(0, taskCount - meteredTaskCount),
+      hasReportedUsage: true,
+      hasUsageTotals: true,
     });
   }
   // 有运行时长行但没有 token 的 Agent 仍该留在列表里（例如一个在产出用量前就
   // 报错的任务）。它们的 token 列保持 0。
   for (const r of runTimeRows) {
     if (merged.has(r.agent_id)) continue;
+    // Old servers omit the coverage field. The missing token aggregate may
+    // merely be lagging, so do not reinterpret every run as unreported.
+    const coverageKnown = r.metered_task_count !== undefined;
+    const meteredTaskCount = r.metered_task_count ?? 0;
     merged.set(r.agent_id, {
       agentId: r.agent_id,
       tokens: 0,
       cost: 0,
       seconds: r.total_seconds,
       taskCount: r.task_count,
+      unreportedTaskCount: coverageKnown
+        ? Math.max(0, r.task_count - meteredTaskCount)
+        : 0,
+      hasReportedUsage: coverageKnown && meteredTaskCount > 0,
+      hasUsageTotals: false,
     });
   }
   return Array.from(merged.values()).toSorted((a, b) => {
@@ -297,6 +322,9 @@ export function bucketUnknownAgentRows(
     cost: 0,
     seconds: 0,
     taskCount: 0,
+    unreportedTaskCount: 0,
+    hasReportedUsage: false,
+    hasUsageTotals: false,
   };
   let hasDeleted = false;
   for (const r of rows) {
@@ -307,6 +335,9 @@ export function bucketUnknownAgentRows(
     hasDeleted = true;
     bucket.tokens += r.tokens;
     bucket.cost += r.cost;
+    bucket.unreportedTaskCount += r.unreportedTaskCount;
+    bucket.hasReportedUsage ||= r.hasReportedUsage;
+    bucket.hasUsageTotals ||= r.hasUsageTotals;
   }
   return hasDeleted ? [...known, bucket] : known;
 }

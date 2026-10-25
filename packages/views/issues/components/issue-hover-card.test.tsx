@@ -20,6 +20,8 @@ vi.mock("@multica/core/issue-statuses/hooks", () => ({
     statuses: [],
     activeStatuses: [],
     categoryOf: (key: string) => key,
+    colorOf: (key: string) =>
+      key === "awaiting_response" ? "#f97316" : null,
     labelOf: (key: string) => key,
     entryOf: () => undefined,
     inCategory: () => [],
@@ -70,7 +72,22 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 }));
 
 vi.mock("./status-icon", () => ({
-  StatusIcon: () => <svg data-testid="status-icon" />,
+  StatusIcon: ({
+    status,
+    category,
+    color,
+  }: {
+    status: string;
+    category?: string;
+    color?: string | null;
+  }) => (
+    <svg
+      data-testid="status-icon"
+      data-status={status}
+      data-category={category}
+      data-color={color}
+    />
+  ),
 }));
 
 vi.mock("./priority-icon", () => ({
@@ -86,6 +103,7 @@ type Issue = {
   identifier: string;
   title: string;
   status: string;
+  status_category?: string;
   priority: string;
   description?: string | null;
   assignee_type?: string | null;
@@ -226,18 +244,37 @@ describe("IssueHoverCard", () => {
     expect(screen.getByLabelText("In Progress")).toContainElement(
       screen.getByTestId("status-icon"),
     );
-    expect(screen.getByLabelText("High")).toContainElement(
+    expect(screen.getByLabelText("Important, not urgent")).toContainElement(
       screen.getByTestId("priority-icon"),
     );
   });
 
-  it("omits the priority glyph when the issue has no priority", async () => {
+  it("paints a custom status with its catalog color", async () => {
+    mockIssue({
+      ...BASE_ISSUE,
+      status: "awaiting_response",
+      status_category: "in_review",
+    });
+
+    await openCard();
+
+    expect(screen.getByTestId("status-icon")).toHaveAttribute(
+      "data-category",
+      "in_review",
+    );
+    expect(screen.getByTestId("status-icon")).toHaveAttribute(
+      "data-color",
+      "#f97316",
+    );
+  });
+
+  it("shows the default priority quadrant", async () => {
     mockIssue({ ...BASE_ISSUE, priority: "not_important_not_urgent" });
 
     await openCard();
 
     expect(screen.getByTestId("status-icon")).toBeInTheDocument();
-    expect(screen.queryByTestId("priority-icon")).not.toBeInTheDocument();
+    expect(screen.getByTestId("priority-icon")).toHaveAttribute("data-priority", "not_important_not_urgent");
   });
 
   it("shows the assignee avatar and name, without nesting another hover card", async () => {

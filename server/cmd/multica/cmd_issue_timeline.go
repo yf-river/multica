@@ -239,16 +239,23 @@ func printIssueTimelineTable(entries []map[string]any, actors actorDisplayLookup
 		rows = append(rows, []string{
 			when,
 			kind,
-			timelineActor(strVal(e, "actor_type"), strVal(e, "actor_id"), actors, fullID),
+			timelineActor(
+				strVal(e, "actor_type"),
+				strVal(e, "actor_id"),
+				strVal(e, "actor_name"),
+				actors,
+				fullID,
+			),
 			timelineDetail(e, actors, fullID),
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
 }
 
-// timelineActor 把 actor 渲染成 "member:Alice"；工作区查找表叫不出名字时
-// （成员已删除、外部 ID）回退到缩短后的 id。
-func timelineActor(actorType, actorID string, actors actorDisplayLookup, fullID bool) string {
+// timelineActor renders an actor as "member:Alice". The timeline-provided name
+// wins because it remains available after the member leaves the workspace;
+// live directory lookup and then a shortened id are compatibility fallbacks.
+func timelineActor(actorType, actorID, actorName string, actors actorDisplayLookup, fullID bool) string {
 	switch {
 	case actorType == "" && actorID == "":
 		return ""
@@ -263,6 +270,9 @@ func timelineActor(actorType, actorID string, actors actorDisplayLookup, fullID 
 		}
 		return truncateID(actorID)
 	}
+	if actorName != "" {
+		return actorType + ":" + actorName
+	}
 	display := actors.actor(actorType, actorID)
 	if !fullID && strings.HasSuffix(display, ":"+actorID) {
 		return actorType + ":" + truncateID(actorID)
@@ -275,6 +285,9 @@ func timelineActor(actorType, actorID string, actors actorDisplayLookup, fullID 
 // 就按 key=value 排序拼出兜底文案，而不是丢弃。
 func timelineDetail(entry map[string]any, actors actorDisplayLookup, fullID bool) string {
 	if strVal(entry, "type") == "comment" {
+		if strVal(entry, "deleted_at") != "" {
+			return "(deleted)"
+		}
 		return clipTimelineText(singleLineText(strVal(entry, "content")), 60)
 	}
 
@@ -295,8 +308,8 @@ func timelineDetail(entry map[string]any, actors actorDisplayLookup, fullID bool
 	// 那一侧的字段就不存在。
 	if hasAnyKey(details, "from_type", "from_id", "to_type", "to_id") {
 		return transitionText(
-			timelineActor(strVal(details, "from_type"), strVal(details, "from_id"), actors, fullID),
-			timelineActor(strVal(details, "to_type"), strVal(details, "to_id"), actors, fullID),
+			timelineActor(strVal(details, "from_type"), strVal(details, "from_id"), "", actors, fullID),
+			timelineActor(strVal(details, "to_type"), strVal(details, "to_id"), "", actors, fullID),
 		)
 	}
 

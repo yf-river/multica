@@ -12,6 +12,14 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// OfflineRuntimeTTLSeconds 供离线清理与删除提示共用，确保提示与实际保留时长一致。
+const OfflineRuntimeTTLSeconds = 7 * 24 * 3600.0
+
+// OfflineRuntimeTTLDays 返回删除提示使用的保留天数。
+func OfflineRuntimeTTLDays() int {
+	return int(OfflineRuntimeTTLSeconds / 86400)
+}
+
 var (
 	// ErrRuntimeNotDrained 表示该 runtime 或它的某个绑定用户 agent 仍持有非终态任务。调用方必须中止事务，
 	// 而不是删除 runtime 后指望数据库级联。
@@ -78,7 +86,7 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 		if err != nil {
 			return out, fmt.Errorf("cancel tasks: %w", err)
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return out, err
 		}
 		// runtime 删除还会移除系统 agent 及其 chat 会话。在这些链接消失前记录每条取消，使 durable 事件保留原

@@ -29,6 +29,7 @@ import {
 } from "@multica/ui/components/ui/popover";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { cn } from "@multica/ui/lib/utils";
+import { BorderBeam } from "@multica/ui/components/common/border-beam";
 import { api } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
 import type { AgentTask } from "@multica/core/types";
@@ -176,7 +177,7 @@ function ActiveChip({
               // 状态保持平静（无光束），把动效留给真正在途的工作。
               className={cn(
                 "flex h-9 min-w-9 max-w-[11rem] items-center justify-center gap-1.5 rounded-md px-2 text-muted-foreground outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring md:h-7 md:min-w-0 md:justify-start md:px-1.5",
-                anyRunning && "border-beam bg-brand/5",
+                anyRunning && "relative bg-brand/5",
               )}
             />
           }
@@ -195,6 +196,7 @@ function ActiveChip({
           >
             {label}
           </span>
+          {anyRunning && <BorderBeam />}
         </PopoverTrigger>
         <PopoverContent align="end" keepMounted className="w-80">
           <div className="text-caption font-medium text-muted-foreground">

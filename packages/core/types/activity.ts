@@ -17,7 +17,10 @@ export interface TimelineEntry {
   actor_type: string;
   actor_id: string;
   created_at: string;
-  // Activity（活动）字段
+  /** Display identity hydrated from the actor's global user row when available. */
+  actor_name?: string;
+  actor_avatar_url?: string;
+  // Activity fields
   action?: string;
   details?: Record<string, unknown>;
   // Comment（评论）字段
@@ -34,6 +37,17 @@ export interface TimelineEntry {
   resolved_by_type?: CommentAuthorType | null;
   resolved_by_id?: string | null;
   source_task_id?: string | null;
-  /** 前端在合并连续的相同活动时设置：表示本条代表几条合并记录。 */
+  /** Delivery receipt for a member message explicitly bound to one live run. */
+  supplement_task_id?: string;
+  supplement_status?: "pending" | "delivering" | "delivered" | "failed";
+  supplement_failure_reason?: string;
+  supplement_delivered_at?: string;
+  /**
+   * Set only on a comment deleted while it still had replies: the server keeps
+   * it as an empty tombstone so the replies keep their parent. Read it through
+   * `isDeletedComment`.
+   */
+  deleted_at?: string | null;
+  /** Set by frontend coalescing when consecutive identical activities are merged. */
   coalesced_count?: number;
 }

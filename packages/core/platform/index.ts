@@ -7,6 +7,7 @@ export { defaultStorage } from "./storage";
 export { createPersistStorage } from "./persist-storage";
 export { createWorkspaceAwareStorage, setCurrentWorkspace, getCurrentSlug, getCurrentWsId, subscribeToCurrentSlug, registerForWorkspaceRehydration } from "./workspace-storage";
 export { clearWorkspaceStorage } from "./storage-cleanup";
+export { clearClientSessionData } from "./session-cleanup";
 export {
   registerSystemNotificationClickHandler,
   isWebNotificationSupported,

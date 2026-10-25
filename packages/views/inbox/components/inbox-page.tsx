@@ -14,7 +14,8 @@ import {
   Suspense,
 } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { workspaceWorkingAgentsOptions } from "@multica/core/agents/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { ApiError, errorCode } from "@multica/core/api";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -29,7 +30,8 @@ import { isImeComposing } from "@multica/core/utils";
 import { useIssueDraftStore } from "@multica/core/issues/stores/draft-store";
 import {
   inboxListOptions,
-  archivedInboxListOptions,
+  archivedInboxPagesOptions,
+  archivedInboxLookupOptions,
   deduplicateInboxItems,
   deduplicateArchivedInboxItems,
   useInboxUnreadCount,
@@ -47,6 +49,7 @@ import {
 } from "@multica/core/inbox/mutations";
 import {
   filterInboxItems,
+  inboxFiltersForArchive,
   inboxFiltersForPrioritySupport,
   inboxFilterCount,
   inboxPriorityFilterSupport,
@@ -120,6 +123,8 @@ export function InboxPage() {
   const wsPaths = useWorkspacePaths();
 
   const [selectedKey, setSelectedKeyState] = useState(() => urlIssue);
+  const pinnedUnreadKeyRef = useRef<string | null>(null);
+  const pinnedIdleKeyRef = useRef<string | null>(null);
   const [view, setViewState] = useState<InboxView>(() => urlView);
 
   // URL 变化（例如导航）时把选中同步回 state。
@@ -131,47 +136,63 @@ export function InboxPage() {
   }, [urlView]);
 
   const wsId = useWorkspaceId();
-  const { data: rawItems = [], isLoading: loading } = useQuery(inboxListOptions(wsId));
-  const items = useMemo(() => deduplicateInboxItems(rawItems), [rawItems]);
-
-  // 归档列表在两个视图都拉取，而不只在归档视图：主列表的归档入口要用这个计数
-  // 配数字，所以必须等用户进去之前就已知。
-  const {
-    data: rawArchivedItems = [],
-    isLoading: archivedLoading,
-    isError: archivedError,
-  } = useQuery(archivedInboxListOptions(wsId));
-  const archivedItems = useMemo(
-    () => deduplicateArchivedInboxItems(rawArchivedItems),
-    [rawArchivedItems],
-  );
-
   const isArchivedView = view === "archived";
-  const viewItems = isArchivedView ? archivedItems : items;
   const filters = useInboxFilters(wsId);
   const clearFilters = useInboxFilterStore((state) => state.clearFilters);
-  // 活跃与归档两个接口返回同一份行契约，且本页两者都已加载。要求「合并响应」才
-  // 暴露能力，能防止滚动发布里一个 pod 宣称的能力另一个 pod 还没有。
-  const priorityFilterSupport = useMemo(
-    () => inboxPriorityFilterSupport([...rawItems, ...rawArchivedItems]),
-    [rawItems, rawArchivedItems],
-  );
-  const effectiveFilters = useMemo(
-    () => inboxFiltersForPrioritySupport(filters, priorityFilterSupport),
-    [filters, priorityFilterSupport],
-  );
+  const { data: rawItems = [], isLoading: loading } = useQuery({
+    ...inboxListOptions(wsId), enabled: !isArchivedView,
+  });
+  const items = useMemo(() => deduplicateInboxItems(rawItems), [rawItems]);
+  const archiveQuery = useInfiniteQuery({
+    ...archivedInboxPagesOptions(wsId, filters), enabled: isArchivedView,
+  });
+  const fetchNextArchivedPage = archiveQuery.fetchNextPage;
+  const loadNextArchivedPage = useCallback(() => { void fetchNextArchivedPage(); }, [fetchNextArchivedPage]);
+  const archivedLoading = archiveQuery.isLoading;
+  const archivedError = archiveQuery.isError && !archiveQuery.data;
+  const archivedItems = useMemo(() => deduplicateArchivedInboxItems(
+    archiveQuery.data?.pages.flatMap((page) => page.items) ?? [],
+  ), [archiveQuery.data]);
+  const viewItems = isArchivedView ? archivedItems : items;
+  // The paginated endpoint guarantees the projection, including on empty pages.
+  const priorityFilterSupport = isArchivedView ? "supported" : inboxPriorityFilterSupport(rawItems);
+  const effectiveFilters = useMemo(() => {
+    const supported = inboxFiltersForPrioritySupport(filters, priorityFilterSupport);
+    return isArchivedView ? inboxFiltersForArchive(supported) : supported;
+  }, [filters, priorityFilterSupport, isArchivedView]);
+  const { data: workingAgents } = useQuery({
+    ...workspaceWorkingAgentsOptions(wsId, "issue"),
+    enabled: !isArchivedView && effectiveFilters.idleOnly,
+  });
+  const activeIssueIds = useMemo(() => new Set(workingAgents?.flatMap((agent) => agent.issue_ids) ?? []), [workingAgents]);
+  const pinnedUnreadKey = effectiveFilters.unreadOnly && pinnedUnreadKeyRef.current === selectedKey ? selectedKey : null;
+  const pinnedIdleKey = effectiveFilters.idleOnly && pinnedIdleKeyRef.current === selectedKey ? selectedKey : null;
+  const filterContext = useMemo(() => ({activeIssueIds, pinnedUnreadKey, pinnedIdleKey}), [activeIssueIds, pinnedUnreadKey, pinnedIdleKey]);
   const visibleItems = useMemo(
-    () => filterInboxItems(viewItems, effectiveFilters),
-    [viewItems, effectiveFilters],
+    () => filterInboxItems(viewItems, effectiveFilters, filterContext),
+    [viewItems, effectiveFilters, filterContext],
   );
   const hasActiveFilters = inboxFilterCount(effectiveFilters) > 0;
-
-  const selected =
-    visibleItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
-  const selectedInView =
-    viewItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
-  const selectionFilteredOut =
-    selectedKey.length > 0 && selectedInView !== null && selected === null;
+  const selectedOnPage = viewItems.find((i) => (i.issue_id ?? i.id) === selectedKey);
+  // A deep link can point beyond every loaded page. Resolve its group directly
+  // without adding it to the cursor chain or mistaking a page miss for a 404.
+  const lookup = useQuery({
+    ...archivedInboxLookupOptions(wsId, selectedKey),
+    enabled: isArchivedView && !!selectedKey && !selectedOnPage && !archivedLoading && !archivedError,
+  });
+  const lookupItems = useMemo(() => deduplicateArchivedInboxItems(lookup.data?.items ?? []), [lookup.data]);
+  const selectionItems = useMemo(() => {
+    if (!isArchivedView || selectedOnPage) return visibleItems;
+    return [...visibleItems, ...filterInboxItems(lookupItems, effectiveFilters)];
+  }, [isArchivedView, selectedOnPage, visibleItems, lookupItems, effectiveFilters]);
+  const selected = selectionItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
+  const selectedInView = selectedOnPage ?? (isArchivedView ? lookupItems.find((i) => (i.issue_id ?? i.id) === selectedKey) : null);
+  const selectionFilteredOut = !!selectedKey && !!selectedInView && !selected;
+  useEffect(() => {
+    if (pinnedUnreadKeyRef.current !== selectedKey || !effectiveFilters.unreadOnly) pinnedUnreadKeyRef.current = null;
+    if (pinnedIdleKeyRef.current !== selectedKey || !effectiveFilters.idleOnly) pinnedIdleKeyRef.current = null;
+    if (effectiveFilters.idleOnly && selected && workingAgents) pinnedIdleKeyRef.current = selectedKey;
+  }, [selectedKey, selected, workingAgents, effectiveFilters.unreadOnly, effectiveFilters.idleOnly]);
 
   // 详情面板展示什么，比点击晚一个 React transition。
   //
@@ -182,7 +203,7 @@ export function InboxPage() {
   // 留在屏幕上。
   const detailKey = useDeferredValue(selectedKey);
   const detailSwapping = detailKey !== selectedKey;
-  const detailItem = resolveDetailItem(visibleItems, selectedKey, detailKey);
+  const detailItem = resolveDetailItem(selectionItems, selectedKey, detailKey);
 
   // 上面的延迟对外壳导航适配器不可见——收件箱始终在同一路由，只改写 `?issue=`——
   // 所以这里显式上报，外壳的进度条在两种平台上都能盖住这次切换。
@@ -236,13 +257,16 @@ export function InboxPage() {
   // 当前屏幕上的列表是否已完成首次加载。下面两个兜底 effect 都以它为准；
   // 在归档视图里搞错它，等于对一个「只是还没到货」的空列表做动作。
   const viewLoading = isArchivedView ? archivedLoading : loading;
+  const needsLookup = isArchivedView && !!selectedKey && !selectedOnPage;
+  const lookupLoading = needsLookup && lookup.isLoading;
+  const lookupError = needsLookup && lookup.isError && !selected;
 
   // 共享的收件箱链接（?issue=<id>）可能指向不在该用户收件箱里的通知（已归档，
   // 或从没收到过）。退回任务页，让 URL 仍解析到有意义的地方。但如果这个 key
   // 之前能解析（例如该任务刚在别的标签页被删、`onInboxIssueDeleted` 已清掉
   // 缓存），任务详情也会 404——那就清空选中、留在 /inbox。
   useEffect(() => {
-    if (viewLoading) return;
+    if (viewLoading || lookupLoading || lookupError || (isArchivedView && archivedError)) return;
     if (!selectedKey) return;
     if (selected) return;
     if (selectionFilteredOut) return;
@@ -253,36 +277,16 @@ export function InboxPage() {
     replace(wsPaths.issueDetail(selectedKey));
   }, [
     viewLoading,
+    isArchivedView,
+    archivedError,
+    lookupLoading,
+    lookupError,
     selectedKey,
     selected,
     selectionFilteredOut,
     replace,
     wsPaths,
     setSelectedKey,
-  ]);
-
-  // 别把用户困在空归档里：当最后一条归档任务被还原（或新通知把它带回主收件箱）
-  // 时，退回主列表。与聊天归档视图同样的兜底。以加载完成作为门控，避免冷启动
-  // `?view=archived` 在数据落地前就被弹走。
-  useEffect(() => {
-    if (!isArchivedView) return;
-    if (archivedLoading) return;
-    // 拉取失败也等于「没有条目」——在这弹走会把错误信息换成主列表，用户连失败
-    // 都不知道。
-    if (archivedError) return;
-    // 先让上面的兜底 effect 处理掉解析不到的选中。像 `?view=archived&issue=X`
-    // 深链进空归档时，两个 effect 会在同一提交同时触发，后者的 replace() 会
-    // 最后落地、把去 X 的重定向吞掉。
-    if (selectedKey) return;
-    if (archivedItems.length > 0) return;
-    setView("inbox");
-  }, [
-    isArchivedView,
-    archivedLoading,
-    archivedError,
-    archivedItems.length,
-    selectedKey,
-    setView,
   ]);
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -320,6 +324,7 @@ export function InboxPage() {
   useEffect(() => {
     if (!selectedId || selectedRead) return;
     if (manualUnreadIdRef.current === selectedId) return;
+    pinnedUnreadKeyRef.current = selectedKey;
     markReadMutate(selectedId, {
       onError: (err) =>
         toast.error(
@@ -328,7 +333,7 @@ export function InboxPage() {
             : t(($) => $.errors.mark_read_failed),
         ),
     });
-  }, [selectedId, selectedRead, markReadMutate, t]);
+  }, [selectedId, selectedKey, selectedRead, markReadMutate, t]);
 
   // 选中一离开被「留住」的行，就释放守卫。
   useEffect(() => {
@@ -399,7 +404,7 @@ export function InboxPage() {
 
   // toast 放在这些共享 handler 里，让所有归档入口的确认文案一致。
   const handleArchive = (id: string) => {
-    advanceSelectionPast(id, visibleItems);
+    advanceSelectionPast(id, selectionItems);
     archiveMutation.mutate(id, {
       onSuccess: () => toast.success(t(($) => $.toasts.archived)),
       onError: (err) =>
@@ -412,7 +417,7 @@ export function InboxPage() {
   };
 
   const handleUnarchive = (id: string) => {
-    advanceSelectionPast(id, visibleItems);
+    advanceSelectionPast(id, selectionItems);
     unarchiveMutation.mutate(id, {
       onSuccess: () => toast.success(t(($) => $.toasts.unarchived)),
       onError: (err) =>
@@ -517,6 +522,7 @@ export function InboxPage() {
         wsId={wsId}
         items={viewItems}
         priorityFilterSupport={priorityFilterSupport}
+        archived={isArchivedView}
       />
       {/* 批量操作只出现在主视图。每条入口都是「从主收件箱归档」——在归档列表
           上提供它们会被读成「把这些全部归档」，做出来的事正好和字面相反。 */}
@@ -567,17 +573,17 @@ export function InboxPage() {
     >
       <ChevronLeft className="size-4 shrink-0" />
       <span className="truncate">{t(($) => $.list.archived_title)}</span>
-      <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-        {archivedItems.length}
-      </span>
     </button>
   );
 
-  const list = archivedError && isArchivedView ? (
+  const list = isArchivedView && archivedError ? (
     <div className="flex-1 min-h-0 overflow-y-auto">
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
         <Archive className="mb-3 h-8 w-8 text-faint-foreground" />
         <p className="text-body">{t(($) => $.errors.archived_load_failed)}</p>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => void archiveQuery.refetch()}>
+          {t(($) => $.list.retry)}
+        </Button>
       </div>
     </div>
   ) : (
@@ -593,17 +599,19 @@ export function InboxPage() {
         items={visibleItems}
         view={view}
         selectedKey={selectedKey}
-        archivedCount={archivedItems.length}
+        onLoadMore={isArchivedView && archiveQuery.hasNextPage ? loadNextArchivedPage : undefined}
+        loadingMore={archiveQuery.isFetchingNextPage}
+        loadMoreError={archiveQuery.isFetchNextPageError}
         onSelect={handleSelect}
         onAction={isArchivedView ? handleUnarchive : handleArchive}
         onOpenArchived={openArchived}
         emptyLabel={
-          hasActiveFilters && viewItems.length > 0 && visibleItems.length === 0
+          hasActiveFilters && visibleItems.length === 0
             ? t(($) => $.filters.empty)
             : undefined
         }
         emptyAction={
-          hasActiveFilters && viewItems.length > 0 && visibleItems.length === 0 ? (
+          hasActiveFilters && visibleItems.length === 0 ? (
             <Button
               variant="outline"
               size="sm"
@@ -621,6 +629,21 @@ export function InboxPage() {
     <>
       {listHeader}
       {isArchivedView && archivedBackRow}
+      {lookupLoading && (
+        <p role="status" className="shrink-0 border-b px-3 py-2 text-caption text-muted-foreground">
+          {t(($) => $.list.loading_selection)}
+        </p>
+      )}
+      {lookupError && (
+        <div role="alert" className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+          <p className="flex-1 text-caption text-muted-foreground">
+            {t(($) => $.errors.archived_lookup_failed)}
+          </p>
+          <Button variant="outline" size="sm" disabled={lookup.isFetching} onClick={() => void lookup.refetch()}>
+            {t(($) => $.list.retry)}
+          </Button>
+        </div>
+      )}
       {list}
     </>
   );

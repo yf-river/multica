@@ -30,7 +30,11 @@ export interface CoreProviderProps {
   onLogin?: () => void;
   /** 登出后回调（例如清 cookie）。 */
   onLogout?: () => void;
-  /** 向服务端标识调用方客户端（web/CLI/daemon + 版本 + OS）。 */
+  /** Called when the server ends the session (401) rather than the user.
+   *  Defaults to `onLogout`; pass it only when some of this shell's logout
+   *  teardown is too destructive for an expiry the user did not ask for. */
+  onSessionExpired?: () => void;
+  /** Identifies the calling client (web/desktop + version + os) to the server. */
   identity?: ClientIdentity;
   /** 当前语言，由宿主应用决定。 */
   locale: SupportedLocale;

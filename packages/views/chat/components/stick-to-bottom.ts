@@ -124,20 +124,23 @@ export interface StickToBottom {
 export function useStickToBottom(
   scrollEl: HTMLElement | null,
   pinToLiveEnd: () => void,
+  active = true,
 ): StickToBottom {
   const followRef = useRef<LiveEndFollow | null>(null);
   if (followRef.current === null) {
     followRef.current = createLiveEndFollow();
-    // 和 transcript 不同，聊天列表永远是"实时"的，所以在创建时就激活，
-    // 而不是放到 effect 里：`followOutput` 在第一次渲染时就要读这个闩锁。
-    followRef.current.setActive(true);
   }
   const follow = followRef.current;
+  // followOutput reads this latch in the same render, so an effect would update
+  // it too late. Retained exit callbacks must also stop before the list unmounts.
+  follow.setActive(active);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   const pinRef = useRef(pinToLiveEnd);
   pinRef.current = pinToLiveEnd;
   const pin = useCallback(() => {
-    pinRef.current();
+    if (activeRef.current) pinRef.current();
   }, []);
 
   // 用轮询而不是 Virtuoso 的回调来驱动：`atBottomStateChange` 在行还不存在时
@@ -146,13 +149,14 @@ export function useStickToBottom(
   // 在打开时只需付出几次 rect 读取的代价。
   const [hasReachedLiveEnd, setHasReachedLiveEnd] = useState(false);
   useEffect(() => {
-    if (!scrollEl || hasReachedLiveEnd) return;
+    if (!active || !scrollEl || hasReachedLiveEnd) return;
     let frame = 0;
     // 滚动范围是"某行尺寸变了"最便宜的代理信号：
     // 每个会移动视图的迟到内容也都会移动它。
     let lastHeight = -1;
     let steadySince: number | null = null;
     const poll = (now: number) => {
+      if (!activeRef.current) return;
       const height = scrollEl.scrollHeight;
       const steady = height === lastHeight && isShowingLiveEndRow(scrollEl);
       lastHeight = height;
@@ -170,22 +174,23 @@ export function useStickToBottom(
       cancelAnimationFrame(frame);
       clearTimeout(deadline);
     };
-  }, [scrollEl, hasReachedLiveEnd]);
+  }, [active, scrollEl, hasReachedLiveEnd]);
 
   // 内容长高了或视口尺寸变了——这是没有滚动事件的位移，
   // 所以它永远不会把暂存的读者输入"转正"。
   const onResize = useCallback(() => {
-    if (!scrollEl) return;
+    if (!activeRef.current || !scrollEl) return;
     if (follow.onResize(distanceFromBottom(scrollEl))) pin();
   }, [scrollEl, follow, pin]);
 
   useEffect(() => {
-    if (!scrollEl) return;
+    if (!active || !scrollEl) return;
 
     // transcript 对话框接线的镜像，只是实时端在 BOTTOM（底部）：
     // 离开它是向上滚，所以每个输入的方向符号都要翻转。
     let inputFrame: number | null = null;
     const stageInput = (delta: number) => {
+      if (!activeRef.current) return;
       follow.input(delta);
       if (inputFrame !== null) cancelAnimationFrame(inputFrame);
       inputFrame = requestAnimationFrame(() => {
@@ -246,6 +251,7 @@ export function useStickToBottom(
     };
     let atEdge = isAtLiveEnd(scrollEl);
     const onScroll = () => {
+      if (!activeRef.current) return;
       const nowAtEdge = isAtLiveEnd(scrollEl);
       if (nowAtEdge !== atEdge) {
         atEdge = nowAtEdge;
@@ -287,7 +293,7 @@ export function useStickToBottom(
       follow.pointerUp();
       follow.touchEnd();
     };
-  }, [scrollEl, follow, pin, onResize]);
+  }, [active, scrollEl, follow, pin, onResize]);
 
   return useMemo(
     () => ({

@@ -101,7 +101,7 @@ type RegisterSlackBYORequest struct {
 // 正是给没有托管应用的部署用的路径。
 func (h *Handler) RegisterSlackBYO(w http.ResponseWriter, r *http.Request) {
 	if h.SlackInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "slack integration not enabled")
+		writeFeatureDisabled(w, "slack_not_configured", "slack integration not enabled")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -183,7 +183,7 @@ func (h *Handler) publishSlackInstallationCreated(row db.ChannelInstallation, ac
 // token）会把状态翻回 'active'。
 func (h *Handler) RevokeSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.SlackInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "slack integration not configured")
+		writeFeatureDisabled(w, "slack_not_configured", "slack integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -239,7 +239,7 @@ type RedeemSlackBindingTokenResponse struct {
 //   - 403 Forbidden: 赎回者不是 workspace 成员
 func (h *Handler) RedeemSlackBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.SlackBindingTokens == nil {
-		writeError(w, http.StatusServiceUnavailable, "slack integration not configured")
+		writeFeatureDisabled(w, "slack_not_configured", "slack integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)

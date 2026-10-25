@@ -195,6 +195,7 @@ export function useCommentLongPress(
     issueIdentifier,
     userId,
     wsSlug,
+    getName,
     toggleReaction,
     deleteComment,
     resolveComment,

@@ -13,7 +13,7 @@ function issue(id: string, status: string, statusCategory?: string): Issue {
     description: null,
     status,
     ...(statusCategory ? { status_category: statusCategory as Issue["status_category"] } : {}),
-    priority: "none",
+    priority: "not_important_not_urgent",
     assignee_type: null,
     assignee_id: null,
     creator_type: "member",

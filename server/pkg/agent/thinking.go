@@ -20,7 +20,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +47,7 @@ type thinkingCacheKey struct {
 
 // thinkingCacheEntry 是缓存里的一条：按模型 ID 索引的档位目录 + 过期时间。
 type thinkingCacheEntry struct {
-	value     map[string]*ModelThinking // 键为模型 ID
+	value     claudeEffortHelp
 	expiresAt time.Time
 }
 
@@ -57,19 +60,17 @@ var (
 	thinkingCache   = map[thinkingCacheKey]thinkingCacheEntry{}
 )
 
-// thinkingCacheGet 读缓存；未命中或已过期返回 not-ok。
-func thinkingCacheGet(key thinkingCacheKey) (map[string]*ModelThinking, bool) {
+func thinkingCacheGet(key thinkingCacheKey) (claudeEffortHelp, bool) {
 	thinkingCacheMu.Lock()
 	defer thinkingCacheMu.Unlock()
 	entry, ok := thinkingCache[key]
 	if !ok || time.Now().After(entry.expiresAt) {
-		return nil, false
+		return claudeEffortHelp{}, false
 	}
 	return entry.value, true
 }
 
-// thinkingCachePut 写入一条缓存记录（带 TTL）。
-func thinkingCachePut(key thinkingCacheKey, value map[string]*ModelThinking) {
+func thinkingCachePut(key thinkingCacheKey, value claudeEffortHelp) {
 	thinkingCacheMu.Lock()
 	defer thinkingCacheMu.Unlock()
 	thinkingCache[key] = thinkingCacheEntry{value: value, expiresAt: time.Now().Add(thinkingDiscoveryTTL)}
@@ -106,43 +107,46 @@ var claudeEffortLabel = map[string]string{
 	"max":    "Max",
 }
 
-// claudeModelEffortAllow 在上游文档说“只有部分档位有效”的模型上收窄档位集合。模型缺失/不在
-// 表里 → 直接用解析出的超集（当前 Claude Code 默认行为）。Anthropic 发布不支持 `xhigh`/`max`
-// 的新模型时要更新这张表。
-var claudeModelEffortAllow = map[string]map[string]bool{
-	// Opus 是唯一公开支持 xhigh 的模型；帮助列表里 Sonnet / Haiku 仍带它，所以在这里过滤。
-	"claude-opus-5":             {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
-	"claude-opus-4-8":           {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
-	"claude-opus-4-7":           {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
-	"claude-opus-4-6":           {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
-	"claude-sonnet-4-6":         {"low": true, "medium": true, "high": true, "max": true},
-	"claude-sonnet-4-5":         {"low": true, "medium": true, "high": true, "max": true},
-	"claude-haiku-4-5-20251001": {"low": true, "medium": true, "high": true},
-}
-
-// claudeStaticEffortFallback 是“解析 `--effort` 帮助行失败（二进制缺失、输出漂移等）”时使用的
-// 保守子集。从近期各 Claude Code 发布版本的“最小公分母”里挑出来。
+// claudeStaticEffortFallback is the conservative picker used when
+// `claude --help` cannot be captured at all (binary missing, timeout).
+// Picked from the lowest-common-denominator across recent Claude Code
+// releases.
 var claudeStaticEffortFallback = []string{"low", "medium", "high"}
 
 // claudeStaticEffortFullSuperset 是 `claude --help` 在 2.1.121 上列出的档位全集。当模型不在
 // 按模型白名单里时当目录超集用——宁可多提供让 CLI 去拒绝，也不人为挡住合法组合。
 var claudeStaticEffortFullSuperset = []string{"low", "medium", "high", "xhigh", "max"}
 
-// annotateClaudeThinking 通过跑一次 `claude --help` 并把解析出的超集投影过
-// claudeModelEffortAllow，来填充每条目录记录的 Thinking 字段。错误被静默吸收，这样缺失的 CLI
-// 不会弄坏模型列表——UI 只是隐藏该模型的档位选择器。
-func annotateClaudeThinking(ctx context.Context, models []Model, cmd Command) {
-	mapping := loadClaudeThinkingByModel(ctx, cmd)
-	for i := range models {
-		if t, ok := mapping[models[i].ID]; ok && t != nil {
-			models[i].Thinking = t
-		}
-	}
+// claudeEffortHelp is what one `claude --help` run established about
+// `--effort`.
+type claudeEffortHelp struct {
+	// flag is the binary's own vocabulary, surfaced as
+	// Catalog.CLIThinkingLevels: nil when help could not establish it, a
+	// non-nil empty slice when the binary predates the flag.
+	flag []string
+	// picker is what the static catalog offers every model.
+	picker []string
 }
 
-// loadClaudeThinkingByModel 为 Claude 静态目录里的每个模型算出档位目录并缓存。默认档位写死
-// medium——与 Claude 自己对“未指定 effort”的处理一致。
-func loadClaudeThinkingByModel(ctx context.Context, cmd Command) map[string]*ModelThinking {
+// annotateClaudeThinking gives every static model the effort picker read
+// from `claude --help` and returns the binary's own `--effort` vocabulary
+// (see claudeEffortHelp.flag). Errors are silently absorbed so a missing
+// CLI doesn't break model listing.
+func annotateClaudeThinking(ctx context.Context, models []Model, cmd Command) []string {
+	help := loadClaudeEffortHelp(ctx, cmd)
+	levels := claudeThinkingLevels(help.picker)
+	if len(levels) > 0 {
+		for i := range models {
+			models[i].Thinking = &ModelThinking{
+				SupportedLevels: append([]ThinkingLevel(nil), levels...),
+				DefaultLevel:    "medium",
+			}
+		}
+	}
+	return help.flag
+}
+
+func loadClaudeEffortHelp(ctx context.Context, cmd Command) claudeEffortHelp {
 	if cmd.Path == "" {
 		cmd.Path = "claude"
 	}
@@ -151,53 +155,45 @@ func loadClaudeThinkingByModel(ctx context.Context, cmd Command) map[string]*Mod
 	if cached, ok := thinkingCacheGet(key); ok {
 		return cached
 	}
-
-	superset := claudeEffortSuperset(ctx, cmd)
-	result := map[string]*ModelThinking{}
-	for _, m := range claudeStaticModels() {
-		allow := claudeModelEffortAllow[m.ID]
-		levels := projectClaudeLevels(superset, allow)
-		if len(levels) == 0 {
-			continue
-		}
-		result[m.ID] = &ModelThinking{
-			SupportedLevels: levels,
-			DefaultLevel:    "medium",
-		}
-	}
-	thinkingCachePut(key, result)
-	return result
+	help := readClaudeEffortHelp(ctx, cmd)
+	thinkingCachePut(key, help)
+	return help
 }
 
-// claudeEffortSuperset 返回解析出的 `--effort` 取值列表。help 输出完全抓不到时返回静态兜底而
-// 不是空，这样调用方仍能渲染一个可用的选择器。
-func claudeEffortSuperset(ctx context.Context, runtimeCmd Command) []string {
+// readClaudeEffortHelp runs `claude --help`. When its output can't be
+// captured at all the binary's vocabulary is unknown, and the picker still
+// gets the conservative static subset so it stays usable.
+func readClaudeEffortHelp(ctx context.Context, runtimeCmd Command) claudeEffortHelp {
 	cmd := runtimeCmd.exec(ctx, "--help")
 	hideAgentWindow(cmd)
 	out, err := combinedOutputOwned(cmd, runtimeCmd.logger)
 	if err != nil {
-		return append([]string(nil), claudeStaticEffortFallback...)
+		return claudeEffortHelp{picker: append([]string(nil), claudeStaticEffortFallback...)}
 	}
-	return claudeEffortLevelsFromHelp(string(out))
+	return claudeEffortHelpFromText(string(out))
 }
 
-// claudeEffortLevelsFromHelp 从一份成功抓到的 `claude --help` 里决定档位超集。三种情况：
-//   - 值列表解析成功 → 原样使用；
-//   - 有 `--effort` 但值列表没解析出来 → help 格式漂移了；退回“最后一个已知正确超集”，这样在
-//     我们手工改兜底之前，更新的档位仍会被提供；
-//   - 完全没有 `--effort` → 安装的 CLI 比这个 flag 老。返回空档位：提供任何档位都会让 daemon
-//     通过 ValidateThinkingLevel 并注入 --effort，而这样的二进制会用
-//     `error: unknown option '--effort'` 拒绝——对持久化了 thinking_level 的 agent，这会硬性
-//     搞挂每一个任务，而不是降级成一次普通运行。
-func claudeEffortLevelsFromHelp(helpText string) []string {
-	parsed := parseClaudeEffortHelp(helpText)
-	if len(parsed) > 0 {
-		return parsed
+// claudeEffortHelpFromText reads a successfully captured `claude --help`.
+// Three cases:
+//   - the value list parsed → it is both the binary's vocabulary and the
+//     picker;
+//   - `--effort` is advertised but the value list didn't parse → help
+//     format drifted. The vocabulary is unknown, so nothing is vetoed, and
+//     the picker falls back to the last known good superset;
+//   - `--effort` is absent entirely → the installed CLI predates the flag.
+//     Its vocabulary is empty and the picker offers nothing: injecting
+//     --effort would make such a binary reject the launch with
+//     `error: unknown option '--effort'` — hard-failing every task for an
+//     agent with a persisted thinking_level instead of degrading to a plain
+//     run.
+func claudeEffortHelpFromText(helpText string) claudeEffortHelp {
+	if parsed := parseClaudeEffortHelp(helpText); len(parsed) > 0 {
+		return claudeEffortHelp{flag: parsed, picker: parsed}
 	}
 	if strings.Contains(helpText, "--effort") {
-		return append([]string(nil), claudeStaticEffortFullSuperset...)
+		return claudeEffortHelp{picker: append([]string(nil), claudeStaticEffortFullSuperset...)}
 	}
-	return nil
+	return claudeEffortHelp{flag: []string{}}
 }
 
 // parseClaudeEffortHelp 从一条 `--effort` 帮助行里抽逗号分隔的值列表。行缺失或捕获组为空时
@@ -218,14 +214,9 @@ func parseClaudeEffortHelp(helpText string) []string {
 	return out
 }
 
-// projectClaudeLevels 把档位超集投影成 ThinkingLevel 列表，并过滤掉 allow 白名单里不允许的
-// 值（allow 为 nil 表示不限制）。
-func projectClaudeLevels(superset []string, allow map[string]bool) []ThinkingLevel {
-	out := make([]ThinkingLevel, 0, len(superset))
-	for _, value := range superset {
-		if allow != nil && !allow[value] {
-			continue
-		}
+func claudeThinkingLevels(values []string) []ThinkingLevel {
+	out := make([]ThinkingLevel, 0, len(values))
+	for _, value := range values {
 		label, ok := claudeEffortLabel[value]
 		if !ok {
 			// daemon 还没见过的新值——原样浮出来，让高级用户仍能选中。
@@ -305,31 +296,50 @@ type codexDebugServiceTier struct {
 	Description string `json:"description"`
 }
 
-// discoverCodexModels 返回已装 Codex 二进制 bundled 的可见目录（含 reasoning 元数据）。
-// 版本检测放在 debug 命令之前，避免旧二进制每次缓存刷新都记一条可预期的 "unknown command"
-// 失败。
-func discoverCodexModels(ctx context.Context, cmd Command) []Model {
+// discoverCodexCatalog returns the installed Codex binary's live visible
+// catalog, including reasoning metadata. Version detection happens before the
+// debug command so old binaries do not log a predictable "unknown command"
+// failure on every cache refresh.
+func discoverCodexCatalog(ctx context.Context, cmd Command) Catalog {
 	if cmd.Path == "" {
 		cmd.Path = "codex"
 	}
 	version, err := DetectVersion(ctx, cmd)
 	if err != nil {
-		return codexStaticModels()
+		return Catalog{Models: codexStaticModels(), Fallback: true}
 	}
 	supportsExplicitStandard := codexSupportsExplicitStandardServiceTier(version)
 	if !codexSupportsDebugModels(version) {
-		return annotateCodexExplicitStandardServiceTier(codexStaticModels(), supportsExplicitStandard)
+		return Catalog{
+			Models:   annotateCodexExplicitStandardServiceTier(codexStaticModels(), supportsExplicitStandard),
+			Fallback: true,
+		}
 	}
 
-	raw, err := runCodexDebugModels(ctx, cmd)
-	if err != nil {
-		return annotateCodexExplicitStandardServiceTier(codexStaticModels(), supportsExplicitStandard)
+	liveCtx, cancel := context.WithTimeout(ctx, codexLiveCatalogTimeout)
+	raw, err := runCodexDebugModels(liveCtx, cmd, codexDebugModelsArgs...)
+	cancel()
+	if err == nil {
+		models, parseErr := parseCodexModelCatalog(raw)
+		if parseErr == nil && len(models) > 0 {
+			return Catalog{Models: annotateCodexExplicitStandardServiceTier(models, supportsExplicitStandard)}
+		}
 	}
-	models, err := parseCodexModelCatalog(raw)
-	if err != nil || len(models) == 0 {
-		return annotateCodexExplicitStandardServiceTier(codexStaticModels(), supportsExplicitStandard)
+
+	raw, err = runCodexDebugModels(ctx, cmd, codexBundledDebugModelsArgs...)
+	if err == nil {
+		models, parseErr := parseCodexModelCatalog(raw)
+		if parseErr == nil && len(models) > 0 {
+			return Catalog{
+				Models:   annotateCodexExplicitStandardServiceTier(models, supportsExplicitStandard),
+				Fallback: true,
+			}
+		}
 	}
-	return annotateCodexExplicitStandardServiceTier(models, supportsExplicitStandard)
+	return Catalog{
+		Models:   annotateCodexExplicitStandardServiceTier(codexStaticModels(), supportsExplicitStandard),
+		Fallback: true,
+	}
 }
 
 // codexSupportsDebugModels 判断该版本是否支持 `codex debug models`（≥ 0.122.0）。
@@ -368,14 +378,18 @@ func annotateCodexExplicitStandardServiceTier(models []Model, supported bool) []
 	return models
 }
 
-// codexDebugModelsArgs 是我们发现本地 Codex 目录时传的 argv。保持为包级变量（而不是调用点的
-// 字面量），是为了让测试能断言真实 `codex` 调用收到的确切形态，而不只是解析器对一条 fixture
-// 字符串的行为。argv 形态正是 PR1 review 时被弄坏的契约；钉住它的测试在 thinking_test.go。
-var codexDebugModelsArgs = []string{"debug", "models", "--bundled"}
+const codexLiveCatalogTimeout = 15 * time.Second
 
-// runCodexDebugModels 执行 `codex debug models --bundled` 并返回 stdout 字节。
-func runCodexDebugModels(ctx context.Context, runtimeCmd Command) ([]byte, error) {
-	cmd := runtimeCmd.exec(ctx, codexDebugModelsArgs...)
+// codexDebugModelsArgs is the argv we pass for the authoritative live catalog.
+// codexBundledDebugModelsArgs is the offline fallback. Kept as package-level
+// vars so tests can assert the exact form a real `codex` invocation receives.
+var (
+	codexDebugModelsArgs        = []string{"debug", "models"}
+	codexBundledDebugModelsArgs = []string{"debug", "models", "--bundled"}
+)
+
+func runCodexDebugModels(ctx context.Context, runtimeCmd Command, args ...string) ([]byte, error) {
+	cmd := runtimeCmd.exec(ctx, args...)
 	hideAgentWindow(cmd)
 	return outputOwned(cmd, runtimeCmd.logger)
 }
@@ -648,6 +662,12 @@ func ValidateThinkingLevelWith(loadCatalog func() (Catalog, error), providerType
 	if err != nil {
 		return false, err
 	}
+	if catalog.CLIThinkingLevels != nil && !slices.Contains(catalog.CLIThinkingLevels, value) {
+		return false, nil
+	}
+	if !catalog.Verified() {
+		return false, fmt.Errorf("%w; cannot validate %s thinking level %q", errUnverifiedCatalog, providerType, value)
+	}
 	models := catalog.Models
 	target := modelIDForCapabilityLookup(providerType, model)
 	if target == "" {
@@ -667,7 +687,13 @@ func ValidateThinkingLevelWith(loadCatalog func() (Catalog, error), providerType
 		}
 	}
 	for _, m := range models {
-		if m.ID != target {
+		// Normalise the catalog side too, not just the requested model. Claude
+		// discovery reports what the CLI would really run, and that includes
+		// the context-window tag (`claude-opus-5[1m]`), while target has
+		// already had it stripped. Comparing raw IDs would miss every tagged
+		// entry and fail the level closed, silently dropping the user's
+		// --effort (MUL-6961).
+		if modelIDForCapabilityLookup(providerType, m.ID) != target {
 			continue
 		}
 		if m.Thinking == nil {
@@ -682,6 +708,9 @@ func ValidateThinkingLevelWith(loadCatalog func() (Catalog, error), providerType
 	}
 	return false, nil
 }
+
+// 未验证目录不能否定用户保存的模型参数，由实际 CLI 决定可用性。
+var errUnverifiedCatalog = errors.New("model discovery did not return the runtime's own catalog")
 
 // ValidateServiceTier 报告 value 是否被“当前 Codex 目录对显式模型”宣传。空值永远合法，表示
 // “继承运行时配置”。Codex 的 "default" 哨兵只有当 daemon 装的 CLI 上报支持“显式 standard
@@ -707,6 +736,11 @@ func ValidateServiceTierWith(loadCatalog func() (Catalog, error), providerType, 
 	if err != nil {
 		return false, err
 	}
+	// Explicit standard routing is a CLI-version capability, not a per-model
+	// one: discoverCodexCatalog stamps it on every entry, fallback entries
+	// included, from the installed version alone. Resolve it before the
+	// unverified-catalog pass-through below: an old CLI must never receive
+	// "default" just because discovery failed.
 	if value == codexStandardServiceTier {
 		for _, candidate := range catalog.Models {
 			if candidate.SupportsExplicitStandardServiceTier {
@@ -714,6 +748,9 @@ func ValidateServiceTierWith(loadCatalog func() (Catalog, error), providerType, 
 			}
 		}
 		return false, nil
+	}
+	if !catalog.Verified() {
+		return false, fmt.Errorf("%w; cannot validate %s service tier %q", errUnverifiedCatalog, providerType, value)
 	}
 	for _, m := range catalog.Models {
 		if m.ID != model {
@@ -729,7 +766,6 @@ func ValidateServiceTierWith(loadCatalog func() (Catalog, error), providerType, 
 	return false, nil
 }
 
-// anyModelSupportsThinkingValue 判断目录里是否存在任一模型支持 value 这个 thinking 档位。
 func anyModelSupportsThinkingValue(models []Model, value string) bool {
 	for _, m := range models {
 		if m.Thinking == nil {

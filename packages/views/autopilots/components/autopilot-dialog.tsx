@@ -236,13 +236,21 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   // 所以写入会新建一个。
   const scheduleTriggerIdRef = useRef(existingSchedule?.id ?? null);
 
-  const triggerCount = isCreate ? 0 : props.triggers.length;
-  const schedulePillDisabled = !isCreate && triggerCount >= 2;
+  // Only SCHEDULE rows can make this panel ambiguous, so only they are counted.
+  // Counting every kind locked a 1 schedule + 1 webhook autopilot (MUL-7478),
+  // where `existingSchedule` above names exactly one row and the write below
+  // has nowhere else to land. Two schedules is the real ambiguity: this editor
+  // holds one `ScheduleConfig`, so it would show the first row as if it were
+  // the whole story and save would silently rewrite that one alone.
+  const scheduleTriggerCount = isCreate
+    ? 0
+    : props.triggers.filter((trig) => trig.kind === "schedule").length;
+  const schedulePillDisabled = !isCreate && scheduleTriggerCount >= 2;
 
   // 手动 autopilot 的空态，以及从本弹窗通往"第一个计划"的唯一入口。面板锁定时
   // （≥2 个触发器）跳过——那种情况保持渲染它一贯展示的禁用编辑器。
   const showScheduleEmptyState =
-    !isCreate && existingSchedule === null && !scheduleAdded && !schedulePillDisabled;
+    !isCreate && existingSchedule === null && !scheduleAdded;
 
   const selectedAssignee = useMemo(() => {
     if (!assigneeId) return null;
@@ -641,7 +649,9 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             {triggerKind === "schedule" ? (
               <div>
                 <SectionLabel>{t(($) => $.dialog.section_schedule)}</SectionLabel>
-                {showScheduleEmptyState ? (
+                {schedulePillDisabled ? (
+                  <ScheduleMultipleNotice count={scheduleTriggerCount} />
+                ) : showScheduleEmptyState ? (
                   <ScheduleEmptyState onAdd={() => setScheduleAdded(true)} />
                 ) : (
                   /* 与详情页的"添加触发"弹窗不同，这里不传 `onValidityChange` /
@@ -652,14 +662,11 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
                     value={schedule}
                     onChange={setSchedule}
                     wsId={wsId}
-                    // 保存飞行中锁定：提交路径经网络校验后写它在那次往返前读到的计划，
-                    // 中途落进来的编辑会被成功 toast 盖着丢地上。
-                    disabled={schedulePillDisabled || submitting}
-                    disabledReason={
-                      schedulePillDisabled
-                        ? t(($) => $.dialog.schedule_disabled_reason)
-                        : undefined
-                    }
+                    // Locked while the save is in flight: the submit path validates
+                    // over the network and then writes the schedule it read before
+                    // that round trip, so an edit made in between would be dropped
+                    // on the floor with a success toast over it.
+                    disabled={submitting}
                   />
                 )}
               </div>
@@ -952,10 +959,27 @@ function SubscribersSection({
 }
 
 
-// 没有计划的 autopilot（手动运行）在本弹窗里的空态卡片：只有点一下"添加"按钮
-// 才会真的长出计划编辑器。它要和详情页里触发器的空态保持同一种说法——都是虚线卡片
-// 标明"当前手动运行"——否则同一份"没计划"的数据，一个入口显示空态、另一个显示满配的
-// 编辑器和"下次运行"预览，用户就会以为已经有计划在跑了。
+// The panel cannot speak for two schedules, and a disabled editor showing the
+// first of them is still half a truth — the one the reader would set their
+// clock by. It says what it cannot do and where the reader can: this dialog
+// only ever opens from the detail page, so the Triggers list is already on
+// screen behind it.
+function ScheduleMultipleNotice({ count }: { count: number }) {
+  const { t } = useT("autopilots");
+  return (
+    <div className="rounded-md border border-dashed p-3">
+      <p className="text-caption text-muted-foreground">
+        {t(($) => $.dialog.schedule_multiple_notice, { count })}
+      </p>
+    </div>
+  );
+}
+
+// The schedule section of an autopilot that has none. Mirrors the detail
+// page's trigger empty state — a dashed card that states the autopilot is
+// manual — so the two surfaces agree on what "no schedule" looks like instead
+// of one of them showing a filled-in editor and a next-run preview for a
+// schedule that does not exist.
 function ScheduleEmptyState({ onAdd }: { onAdd: () => void }) {
   const { t } = useT("autopilots");
   return (

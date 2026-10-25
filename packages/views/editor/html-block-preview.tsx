@@ -21,13 +21,11 @@ import {
   Copy,
   Eye,
   Maximize2,
+  RotateCw,
 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
-import {
-  Dialog,
-  DialogContent,
-} from "@multica/ui/components/ui/dialog";
+import { HtmlPreviewSurface } from "./html-preview-surface";
 import { useT } from "../i18n";
 import { CodeBlockStatic } from "./code-block-static";
 import { HtmlPreviewBody } from "./html-preview-body";
@@ -58,6 +56,7 @@ export function HtmlBlockPreview({ html, className }: HtmlBlockPreviewProps) {
   const [view, setView] = useState<"preview" | "source">("preview");
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [previewRevision, setPreviewRevision] = useState(0);
 
   const handleCopy = async () => {
     if (!html) return;
@@ -97,6 +96,11 @@ export function HtmlBlockPreview({ html, className }: HtmlBlockPreviewProps) {
             <Eye className="h-3.5 w-3.5" />
           )}
         </button>
+        {view === "preview" && <button type="button" title={t(($) => $.attachment.reload)}
+          aria-label={t(($) => $.attachment.reload)} onClick={() => setPreviewRevision(value => value + 1)}
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted">
+          <RotateCw className="h-3.5 w-3.5" />
+        </button>}
         {view === "preview" && (
           <button
             type="button"
@@ -122,28 +126,20 @@ export function HtmlBlockPreview({ html, className }: HtmlBlockPreviewProps) {
           )}
         </button>
       </div>
-      {view === "preview" ? (
-        <HtmlPreviewBody
+      <div hidden={view !== "preview" && !fullscreen}>
+      <HtmlPreviewSurface open={fullscreen} onOpenChange={setFullscreen}
+        inlineHeight={HTML_BLOCK_PREVIEW_HEIGHT_PX}
+        title={t(($) => $.code_block.html_preview)}
+        onReload={() => setPreviewRevision(value => value + 1)}>
+        <HtmlPreviewBody key={previewRevision}
           source={{ kind: "inline", html }}
           title={t(($) => $.code_block.html_preview)}
-          className={CODE_BLOCK_IFRAME_HEIGHT}
+          className={fullscreen ? "h-full w-full" : CODE_BLOCK_IFRAME_HEIGHT}
         />
-      ) : (
-        <CodeBlockStatic language="xml" body={html} />
-      )}
-      <Dialog open={fullscreen} onOpenChange={setFullscreen}>
-        <DialogContent
-          className="!max-w-6xl !h-[min(90vh,calc(100vh-2rem))] w-full p-0 gap-0 overflow-hidden"
-          aria-label={t(($) => $.code_block.fullscreen)}
-        >
-          <HtmlPreviewBody
-            source={{ kind: "inline", html }}
-            title={t(($) => $.code_block.html_preview)}
-            className="h-full w-full"
-            iframeClassName="rounded-none border-0"
-          />
-        </DialogContent>
-      </Dialog>
+      </HtmlPreviewSurface>
+      </div>
+      {view === "source" && <CodeBlockStatic language="xml" body={html} />}
+
     </div>
   );
 }

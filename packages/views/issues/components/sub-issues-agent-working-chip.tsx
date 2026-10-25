@@ -1,5 +1,7 @@
 "use client";
 
+import { ShimmerText } from "@multica/ui/components/common/shimmer-text";
+
 // 本文件：SubIssuesAgentWorkingChip —— 问题详情"子问题"头部的人数聚合 chip。
 // 行内的 IssueAgentActivityIndicator 回答"哪个子问题正在被处理"；
 // 本 chip 回答"当前有多少 agent 正在动这个父问题的子问题"，列表折叠时也
@@ -59,13 +61,11 @@ export const SubIssuesAgentWorkingChip = memo(
           }
         >
           <AgentAvatarStack agentIds={agentIds} size="xs" max={3} />
-          {/* 不能加 leading-none：光晕动效用 background-clip: text 画字形，
-              背景只覆盖行盒——行盒被压扁会让下降部笔画变透明。 */}
-          <span className="animate-chat-text-shimmer text-micro font-medium tabular-nums">
+          <ShimmerText className="text-micro font-medium tabular-nums">
             {t(($) => $.agent_activity.chip_agents_working, {
               count: agentIds.length,
             })}
-          </span>
+          </ShimmerText>
         </HoverCardTrigger>
         <HoverCardContent align="start" className="w-72">
           <WorkingAgentsHoverContent agents={agents} />

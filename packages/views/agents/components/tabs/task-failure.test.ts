@@ -24,6 +24,10 @@ const zhT = fixedT();
 // row, a user's own cancel stays a plain "Cancelled" — labelling every cancel
 // would bury the rows that actually need the user to act.
 describe("cancelReasonLabel", () => {
+  it("localizes access revocation without calling the cancelled run a failure", () => {
+    expect(cancelReasonLabel({ status: "cancelled", failure_reason: "runtime_access_revoked" }, zhT))
+      .toBe(zhHansAgents.task_failure.reasons.runtime_access_revoked);
+  });
   it("returns null for a user-initiated cancel", () => {
     expect(
       cancelReasonLabel(
@@ -83,6 +87,13 @@ describe("failureReasonLabel", () => {
     expect(failureReasonLabel("invalid_task_identity", zhT)).toBe(
       "任务身份不匹配",
     );
+  });
+
+  it("maps runtime access denial to actionable recovery copy", () => {
+    const label = failureReasonLabel("runtime_access_denied", zhT);
+    expect(label).toContain("公开");
+    expect(label).toContain("绑定");
+    expect(label).not.toBe("任务身份不匹配");
   });
 
   it("covers operational reasons emitted outside the canonical taxonomy", () => {

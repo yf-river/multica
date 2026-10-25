@@ -69,7 +69,10 @@ func TestLifeCognitionOrdinaryTerminalCallbacksStayAtomic(t *testing.T) {
 		{
 			name: "daemon failure uses cognition retry only",
 			call: func(taskID pgtype.UUID) error {
-				_, err := testHandler.TaskService.FailTask(ctx, taskID, "provider timed out", "", "", "", "timeout", false, "", "")
+				_, transitioned, err := testHandler.TaskService.FailTaskWithTransition(ctx, taskID, "provider timed out", "", "", "", "timeout", false, "", "")
+				if err == nil && !transitioned {
+					return fmt.Errorf("first Life failure did not transition")
+				}
 				return err
 			},
 		},
@@ -116,6 +119,9 @@ func TestLifeCognitionOrdinaryTerminalCallbacksStayAtomic(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			if _, transitioned, err := testHandler.TaskService.FailTaskWithTransition(ctx, taskID, "late duplicate callback", "", "", "", "timeout", false, "", ""); err != nil || transitioned {
+				t.Fatalf("重复 Life 终态回调: changed=%v err=%v", transitioned, err)
+			}
 			var taskStatus, jobStatus string
 			var retainedTaskID pgtype.UUID
 			if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id=$1`, taskID).Scan(&taskStatus); err != nil {

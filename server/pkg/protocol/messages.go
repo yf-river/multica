@@ -38,6 +38,18 @@ const (
 	// request/response RPC（MUL-4257）。开关式能力：只有双方都支持时，
 	// 认领任务才走 WS；其余情况继续走 HTTP claim 端点。
 	DaemonCapabilityRPCV1 = "rpc-v1"
+	// 新会话仅在 checkout 保留已有工作时复用父执行目录。
+	DaemonCapabilityCheckoutKeepsWorkV1 = "checkout-keeps-work-v1"
+	// DaemonCapabilityTaskSupplementV1 advertises that this provider run can accept
+	// an additional text instruction without cancelling or starting a task.
+	// It is persisted when this exact task enters running; absence always means
+	// unsupported so mixed server/daemon versions fail closed.
+	DaemonCapabilityTaskSupplementV1 = "task-supplement-v1"
+
+	TaskSupplementFailureTurnNotStarted   = "turn_not_started"
+	TaskSupplementFailureProviderRejected = "provider_rejected"
+	TaskSupplementFailureTimeout          = "timeout"
+	TaskSupplementFailureTurnEnded        = "turn_ended"
 
 	// AppCapabilityChatDraftRestoreV1 由理解「持久化草稿恢复」路径的 app
 	// 客户端用 X-Client-Capabilities 宣告：chat:cancel_finalized 作为失效提示，
@@ -176,6 +188,7 @@ type TaskMessagePayload struct {
 	Input           map[string]any `json:"input,omitempty"`   // 工具入参（仅 tool_use）
 	Output          string         `json:"output,omitempty"`  // 工具输出（仅 tool_result）
 	CreatedAt       string         `json:"created_at,omitempty"`
+	CallID          string         `json:"call_id,omitempty"` // 单次执行内的工具调用标识
 }
 
 // DaemonRegisterPayload 是 daemon 连接建立时发给 server 的注册消息。

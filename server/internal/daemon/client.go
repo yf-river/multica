@@ -32,7 +32,9 @@ func (e *requestError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
 }
 
-// isWorkspaceNotFoundError 判断错误是否为带 "workspace not found" 响应体的 404。
+var errInvalidResponseBody = errors.New("invalid response body")
+
+// isWorkspaceNotFoundError returns true if the error is a 404 with "workspace not found" body.
 func isWorkspaceNotFoundError(err error) bool {
 	var reqErr *requestError
 	if !errors.As(err, &reqErr) {
@@ -190,6 +192,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilitySourceContextQuickCreateV1,
 		protocol.DaemonCapabilityRPCV1,
+		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
 	}, ",")
 }
 
@@ -239,14 +242,17 @@ func (c *Client) ResolveRemoteMCPCredential(ctx context.Context, daemonToken, ta
 	return headers, nil
 }
 
-// batchClaimRequestTimeout 是机器级 batch claim（MUL-4257）的短请求级截止时间。
-// 与按 runtime 的 claim——那里给满 30s 控制面超时，因为卡住只堵那一个 runtime 的
-// goroutine——不同，batch 调用一个请求就覆盖 daemon 承载的所有 runtime，一次慢
-// claim 会拖住它们全部（这正是按 runtime 轮询器要拆开的队头耦合，MUL-1744）。把
-// batch 限到几秒就封顶了这个最坏饿死情形；客户端放弃后服务端仍提交的 claim，由
-// 下一轮 ReclaimStaleDispatchedTasksForRuntimes 兜底。保持明显高于 p99 claim 延迟，
-// 让恢复成为例外。
-const batchClaimRequestTimeout = 5 * time.Second
+// batchClaimRequestTimeout is the short, request-scoped deadline for the
+// machine-level batch claim (MUL-4257). Unlike the per-runtime claim — which
+// gets the full 30s control-plane timeout because a stall there only blocks
+// that one runtime's goroutine — the batch call covers every runtime the
+// daemon hosts in a single request, so a slow claim would delay ALL of them
+// (the head-of-line coupling the per-runtime pollers were split to avoid,
+// MUL-1744). Bounding the batch to a few seconds caps that worst-case
+// starvation; a claim that commits server-side after the client gives up is
+// recovered by ReclaimStaleDispatchedTasksForRuntimes on the next poll. Kept
+// comfortably above p99 claim latency so recovery stays the exception.
+const batchClaimRequestTimeout = protocol.DaemonBatchClaimRequestTimeout
 
 // ClaimTasks 是 ClaimTask 的机器级（MUL-4257）batch 对应物：它用一个请求让服务器在
 // daemon 承载的每个 runtime 上最多认领 maxTasks 个任务。daemonID 把请求限定到这台
@@ -396,9 +402,90 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/prepare-lease", runtimeID, taskID), map[string]any{}, nil)
 }
 
-// StartTask 通知服务器任务已开始执行。
-func (c *Client) StartTask(ctx context.Context, taskID string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+type TaskSupplement struct {
+	CommentID  string `json:"comment_id"`
+	AuthorName string `json:"author_name"`
+	Content    string `json:"content"`
+}
+
+func (c *Client) ClaimTaskSupplement(ctx context.Context, taskID string) (*TaskSupplement, error) {
+	var supplement TaskSupplement
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/supplements/claim", taskID), map[string]any{}, &supplement); err != nil {
+		return nil, err
+	}
+	if supplement.CommentID == "" {
+		return nil, nil
+	}
+	return &supplement, nil
+}
+
+func (c *Client) AckTaskSupplement(ctx context.Context, taskID, commentID string, delivered bool, errText string) error {
+	return c.postJSONWithRetry(ctx,
+		fmt.Sprintf("/api/daemon/tasks/%s/supplements/%s/ack", taskID, commentID),
+		map[string]any{"delivered": delivered, "error": errText}, nil,
+		[]time.Duration{0, 100 * time.Millisecond, 300 * time.Millisecond})
+}
+
+// startTaskRetrySchedule allows two short reconnects without the terminal
+// callbacks' 124s backoff. The whole start has a 30s budget (not 3 x the HTTP
+// client's 30s timeout). Preparation keeps renewing its 45s lease every 15s
+// throughout requests and backoff; its own deadline can end this sooner.
+// runTask calls this once. Task-level retries are separate executions, with
+// fresh claims, and cannot reuse this acknowledgement.
+var startTaskRetrySchedule = []time.Duration{500 * time.Millisecond, 2 * time.Second}
+
+const (
+	startTaskTimeout = 30 * time.Second
+	// Start responses can include an issue snapshot alongside the capability.
+	maxStartTaskResponseBytes = 1 << 20
+)
+
+var errStartClaimRejected = errors.New("task start claim rejected")
+
+func (c *Client) StartTask(ctx context.Context, task Task, capabilities ...string) (bool, error) {
+	var negotiated bool
+	var decodeResponse responseDecoder = func(r io.Reader) error {
+		data, err := io.ReadAll(io.LimitReader(r, maxStartTaskResponseBytes+1))
+		if err != nil {
+			return err
+		}
+		if len(data) > maxStartTaskResponseBytes {
+			return fmt.Errorf("%w: task start exceeds %d bytes", errInvalidResponseBody, maxStartTaskResponseBytes)
+		}
+		var response struct {
+			SupplementCapability string `json:"supplement_capability"`
+		}
+		// Empty acknowledgements start the task without negotiating supplements.
+		// Invalid JSON fails without retrying; transport read failures can retry.
+		if len(data) != 0 {
+			if err := json.Unmarshal(data, &response); err != nil {
+				return fmt.Errorf("%w: task start: %w", errInvalidResponseBody, err)
+			}
+		}
+		negotiated = response.SupplementCapability == protocol.DaemonCapabilityTaskSupplementV1
+		return nil
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/start", task.ID)
+	if !task.StartClaimSupported {
+		// Old servers have no safe replay contract. Preserve one attempt.
+		err := c.postJSON(ctx, path, map[string]any{"capabilities": capabilities}, decodeResponse)
+		return err == nil && negotiated, err
+	}
+	if task.RuntimeID == "" || task.DispatchedAt == "" {
+		return false, fmt.Errorf("start task: claim is missing runtime_id or dispatched_at")
+	}
+	ctx, cancel := context.WithTimeout(ctx, startTaskTimeout)
+	defer cancel()
+	err := c.postJSONWithRetry(ctx, path, map[string]any{
+		"runtime_id":    task.RuntimeID,
+		"capabilities":  capabilities,
+		"dispatched_at": task.DispatchedAt,
+	}, decodeResponse, startTaskRetrySchedule)
+	var reqErr *requestError
+	if errors.As(err, &reqErr) && reqErr.StatusCode == http.StatusConflict {
+		return false, fmt.Errorf("%w: %w", errStartClaimRejected, err)
+	}
+	return err == nil && negotiated, err
 }
 
 // MarkTaskWaitingLocalDirectory 把刚派发的任务在服务器上停进 waiting_local_directory
@@ -463,12 +550,16 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData 表示批量上报中的一条 agent 执行消息。
 type TaskMessageData struct {
+	// CallID is an opaque tool-call identity scoped to one backend execution.
+	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
 	Type    string         `json:"type"`
 	Tool    string         `json:"tool,omitempty"`
 	Content string         `json:"content,omitempty"`
 	Input   map[string]any `json:"input,omitempty"`
 	Output  string         `json:"output,omitempty"`
+	// Daemon 观察到事件的时间，早于批量上报。
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ReportTaskMessages 批量上报任务执行过程中的消息。
@@ -478,8 +569,12 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-// CompleteTask 上报任务成功完成及结果。
+// CompleteTask 上报任务完成；差异数据随终态一起持久化。
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff) error {
+	return c.completeTaskWithRetrySchedule(ctx, taskID, output, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, durableWorkDir, codeDiff, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) completeTaskWithRetrySchedule(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff, schedule []time.Duration) error {
 	body := map[string]any{"output": output}
 	if codeDiff != nil {
 		body["code_diff"] = codeDiff
@@ -502,7 +597,7 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	if retiredSessionID != "" {
 		body["retired_session_id"] = retiredSessionID
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, defaultTerminalRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, schedule)
 }
 
 // ReportTaskUsage 上报任务中各模型的 token 用量。
@@ -526,8 +621,11 @@ func (c *Client) ReportTaskTraces(ctx context.Context, taskID string, traces []T
 	}, nil)
 }
 
-// FailTask 上报任务失败及原因。
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff) error {
+	return c.failTaskWithRetrySchedule(ctx, taskID, errMsg, sessionID, workDir, branchName, failureReason, sessionRolloutMissing, retiredSessionID, durableWorkDir, codeDiff, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) failTaskWithRetrySchedule(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff, schedule []time.Duration) error {
 	body := map[string]any{"error": errMsg}
 	// 1. 失败的运行也可能已经改过文件：把 diff 一起上报，用户才看得到它停在
 	//    哪一步。服务器把它写到失败任务的 result 上。
@@ -557,7 +655,7 @@ func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDi
 	if retiredSessionID != "" {
 		body["retired_session_id"] = retiredSessionID
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, defaultTerminalRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, schedule)
 }
 
 // PinTaskSession 在运行中途把 agent 的 session_id 与 work_dir 持久化到任务行上，
@@ -881,13 +979,33 @@ func (c *Client) GetTaskGCCheck(ctx context.Context, taskID string) (*TaskGCStat
 // 队等机器回来，但给这台机器的活必须带着解释被拒绝（MUL-6164）。
 const RuntimeOfflineCodeNotExecutable = "not_executable"
 
-// RuntimeOfflineReason 是 runtime 离线的原因，形式可被客户端直接行动：一个稳定的、
-// 可开关并本地化的 code，加上一条修复安装的命令。说明性文字放 Detail 供日志用——
-// 绝不做客户端解析的对象。
+// RuntimeOfflineCodeDshProfile marks a runtime taken offline because the DSH
+// runtime profile it depends on is not installed. Like not_executable it is not
+// something waiting fixes on its own — a human installs a bundle, or configures
+// the daemon to — so work for it is refused with an explanation rather than
+// queued forever. The exception is an install the daemon is running right now,
+// which Installing states explicitly.
+//
+// Only an ABSENT profile reaches this code. A profile that is present but
+// answers with a protocol this daemon does not drive never takes a live runtime
+// offline at all: the daemon can be the stale side of that skew, so it reports
+// the incompatibility and leaves the runtime alone.
+const RuntimeOfflineCodeDshProfile = "dsh_profile"
+
+// RuntimeOfflineReason is why a runtime went offline, in the form clients can
+// act on: a stable code they switch on and localize, and the command that
+// repairs the install. Prose stays in Detail for logs — never as the thing a
+// client parses.
 type RuntimeOfflineReason struct {
 	Code   string                  `json:"code"`
 	Detail string                  `json:"detail,omitempty"`
 	Repair *agent.ExecFormatRepair `json:"repair,omitempty"`
+	// Installing reports that the daemon has an automatic install in flight for
+	// this runtime. It is the difference between "a human has to act" and "this
+	// comes back by itself", which the server cannot infer from the code alone:
+	// without it, a successful install that is still running would look exactly
+	// like a machine waiting on an operator who was never going to be told.
+	Installing bool `json:"installing,omitempty"`
 }
 
 // Deregister 把 runtime 拉下线。reasons 可选、按 runtime id 键控：关停中的 daemon
@@ -1010,7 +1128,7 @@ var retrySleep = func(ctx context.Context, d time.Duration) error {
 // 调用方需自行处理父 context 取消；本谓词区分不了“daemon 正在关停”与“HTTP 客户端
 // 单次尝试超时”，因为两者到这里都是经 net/http 包装的 context 错误。
 func isTransientError(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, errInvalidResponseBody) {
 		return false
 	}
 	var reqErr *requestError
@@ -1073,9 +1191,14 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 	return c.postJSONVia(ctx, c.client, path, reqBody, respBody)
 }
 
-// postJSONVia 是跑在显式 http.Client 上的 postJSON。调用方挑客户端以控制超时制度：
-// c.client（固定 30s）用于控制面调用，c.bundleClient（截止时间来自 ctx）用于大体量
-// 技能包下载。
+// responseDecoder customizes successful-response decoding inside each attempt.
+type responseDecoder func(io.Reader) error
+
+// postJSONVia is postJSON over an explicit http.Client. Callers pick the client
+// to control the timeout regime: c.client (fixed 30s) for control-plane calls,
+// c.bundleClient (deadline from ctx) for large skill-bundle downloads.
+// respBody can be a JSON destination or a responseDecoder that decodes a
+// successful response inside each attempt, before retry decisions are made.
 func (c *Client) postJSONVia(ctx context.Context, httpClient *http.Client, path string, reqBody any, respBody any) error {
 	return c.postJSONViaObserved(ctx, httpClient, path, reqBody, respBody, nil)
 }
@@ -1116,6 +1239,9 @@ func (c *Client) postJSONViaObserved(ctx context.Context, httpClient *http.Clien
 	if respBody == nil {
 		io.Copy(io.Discard, respReader)
 		return nil
+	}
+	if decode, ok := respBody.(responseDecoder); ok {
+		return decode(respReader)
 	}
 	return json.NewDecoder(respReader).Decode(respBody)
 }

@@ -13,7 +13,7 @@ import { DingTalkTab } from "./dingtalk-tab";
 import { VCSTab } from "./vcs-tab";
 import { WecomTab } from "./wecom-tab";
 import { TelegramTab } from "./telegram-tab";
-import { ApiError } from "@multica/core/api";
+import { ApiError, errorCode } from "@multica/core/api";
 import { composioToolkitsOptions } from "@multica/core/composio";
 import { useConfigStore, useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
@@ -36,10 +36,10 @@ export function IntegrationsTab() {
     ...composioToolkitsOptions(),
     enabled: composioEnabled,
   });
-  // 503 表示服务端还没配好 Composio 的密钥等；此时隐藏整个分区，而不是给
-  // 一个「运营商未配置」的报错面板。
+  // 未配置的服务端不显示 Composio 分区；兼容旧版本的 503 响应。
   const composioUnconfigured =
-    composioToolkits.error instanceof ApiError && composioToolkits.error.status === 503;
+    errorCode(composioToolkits.error) === "composio_not_configured" ||
+    (composioToolkits.error instanceof ApiError && composioToolkits.error.status === 503);
 
   // 自托管专属集成：托管云把该字段从 /api/config 里省略、上报为 false，于是整段
   // 分区（含标题）在托管云隐藏，而不是对普通用户展示一条「缺运营商配置」的提示。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"os"
 	"strings"
 	"testing"
@@ -20,9 +21,12 @@ import (
 
 func sessionPersistenceTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
+	if os.Getenv("DATABASE_URL") == "" && os.Getenv("MULTICA_TEST_DATABASE_URL") == "" {
+		t.Skip("需要显式的隔离测试数据库")
+	}
+	dsn, targetErr := dbfx.TestDatabaseURL()
+	if targetErr != nil {
+		t.Fatal(targetErr)
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -342,7 +346,7 @@ func TestBindMediaRefs_IssueAttachmentSurvivesChatSessionDeletion(t *testing.T) 
 	var issueID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, number)
-		VALUES ($1, 'Fix broken layout', 'todo', 'none', 'member', $2, 1)
+		VALUES ($1, 'Fix broken layout', 'todo', 'not_important_not_urgent', 'member', $2, 1)
 		RETURNING id
 	`, fixture.workspaceID, fixture.userID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -413,7 +417,7 @@ func TestBindMediaRefs_EmptyRefsCreateNoAttachmentAndClearPending(t *testing.T) 
 	var issueID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, number)
-		VALUES ($1, 'Existing issue', 'todo', 'none', 'member', $2, 1)
+		VALUES ($1, 'Existing issue', 'todo', 'not_important_not_urgent', 'member', $2, 1)
 		RETURNING id
 	`, fixture.workspaceID, fixture.userID).Scan(&issueID); err != nil {
 		t.Fatalf("create existing issue: %v", err)
@@ -492,7 +496,7 @@ func TestBindMediaRefs_MaterializesIssueImagesInOriginalRichTextOrder(t *testing
 	var issueID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, description, status, priority, creator_type, creator_id, number)
-		VALUES ($1, 'explain below questions', $2, 'todo', 'none', 'member', $3, 4)
+		VALUES ($1, 'explain below questions', $2, 'todo', 'not_important_not_urgent', 'member', $3, 4)
 		RETURNING id
 	`, fixture.workspaceID, base, fixture.userID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -565,7 +569,7 @@ func TestMaterializeIssueChannelMediaMarkdownPreservesEditedDescription(t *testi
 	var issueID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, description, status, priority, creator_type, creator_id, number)
-		VALUES ($1, 'Keep description', 'Reproduction steps', 'todo', 'none', 'member', $2, 2)
+		VALUES ($1, 'Keep description', 'Reproduction steps', 'todo', 'not_important_not_urgent', 'member', $2, 2)
 		RETURNING id
 	`, fixture.workspaceID, fixture.userID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -605,7 +609,7 @@ func TestMaterializeIssueChannelMediaMarkdownReplacesUnchangedBase(t *testing.T)
 	var issueID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, description, status, priority, creator_type, creator_id, number)
-		VALUES ($1, 'Keep layout', $2, 'todo', 'none', 'member', $3, 3)
+		VALUES ($1, 'Keep layout', $2, 'todo', 'not_important_not_urgent', 'member', $3, 3)
 		RETURNING id
 	`, fixture.workspaceID, base, fixture.userID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -644,7 +648,7 @@ func TestIssueDeleteLockPreventsLateMediaBindFromOrphaningObject(t *testing.T) {
 	var issueID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, number)
-		VALUES ($1, 'Delete while binding', 'todo', 'none', 'member', $2, 2)
+		VALUES ($1, 'Delete while binding', 'todo', 'not_important_not_urgent', 'member', $2, 2)
 		RETURNING id`, fixture.workspaceID, fixture.userID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}

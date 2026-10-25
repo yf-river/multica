@@ -72,7 +72,7 @@ func (h *Handler) requirePluginActionV1(w http.ResponseWriter, r *http.Request) 
 	if h.pluginsV1Enabled(r.Context()) {
 		return true
 	}
-	publicapiv1.WriteProblem(w, r, http.StatusServiceUnavailable, "plugin_api_disabled", "Plugin management is not enabled")
+	publicapiv1.WriteProblem(w, r, http.StatusForbidden, "plugin_api_disabled", "Plugin management is not enabled")
 	return false
 }
 
@@ -497,7 +497,7 @@ func (h *Handler) ListPluginComments(w http.ResponseWriter, r *http.Request) {
 
 // publicPluginComment 把内部 Comment 映射成公共 DTO。
 func publicPluginComment(comment db.Comment) publicapiv1.Comment {
-	return publicapiv1.Comment{
+	out := publicapiv1.Comment{
 		ID:         uuidToString(comment.ID),
 		AuthorType: comment.AuthorType,
 		AuthorID:   uuidToString(comment.AuthorID),
@@ -506,6 +506,10 @@ func publicPluginComment(comment db.Comment) publicapiv1.Comment {
 		ParentID:   uuidToString(comment.ParentID),
 		CreatedAt:  comment.CreatedAt.Time.UTC().Format(timeFormatRFC3339),
 	}
+	if comment.DeletedAt.Valid {
+		out.DeletedAt = comment.DeletedAt.Time.UTC().Format(timeFormatRFC3339)
+	}
+	return out
 }
 
 // CreatePluginComment 处理 POST /v1/issues/{issue_ref}/comments（需 comments:write scope）。

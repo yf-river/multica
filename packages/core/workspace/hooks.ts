@@ -120,11 +120,11 @@ export function useActorName(
   scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUERY_SCOPE,
 ) {
   const wsId = useWorkspaceId();
-  const { data: members = EMPTY_MEMBERS } = useQuery({
+  const { data: memberData } = useQuery({
     ...memberListOptions(wsId),
     enabled: !!wsId && scope.members !== false,
   });
-  const { data: agents = EMPTY_AGENTS } = useQuery({
+  const { data: agentData } = useQuery({
     ...agentListOptions(wsId),
     enabled: !!wsId && scope.agents !== false,
   });
@@ -133,12 +133,15 @@ export function useActorName(
     ...managedAgentListOptions(wsId),
     enabled: !!wsId && scope.agents !== false,
   });
-  const { data: squads = EMPTY_SQUADS } = useQuery({
+  const { data: squadData } = useQuery({
     ...squadListOptions(wsId),
     enabled: !!wsId && scope.squads !== false,
   });
   // 只为给插件署名的行取名。受特性开关约束，避免没有插件的工作区拉一份它
   // 永远渲染不出作者的列表。
+  const members = memberData ?? EMPTY_MEMBERS;
+  const agents = agentData ?? EMPTY_AGENTS;
+  const squads = squadData ?? EMPTY_SQUADS;
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
   const { data: pluginData } = useQuery({
     ...pluginInstallationsOptions(wsId),
@@ -170,15 +173,18 @@ export function useActorName(
     [directoryAgents, members, squads, pluginData],
   );
 
-  const getActorInitials = useCallback((type: string, id: string) => {
-    const name = getActorName(type, id);
-    return name
-      .split(" ")
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  }, [getActorName]);
+  const getActorInitials = useCallback(
+    (type: string, id: string, nameOverride?: string) => {
+      const name = nameOverride ?? getActorName(type, id);
+      return name
+        .split(" ")
+        .map((w) => w[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2);
+    },
+    [getActorName],
+  );
 
   const getActorAvatarUrl = useCallback((type: string, id: string): string | null => {
     if (type === "member") return resolvePublicFileUrl(members.find((m) => m.user_id === id)?.avatar_url);
@@ -186,6 +192,33 @@ export function useActorName(
     if (type === "squad") return resolvePublicFileUrl(squads.find((s) => s.id === id)?.avatar_url);
     return null;
   }, [agents, members, squads]);
+
+  const hasActor = useCallback(
+    (type: string, id: string): boolean | undefined => {
+      // undefined means the relevant directory has not produced an
+      // authoritative snapshot yet; it must not be treated as a missing actor.
+      if (type === "member") {
+        return memberData === undefined
+          ? undefined
+          : members.some((m) => m.user_id === id);
+      }
+      if (type === "agent") {
+        return agentData === undefined
+          ? undefined
+          : directoryAgents.some((a) => a.id === id);
+      }
+      if (type === "squad") {
+        return squadData === undefined
+          ? undefined
+          : squads.some((s) => s.id === id);
+      }
+      if (type === "plugin") {
+        return pluginData?.plugins.some((p) => p.id === id);
+      }
+      return type === "system";
+    },
+    [agentData, directoryAgents, memberData, members, pluginData, squadData, squads],
+  );
 
   return useMemo(
     () => ({
@@ -195,6 +228,7 @@ export function useActorName(
       getActorName,
       getActorInitials,
       getActorAvatarUrl,
+      hasActor,
     }),
     [
       getActorAvatarUrl,
@@ -203,6 +237,7 @@ export function useActorName(
       getAgentName,
       getMemberName,
       getSquadName,
+      hasActor,
     ],
   );
 }

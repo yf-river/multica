@@ -15,29 +15,11 @@ import (
 // 预算截断正文。用 4000 是给前缀 + 链接后缀留出富余。
 const inboxMarkdownMaxLen = 4000
 
-// inboxTypeLabels 是通知开头用的中文显示名。放在本包内，wecom 就不必伸到
-// cmd/server 去取；两份名单靠约定保持一致。
-var inboxTypeLabels = map[string]string{
-	"issue_assigned":     "任务指派",
-	"mentioned":          "提及你",
-	"status_changed":     "状态变更",
-	"comment_added":      "新评论",
-	"new_comment":        "新评论",
-	"reaction_added":     "表情反应",
-	"task_failed":        "task 失败",
-	"unassigned":         "取消指派",
-	"assignee_changed":   "指派人变更",
-	"priority_changed":   "优先级变更",
-	"due_date_changed":   "截止日期变更",
-	"start_date_changed": "开始日期变更",
-}
-
-func inboxTypeLabel(t string) string {
-	if label, ok := inboxTypeLabels[t]; ok {
-		return label
-	}
-	return "新消息"
-}
+// The notification type labels and the deep link's anchor text live in the
+// copy pack (strings.go), read through copyPack.label / InboxDetailLink. The
+// pack's zh-Hans labels are the same table this file used to hold, character
+// for character; the card is a 1:1 push to a named Multica member, so it is
+// their own profile language that picks the pack (outbound.go).
 
 // inboxAppURL 解析出前端地址，用于构造「查看详情」链接。优先级：
 // WECOM_APP_URL → MULTICA_APP_URL → FRONTEND_ORIGIN。只收 HTTPS 值；非 HTTPS
@@ -63,9 +45,10 @@ func inboxAppURL() string {
 //	{正文}
 //	[查看详情]({appURL}/{slug|workspaceID}/inbox?issue={issueID})
 //
-// 没有配置 appURL 时整段链接直接省略——发一张只有标题的卡片，也好过发一条坏链
-// 接。
-func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
+// The type label and the link's anchor text come from the reader's copyPack.
+// The link segment is omitted entirely when no appURL is configured — we
+// would rather send a title-only card than a broken link.
+func buildInboxMarkdown(item map[string]any, workspaceID, slug string, c copyPack) string {
 	title, _ := item["title"].(string)
 	typeStr, _ := item["type"].(string)
 	if title == "" && typeStr == "" {
@@ -94,7 +77,7 @@ func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
 
 	var b strings.Builder
 	b.WriteString("**[")
-	b.WriteString(inboxTypeLabel(typeStr))
+	b.WriteString(c.label(typeStr))
 	b.WriteString("] ")
 	b.WriteString(title)
 	b.WriteString("**")
@@ -103,7 +86,7 @@ func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
 		b.WriteString(body)
 	}
 	if link != "" {
-		b.WriteString("\n[查看详情](")
+		b.WriteString("\n[" + c.InboxDetailLink + "](")
 		b.WriteString(link)
 		b.WriteString(")")
 	}
@@ -111,11 +94,12 @@ func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
 	if utf8.RuneCountInString(result) <= inboxMarkdownMaxLen {
 		return result
 	}
-	// 只截正文。前缀与链接必须完整幸存，用户才仍保有「查看详情」这个出口。
-	prefix := "**[" + inboxTypeLabel(typeStr) + "] " + title + "**"
+	// Truncate the body only. Prefix + link must survive intact so the
+	// user still gets the "view detail" affordance.
+	prefix := "**[" + c.label(typeStr) + "] " + title + "**"
 	suffix := ""
 	if link != "" {
-		suffix = "\n[查看详情](" + link + ")"
+		suffix = "\n[" + c.InboxDetailLink + "](" + link + ")"
 	}
 	// 下面两种截断都不可能让 "]" 重新贴到 "(" 或 ":" 旁边。truncateRunes 只会
 	// 丢弃后缀，无法再造出 breakMemberLinks 已经拆开的那对组合；而这里在成员文
@@ -140,7 +124,7 @@ func buildInboxMarkdown(item map[string]any, workspaceID, slug string) string {
 		// 而现实里没有任何输入会走到这一步。
 		titleRoom = 0
 	}
-	return "**[" + inboxTypeLabel(typeStr) + "] " +
+	return "**[" + c.label(typeStr) + "] " +
 		truncateRunes(title, titleRoom) + "...**" + suffix
 }
 

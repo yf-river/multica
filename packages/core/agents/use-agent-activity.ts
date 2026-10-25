@@ -15,6 +15,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export interface ActivityBucket {
   total: number;
   failed: number;
+  completed: number;
+  cancelled: number;
 }
 
 /** 单个 Agent 的近 30 天活动序列。 */
@@ -30,6 +32,7 @@ export interface AgentActivity {
    * 年轻 Agent 的火花图形状刻意不变；出生前的天看起来和零活动的天一样。
    */
   daysSinceCreated: number;
+  avgDurationMs?: number;
 }
 
 /**
@@ -44,13 +47,28 @@ export interface ActivityWindowSummary {
   totalRuns: number;
   /** 窗口内 `bucket.failed` 之和。 */
   totalFailed: number;
-  /** 输入窗口的回显——渲染器用它拼文案。 */
+  /** Sum of `bucket.completed` across the window. */
+  totalCompleted: number;
+  /** Sum of `bucket.cancelled` across the window. */
+  totalCancelled: number;
+  /**
+   * Completed / (completed + failed). Null when the window has no
+   * completed or failed run to divide by — a window of nothing but
+   * cancellations has no success rate, and must not claim 100%.
+   */
+  successRate: number | null;
+  /** Echo of the input window — the renderer uses it for copy. */
   windowDays: number;
 }
 
 /** 空活动（所有桶补零、按满 30 天处理）。 */
 const EMPTY: AgentActivity = {
-  buckets: Array.from({ length: DAYS }, () => ({ total: 0, failed: 0 })),
+  buckets: Array.from({ length: DAYS }, () => ({
+    total: 0,
+    failed: 0,
+    completed: 0,
+    cancelled: 0,
+  })),
   daysSinceCreated: DAYS,
 };
 
@@ -59,6 +77,9 @@ const EMPTY_SUMMARY: ActivityWindowSummary = {
   buckets: [],
   totalRuns: 0,
   totalFailed: 0,
+  totalCompleted: 0,
+  totalCancelled: 0,
+  successRate: null,
   windowDays: 0,
 };
 
@@ -130,20 +151,32 @@ export function deriveAgentActivity(
   const series: ActivityBucket[] = Array.from({ length: DAYS }, () => ({
     total: 0,
     failed: 0,
+    completed: 0,
+    cancelled: 0,
   }));
 
   // 最新的槽位是本地时间"今天"的开头；往回铺 DAYS 个槽，
   // 于是下标 0 = 最旧、下标 DAYS-1 = 今天。
   const today = startOfDay(now);
 
+  let durationMs = 0;
+  let durationCount = 0;
   for (const b of buckets) {
+    // The server already bounds duration to its rolling 30-day window, which
+    // can span 31 calendar days. Sum before the chart's local-day slotting so
+    // the oldest partial day still counts toward the average.
+    durationMs += b.duration_ms ?? 0;
+    durationCount += b.duration_count ?? 0;
     const ts = new Date(b.bucket_at).getTime();
     if (Number.isNaN(ts)) continue;
     const daysAgo = Math.floor((today - startOfDay(ts)) / DAY_MS);
     if (daysAgo < 0 || daysAgo >= DAYS) continue;
     const slot = DAYS - 1 - daysAgo;
-    series[slot]!.total += b.task_count;
-    series[slot]!.failed += b.failed_count;
+    const target = series[slot]!;
+    target.total += b.task_count;
+    target.failed += b.failed_count;
+    target.completed += b.completed_count;
+    target.cancelled += b.cancelled_count;
   }
 
   const createdAt = new Date(agentCreatedAt).getTime();
@@ -156,6 +189,7 @@ export function deriveAgentActivity(
   return {
     buckets: series,
     daysSinceCreated,
+    avgDurationMs: durationCount > 0 ? Math.round(durationMs / durationCount) : 0,
   };
 }
 
@@ -180,11 +214,26 @@ export function summarizeActivityWindow(
     safeWindow === 0 ? [] : activity.buckets.slice(-safeWindow);
   let totalRuns = 0;
   let totalFailed = 0;
+  let totalCompleted = 0;
+  let totalCancelled = 0;
   for (const b of slice) {
     totalRuns += b.total;
     totalFailed += b.failed;
+    totalCompleted += b.completed;
+    totalCancelled += b.cancelled;
   }
-  return { buckets: slice, totalRuns, totalFailed, windowDays };
+  const outcomes = totalCompleted + totalFailed;
+  const successRate =
+    outcomes > 0 ? Math.round((totalCompleted / outcomes) * 100) : null;
+  return {
+    buckets: slice,
+    totalRuns,
+    totalFailed,
+    totalCompleted,
+    totalCancelled,
+    successRate,
+    windowDays,
+  };
 }
 
 function startOfDay(ts: number): number {

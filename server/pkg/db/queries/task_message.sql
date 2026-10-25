@@ -1,6 +1,6 @@
 -- name: CreateTaskMessage :one
-INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, call_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: CreateTaskMessages :many
@@ -24,7 +24,7 @@ RETURNING *;
 -- `pgtype.Text{Valid: x != ""}` mapping the single-row query carries — empty
 -- string means SQL NULL. input is passed as text and cast here for the same
 -- reason; it is the one column that genuinely has to be parsed as JSON, because
--- it is a jsonb column.
+-- it is a jsonb column. created_at 使用可空文本传输；旧 Daemon 回退数据库时间。
 --
 -- Callers MUST still run the Postgres text sanitizer first. A NUL anywhere in
 -- the batch fails the whole statement (GH #7098) — that is inherent to batching
@@ -54,11 +54,13 @@ WITH incoming AS (
         unnest(sqlc.arg('seqs')::int4[]) AS seq,
         unnest(sqlc.arg('types')::text[]) AS type,
         unnest(sqlc.arg('tools')::text[]) AS tool,
+        unnest(sqlc.arg('call_ids')::text[]) AS call_id,
         unnest(sqlc.arg('contents')::text[]) AS content,
         unnest(sqlc.arg('inputs')::text[]) AS input,
-        unnest(sqlc.arg('outputs')::text[]) AS output
+        unnest(sqlc.arg('outputs')::text[]) AS output,
+        unnest(sqlc.arg('created_ats')::text[]) AS created_at
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, call_id)
     SELECT
         m.id,
         sqlc.arg('task_id')::uuid,
@@ -67,7 +69,9 @@ WITH incoming AS (
         NULLIF(m.tool, ''),
         NULLIF(m.content, ''),
         NULLIF(m.input, '')::jsonb,
-        NULLIF(m.output, '')
+        NULLIF(m.output, ''),
+        COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
+        NULLIF(m.call_id, '')
     FROM incoming AS m
     RETURNING *
 )

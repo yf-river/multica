@@ -64,6 +64,12 @@ const REASON_CLASS: Record<string, FailureClass> = {
   // 本地运行时 CLI 在准备阶段超时。同样归 "runtime"：修复点在跑 daemon 的
   // 机器上——换更快的 CLI 或调高超时——而模型提供方从头到尾都没被请求到。
   runtime_cli_timeout: "runtime",
+  // The daemon could not build or re-open the task's execution environment on
+  // its own host — its workspace directory, or the local runtime config
+  // written into it. The reason this class exists at all: these rows used to
+  // arrive as agent_error.* and inflated the agent class with problems only a
+  // machine owner can fix (#7913).
+  environment_prepare_failed: "runtime",
 
   // agent 进程自身产生的失败。
   "agent_error.process_failure": "agent",

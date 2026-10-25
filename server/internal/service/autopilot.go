@@ -698,6 +698,9 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 			ActorID:       leader.ID,
 			Details:       details,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("create autopilot subscriber inbox: %w", err)
 		}
@@ -1041,10 +1044,7 @@ func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTas
 			s.publishRunDone(wsID, updatedRun, "completed")
 		}
 	case "failed", "cancelled":
-		reason := "task " + task.Status
-		if task.Error.Valid {
-			reason = task.Error.String
-		}
+		reason := taskFailureReasonForAutopilotRun(task)
 		var updatedRun db.AutopilotRun
 		if s.TxStarter != nil {
 			updatedRun, _, err = s.settleAutopilotRunDurably(ctx, run.ID, "failed", nil, reason, "", false)

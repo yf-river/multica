@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -691,7 +692,7 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusInternalServerError, "failed to cancel queued tasks for the archived session")
 				return
 			}
-			if err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
+			if err = service.SettleTerminalTaskState(r.Context(), qtx, cancelled...); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
 				return
 			}
@@ -802,7 +803,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to cancel chat session tasks")
 		return
 	}
-	if err := service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
+	if err := service.SettleTerminalTaskState(r.Context(), qtx, cancelled...); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
 		return
 	}
@@ -1035,7 +1036,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
 			writeError(w, http.StatusConflict, "chat agent has no runtime")
 		default:
-			writeError(w, http.StatusInternalServerError, "failed to send chat message: "+err.Error())
+			slog.Warn("send chat message failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to send chat message")
 		}
 		return
 	}
@@ -1237,7 +1239,7 @@ func (h *Handler) RegenerateChatQuickActions(w http.ResponseWriter, r *http.Requ
 		case errors.Is(err, service.ErrChatQuickActionsNoTurn):
 			writeError(w, http.StatusConflict, "no assistant reply to refresh yet")
 		case errors.Is(err, service.ErrChatQuickActionsUnavailable):
-			writeError(w, http.StatusServiceUnavailable, "suggestions are not available on this deployment")
+			writeFeatureDisabled(w, "suggestions_not_available", "suggestions are not available on this deployment")
 		default:
 			writeError(w, http.StatusInternalServerError, "failed to regenerate quick actions")
 		}

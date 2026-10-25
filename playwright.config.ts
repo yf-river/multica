@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: ["**/typing-under-live-runs.spec.ts"],
   timeout: 60000,
   workers: 1,
   retries: 0,

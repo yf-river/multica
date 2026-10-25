@@ -1,7 +1,7 @@
 "use client";
 
 import { useConfigStore } from "@multica/core/config";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { parseTabSubject } from "@multica/core/paths";
 import { useTabPresentation } from "@multica/views/layout";
@@ -38,11 +38,20 @@ export function WorkspaceDocumentTitle() {
   const documentTitle =
     formatDocumentTitle(subject.kind === "unknown" ? undefined : title, environmentName);
 
+  const documentTitleRef = useRef(documentTitle);
+  documentTitleRef.current = documentTitle;
+
   // 虽然真正写入的是 documentTitle，但依赖里必须带 url：app router 在导航后会
   // 用目标路由的 metadata 重新渲染并重置 document.title 为根默认值，所以两次
   // 恰好同标题的路由之间移动（/inbox → /inbox?view=archived）也得重新断言一次。
   useEffect(() => {
-    document.title = documentTitle;
+    const apply = () => {
+      if (document.title !== documentTitleRef.current) document.title = documentTitleRef.current;
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.head, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
   }, [documentTitle, url]);
 
   // 整体离开 dashboard（登出、切换工作区、回落地页）时把标题重置回站点名，

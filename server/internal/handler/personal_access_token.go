@@ -70,6 +70,10 @@ type CreatePATRequest struct {
 // CreatePersonalAccessToken 创建一条 PAT：生成原始 token，落库只存哈希 + 前缀，
 // 明文 token 仅在本次响应的 CreatePATResponse.Token 里返回。
 func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Request) {
+	if isMachineCredentialActor(r) {
+		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

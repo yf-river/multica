@@ -103,7 +103,7 @@ func normalizeRepositoryConfig(config map[string]any) ([]byte, error) {
 	// 分支交给 Git 作为单独参数；拒绝选项及控制字符。
 	for _, key := range []string{"ref", "default_branch"} {
 		v := stringField(result, key)
-		if strings.HasPrefix(v, "-") || strings.ContainsAny(v, "\x00\r\n") {
+		if validateGitRef(v) != nil {
 			return nil, errors.New("开发分支无效")
 		}
 	}
@@ -118,6 +118,13 @@ func bindRepository(ctx context.Context, q *db.Queries, ws pgtype.UUID, kind str
 	var input map[string]any
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return nil, err
+	}
+	ref := stringField(input, "ref")
+	if _, ok := input["project_ref"]; ok {
+		ref = stringField(input, "project_ref")
+	}
+	if validateGitRef(ref) != nil {
+		return nil, errors.New("项目开发分支无效")
 	}
 	var repo db.Repository
 	var err error
@@ -145,14 +152,7 @@ func bindRepository(ctx context.Context, q *db.Queries, ws pgtype.UUID, kind str
 		return nil, errors.New("仓库平台与资源类型不一致")
 	}
 	result := map[string]any{"repository_id": uuidToString(repo.ID)}
-	ref := stringField(input, "ref")
-	if _, ok := input["project_ref"]; ok {
-		ref = stringField(input, "project_ref")
-	}
 	if ref != "" {
-		if strings.HasPrefix(ref, "-") || strings.ContainsAny(ref, "\x00\r\n") {
-			return nil, errors.New("项目开发分支无效")
-		}
 		result["ref"] = ref
 	}
 	return json.Marshal(result)

@@ -286,7 +286,7 @@ The daemon periodically scans `MULTICA_WORKSPACES_ROOT` and applies several disk
 
 - **Hermes session store reclamation** — a conversation's Hermes transcript (`state.db`) lives at `<profile dir>/hermes-sessions/<agent-id>/<hermes-profile>/<conversation>/`, outside any task directory, so a follow-up turn can resume it (see [Hermes agent memory](#hermes-agent-memory)). A store untouched for `MULTICA_GC_HERMES_SESSION_TTL` is removed. The default matches the Codex session store rather than the memory store above: these hold full transcripts, and reclaiming an idle one costs a thread that starts fresh (with a continuity notice), not an agent that forgot what it learned. A store a running task holds is never reclaimed.
 - **Hermes memory store reclamation** — a Hermes agent's long-term memory (`memories/`) lives at `<profile dir>/hermes-state/<agent-id>/<hermes-profile>/`, outside any task directory, so it survives across tasks and issues (see [Hermes agent memory](#hermes-agent-memory)). A store untouched for `MULTICA_GC_HERMES_MEMORY_TTL` is removed, giving a deleted agent's memory an eventual-reclamation guarantee. The default is deliberately long: these are a handful of markdown files, and reclaiming one is user-visible amnesia rather than a cache miss. A store a running task holds is never reclaimed.
-- **Task temp dir reclamation** — every task gets a private temp directory (`multica-task-*`) under the system temp base (`/tmp`, or `MULTICA_AGENT_TEMP_BASE`), exported to the agent as `TMPDIR`/`TMP`/`TEMP`. It is removed when the run ends, but that removal never happens when the daemon is killed and does not succeed while a file inside is still open — common on Windows, where an open handle makes the delete fail outright. These directories live outside `MULTICA_WORKSPACES_ROOT`, so nothing else reclaimed them and whatever the end-of-run removal missed accumulated forever. Every GC cycle now sweeps the temp base. Liveness is decided by the directory's `.task_lock` — the same OS advisory lock an env root uses, which the kernel releases when the holding process dies — not by age: a directory still in use is never removed however old it is, including one owned by a different daemon sharing the same temp base, and a directory whose owner is gone is removed on the next cycle however new it is. Directories left by a daemon predating that lock carry no lock file, so nothing can be proven about them and age is the only signal available. Reclaiming those is an operator's explicit decision: `MULTICA_GC_TASK_TEMP_LEGACY_TTL` defaults to `0`, which leaves them in place. Set it to a duration only once you know no pre-lock daemon is still running tasks on this machine — a task may legitimately run for weeks (there is no default agent timeout), a daemon on another profile can still be on the old binary, and every daemon on the machine shares one temp base, so a TTL here can delete a `TMPDIR` that is still in use. Each GC cycle logs how many such directories it left alone. Even with a TTL set, a directory holding no task content is never reclaimed on age — an old empty leftover, or a shell left by a daemon that died between creating the directory and publishing its lock — because holding no content is exactly what a directory currently being published looks like, and deleting one of those would take the `TMPDIR` of a task that is starting. Those shells are a few bytes each. Only entries carrying the `multica-task-` prefix are ever considered — the temp base itself is usually shared with other programs — and a directory this sweep cannot read is never touched.
+- **Task temp dir reclamation** — every task gets a private temp directory (`multica-task-*`) under the system temp base (`/tmp`, or `MULTICA_AGENT_TEMP_BASE`), exported to the agent as `TMPDIR`/`TMP`/`TEMP`. On Windows, every task instead inherits the daemon user's `TMP`/`TEMP`: Git Bash's `/tmp` mount is shared by all of the user's live Git Bash processes, whichever runtime started them, so it must never point at a task directory that will be deleted. `TMPDIR` stays task-local, and for Claude Code `CLAUDE_CODE_TMPDIR` defaults to that directory unless the user overrides it. It is removed when the run ends, but that removal never happens when the daemon is killed and does not succeed while a file inside is still open — common on Windows, where an open handle makes the delete fail outright. These directories live outside `MULTICA_WORKSPACES_ROOT`, so nothing else reclaimed them and whatever the end-of-run removal missed accumulated forever. Every GC cycle now sweeps the temp base. Liveness is decided by the directory's `.task_lock` — the same OS advisory lock an env root uses, which the kernel releases when the holding process dies — not by age: a directory still in use is never removed however old it is, including one owned by a different daemon sharing the same temp base, and a directory whose owner is gone is removed on the next cycle however new it is. Directories left by a daemon predating that lock carry no lock file, so nothing can be proven about them and age is the only signal available. Reclaiming those is an operator's explicit decision: `MULTICA_GC_TASK_TEMP_LEGACY_TTL` defaults to `0`, which leaves them in place. Set it to a duration only once you know no pre-lock daemon is still running tasks on this machine — a task may legitimately run for weeks (there is no default agent timeout), a daemon on another profile can still be on the old binary, and every daemon on the machine shares one temp base, so a TTL here can delete a `TMPDIR` that is still in use. Each GC cycle logs how many such directories it left alone. Even with a TTL set, a directory holding no task content is never reclaimed on age — an old empty leftover, or a shell left by a daemon that died between creating the directory and publishing its lock — because holding no content is exactly what a directory currently being published looks like, and deleting one of those would take the `TMPDIR` of a task that is starting. Those shells are a few bytes each. Only entries carrying the `multica-task-` prefix are ever considered — the temp base itself is usually shared with other programs — and a directory this sweep cannot read is never touched.
 
 Configured patterns are basename-only — entries containing `/` or `\` are silently dropped — and `.git` subtrees are never descended into. The managed Codex cache is matched by its exact relative path, so a repository's own `.sandbox-bin` is not removed unless an operator explicitly adds that basename to `MULTICA_GC_ARTIFACT_PATTERNS`. The default list (`node_modules`, `.next`, `.turbo`) is intentionally narrow; extend it per deployment if your repos consistently produce other regenerable directories (for example, `MULTICA_GC_ARTIFACT_PATTERNS=node_modules,.next,.turbo,target,__pycache__`). To disable artifact cleanup entirely, including the managed Codex cache, set `MULTICA_GC_ARTIFACT_TTL=0`.
 
@@ -496,7 +496,13 @@ multica issue list --status todo --sort position       # board order (the defaul
 multica issue list --sort created_at --direction desc  # newest first
 ```
 
-Table output shows a routable issue `KEY` such as `MUL-123`; copy that key into follow-up commands like `issue get`, `issue comment list`, `issue status`, or `--parent`. Add `--full-id` when you need canonical UUIDs. Available filters: `--status`, `--priority`, `--assignee` / `--assignee-id`, `--project`, `--metadata`, `--limit`. Use `--assignee-id <uuid>` for unambiguous filtering when names overlap.
+Table output shows a routable issue `KEY` such as `MUL-123`; copy that key into follow-up commands like `issue get`, `issue comment list`, `issue status`, or `--parent`. Add `--full-id` when you need canonical UUIDs. Available filters: `--status`, `--priority`, `--assignee` / `--assignee-id`, `--project`, `--metadata`, `--property`, plus `--limit` and `--offset` for paging. Use `--assignee-id <uuid>` for unambiguous filtering when names overlap.
+
+If the server cannot count the matching issues, the list request fails with `failed to count issues` instead of returning the page length as a fabricated total. Successful response fields are unchanged. This trades availability of a partial page for an explicit failure that callers can retry.
+
+`--fields` (JSON output only) whitelists which top-level issue keys come back — pass a comma-separated list such as `--fields=id,title,status,priority`. Omit it for the full issue object, unchanged from before this flag existed. Filtering happens client-side after the CLI fetches the full response, so this shrinks CLI output size and agent context cost — not network transfer or server-side work. Field names are the real API keys, not table-display labels — assignee is `assignee_type`/`assignee_id` rather than a single `assignee` field. An unknown name is rejected up front with the valid list rather than silently dropped. Has no effect on `--output table`.
+
+Results come back in board order (`position`, ascending) by default. Pass `--sort` to change the column (`position`, `title`, `created_at`, `start_date`, `due_date`, `priority`, or `property:<name-or-id>` for a custom property — select properties order by option order, and issues without the property sort last) and `--direction asc|desc` to flip the order. `position` is always ascending (it is the manual drag order), so `--direction` is rejected when `--sort` is `position` or omitted — use it only with `title`, `created_at`, `start_date`, `due_date`, `priority`, or a `property:` sort.
 
 Results come back in board order (`position`, ascending) by default. Pass `--sort` to change the column (`position`, `title`, `created_at`, `start_date`, `due_date`, `priority`) and `--direction asc|desc` to flip the order. `position` is always ascending (it is the manual drag order), so `--direction` is rejected when `--sort` is `position` or omitted — use it only with `title`, `created_at`, `start_date`, `due_date`, or `priority`.
 
@@ -528,9 +534,11 @@ Flags: `--title` (required), `--description`, `--status`, `--priority`, `--assig
 ```bash
 multica issue update <id> --title "New title" --priority urgent
 multica issue update <id> --position 4.5
+multica issue update <id> --attachment revised.png
 ```
 
 `--position` sets the raw ordering value within the board column (lower sorts first). For relative moves, `issue reorder` is easier because it works out the value for you.
+`--attachment` uploads a local file and appends its Markdown reference to the end of the issue description. Repeat the flag to attach multiple files. To replace an existing image, also use `--description-file` to remove the old reference from the description.
 
 ### Reorder Issue
 
@@ -544,6 +552,8 @@ multica issue reorder <id> --after  <other>   # directly below another issue in 
 ```
 
 Pick exactly one of `--top`, `--bottom`, `--before`, or `--after`. Reorder stays inside the issue's current column, so `--before` / `--after` must name an issue in that same column. To move an issue to a different column, change its status first with `issue status`, then reorder within the new column.
+
+Reorder reads the project-scoped column before computing the new position. With older servers that omit the total or substitute the page length after a failed count, it continues to an empty page instead of trusting that count. This may cost one extra request. A failed page request, malformed issue, or repeated issue aborts the operation before a position is written. These checks do not provide a consistent snapshot across concurrent edits.
 
 ### Assign Issue
 
@@ -692,6 +702,23 @@ Subscribers receive notifications about issue activity (new comments, status cha
 multica issue runs <issue-id>
 multica issue runs <issue-id> --full-id
 multica issue runs <issue-id> --output json
+
+# Only work in flight (queued / dispatched / running / waiting_local_directory)
+multica issue runs <issue-id> --active --output json
+
+# ...and across the sub-issue family: the issue's parent (or itself, when it has
+# no parent) plus every child of that parent, each row labelled with its issue.
+# Answers "is another agent already working next to me?" before you start
+# overlapping code or PR work. Advisory only — it reserves nothing.
+#
+# Returns a compact per-run row — task_id, issue_id, issue_identifier,
+# issue_title, agent_id, status, created_at, started_at — not the full
+# execution-log record. Follow a task_id with `issue run-messages` for detail.
+#
+# Ordered running-first, newest-first within a status, capped at 20 rows. When
+# the cap truncates the answer the server sets X-Active-Runs-Truncated and the
+# CLI warns on stderr, so a short list is never mistaken for a complete one.
+multica issue runs <issue-id> --siblings --output json
 
 # View messages for a specific execution run
 multica issue run-messages <task-id>
@@ -1031,3 +1058,16 @@ On the API, both endpoints accept `?include=content` and `?include=metadata`.
 A request that sends neither still gets `content`, on both endpoints, so a
 server upgrade never changes what an un-upgraded client receives — it is the
 CLI that asks for the smaller shape.
+
+
+## 终态回传恢复
+
+Daemon 将完成和失败结果先写入 `<workspaces_root>/.pending-terminal-reports/v1/<namespace>/`，再向 API 回传。
+命名空间由服务地址、profile 和 daemon ID 确定，文件包含结果和差异数据，不保存登录凭据。
+网络暂时失败后自动补报；Daemon 重启和 WebSocket 重连也会触发恢复，使用当前有效凭据。
+服务端重复接收同一终态时不重复创建评论后续执行或发送收尾通知。
+
+健康检查提供 pending/failed 记录数与字节数，不返回内容和文件路径。
+永久拒绝经过有界核验后移入 `failed/`，原始结果供排查恢复，不自动删除。
+完整成功结果被隔离时，补偿请求只携带简短失败原因及差异保存位置说明，避免再次提交被拒的大体积结果。
+更换服务或 profile 后不会向新服务重放旧命名空间的结果；排查时须先核对目标、任务和原始记录。

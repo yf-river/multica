@@ -130,7 +130,7 @@ describe("IssueAgentActivityIndicator", () => {
     expect(screen.queryByTestId("hover-card-trigger")).toBeNull();
     // The cue itself survives — only the popup behind it is dropped.
     expect(screen.getByTestId("agent-avatar-stack")).not.toBeNull();
-    expect(screen.getByText("Working")).not.toBeNull();
+    expect(screen.getByText("Working", { ignore: '[aria-hidden="true"] *' })).not.toBeNull();
   });
 
   it("renders nothing when no agent is on the issue", () => {

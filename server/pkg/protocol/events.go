@@ -142,18 +142,22 @@ const (
 	EventSquadUpdated = "squad:updated"
 	EventSquadDeleted = "squad:deleted"
 
-	// Daemon 事件
-	EventDaemonHeartbeat              = "daemon:heartbeat"
-	EventDaemonHeartbeatAck           = "daemon:heartbeat_ack"
-	EventDaemonRegister               = "daemon:register"
-	EventDaemonTaskAvailable          = "daemon:task_available"
-	EventDaemonRuntimeProfilesChanged = "daemon:runtime_profiles_changed"
-	EventDaemonWorkspacesChanged      = "daemon:workspaces_changed"
-	// EventDaemonPendingWork 是一个 runtime 作用域的提示：某条由心跳携带的请求
-	// （模型发现、能力发现或本地 skill 导入）已为该 runtime 入队。没有它，
-	// daemon 要等下一次调度心跳才知道这条请求，给交互式 UI 流程多添最多一个
-	// HeartbeatInterval（默认 15s）的干等（MUL-5444）。提示本身不携带工作：
-	// daemon 仍走常规心跳认领请求，所以丢一条或重复一条提示都无害。
+	// Daemon events
+	EventDaemonHeartbeat               = "daemon:heartbeat"
+	EventDaemonHeartbeatAck            = "daemon:heartbeat_ack"
+	EventDaemonRegister                = "daemon:register"
+	EventDaemonTaskAvailable           = "daemon:task_available"
+	EventDaemonTaskSupplementAvailable = "daemon:task_supplement_available"
+	EventDaemonRuntimeProfilesChanged  = "daemon:runtime_profiles_changed"
+	EventDaemonWorkspacesChanged       = "daemon:workspaces_changed"
+	// EventDaemonPendingWork is a runtime-scoped hint that a heartbeat-carried
+	// request (model discovery, capability discovery, or local-skill import) is
+	// queued for that runtime. Without it the daemon only learns about the
+	// request on its next scheduled heartbeat, adding up to one HeartbeatInterval
+	// (15s by default) of dead wait to an interactive UI flow (MUL-5444). The
+	// hint carries no work
+	// itself: the daemon still pulls the request through the normal heartbeat
+	// claim, so a lost or duplicated hint is harmless.
 	EventDaemonPendingWork = "daemon:pending_work"
 	// 经 WebSocket 控制连接的通用 daemon→server request/response（MUL-4257）。
 	// daemon 发 EventDaemonRPCRequest（带关联 id + method + body），server 用

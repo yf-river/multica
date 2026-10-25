@@ -90,21 +90,32 @@ function sinkListItemRange(itemType: NodeType): Command {
  * 导航）。
  */
 function listItemKeymap(editor: Editor, name: string) {
+  const ownsSelection = () => {
+    const { $from, $to } = editor.state.selection;
+    const range = $from.blockRange($to, (node) => {
+      const itemName = node.firstChild?.type.name;
+      return itemName === "listItem" || itemName === "taskItem";
+    });
+    return range?.parent.firstChild?.type.name === name;
+  };
+
   return {
     Enter: () =>
+      ownsSelection() &&
       editor.commands.first(({ commands }) => [
         () => commands.splitListItem(name),
         () => commands.liftListItem(name),
       ]),
     Tab: () => {
+      if (!ownsSelection()) return false;
       const itemType = editor.schema.nodes[name];
       if (!itemType) return false;
       sinkListItemRange(itemType)(editor.state, (tr) =>
         editor.view.dispatch(tr),
       );
-      return editor.isActive(name);
+      return true;
     },
-    "Shift-Tab": () => editor.commands.liftListItem(name),
+    "Shift-Tab": () => ownsSelection() && editor.commands.liftListItem(name),
   };
 }
 

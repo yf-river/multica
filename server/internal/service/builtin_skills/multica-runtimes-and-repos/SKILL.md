@@ -33,6 +33,14 @@ The chain is:
 6. daemon prepares a workdir and launches the provider CLI;
 7. `multica repo checkout` talks to the local daemon, not directly to GitHub.
 
+## 访问与在线状态
+
+Agent 的调用权限与执行机器的使用权限分别判断。私有运行时只允许其所有者的 Agent 执行；工作区管理员的管理权限不代表可以借用私有机器。`runtime_access_denied` 需要修复绑定或共享设置，重复触发不会解决。
+
+成员列表没有某台私有运行时，不代表 Agent 没绑定机器，也不代表 CLI 太旧。Agent 的 `runtime_bound` 表示是否绑定，`runtime_availability` 只提供在线状态；设备、配置和凭据仍受运行时读取权限保护。运行时删除后由失效通知撤销旧连接的声明，心跳仍核对当前所有者。
+
+公开转私有若返回依赖清单，需要用户核对受影响的 Agent 与任务后确认撤权；旧清单不能覆盖发生变化后的依赖。令牌最终发放在事务内复查所有者及绑定，过时的领取由原有精确回收机制处理。
+
 ## CLI
 
 ```bash

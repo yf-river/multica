@@ -205,10 +205,10 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    stage, last_activity_at, id, work_started_at, work_completed_at
+    stage, properties, last_activity_at, id, work_started_at, work_completed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    $16, now(), COALESCE($17::uuid, gen_random_uuid()),
+    $16, COALESCE($17::jsonb, '{}'::jsonb), now(), COALESCE($18::uuid, gen_random_uuid()),
     CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
     CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, work_started_at, work_completed_at
@@ -231,6 +231,7 @@ type CreateIssueParams struct {
 	Number        int32       `json:"number"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	Stage         pgtype.Int4 `json:"stage"`
+	Properties    []byte      `json:"properties"`
 	ID            pgtype.UUID `json:"id"`
 }
 
@@ -252,6 +253,7 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		arg.Number,
 		arg.ProjectID,
 		arg.Stage,
+		arg.Properties,
 		arg.ID,
 	)
 	var i Issue
@@ -295,10 +297,10 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id, stage, last_activity_at, id, work_started_at, work_completed_at
+    origin_type, origin_id, stage, properties, last_activity_at, id, work_started_at, work_completed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    $16, $17, $18, now(), COALESCE($19::uuid, gen_random_uuid()),
+    $16, $17, $18, COALESCE($19::jsonb, '{}'::jsonb), now(), COALESCE($20::uuid, gen_random_uuid()),
     CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
     CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, work_started_at, work_completed_at
@@ -323,6 +325,7 @@ type CreateIssueWithOriginParams struct {
 	OriginType    pgtype.Text `json:"origin_type"`
 	OriginID      pgtype.UUID `json:"origin_id"`
 	Stage         pgtype.Int4 `json:"stage"`
+	Properties    []byte      `json:"properties"`
 	ID            pgtype.UUID `json:"id"`
 }
 
@@ -346,6 +349,7 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 		arg.OriginType,
 		arg.OriginID,
 		arg.Stage,
+		arg.Properties,
 		arg.ID,
 	)
 	var i Issue
@@ -387,6 +391,12 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 const deleteIssue = `-- name: DeleteIssue :exec
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
+),
+cleared_task_supplements AS (
+ DELETE FROM task_supplement WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_task_supplement_capabilities AS (
+ DELETE FROM task_supplement_capability WHERE issue_id IN (SELECT target.id FROM target)
 ),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)
@@ -1447,6 +1457,35 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 func (q *Queries) LockIssueDuplicateKey(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockIssueDuplicateKey, dollar_1)
 	return err
+}
+
+const lockIssueForAttachmentWrite = `-- name: LockIssueForAttachmentWrite :one
+SELECT id FROM issue
+WHERE id = $1 AND workspace_id = $2
+FOR NO KEY UPDATE
+`
+
+type LockIssueForAttachmentWriteParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Owner-first guard for a write to one of an issue's attachments: take the
+// issue before the attachment row, so a writer that reaches the same row
+// through the issue — teardown's issue_id cascade, or the revision bump this
+// write itself performs — either waits for this transaction or is waited on,
+// never both.
+//
+// FOR NO KEY UPDATE, the mode of that revision bump, is the weakest mode that
+// actually serializes issue writers. FOR KEY SHARE is NOT enough: it is
+// compatible with FOR NO KEY UPDATE (see LockLiveComment), so a concurrent
+// CreateComment would take the issue anyway, wait on the attachment this
+// transaction holds, and deadlock with its bump.
+func (q *Queries) LockIssueForAttachmentWrite(ctx context.Context, arg LockIssueForAttachmentWriteParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockIssueForAttachmentWrite, arg.ID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockIssueForChannelMediaBind = `-- name: LockIssueForChannelMediaBind :one

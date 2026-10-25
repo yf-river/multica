@@ -78,9 +78,10 @@ const (
 	reconnectRetryExpireBatchSize = 500
 	// offlineRuntimeTTLSeconds deletes offline runtimes with no active agents
 	// after this duration. 7 days gives users plenty of time to restart daemons.
-	// 中文说明：离线且没有活跃 agent 的 runtime，超过这个时长后删除。7 天给
-	// 用户足够时间去重启 daemon。
-	offlineRuntimeTTLSeconds = 7 * 24 * 3600.0
+	// Shared with the delete handlers, which quote the same window when they
+	// refuse to remove a profile-backed instance the user could otherwise only
+	// wait out.
+	offlineRuntimeTTLSeconds = service.OfflineRuntimeTTLSeconds
 	// runtimeGCBatchSize bounds both the candidate scan and the number of
 	// per-runtime transactions one sweeper tick may open. At the hourly cadence,
 	// 500 preserves a theoretical capacity of 12,000 candidates per day; the
@@ -172,6 +173,7 @@ type runtimeGCTxStarter interface {
 type runtimeGCEventPublisher interface {
 	PublishRuntimeTeardown(context.Context, service.RuntimeTeardownResult, string, string, string, string, bool)
 	PublishRuntimeRefresh(string, string, string, string)
+	NotifyRuntimeGone(string)
 }
 
 // runtimeSweepStageStats 是一次巡检阶段的观测数据：扫到多少候选、实际改变了
@@ -511,6 +513,7 @@ func gcRuntimesWithBudget(ctx context.Context, txStarter runtimeGCTxStarter, que
 		metrics.RecordRuntimeGCDeleted()
 		gcWorkspaces[result.workspaceID] = true
 		if publisher != nil {
+			publisher.NotifyRuntimeGone(util.UUIDToString(runtimeID))
 			publisher.PublishRuntimeTeardown(gcCtx, result.teardown, result.workspaceID, "system", "", "runtime_gc", false)
 		}
 	}

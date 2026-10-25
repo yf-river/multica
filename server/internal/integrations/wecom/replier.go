@@ -19,13 +19,21 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-const (
-	agentOfflineText  = "⚠️ 智能体当前不在线，你的消息已收到，等它上线后会处理。"
-	agentArchivedText = "⚠️ 该智能体已归档，无法回复。请联系工作区管理员。"
-	freshPendingText  = "✅ 已准备从空上下文运行。你的下一条聊天消息仍会进入当前对话，但不会带上之前的上下文。"
-	chatStartedText   = "✅ 已新建 Multica 对话。你的下一条消息会进入该对话。"
-	issueUsageText    = "请填写任务标题，格式如下：\n\n`/issue <标题>`\n`[描述]`（可选）"
-)
+// defaultBindingPath is where the web app serves the bind page.
+const defaultBindingPath = "/wecom/bind"
+
+// normalizeBindingPath applies the one default: the binding prompt is the only
+// thing that builds this URL, and a deployment that configures no path still
+// needs a usable link.
+func normalizeBindingPath(p string) string {
+	if p == "" {
+		return defaultBindingPath
+	}
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
+	return p
+}
 
 // OutboundReplier 为 WeCom 实现 engine.OutboundReplier。
 type OutboundReplier struct {
@@ -51,10 +59,12 @@ type OutboundReplierConfig struct {
 	// installation id 查活 wsSender。
 	Senders *sendersRegistry
 
-	// AppURL 是用户点进去兑换绑定 token 的 Multica Web 应用主机（如
-	// https://multica.example）。它来自 MULTICA_APP_URL（回退 FRONTEND_ORIGIN），
-	// 刻意与 MULTICA_PUBLIC_URL 分开——后者是后端 / API 的 URL。绑定页
-	// （/wecom/bind）由 Web 应用托管，所以链接必须指向应用主机。
+	// AppURL is the Multica web app host the user clicks into to redeem
+	// the binding token (e.g. https://multica.example). It comes from
+	// MULTICA_APP_URL (falling back to FRONTEND_ORIGIN) and is
+	// intentionally separate from MULTICA_PUBLIC_URL, which is the
+	// backend/API URL — the bind page (/wecom/bind) is served by the web
+	// app, so the link must point at the app host.
 	AppURL      string
 	BindingPath string // 默认 "/wecom/bind"
 	Logger      *slog.Logger
@@ -68,17 +78,10 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	bindingPath := cfg.BindingPath
-	if bindingPath == "" {
-		bindingPath = "/wecom/bind"
-	}
-	if !strings.HasPrefix(bindingPath, "/") {
-		bindingPath = "/" + bindingPath
-	}
 	r := &OutboundReplier{
 		senders:     cfg.Senders,
 		appURL:      strings.TrimRight(cfg.AppURL, "/"),
-		bindingPath: bindingPath,
+		bindingPath: normalizeBindingPath(cfg.BindingPath),
 		logger:      logger,
 	}
 	// 只在非 nil 时经接口赋值：把 nil *BindingTokenService 存进 binder 接口，会得
@@ -93,48 +96,65 @@ func NewOutboundReplier(cfg OutboundReplierConfig) *OutboundReplier {
 // Reply 把每个结局路由到它对用户可见的消息。错误记日志、不向上抛：回复器脱离入站
 // ACK 路径运行（那条 goroutine 归 engine.Router 所有）。
 func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result) {
+	// These notices land in the room the message came from, so the room
+	// decides the language — not whichever member happened to trigger them.
+	//
+	// The binding prompt is the one thing here addressed to a person rather
+	// than the room, and it needs no separate resolution: its reader is
+	// unbound by definition, so they have no profile to consult and get the
+	// same deployment default the room does.
+	c := copyFor(deploymentLocale())
+
 	switch res.Outcome {
 	case engine.OutcomeNeedsBinding:
-		if err := r.sendBindingPrompt(ctx, inst, msg, res); err != nil {
+		if err := r.sendBindingPrompt(ctx, inst, msg, res, c); err != nil {
 			r.logger.WarnContext(ctx, "wecom replier: binding prompt failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeAgentOffline:
-		if err := r.post(ctx, inst, msg, agentOfflineText); err != nil {
+		if err := r.post(ctx, inst, msg, c.AgentOffline); err != nil {
 			r.logger.WarnContext(ctx, "wecom replier: offline notice failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeAgentArchived:
-		if err := r.post(ctx, inst, msg, agentArchivedText); err != nil {
+		if err := r.post(ctx, inst, msg, c.AgentArchived); err != nil {
 			r.logger.WarnContext(ctx, "wecom replier: archived notice failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeFreshPending:
-		if err := r.post(ctx, inst, msg, freshPendingText); err != nil {
+		if err := r.post(ctx, inst, msg, c.FreshPending); err != nil {
 			r.logger.WarnContext(ctx, "wecom replier: fresh-start confirmation failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeChatStarted:
-		if err := r.post(ctx, inst, msg, chatStartedText); err != nil {
-			r.logger.WarnContext(ctx, "wecom replier: new-chat confirmation failed", "installation_id", util.UUIDToString(inst.ID), "error", err)
+		if err := r.post(ctx, inst, msg, c.ChatStarted); err != nil {
+			r.logger.WarnContext(ctx, "wecom replier: new-chat confirmation failed",
+				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeIssueUsage:
-		if err := r.post(ctx, inst, msg, issueUsageText); err != nil {
+		if err := r.post(ctx, inst, msg, c.IssueUsage); err != nil {
 			r.logger.WarnContext(ctx, "wecom replier: issue usage reply failed",
+				"installation_id", util.UUIDToString(inst.ID), "error", err)
+		}
+	case engine.OutcomeInvokeDenied:
+		if err := r.sendInvokeDenied(ctx, inst, msg); err != nil {
+			r.logger.WarnContext(ctx, "wecom replier: invoke-denied notice failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
 	case engine.OutcomeIngested:
 		// 只有「创建任务」的消息才值得一条确认；普通聊天消息保持安静（agent 自己的
 		// 回答经 EventChatDone / Channel.Send 落地）。
 		if res.IssueID.Valid {
-			// 引擎报重复的做法是带着另一张任务的 id、编号与标题、把 IssueDuplicate
-			// 置位。若两种情形都用「已创建」文案回答，等于告诉举报人他的 bug 是在
-			// 别人开的编号下、用一个他从未写过的标题登记了——于是他们不再追，报告
-			// 就此丢失。slack/replier.go:125 和 dingtalk/replier.go:125 都在这里分
-			// 支；WeCom 曾是唯一不分的那家。
-			text := issueCreatedText(res)
+			// The engine reports a duplicate by carrying the OTHER issue's
+			// id, number and title with IssueDuplicate set. Answering both
+			// cases with the created copy told the reporter their bug was
+			// filed under a number somebody else opened, under a title they
+			// never wrote — so they stopped chasing it and the report was
+			// lost. slack/replier.go:125 and dingtalk/replier.go:125 both
+			// branch here; WeCom was the one that did not.
+			text := issueCreatedText(res, c)
 			if res.IssueDuplicate {
-				text = issueDuplicateText(res)
+				text = issueDuplicateText(res, c)
 			}
 			if err := r.post(ctx, inst, msg, text); err != nil {
 				r.logger.WarnContext(ctx, "wecom replier: issue confirmation failed",
@@ -145,7 +165,7 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 	}
 }
 
-func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result) error {
+func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage, res engine.Result, c copyPack) error {
 	sender := res.Sender
 	if sender == "" {
 		sender = msg.Source.SenderID
@@ -167,14 +187,16 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 	// 有可重建的 URL——让用户去点已有的那条消息即可。节流窗口远比 TTL 短，那条
 	// 链接还有大半条命。
 	//
-	// 这段文案由下面的 postPrivate 投递，它永远落在 1:1——无论哪间房触发的，都和
-	// 更早那条链接躺在同一场对话里。所以它指引的是「当前这条线程」而不是让读者
-	// 去一条他本来就在看的会话。只有更下面的群 ack 跑在房间里，而那一条正是点名
-	// 1:1 的。
-	text := "👋 绑定链接刚才已经发给你了，就在上方，请直接点击完成绑定。"
+	// This text is delivered by postPrivate below, which always lands in the
+	// 1:1 — the same conversation the earlier link is sitting in, whichever
+	// room triggered this. So it points up the current thread rather than
+	// telling the reader to go to a chat they are already reading. Only the
+	// group ack further down runs in the room, and it is the one that names
+	// the 1:1.
+	text := c.BindingPending
 	if !token.Reused {
 		bindURL := r.appURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
-		text = "👋 请先绑定你的 Multica 账号，才能与我对话：\n" + bindURL + "\n（链接 15 分钟内有效）"
+		text = c.BindingPromptPrefix + bindURL + c.BindingPromptSuffix
 	}
 	// 绑定 token 是 bearer 凭证：binding.Redeem 只校验兑换者属于 token 的工作区，
 	// 而绑定页在加载时就会以「当前登录者」身份兑换。把它发给 msg.Source.ChatID——
@@ -189,13 +211,29 @@ func (r *OutboundReplier) sendBindingPrompt(ctx context.Context, inst engine.Res
 	// 无 token 的回答。只在私发被接受后才发，这样房间永远不会被指向一条线上拒收
 	// 过的消息。1:1 触发已经在其唯一房间里收到提示了。
 	if aibotChatTypeFromChannel(msg.Source.ChatType) == chatTypeGroupInt {
-		return r.post(ctx, inst, msg, "👋 已把绑定链接私发给你，请在与我的单聊里点击完成绑定。")
+		return r.post(ctx, inst, msg, c.BindingSentPrivately)
 	}
 	return nil
 }
 
-// postPrivate 把 text 送到某位用户 1:1 会话（chat_type=1），不管这条消息是哪间房
-// 触发的。用于绝不能被发进群的 bearer 凭证内容（绑定链接）。
+// sendInvokeDenied tells a member the agent is not theirs to run.
+//
+// A 1:1 is answered in place. A GROUP trigger is answered in the sender's own
+// 1:1 and the room hears nothing: a line there would tell everyone present both
+// which member was refused and that the agent is someone's private one. The
+// sender is bound by definition at this point — the identity check is what
+// produced the user id this verdict was read for — so a 1:1 route to them
+// exists.
+func (r *OutboundReplier) sendInvokeDenied(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) error {
+	if aibotChatTypeFromChannel(msg.Source.ChatType) != chatTypeGroupInt {
+		return r.post(ctx, inst, msg, copyFor(deploymentLocale()).InvokeDenied)
+	}
+	return r.postPrivate(ctx, inst, msg.Source.SenderID, copyFor(deploymentLocale()).InvokeDenied)
+}
+
+// postPrivate delivers text to a single user's 1:1 chat (chat_type=1),
+// regardless of which room triggered the message. Used for bearer-credential
+// content (the binding link) that must never land in a group.
 func (r *OutboundReplier) postPrivate(ctx context.Context, inst engine.ResolvedInstallation, userID, text string) error {
 	if r.senders == nil {
 		return errors.New("wecom: sender registry not configured")
@@ -239,34 +277,29 @@ func (r *OutboundReplier) post(ctx context.Context, inst engine.ResolvedInstalla
 // 名的是另一张任务——这正是全部意义：举报人需要知道讨论已经在哪里，而不是被塞
 // 一个会被他当成自己的编号。
 //
-// 那个标题属于既有任务，所以是某个*别的*成员写的——甚至不是举报人自己的，这让它
-// 成了两处 /issue 调用点里更糟的那处——而回复以 markdown 形态发出。所以过
-// breakMemberLinks——issueCreatedText 跑它标题时用的同一个入口：它拆内联 "]("
-// 形态，也拆多行标题能偷渡进来的链接引用定义。见 markdown.go。
-func issueDuplicateText(res engine.Result) string {
-	id := res.IssueIdentifier
-	if id == "" {
-		id = fmt.Sprintf("#%d", res.IssueNumber)
-	}
-	title := breakMemberLinks(strings.TrimSpace(res.IssueTitle))
-	if title == "" {
-		return "⚠️ 未创建 —— 已存在进行中的 " + id
-	}
-	return "⚠️ 未创建 —— 已存在进行中的 " + id + " — " + title
+// That title belongs to the pre-existing issue, so it is text some *other*
+// member wrote — not even the reporter's own, which is what makes this the
+// worse of the two /issue call sites — and the reply ships as markdown. The
+// pack's renderer runs it through breakMemberLinks, the same entry point
+// issueCreated uses: it breaks the inline "](" form and the link reference
+// definition a multi-line title can smuggle instead. See markdown.go.
+func issueDuplicateText(res engine.Result, c copyPack) string {
+	return c.issueDuplicate(issueRef(res), res.IssueTitle)
 }
 
-func issueCreatedText(res engine.Result) string {
-	id := res.IssueIdentifier
-	if id == "" {
-		id = fmt.Sprintf("#%d", res.IssueNumber)
+// issueCreatedText answers a /issue the engine accepted. The title is the
+// reporter's own text and this confirmation goes back into the chat that
+// triggered it — in a group, in front of the room — so the pack breaks its
+// links before it goes out. See copyPack.issueCreated.
+func issueCreatedText(res engine.Result, c copyPack) string {
+	return c.issueCreated(issueRef(res), res.IssueTitle)
+}
+
+// issueRef is how an issue is named in a confirmation: its identifier when the
+// engine produced one, its number otherwise.
+func issueRef(res engine.Result) string {
+	if res.IssueIdentifier != "" {
+		return res.IssueIdentifier
 	}
-	// 标题是举报人自己的文本，而这条确认会回到触发它的会话——群里就是当着全房间
-	// 的面。标题若写成 "安全升级：请点击 [重置密码](https://evil.example) 完成验
-	// 证"，否则就会以机器人名义顶着一个可点击链接回来。带换行的标题可以定义一条
-	// 引用定义而不是内联写出，所以引用定义拆分在这里同样适用。
-	title := breakMemberLinks(strings.TrimSpace(res.IssueTitle))
-	if title == "" {
-		return "✅ 已创建 " + id
-	}
-	return "✅ 已创建 " + id + " — " + title
+	return fmt.Sprintf("#%d", res.IssueNumber)
 }

@@ -35,7 +35,7 @@ export interface IssueSurfaceActions {
   batchUpdate: (
     issueIds: string[],
     updates: Partial<UpdateIssueRequest>,
-  ) => Promise<void>;
+  ) => Promise<{ updated: number } | void>;
   /** 批量删除多个问题。 */
   batchDelete: (issueIds: string[]) => Promise<void>;
 }

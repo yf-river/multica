@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,8 +66,8 @@ func TestClaimTasksByRuntime_RoutesAcrossRuntimesAndMintsTokens(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	rt1 := createClaimReclaimRuntime(t, ctx, "Batch claim rt1")
-	rt2 := createClaimReclaimRuntime(t, ctx, "Batch claim rt2")
+	rt1 := createBatchClaimRuntime(t, ctx, "Batch claim rt1")
+	rt2 := createBatchClaimRuntime(t, ctx, "Batch claim rt2")
 	a1, i1 := createClaimReclaimAgentAndIssue(t, ctx, rt1, "Batch claim a1")
 	a2, i2 := createClaimReclaimAgentAndIssue(t, ctx, rt2, "Batch claim a2")
 	seedQueuedIssueTask(t, ctx, a1, rt1, i1)
@@ -95,12 +96,12 @@ func TestClaimTasksByRuntime_RoutesAcrossRuntimesAndMintsTokens(t *testing.T) {
 	}
 }
 
-func TestClaimTasksByRuntime_IncludesActiveSiblingRun(t *testing.T) {
+func TestClaimTasksByRuntime_OmitsUnrelatedSiblingContext(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	runtimeID := createClaimReclaimRuntime(t, ctx, "Sibling claim runtime")
+	runtimeID := createBatchClaimRuntime(t, ctx, "Sibling claim runtime")
 	agentID, sourceIssueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Sibling claim agent")
 	if _, err := testPool.Exec(ctx, `UPDATE agent SET max_concurrent_tasks = 2 WHERE id = $1`, agentID); err != nil {
 		t.Fatalf("raise concurrency: %v", err)
@@ -110,7 +111,7 @@ func TestClaimTasksByRuntime_IncludesActiveSiblingRun(t *testing.T) {
 	var targetIssueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'sibling target', 'todo', 'none', $2, 'member',
+		VALUES ($1, 'sibling target', 'todo', 'not_important_not_urgent', $2, 'member',
 			(SELECT COALESCE(MAX(number), 82649) + 1 FROM issue WHERE workspace_id = $1), 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&targetIssueID); err != nil {
@@ -124,7 +125,7 @@ func TestClaimTasksByRuntime_IncludesActiveSiblingRun(t *testing.T) {
 	var queuedSiblingIssueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'queued sibling', 'todo', 'none', $2, 'member',
+		VALUES ($1, 'queued sibling', 'todo', 'not_important_not_urgent', $2, 'member',
 			(SELECT COALESCE(MAX(number), 82649) + 1 FROM issue WHERE workspace_id = $1), 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&queuedSiblingIssueID); err != nil {
@@ -144,12 +145,14 @@ func TestClaimTasksByRuntime_IncludesActiveSiblingRun(t *testing.T) {
 	if len(resp.Tasks) != 1 || resp.Tasks[0].ID != queuedID {
 		t.Fatalf("claimed task = %+v, want %s", resp.Tasks, queuedID)
 	}
-	if len(resp.Tasks[0].ActiveSiblingRuns) != 1 {
-		t.Fatalf("active_sibling_runs = %+v, want one running sibling", resp.Tasks[0].ActiveSiblingRuns)
+	var wire map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
+		t.Fatal(err)
 	}
-	sibling := resp.Tasks[0].ActiveSiblingRuns[0]
-	if sibling.IssueID != sourceIssueID || sibling.Status != "running" || sibling.IssueIdentifier == "" {
-		t.Fatalf("wrong sibling payload: %+v", sibling)
+	for _, raw := range wire["tasks"].([]any) {
+		if _, exists := raw.(map[string]any)["active_sibling_runs"]; exists {
+			t.Fatal("claim injected unrelated concurrent-task context")
+		}
 	}
 }
 
@@ -190,7 +193,7 @@ func TestClaimTasksByRuntime_SkipsCrossWorkspaceRuntime(t *testing.T) {
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'foreign issue', 'in_progress', 'none', $2, 'member', 1, 0)
+		VALUES ($1, 'foreign issue', 'in_progress', 'not_important_not_urgent', $2, 'member', 1, 0)
 		RETURNING id`, foreignWS, foreignUser).Scan(&foreignIssue); err != nil {
 		t.Fatalf("foreign issue: %v", err)
 	}
@@ -221,7 +224,7 @@ func TestClaimTasksByRuntime_SkipsCrossWorkspaceRuntime(t *testing.T) {
 // unscoped-credential guard: a runtime with no owner cannot mint a task token,
 // so the claimed task must be cancelled and omitted from the response rather
 // than shipped without a scoped credential.
-func TestClaimTasksByRuntime_CancelsTaskWhenRuntimeOwnerMissing(t *testing.T) {
+func TestClaimTasksByRuntime_RejectsRuntimeOwnerMissing(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -254,8 +257,8 @@ func TestClaimTasksByRuntime_CancelsTaskWhenRuntimeOwnerMissing(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status); err != nil {
 		t.Fatalf("read task status: %v", err)
 	}
-	if status != "cancelled" {
-		t.Fatalf("task status = %s, want cancelled (owner missing)", status)
+	if status != "queued" {
+		t.Fatalf("task status = %s, unauthorized claim must leave it queued", status)
 	}
 }
 
@@ -268,7 +271,7 @@ func TestFailClaimedTaskBeforeLaunchSettlesDispatchedTask(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	runtimeID := createClaimReclaimRuntime(t, ctx, "Prelaunch failure rt")
+	runtimeID := createBatchClaimRuntime(t, ctx, "Prelaunch failure rt")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Prelaunch failure agent")
 	taskID := seedQueuedIssueTask(t, ctx, agentID, runtimeID, issueID)
 	if _, err := testPool.Exec(ctx, `
@@ -313,4 +316,9 @@ func TestFailClaimedTaskBeforeLaunchSettlesDispatchedTask(t *testing.T) {
 	if failureReason != taskfailure.ReasonAgentMissingConfig.String() {
 		t.Fatalf("failure_reason = %q", failureReason)
 	}
+}
+
+func createBatchClaimRuntime(t *testing.T, ctx context.Context, name string) string {
+	t.Helper()
+	return dbfx.Runtime(t, name, testutil.Cols{"daemon_id": batchClaimTestDaemonID, "device_info": "batch claim fixture", "provider": "handler_test_" + name})
 }

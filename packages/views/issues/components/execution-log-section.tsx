@@ -30,6 +30,7 @@ import {
 } from "../../runtimes/utils";
 import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 import { IssueUsageDialog } from "./issue-usage-dialog";
+import { TaskSupplementButton, TaskSupplementDialogs } from "./task-supplement-dialog";
 import { TaskStatusIcon } from "./task-status-icon";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 
@@ -200,6 +201,7 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
           )}
         </div>
       )}
+      <TaskSupplementDialogs tasks={tasks} issueId={issueId} />
       <IssueUsageDialog
         open={usageOpen}
         onOpenChange={setUsageOpen}
@@ -382,6 +384,7 @@ export function ActiveTaskRow({
         )}
       </RowStatus>
       <RowActions>
+        <TaskSupplementButton task={task} issueId={issueId} />
         {showTranscript && (
           <TranscriptButton
             task={task}

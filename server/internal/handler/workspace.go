@@ -307,7 +307,8 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "workspace slug already exists")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to create workspace: "+err.Error())
+		slog.Warn("create workspace failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to create workspace")
 		return
 	}
 
@@ -317,14 +318,16 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		Role:        "owner",
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add owner: "+err.Error())
+		slog.Warn("add owner failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to add owner")
 		return
 	}
 
 	// 在同一事务里播种 7 个内置 issue 状态，保证 workspace 从不以"没有状态
 	// 目录"的形态出现——issue 得先能解析到状态才能被创建。（MUL-6243）
 	if err := issuestatus.Ensure(r.Context(), qtx, ws.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to seed issue statuses: "+err.Error())
+		slog.Warn("seed issue statuses failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to seed issue statuses")
 		return
 	}
 	workspaceEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildWorkspaceDomainEvent(
@@ -460,7 +463,7 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws, err := qtx.UpdateWorkspace(r.Context(), params)
 	if err != nil {
 		slog.Warn("update workspace failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", id)...)
-		writeError(w, http.StatusInternalServerError, "failed to update workspace: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to update workspace")
 		return
 	}
 	repos, err := repositoryConfigs(r.Context(), qtx, idUUID, false)
@@ -683,6 +686,10 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.Hub != nil {
+		h.Hub.DisconnectMember(uuidToString(target.WorkspaceID), uuidToString(target.UserID), uuidToString(target.ID))
+	}
+
 	h.MembershipCache.Invalidate(r.Context(), uuidToString(target.UserID), workspaceID)
 
 	user, err := qtx.GetUser(r.Context(), updatedMember.UserID)
@@ -799,6 +806,10 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("leave workspace failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to leave workspace")
 		return
+	}
+
+	if h.Hub != nil {
+		h.Hub.DisconnectMember(uuidToString(member.WorkspaceID), uuidToString(member.UserID), uuidToString(member.ID))
 	}
 
 	h.MembershipCache.Invalidate(r.Context(), uuidToString(member.UserID), workspaceID)
@@ -1174,6 +1185,15 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		failWorkspaceDelete(w, r, workspaceID, "lock workspace", err)
 		return
 	}
+	// Take a best-effort snapshot for post-commit daemon invalidation. Runtime
+	// registration does not participate in the workspace delete lock protocol,
+	// so PR1 retains the heartbeat lookup as the correctness fallback for a
+	// registration that races this snapshot.
+	runtimeIDs, err := qtx.ListAgentRuntimeIDsByWorkspace(r.Context(), requester.WorkspaceID)
+	if err != nil {
+		failWorkspaceDelete(w, r, workspaceID, "list runtimes", err)
+		return
+	}
 
 	if _, err := qtx.LockChatSessionsByWorkspace(r.Context(), requester.WorkspaceID); err != nil {
 		failWorkspaceDelete(w, r, workspaceID, "lock chat sessions", err)
@@ -1369,6 +1389,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("commit workspace delete failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete workspace")
 		return
+	}
+	for _, runtimeID := range runtimeIDs {
+		h.NotifyRuntimeGone(uuidToString(runtimeID))
 	}
 	h.deleteS3Objects(r.Context(), append(sourceContextAttachmentURLs, sourceContextIntentURLs...))
 	if err := os.RemoveAll(filepath.Join(healthPrivateRoot(), uuidToString(requester.WorkspaceID))); err != nil {

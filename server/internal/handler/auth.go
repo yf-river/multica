@@ -103,9 +103,19 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 	if account == "" {
 		account = user.Email
 	}
+	// `sid` identifies this login for as long as it lasts: sliding renewal
+	// copies it forward, so it stays put while `exp` moves. The CSRF token is
+	// bound to it rather than to the token string, which is what lets the
+	// auth cookie be re-issued mid-session without invalidating CSRF tokens
+	// other tabs are already holding (MUL-7436).
+	sid, err := auth.NewSessionID()
+	if err != nil {
+		return "", err
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":     uuidToString(user.ID),
 		"account": account,
+		"sid":     sid,
 		"email":   user.Email,
 		"name":    user.Name,
 		"exp":     time.Now().Add(auth.AuthTokenTTL()).Unix(),
@@ -270,7 +280,7 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	clientID := os.Getenv("GOOGLE_CLIENT_ID")
 	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	if clientID == "" || clientSecret == "" {
-		writeError(w, http.StatusServiceUnavailable, "Google login is not configured")
+		writeFeatureDisabled(w, "google_login_not_configured", "Google login is not configured")
 		return
 	}
 
@@ -423,6 +433,10 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 // IssueCliToken 给已认证用户发一枚全新 JWT。用途：让 cookie 认证的浏览器会话能拿到一个
 // bearer token，经 cli_callback 重定向交给 CLI 使用。
 func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
+	if isMachineCredentialActor(r) {
+		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

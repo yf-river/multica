@@ -20,7 +20,8 @@
     "clear": "Clear filters",
     "empty": "No notifications match your filters",
     "active_count_one": "{{count}} active filter",
-    "notification_count_one": "{{count}} notification"
+    "notification_count_one": "{{count}} notification",
+    "no_agents_working": "No agents working"
   },
   "context_menu": {
     "mark_read": "Mark as read",
@@ -42,7 +43,11 @@
     "archived_title": "Archived",
     "archived_empty": "No archived notifications",
     "unarchive_tooltip": "Unarchive",
-    "actions_aria": "Notification actions"
+    "actions_aria": "Notification actions",
+    "loading_selection": "Loading notification…",
+    "load_more": "Load more",
+    "loading_more": "Loading…",
+    "retry": "Retry"
   },
   "detail": {
     "select_prompt": "Select a notification to view details",
@@ -51,7 +56,9 @@
     "retry_with_context": "Retry with context",
     "edit_advanced": "Edit as advanced form",
     "archive": "Archive",
-    "unarchive": "Unarchive"
+    "unarchive": "Unarchive",
+    "autopilot_quota_exceeded_body": "This workspace has reached its limit of {{limit}} autopilot runs for the current period. Further autopilot runs will not start until the allowance resets {{resetAt}}.",
+    "autopilot_quota_upgrade": "View upgrade options"
   },
   "types": {
     "issue_assigned": "Assigned",
@@ -72,7 +79,9 @@
     "reaction_added": "Reacted",
     "quick_create_done": "Created with agent",
     "quick_create_failed": "Create with agent failed",
-    "quick_create_unconfirmed": "Create with agent unconfirmed"
+    "quick_create_unconfirmed": "Create with agent unconfirmed",
+    "autopilot_paused": "Autopilot paused",
+    "autopilot_quota_exceeded": "Autopilot run limit reached"
   },
   "labels": {
     "set_status_to": "Set status to",
@@ -85,7 +94,8 @@
     "removed_due_date": "Removed due date",
     "reacted_to_comment": "Reacted {{emoji}} to your comment",
     "created_with_agent": "Created with agent: {{identifier}}",
-    "failed_with_detail": "Failed: {{detail}}"
+    "failed_with_detail": "Failed: {{detail}}",
+    "autopilot_quota_blocked": "Run blocked because the limit was reached"
   },
   "toasts": {
     "source_context_retry_started": "Retry started with the original context",
@@ -104,6 +114,8 @@
     "archive_all_read_failed": "Failed to archive read items",
     "archive_completed_failed": "Failed to archive completed",
     "unarchive_failed": "Failed to unarchive",
-    "archived_load_failed": "Failed to load archived notifications"
+    "archived_load_failed": "Failed to load archived notifications",
+    "archived_lookup_failed": "Failed to load the linked notification",
+    "filters_load_failed": "Could not load filters"
   }
 }

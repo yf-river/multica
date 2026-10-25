@@ -497,7 +497,11 @@ func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issu
 	if s != nil && s.Queries != nil && issue.OriginType.Valid &&
 		issue.OriginType.String == "autopilot" && issue.OriginID.Valid {
 		var triggerID pgtype.UUID
-		if run, err := s.Queries.GetAutopilotRunByIssue(ctx, issue.ID); err == nil {
+		if run, err := s.Queries.GetLatestAutopilotRunForIssueAttribution(ctx, db.GetLatestAutopilotRunForIssueAttributionParams{
+			IssueID:     issue.ID,
+			AutopilotID: issue.OriginID,
+			WorkspaceID: issue.WorkspaceID,
+		}); err == nil {
 			triggerID = run.TriggerID
 		}
 		return triggerOwnerAttribution(ctx, s.Queries, triggerID, issue.WorkspaceID, issue.OriginID, attribution.EvidenceIssueAssignment, issue.ID)
@@ -1332,72 +1336,10 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 	return task, nil
 }
 
-// EnqueueDeferredAssigneeFallback 创建一个惰性任务：只有 PromotedDueDeferredTasksForRuntime 把它从 deferred
-// 翻成 queued 后才可认领。用于“主路由任务在规定时间内无人接管”的降级指派场景。
-func (s *TaskService) EnqueueDeferredAssigneeFallback(ctx context.Context, issue db.Issue, agentID, squadID pgtype.UUID, escalationForTaskID pgtype.UUID, triggerCommentID pgtype.UUID, fireAt time.Time) (db.AgentTaskQueue, error) {
-	agent, err := s.Queries.GetAgent(ctx, agentID)
-	if err != nil {
-		slog.Error("deferred fallback enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
-		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
-	}
-	if agent.ArchivedAt.Valid {
-		slog.Debug("deferred fallback enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
-		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
-	}
-	if !agent.RuntimeID.Valid {
-		slog.Error("deferred fallback enqueue failed: agent has no runtime", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
-		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
-	}
-
-	// 降级指派者与主路由任务响应的是同一条触发评论，因此从该评论解析 attribution（成员作者 → direct_human；
-	// agent 作者 → comment_source 链）并在创建时盖章。之后 Promotion 只翻状态，在这里盖章可让最终运行避开
-	// NULL-source 旁路（MUL-4302 §2）。overlay 刻意留给既有提升路径——本次改动仅涉及 attribution。此处没有
-	// 直接 actor：降级由评论路由，attribution 随评论走。
-	attr := s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceCommentSource, pgtype.UUID{})
-	// 没有精确人类 → owner_fallback（accountable = agent owner），
-	// 工作区为 fail-closed 时拒绝入队（MUL-4302 §3.5）。
-	attr, err = s.applyAttributionFallback(ctx, attr, agent)
-	if err != nil {
-		slog.Warn("deferred fallback enqueue refused: attribution fail-closed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
-		return db.AgentTaskQueue{}, err
-	}
-	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
-	isLeader := squadID.Valid
-	task, err := s.Queries.CreateDeferredAgentTask(ctx, db.CreateDeferredAgentTaskParams{
-		ID:                   dbid.NewV7(),
-		AgentID:              agentID,
-		RuntimeID:            agent.RuntimeID,
-		IssueID:              issue.ID,
-		Priority:             priorityToInt(issue.Priority),
-		TriggerCommentID:     triggerCommentID,
-		TriggerSummary:       s.buildCommentTriggerSummary(ctx, issue.WorkspaceID, triggerCommentID),
-		IsLeaderTask:         pgtype.Bool{Bool: isLeader, Valid: isLeader},
-		SquadID:              squadID,
-		EscalationForTaskID:  escalationForTaskID,
-		FireAt:               pgtype.Timestamptz{Time: fireAt, Valid: true},
-		OriginatorUserID:     attr.UserID,
-		AccountableUserID:    attr.AccountableUserID,
-		OriginatorSource:     attrSource,
-		DelegatedFromTaskID:  attrDelegatedFrom,
-		TriggerEvidenceKind:  attrEvidenceKind,
-		TriggerEvidenceRefID: attrEvidenceRef,
-	})
-	if err != nil {
-		slog.Error("deferred fallback enqueue failed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
-		return db.AgentTaskQueue{}, fmt.Errorf("create deferred task: %w", err)
-	}
-
-	slog.Info("deferred fallback task enqueued",
-		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"agent_id", util.UUIDToString(agentID),
-		"fire_at", fireAt.UTC().Format(time.RFC3339),
-	)
-	return task, nil
-}
-
-// QuickCreateContext 是 quick-create 任务 context 列上存的 JSON 载荷。daemon 通过 Type == "quick_create"
-// 识别该变体并切换 quick-create 提示词模板；完成路径用 RequesterID + WorkspaceID 写收件箱通知。
+// QuickCreateContext is the JSON payload stored on a quick-create task's
+// context column. The daemon detects this variant via Type == "quick_create"
+// and switches to the quick-create prompt template; the completion path
+// uses RequesterID + WorkspaceID to write the inbox notification.
 //
 // ProjectID 是用户在弹窗里选的项目（可选）。非空时 daemon 认领会解析项目标题与资源，提示词模板指示 agent
 // 传 `--project <uuid>`，使新 issue 落到该项目下。
@@ -1697,8 +1639,21 @@ type PreparedChatTaskEnqueue struct {
 	runtimeOverlay   runtimeMCPOverlayData
 }
 
-// PrepareChatTaskEnqueue 在调用方开事务前做读取与可选的外部集成工作。BuildTaskOverlay 可能产生网络 I/O，
-// 绝不能在 /new 持有路由切换锁时执行。
+// MemberMayInvokeAgent 在渠道消息落库前核对发送者的真实调用权限；查询失败须交回平台重试。
+func (s *TaskService) MemberMayInvokeAgent(ctx context.Context, agentID, userID pgtype.UUID) (bool, error) {
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load agent: %w", err)
+	}
+	return memberMayInvokeAgent(ctx, s.Queries, agent, userID, agent.WorkspaceID)
+}
+
+// PrepareChatTaskEnqueue performs reads and optional external integration work
+// before the caller opens a transaction. BuildTaskOverlay may perform network
+// I/O and must never run while /new holds route-rotation locks.
 func (s *TaskService) PrepareChatTaskEnqueue(
 	ctx context.Context,
 	agentID, initiatorUserID pgtype.UUID,
@@ -2408,7 +2363,7 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return err
 		}
 		if s.TxStarter != nil {
@@ -2465,7 +2420,7 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return err
 		}
 		if s.TxStarter != nil {
@@ -2502,7 +2457,7 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return err
 		}
 		if s.TxStarter != nil {
@@ -2732,7 +2687,7 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			}
 			task = cancelled
 			// CancelAgentTaskByUser 在同一条语句里追加恢复回执，因此返回的行已携带它。
-			if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled); err != nil {
+			if err := SettleTerminalTaskState(ctx, qtx, cancelled); err != nil {
 				return err
 			}
 			if !cancelled.ChatSessionID.Valid {
@@ -2817,7 +2772,7 @@ func (s *TaskService) CancelQueuedChatTasks(ctx context.Context, sessionID, agen
 		if err != nil {
 			return fmt.Errorf("cancel queued chat tasks: %w", err)
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, tasks...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, tasks...); err != nil {
 			return err
 		}
 		for _, task := range tasks {
@@ -3199,6 +3154,7 @@ func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID 
 				Content:       "Stopped.",
 				TaskID:        claimed.ID,
 				ElapsedMs:     computeChatElapsedMs(claimed),
+				FailureReason: claimed.FailureReason,
 			})
 			if err != nil {
 				return fmt.Errorf("create cancelled chat message: %w", err)
@@ -3273,13 +3229,13 @@ func (s *TaskService) broadcastChatCancelFinalized(ctx context.Context, task db.
 
 // ClaimTask 在当前 runtime 上为某 agent 原子认领下一条排队任务，并遵守 max_concurrent_tasks 上限。
 func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	return s.claimTask(ctx, agentID, pgtype.UUID{})
+	return s.claimTask(ctx, agentID, pgtype.UUID{}, claimScope{claimPath: claimPathAgent})
 }
 
 // claimTask 是 daemon 轮询路径使用的按 runtime 收敛的认领原语。对外包装 ClaimTask 不传 runtimeID，因此解析
 // agent 当前绑定的 runtime。把 SQL 认领本身收敛到 runtime，可防止 runtime A 上一个离线的候选 agent 导致该
 // agent 在 runtime B 上的任务被派发后又被调用方的 runtime 守卫丢弃。
-func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.UUID, scope claimScope) (*db.AgentTaskQueue, error) {
 	if blocked, err := s.releaseClaimsBlocked(ctx); err != nil || blocked {
 		return nil, err
 	}
@@ -3289,8 +3245,10 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 	var claimed *db.AgentTaskQueue
 	var reclaimCheckAfter time.Time
 	var dispatchEvent events.Event
+	var decisionDetail claimDecisionDetail
 	defer func() {
 		s.maybeLogClaimSlow(agentID, outcome, start, getAgentMs, countRunningMs, claimAgentMs, reanchorMs, updateStatusMs, dispatchMs)
+		s.recordClaimDecision(agentID, runtimeID, outcome, scope, decisionDetail)
 	}()
 
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
@@ -3324,7 +3282,7 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 			return fmt.Errorf("count running tasks: %w", err)
 		}
 		if running >= int64(agent.MaxConcurrentTasks) {
-			slog.Debug("task claim: no capacity", "agent_id", util.UUIDToString(agentID), "running", running, "max", agent.MaxConcurrentTasks)
+			decisionDetail = claimDecisionDetail{running: running, maxConcurrent: int64(agent.MaxConcurrentTasks)}
 			outcome = "no_capacity"
 			return nil
 		}
@@ -3340,7 +3298,6 @@ func (s *TaskService) claimTask(ctx context.Context, agentID, runtimeID pgtype.U
 		claimAgentMs = time.Since(t0).Milliseconds()
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				slog.Debug("task claim: no tasks available", "agent_id", util.UUIDToString(agentID))
 				outcome = "no_tasks"
 				return nil
 			}
@@ -3449,6 +3406,7 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	runtimeKey := util.UUIDToString(runtimeID)
 	if err := s.PromoteDueDeferredTasksForRuntime(ctx, runtimeID); err != nil {
 		outcome = "error_promote_deferred"
+		s.recordClaimDecision(pgtype.UUID{}, runtimeID, outcome, claimScope{claimPath: claimPathRuntime}, claimDecisionDetail{})
 		return nil, err
 	}
 
@@ -3472,6 +3430,7 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 			)
 			s.trackTaskForReclaim(stale, reclaimCheckAfter)
 			outcome = "reclaimed_dispatched"
+			s.recordClaimDecision(stale.AgentID, runtimeID, outcome, claimScope{claimPath: claimPathRuntime}, claimDecisionDetail{})
 			claimedFlag = true
 			slog.Info("stale dispatched task reclaimed",
 				"task_id", util.UUIDToString(stale.ID),
@@ -3482,6 +3441,7 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			outcome = "error_reclaim_dispatched"
+			s.recordClaimDecision(pgtype.UUID{}, runtimeID, outcome, claimScope{claimPath: claimPathRuntime}, claimDecisionDetail{})
 			return nil, fmt.Errorf("reclaim stale dispatched task: %w", err)
 		}
 		s.ReclaimCheck.MarkChecked(
@@ -3494,6 +3454,7 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 
 	if s.EmptyClaim.IsEmpty(ctx, runtimeKey) {
 		outcome = "empty_cache_hit"
+		s.recordClaimDecision(pgtype.UUID{}, runtimeID, outcome, claimScope{claimPath: claimPathRuntime}, claimDecisionDetail{})
 		return nil, nil
 	}
 
@@ -3507,17 +3468,26 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	listCount = len(tasks)
 	if err != nil {
 		outcome = "error_list"
+		s.recordClaimDecision(pgtype.UUID{}, runtimeID, outcome, claimScope{claimPath: claimPathRuntime}, claimDecisionDetail{})
 		return nil, fmt.Errorf("list queued claim candidates: %w", err)
 	}
 
 	if len(tasks) == 0 {
 		s.EmptyClaim.MarkEmpty(ctx, runtimeKey, preSelectVersion)
 		outcome = "empty_db"
+		s.recordClaimDecision(pgtype.UUID{}, runtimeID, outcome, claimScope{claimPath: claimPathRuntime}, claimDecisionDetail{})
 		return nil, nil
 	}
 
 	loopStart := time.Now()
 	triedAgents := map[string]struct{}{}
+	// Candidate rows per agent, counted before the loop so each claimTask call
+	// can report whether the runtime saw work for that agent (the #8551
+	// attribution split between candidates_blocked and no_candidates).
+	candidatesByAgent := make(map[string]int, len(tasks))
+	for i := range tasks {
+		candidatesByAgent[util.UUIDToString(tasks[i].AgentID)]++
+	}
 	var claimed *db.AgentTaskQueue
 	for _, candidate := range tasks {
 		agentKey := util.UUIDToString(candidate.AgentID)
@@ -3527,7 +3497,10 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 		triedAgents[agentKey] = struct{}{}
 		tried++
 
-		task, err := s.claimTask(ctx, candidate.AgentID, runtimeID)
+		task, err := s.claimTask(ctx, candidate.AgentID, runtimeID, claimScope{
+			claimPath:  claimPathRuntime,
+			candidates: candidatesByAgent[agentKey],
+		})
 		if err != nil {
 			loopMs = time.Since(loopStart).Milliseconds()
 			outcome = "error_claim"
@@ -3542,6 +3515,15 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	if claimed != nil {
 		claimedFlag = true
 		outcome = "claimed"
+	} else if len(tasks) > 0 {
+		// Work was visible for at least one agent but every claim attempt lost
+		// (capacity cap, SQL serialization fence, or runtime binding). This is
+		// the key signal for attributing queue waits to a fence rather than to
+		// an empty queue (#8551).
+		slog.Debug("claim poll exhausted candidates without a claim",
+			"runtime_id", runtimeKey,
+			"candidates", len(tasks),
+		)
 	}
 
 	return claimed, nil
@@ -3563,6 +3545,28 @@ func (s *TaskService) FinalizeTaskClaim(
 	}
 	receipt := task.DeliveredCommentIds
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		// 令牌写入与运行时/Agent 的最终授权共用事务和行锁。
+		if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, token.WorkspaceID); err != nil {
+			return fmt.Errorf("lock workspace for claim delivery: %w", err)
+		}
+		runtime, err := qtx.LockAgentRuntime(ctx, task.RuntimeID)
+		if err != nil {
+			return fmt.Errorf("lock runtime for claim delivery: %w", err)
+		}
+		if !runtime.OwnerID.Valid || runtime.OwnerID != token.UserID || runtime.WorkspaceID != token.WorkspaceID {
+			return fmt.Errorf("runtime ownership changed before claim delivery")
+		}
+		agent, err := qtx.GetAgentForUpdate(ctx, task.AgentID)
+		if err != nil {
+			return fmt.Errorf("lock agent for claim delivery: %w", err)
+		}
+		if agent.RuntimeID != task.RuntimeID || agent.WorkspaceID != runtime.WorkspaceID || agent.ArchivedAt.Valid {
+			return fmt.Errorf("agent binding changed before claim delivery")
+		}
+		if runtime.Visibility == "private" && (!agent.OwnerID.Valid || agent.OwnerID != runtime.OwnerID) {
+			return fmt.Errorf("private runtime access denied before claim delivery")
+		}
+
 		if _, err := qtx.CreateTaskToken(ctx, token); err != nil {
 			return fmt.Errorf("create task token: %w", err)
 		}
@@ -3571,7 +3575,16 @@ func (s *TaskService) FinalizeTaskClaim(
 			if err := qtx.DeleteExpiredDaemonTokens(ctx); err != nil {
 				return fmt.Errorf("delete expired daemon tokens: %w", err)
 			}
-			if _, err := qtx.CreateDaemonToken(ctx, daemonTokens[0]); err != nil {
+			// Bind the credential to the same owner the task token was just
+			// minted for (the locked runtime owner), so it
+			// can never reach a runtime another member later registers under
+			// this daemon_id (MUL-8154).
+			daemonToken := daemonTokens[0]
+			daemonToken.OwnerID = token.UserID
+			if !daemonToken.OwnerID.Valid {
+				return fmt.Errorf("create remote MCP daemon token: runtime owner required")
+			}
+			if _, err := qtx.CreateDaemonToken(ctx, daemonToken); err != nil {
 				return fmt.Errorf("create remote MCP daemon token: %w", err)
 			}
 		}
@@ -3693,10 +3706,11 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		slog.Info("promote deferred tasks (batch): slot taken by a concurrent enqueue, skipping this tick")
 		promoted = nil
 	} else if err != nil {
+		s.recordClaimDecision(pgtype.UUID{}, pgtype.UUID{}, "error_promote_deferred", claimScope{claimPath: claimPathBatch}, claimDecisionDetail{})
 		return nil, fmt.Errorf("promote deferred tasks: %w", err)
 	}
 	for _, task := range promoted {
-		slog.Info("deferred fallback task promoted (batch)",
+		slog.Info("deferred task promoted (batch)",
 			"task_id", util.UUIDToString(task.ID),
 			"runtime_id", util.UUIDToString(task.RuntimeID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -3728,6 +3742,7 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 			MaxTasks:          int32(maxTasks),
 		})
 		if err != nil {
+			s.recordClaimDecision(pgtype.UUID{}, pgtype.UUID{}, "error_reclaim_dispatched", claimScope{claimPath: claimPathBatch}, claimDecisionDetail{})
 			return nil, fmt.Errorf("reclaim stale dispatched tasks: %w", err)
 		}
 		// UPDATE 的固定建锁成本远大于数组宽度。把完整机器级集合一起查询并推进，各 runtime 兜底才不会漂移成
@@ -3742,6 +3757,7 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 	for i := range reclaimed {
 		s.trackTaskForReclaim(reclaimed[i], reclaimCheckAfter)
 		claimed = append(claimed, reclaimed[i])
+		s.recordClaimDecision(reclaimed[i].AgentID, reclaimed[i].RuntimeID, "reclaimed_dispatched", claimScope{claimPath: claimPathBatch}, claimDecisionDetail{})
 		slog.Info("stale dispatched task reclaimed (batch)",
 			"task_id", util.UUIDToString(reclaimed[i].ID),
 			"runtime_id", util.UUIDToString(reclaimed[i].RuntimeID),
@@ -3764,15 +3780,23 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		nonEmpty = append(nonEmpty, rid)
 	}
 	if len(nonEmpty) == 0 {
+		s.recordClaimDecision(pgtype.UUID{}, pgtype.UUID{}, "empty_cache_hit", claimScope{claimPath: claimPathBatch}, claimDecisionDetail{})
+		slog.Debug("batch claim: all runtimes empty-cached", "runtimes", len(uniqueIDs))
 		return claimed, nil
 	}
 
 	// 4. 跨非空集合做一次候选 SELECT。
 	candidates, err := s.Queries.ListQueuedClaimCandidatesByRuntimes(ctx, nonEmpty)
 	if err != nil {
-		// 步骤 2/6 在各目的事务里提交被回收/认领的任务，因此 `claimed` 可能已持有服务端已派发的任务。用 500 丢掉它们会
-		// 让 daemon HTTP 回退并往同样的空闲槽位认领【第二批】任务（第一批只能等陈旧回收）——正是本 PR 要消除的双重认领
-		//（MUL-4257）。宁可部分成功：交回已提交的，让 handler 收尾返回；报错的候选留在队列里等下一轮轮询。
+		s.recordClaimDecision(pgtype.UUID{}, pgtype.UUID{}, "error_list", claimScope{claimPath: claimPathBatch}, claimDecisionDetail{})
+		// Steps 2/6 commit reclaimed/claimed tasks in their own transactions,
+		// so `claimed` may already hold tasks dispatched server-side. Dropping
+		// them with a 500 makes the daemon HTTP-fall-back and claim a SECOND
+		// batch into the same free slots (the first batch then waits for stale
+		// reclaim) — the same double-claim this PR set out to remove
+		// (MUL-4257). Prefer partial success: hand back what committed so the
+		// handler finalizes and returns it; the errored candidates stay queued
+		// for the next poll.
 		if len(claimed) > 0 {
 			slog.Error("batch claim: candidate query failed after partial success; returning claimed tasks to avoid loss",
 				"error", err, "claimed", len(claimed))
@@ -3793,11 +3817,29 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 			s.EmptyClaim.MarkEmpty(ctx, key, versions[key])
 		}
 	}
+	if len(candidates) == 0 {
+		// Poll-level decision: the candidate query saw nothing claimable for
+		// any runtime in the batch (it already filters wakeup validity and
+		// agent/runtime binding, so this is about visible candidates, not
+		// about the queue being empty).
+		s.recordClaimDecision(pgtype.UUID{}, pgtype.UUID{}, "empty_db", claimScope{claimPath: claimPathBatch}, claimDecisionDetail{})
+		return claimed, nil
+	}
 
 	// 6. 经按 runtime 收敛的助手按去重 agent 认领，保留 per-(issue, agent) 串行化、容量上限与派发副作用。
 	triedAgents := make(map[string]struct{}, len(candidates))
+	// Candidate rows per agent for the claim-decision scope; see the singular
+	// path above for why it is counted before the loop.
+	candidatesByAgent := make(map[string]int, len(candidates))
+	for i := range candidates {
+		candidatesByAgent[util.UUIDToString(candidates[i].AgentID)]++
+	}
 	for i := range candidates {
 		if len(claimed) >= maxTasks {
+			slog.Debug("batch claim: reached max tasks",
+				"claimed", len(claimed),
+				"candidates_remaining", len(candidates)-i,
+			)
 			break
 		}
 		agentKey := util.UUIDToString(candidates[i].AgentID)
@@ -3806,7 +3848,10 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		}
 		triedAgents[agentKey] = struct{}{}
 
-		task, err := s.claimTask(ctx, candidates[i].AgentID, candidates[i].RuntimeID)
+		task, err := s.claimTask(ctx, candidates[i].AgentID, candidates[i].RuntimeID, claimScope{
+			claimPath:  claimPathBatch,
+			candidates: candidatesByAgent[agentKey],
+		})
 		if err != nil {
 			// 每次按收敛域的认领都在自己的事务里提交，因此更早的迭代（及步骤 2 的回收）已在服务端派发。此处返回 nil 会
 			// 丢掉它们、迫使 daemon 经 HTTP 回退双重认领（MUL-4257）。改为返回部分批次；失败 agent 的任务保持 queued。
@@ -3823,6 +3868,10 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		// SQL 认领已收敛到候选 runtime。保留该守卫作为防御性契约检查，防止未来的查询改动把工作路由到本 daemon
 		// 不托管的 runtime。
 		if _, ok := runtimeInSet[util.UUIDToString(task.RuntimeID)]; !ok {
+			slog.Debug("batch claim: skipping claimed task outside requested runtime set",
+				"task_id", util.UUIDToString(task.ID),
+				"runtime_id", util.UUIDToString(task.RuntimeID),
+			)
 			continue
 		}
 		claimed = append(claimed, *task)
@@ -3844,7 +3893,7 @@ func (s *TaskService) cancelSupersededDeferredRetries(ctx context.Context, runti
 		return
 	}
 	for _, task := range cancelled {
-		slog.Info("deferred auto-retry cancelled: superseded by an active task",
+		slog.Info("deferred task cancelled during promotion",
 			"task_id", util.UUIDToString(task.ID),
 			"issue_id", util.UUIDToString(task.IssueID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -3871,7 +3920,7 @@ func (s *TaskService) PromoteDueDeferredTasksForRuntime(ctx context.Context, run
 		return fmt.Errorf("promote due deferred tasks: %w", err)
 	}
 	for _, task := range tasks {
-		slog.Info("deferred fallback task promoted",
+		slog.Info("deferred task promoted",
 			"task_id", util.UUIDToString(task.ID),
 			"runtime_id", util.UUIDToString(runtimeID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -3911,6 +3960,11 @@ func (s *TaskService) promoteDeferredTasks(ctx context.Context, runtimeIDs []pgt
 		if err != nil {
 			return fmt.Errorf("cancel superseded deferred retries: %w", err)
 		}
+		retired, err := qtx.CancelRetiredAssigneeFallbacksForRuntimes(ctx, runtimeIDs)
+		if err != nil {
+			return fmt.Errorf("retire assignee fallbacks: %w", err)
+		}
+		cancelled = append(cancelled, retired...)
 		if batch {
 			promoted, err = qtx.PromoteDueDeferredTasksForRuntimes(ctx, db.PromoteDueDeferredTasksForRuntimesParams{
 				RuntimeIds: runtimeIDs, RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
@@ -3925,8 +3979,12 @@ func (s *TaskService) promoteDeferredTasks(ctx context.Context, runtimeIDs []pgt
 		}
 		persisted = make([]events.Event, 0, len(cancelled)+len(promoted))
 		for _, task := range cancelled {
+			reason := "superseded_by_newer_task"
+			if task.FailureReason.String == "assignee_fallback_retired" {
+				reason = task.FailureReason.String
+			}
 			event, eventErr := recordTaskTerminalEventTx(ctx, qtx, protocol.EventTaskCancelled, task,
-				taskFailedFields("", "superseded_by_newer_task", false))
+				taskFailedFields("", reason, false))
 			if eventErr != nil {
 				return fmt.Errorf("record superseded retry cancellation: %w", eventErr)
 			}
@@ -3949,7 +4007,7 @@ func (s *TaskService) promoteDeferredTasks(ctx context.Context, runtimeIDs []pgt
 		return nil, err
 	}
 	for i, task := range cancelled {
-		slog.Info("deferred auto-retry cancelled: superseded by an active task",
+		slog.Info("deferred task cancelled during promotion",
 			"task_id", util.UUIDToString(task.ID),
 			"issue_id", util.UUIDToString(task.IssueID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -3993,12 +4051,13 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 
 // StartTask 把任务从 dispatched/waiting_local_directory 推进到 running：事务内执行状态翻转并记录 running
 // 事件，提交后清除回收提示、取消该任务的延时降级计时器、调和 agent 状态并广播。
-func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID, supplementSupport ...bool) (*db.AgentTaskQueue, error) {
+	enabled := len(supplementSupport) > 0 && supplementSupport[0]
 	var task db.AgentTaskQueue
 	var runningEvent events.Event
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		var err error
-		task, err = qtx.StartAgentTask(ctx, taskID)
+		task, err = qtx.StartAgentTaskWithSupplement(ctx, db.StartAgentTaskWithSupplementParams{TaskID: taskID, EnableTaskSupplement: enabled})
 		if err != nil {
 			return err
 		}
@@ -4013,8 +4072,53 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	if err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
 	}
+	s.taskStarted(ctx, task, runningEvent)
+	return &task, nil
+}
+
+// StartTaskForClaim serializes the ownership check and transition with reclaim,
+// cancellation and other start requests. A replay linearizes at the locked read;
+// a cancellation that commits later can still cancel the acknowledged task.
+func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentTaskStartClaimParams, supplementSupport ...bool) (*db.AgentTaskQueue, error) {
+	if !claim.ID.Valid || !claim.RuntimeID.Valid || !claim.DispatchedAt.Valid {
+		return nil, fmt.Errorf("start task: incomplete claim")
+	}
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin task start: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	task, err := qtx.LockAgentTaskStartClaim(ctx, claim)
+	if err != nil {
+		return nil, fmt.Errorf("lock task start claim: %w", err)
+	}
+	var runningEvent events.Event
+	replay := task.Status == "running"
+	if !replay {
+		task, err = qtx.StartAgentTaskWithSupplement(ctx, db.StartAgentTaskWithSupplementParams{
+			TaskID:               task.ID,
+			EnableTaskSupplement: len(supplementSupport) > 0 && supplementSupport[0],
+		})
+		if err != nil {
+			return nil, fmt.Errorf("start claimed task: %w", err)
+		}
+		runningEvent, err = RecordTaskLifecycleEventTx(ctx, qtx, protocol.EventTaskRunning, task)
+		if err != nil {
+			return nil, fmt.Errorf("record claimed task running event: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit task start: %w", err)
+	}
+	if !replay {
+		s.taskStarted(ctx, task, runningEvent)
+	}
+	return &task, nil
+}
+
+func (s *TaskService) taskStarted(ctx context.Context, task db.AgentTaskQueue, runningEvent events.Event) {
 	s.forgetTaskReclaim(task)
-	s.cancelDeferredEscalationsForTask(ctx, task.ID)
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskStarted(ctx, task)
@@ -4029,51 +4133,10 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	} else {
 		s.broadcastTaskEvent(ctx, protocol.EventTaskRunning, task)
 	}
-	return &task, nil
 }
 
-// cancelDeferredEscalationsForTask 在任务被“主运行”真正接管（started）时，取消针对它的全部延时降级
-// （assignee fallback）任务并记日志。
-func (s *TaskService) cancelDeferredEscalationsForTask(ctx context.Context, taskID pgtype.UUID) {
-	cancelled, err := s.Queries.CancelDeferredEscalationsForTask(ctx, taskID)
-	if err != nil {
-		slog.Warn("cancel deferred escalations for task failed", "task_id", util.UUIDToString(taskID), "error", err)
-		return
-	}
-	for _, task := range cancelled {
-		slog.Info("deferred fallback task cancelled",
-			"task_id", util.UUIDToString(task.ID),
-			"primary_task_id", util.UUIDToString(taskID),
-			"reason", "primary_acknowledged",
-		)
-	}
-}
-
-// CancelDeferredEscalationsForIssueAgent 取消“为该 issue+agent 排程的延时降级任务”——当 agent 在该 issue
-// 上发表了评论、证明自己已接管时调用。
-func (s *TaskService) CancelDeferredEscalationsForIssueAgent(ctx context.Context, issueID, agentID pgtype.UUID) {
-	cancelled, err := s.Queries.CancelDeferredEscalationsForIssueAgent(ctx, db.CancelDeferredEscalationsForIssueAgentParams{
-		IssueID: issueID,
-		AgentID: agentID,
-	})
-	if err != nil {
-		slog.Warn("cancel deferred escalations for issue agent failed",
-			"issue_id", util.UUIDToString(issueID),
-			"agent_id", util.UUIDToString(agentID),
-			"error", err)
-		return
-	}
-	for _, task := range cancelled {
-		slog.Info("deferred fallback task cancelled",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issueID),
-			"agent_id", util.UUIDToString(agentID),
-			"reason", "agent_comment_acknowledged",
-		)
-	}
-}
-
-// ExtendTaskPrepareLease 在 daemon 解析缓存输入、准备执行环境期间，让“已认领但未开始”的任务保持受保护。
+// ExtendTaskPrepareLease keeps a claimed-but-not-started task protected while
+// the daemon resolves cached inputs and prepares the execution environment.
 func (s *TaskService) ExtendTaskPrepareLease(ctx context.Context, taskID, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	task, err := s.Queries.ExtendAgentTaskPrepareLease(ctx, db.ExtendAgentTaskPrepareLeaseParams{
 		ID:        taskID,
@@ -4200,6 +4263,15 @@ func startsWithAbsolutePath(s string) bool {
 // 陈旧（或 NULL）会话恢复”的竞态。durableWorkDir 是终态投递元数据而非恢复指针：仅在 daemon 确认一次性
 // worktree 已删除后才会填充。
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, error) {
+	task, _, err := s.CompleteTaskWithTransition(ctx, taskID, result, sessionID, workDir, branchName, sessionRolloutMissing, retiredSessionID, durableWorkDir)
+	return task, err
+}
+
+// CompleteTaskWithTransition reports whether this call won the running ->
+// completed compare-and-swap. Callers with transaction-external side effects
+// must only run them when transitioned is true; a replay against an already
+// terminal task is still an idempotent success but must not emit them again.
+func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, bool, error) {
 	// Life 后台任务只有在 life_job_complete 校验并持久化其结构化领域输出后才算完成。daemon 在 agent 进程退出后
 	// 仍会发普通终态回调；此处拒绝这第二次完成，并把任务原子地交回其自身重试生命周期，避免队列行与认知行分叉。
 	if current, err := s.Queries.GetAgentTask(ctx, taskID); err == nil {
@@ -4208,9 +4280,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				ErrLifeStructuredOutputRequired.Error(),
 				string(taskfailure.ReasonAgentEmptyOrUnparseableOutput))
 			if failErr != nil {
-				return nil, failErr
+				return nil, false, failErr
 			}
-			return failed, ErrLifeStructuredOutputRequired
+			return failed, false, ErrLifeStructuredOutputRequired
 		}
 	}
 
@@ -4240,7 +4312,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		task = t
 
 		// 与状态翻转原子：二者之间崩溃会让一条已完成的义务永远看起来 pending。
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, t); err != nil {
 			return err
 		}
 
@@ -4310,7 +4382,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 					"current_status", existing.Status,
 					"agent_id", util.UUIDToString(existing.AgentID),
 				)
-				return &existing, nil
+				return &existing, false, nil
 			}
 			slog.Warn("complete task failed",
 				"task_id", util.UUIDToString(taskID),
@@ -4326,7 +4398,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				"lookup_error", lookupErr,
 			)
 		}
-		return nil, fmt.Errorf("complete task: %w", err)
+		return nil, false, fmt.Errorf("complete task: %w", err)
 	}
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
@@ -4334,9 +4406,6 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// 修改 4. 同步任务结束时批次没走完成流程，就不能继续挂成活动批次。
 	s.closeUpstreamRuns(ctx, task, "interrupted", "任务结束时批次未推进")
 
-	if len(issueReplyEvents) > 0 {
-		s.CancelDeferredEscalationsForIssueAgent(ctx, task.IssueID, task.AgentID)
-	}
 	for _, event := range issueReplyEvents {
 		publishCommittedEvent(s.Bus, event)
 	}
@@ -4378,7 +4447,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
 	}
 
-	return &task, nil
+	return &task, true, nil
 }
 
 // CompleteLifeTaskInTx 用调用方持有的事务收尾一个后台 Life 认知任务。Life 输出与任务终态事件必须一起提交；
@@ -4400,7 +4469,7 @@ func (s *TaskService) CompleteLifeTaskInTx(ctx context.Context, q *db.Queries, t
 	if task.ChatSessionID.Valid || task.IssueID.Valid {
 		return db.AgentTaskQueue{}, events.Event{}, errors.New("complete Life task: task has interactive work attached")
 	}
-	if err := SettleDeliveredDelegatedFailureRecoveries(ctx, q, task); err != nil {
+	if err := SettleTerminalTaskState(ctx, q, task); err != nil {
 		return db.AgentTaskQueue{}, events.Event{}, err
 	}
 	event, err := recordTaskTerminalEventTx(ctx, q, protocol.EventTaskCompleted, task)
@@ -4577,9 +4646,19 @@ func (s *TaskService) observeChatOutputLocalPath(task db.AgentTaskQueue, body st
 // taskfailure.Classify，使持久化的 failure_reason 落在规范的精分类体系，而不是 legacy 的 "agent_error" 粗桶。
 // daemon 调用方已产出精化原因时（classifyPoisonedError、超时/runtime 分类器等），其值会被原样保留。
 func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, error) {
-	// 在任何东西读到 errMsg 之前，先剥掉 PostgreSQL 无法存储的字节，让分类器、事务与所有下游消费方看到的都是
-	// 我们将实际持久化的那份文本（GH #7098）。放在服务边界而非仅 /fail handler，是因为 failClaimedTaskBefore
-	// Launch 不经请求解码也能到达 FailTask。
+	task, _, err := s.FailTaskWithTransition(ctx, taskID, errMsg, sessionID, workDir, branchName, failureReason, sessionRolloutMissing, retiredSessionID, durableWorkDir)
+	return task, err
+}
+
+// FailTaskWithTransition is the failure counterpart to
+// CompleteTaskWithTransition. The bool is false for an idempotent replay that
+// observed an already-terminal row.
+func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, bool, error) {
+	// Strip bytes PostgreSQL cannot store before anything else reads errMsg, so
+	// the classifier, the transaction and every downstream consumer see the one
+	// text we will actually persist (GH #7098). Kept at the service boundary
+	// rather than only in the /fail handler because failClaimedTaskBeforeLaunch
+	// reaches FailTask without going through request decoding.
 	errMsg = util.SanitizeTextForPostgres(errMsg)
 
 	// MUL-2946：调用方未给原因时，从错误文本综合出精化原因。这是防止 "agent_error" 粗行进入
@@ -4599,7 +4678,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// 运行到调和器发现为止。改为在单个事务里同时收尾两行。
 	if current, err := s.Queries.GetAgentTask(ctx, taskID); err == nil {
 		if _, governed := lifeTaskEnvelopeForQueue(current); governed && lifeTaskActive(current.Status) {
-			return s.failLifeCognitionTask(ctx, taskID, errMsg, failureReason)
+			return s.failLifeCognitionTaskWithTransition(ctx, taskID, errMsg, failureReason)
 		}
 	}
 
@@ -4665,7 +4744,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 		// 与状态翻转原子，同完成路径。已收到恢复评论的失败协调者即已消耗义务：既有的 delivered_comment_ids
 		// 覆盖检查本就从不看覆盖任务的状态。
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, t); err != nil {
 			return err
 		}
 
@@ -4839,7 +4918,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 					"current_status", existing.Status,
 					"agent_id", util.UUIDToString(existing.AgentID),
 				)
-				return &existing, nil
+				return &existing, false, nil
 			}
 			slog.Warn("fail task failed",
 				"task_id", util.UUIDToString(taskID),
@@ -4855,7 +4934,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				"lookup_error", lookupErr,
 			)
 		}
-		return nil, fmt.Errorf("fail task: %w", err)
+		return nil, false, fmt.Errorf("fail task: %w", err)
 	}
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
@@ -4936,7 +5015,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		s.broadcastTaskFailedEvent(ctx, task, errMsg, failureReason, retried != nil)
 	}
 
-	return &task, nil
+	return &task, true, nil
 }
 
 // retryableReasons 枚举自动重试路径允许处理的失败原因。agent 侧错误（编译失败、模型拒绝等）被刻意排除——
@@ -5319,7 +5398,18 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		// 覆盖。
 		if !triggerCommentID.Valid {
 			coalescedCommentIDs = append([]pgtype.UUID{}, sourceTask.CoalescedCommentIds...)
-			if sourceTask.TriggerCommentID.Valid {
+			sourceTriggerLive := sourceTask.TriggerCommentID.Valid
+			if sourceTriggerLive {
+				// A trigger deleted while it had replies keeps its row as a
+				// tombstone instead of clearing trigger_comment_id; repair the
+				// plan exactly as for a removed trigger.
+				trigger, err := s.Queries.GetComment(ctx, sourceTask.TriggerCommentID)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return nil, fmt.Errorf("load source trigger comment: %w", err)
+				}
+				sourceTriggerLive = err == nil && !trigger.DeletedAt.Valid
+			}
+			if sourceTriggerLive {
 				triggerCommentID = sourceTask.TriggerCommentID
 			} else if len(coalescedCommentIDs) > 0 {
 				triggerCommentID, coalescedCommentIDs, err = s.promoteNewestSurvivingComment(ctx, coalescedCommentIDs)
@@ -5378,7 +5468,7 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 			if err != nil {
 				return err
 			}
-			if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+			if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 				return err
 			}
 			if s.TxStarter != nil {
@@ -5467,6 +5557,9 @@ func (s *TaskService) promoteNewestSurvivingComment(ctx context.Context, ids []p
 		}
 		if err != nil {
 			return pgtype.UUID{}, nil, err
+		}
+		if comment.DeletedAt.Valid {
+			continue
 		}
 		survivors = append(survivors, survivingComment{id: comment.ID, createdAt: comment.CreatedAt.Time})
 	}
@@ -5582,7 +5675,7 @@ func (s *TaskService) terminateTasksInTx(ctx context.Context, eventType string, 
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, failed...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, failed...); err != nil {
 			return err
 		}
 		// 清扫器变更与 API 回调一样是真实的终态转换。在提交前记录，使崩溃不会让客户端与投影永远不知道这次转换。
@@ -5630,8 +5723,7 @@ func enqueueTaskTerminalEvents(ctx context.Context, queries *db.Queries, eventTy
 // HandleFailedTasks 为一批复新失败的任务执行失败后副作用：可选自动重试、task:failed 广播、agent 状态调和，
 // 以及（当 issue 无剩余活跃任务且未被重试时）把 issue 重置回 todo，让 daemon 能再次拾起。
 //
-// 所有把任务呈现为失败的调用方——清扫器、FailTask、recover-orphans——都汇聚到这里，使每条代码路径都享有
-// 相同的 UI 一致性保证。
+// 清扫器和 recover-orphans 共用本入口；FailTaskWithTransition 负责单次执行失败的副作用。
 func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTaskQueue) int {
 	if len(tasks) == 0 {
 		return 0
@@ -5659,6 +5751,9 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 					"delegated_from_task_id", util.UUIDToString(t.DelegatedFromTaskID),
 					"error", err,
 				)
+			}
+			if t.IssueID.Valid && t.Error.String != "" {
+				s.createAgentComment(ctx, t.IssueID, t.AgentID, redact.Text(t.Error.String), "system", t.TriggerCommentID, t.ID)
 			}
 		}
 
@@ -5717,6 +5812,21 @@ const (
 	delegatedFailureRecoveryMaxTaskAttempts = 3
 	delegatedFailureRecoveryCommentType     = "progress_update"
 )
+
+// SettleTerminalTaskState 与任务终态在同一事务中结算追加输入和委托回执。
+func SettleTerminalTaskState(ctx context.Context, q *db.Queries, tasks ...db.AgentTaskQueue) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.ID)
+	}
+	if _, err := q.SettleTerminalTaskSupplements(ctx, ids); err != nil {
+		return fmt.Errorf("settle terminal task supplements: %w", err)
+	}
+	return SettleDeliveredDelegatedFailureRecoveries(ctx, q, tasks...)
+}
 
 // SettleDeliveredDelegatedFailureRecoveries 退役给定已终态任务实际收到的每一条委托失败恢复评论，使这些评论
 // 移出 idx_comment_delegated_failure_unsettled，而不是每个清扫 tick 都被 ListPendingDelegatedFailureRecoveries
@@ -5834,10 +5944,6 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 			return nil, nil
 		}
 		return nil, fmt.Errorf("load source issue: %w", err)
-	}
-	effectiveStatus := issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status)
-	if effectiveStatus == issuestatus.Done || effectiveStatus == issuestatus.Cancelled || effectiveStatus == issuestatus.Backlog {
-		return nil, nil
 	}
 	agent, err := q.GetAgent(ctx, source.AgentID)
 	if err != nil {
@@ -6062,6 +6168,9 @@ func (s *TaskService) exhaustDelegatedFailureRecovery(ctx context.Context, targe
 				ActorID:       pgtype.UUID{},
 				Details:       details,
 			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
 			if err != nil {
 				return fmt.Errorf("create delegated failure exhaustion inbox item: %w", err)
 			}
@@ -6098,11 +6207,44 @@ func (s *TaskService) exhaustDelegatedFailureRecovery(ctx context.Context, targe
 	return created, nil
 }
 
+// canDispatchDelegatedFailureRecovery 与 SQL 的领取前状态筛选使用本站七类生命周期。
+func canDispatchDelegatedFailureRecovery(ctx context.Context, q *db.Queries, issue db.Issue) (bool, error) {
+	status := issue.Status
+	if !issuestatus.IsBuiltIn(status) {
+		entry, err := q.GetIssueStatusEntryByKey(ctx, db.GetIssueStatusEntryByKeyParams{WorkspaceID: issue.WorkspaceID, Key: status})
+		if err != nil {
+			return false, fmt.Errorf("resolve recovery lifecycle: %w", err)
+		}
+		if !issuestatus.IsCategory(entry.Category) {
+			return false, fmt.Errorf("unknown recovery lifecycle %q", entry.Category)
+		}
+		status = entry.Category
+	}
+	switch status {
+	case "todo", "in_progress", "in_review", "blocked":
+		return true, nil
+	}
+	return false, nil
+}
+
 // dispatchDelegatedFailureRecovery 把恢复评论路由给源协调者，而不依赖通用 mention 解析：有预认领任务就并入它；
 // 否则创建一条专用 queued 后继。唯一同时阻断两种写入的状态是 dispatched 任务（认领载荷已构建、pending-task
 // 唯一槽位仍被持有），该窄竞态下把评论登记为“已计划但未投递”，让完成调和来安排后续。三轮循环围住这些写入
 // 闭合状态变化。
 func (s *TaskService) dispatchDelegatedFailureRecovery(ctx context.Context, target *delegatedFailureRecoveryTarget, excludeTaskID pgtype.UUID) (delegatedFailureRecoveryDispatchOutcome, error) {
+	// 信号已持久化；暂停或无法解析的状态留待后续调度，不消耗执行名额。
+	issue, err := s.Queries.GetIssue(ctx, target.issue.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return delegatedFailureRecoveryCovered, nil
+	}
+	if err != nil {
+		return delegatedFailureRecoveryCovered, err
+	}
+	allowed, err := canDispatchDelegatedFailureRecovery(ctx, s.Queries, issue)
+	if err != nil || !allowed {
+		return delegatedFailureRecoveryCovered, err
+	}
+	target.issue = issue
 	const maxAttempts = 3
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		covered, err := s.Queries.HasTaskCoveringDelegatedFailureComment(ctx, db.HasTaskCoveringDelegatedFailureCommentParams{
@@ -6876,34 +7018,78 @@ func (s *TaskService) broadcastTaskFailedEvent(ctx context.Context, task db.Agen
 // 经其 run 来自 autopilot；quick-create 任务来自 context JSONB。全部链接都无法解析时返回 ""——调用方把它
 // 视为 “not found”。
 func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentTaskQueue) string {
+	workspaceID, _ := s.ResolveTaskWorkspaceIDChecked(ctx, task)
+	return workspaceID
+}
+
+// ResolveTaskWorkspaceIDChecked resolves a task's workspace and keeps the two
+// failure modes apart:
+//
+//   - ("", nil)  — every link this task carries was looked up successfully and
+//     the target is genuinely absent. The task is unreachable; a 404 is honest.
+//   - ("", err)  — a lookup could not be completed (DB timeout, pool exhaustion,
+//     …). We do not know whether the task is reachable, and the caller must NOT
+//     report absence. This is a 5xx.
+//
+// For issue tasks the workspace comes from the issue, for chat tasks from the
+// chat session, for autopilot tasks from the autopilot via its run, and for
+// quick-create tasks from the context JSONB (they carry no link at all).
+//
+// A failed lookup does not stop the walk. If a later link resolves, its
+// workspace is returned and the earlier error is dropped, because that answer
+// is still trustworthy; the error is surfaced only when nothing resolved. That
+// keeps a task carrying several links working during a partial outage while
+// still refusing to call an unknown state "not found".
+func (s *TaskService) ResolveTaskWorkspaceIDChecked(ctx context.Context, task db.AgentTaskQueue) (string, error) {
 	var supervision SupervisionContext
 	if json.Unmarshal(task.Context, &supervision) == nil && supervision.Type == "quality_supervision" {
-		return supervision.WorkspaceID
+		return supervision.WorkspaceID, nil
 	}
-	if task.IssueID.Valid {
-		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
-			return util.UUIDToString(issue.WorkspaceID)
+	// isNotFound is the "genuinely absent" signal; every other error means the
+	// lookup itself did not complete. pgx.ErrNoRows is the only error the
+	// queries below use to say "this row does not exist".
+	var lookupErr error
+	note := func(err error) {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) && lookupErr == nil {
+			lookupErr = err
 		}
+	}
+
+	if task.IssueID.Valid {
+		issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+		if err == nil {
+			return util.UUIDToString(issue.WorkspaceID), nil
+		}
+		note(err)
 	}
 	if task.ChatSessionID.Valid {
-		if cs, err := s.Queries.GetChatSession(ctx, task.ChatSessionID); err == nil {
-			return util.UUIDToString(cs.WorkspaceID)
+		cs, err := s.Queries.GetChatSession(ctx, task.ChatSessionID)
+		if err == nil {
+			return util.UUIDToString(cs.WorkspaceID), nil
 		}
+		note(err)
 	}
 	if task.AutopilotRunID.Valid {
-		if run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID); err == nil {
-			if ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID); err == nil {
-				return util.UUIDToString(ap.WorkspaceID)
+		run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
+		if err == nil {
+			ap, apErr := s.Queries.GetAutopilot(ctx, run.AutopilotID)
+			if apErr == nil {
+				return util.UUIDToString(ap.WorkspaceID), nil
 			}
+			note(apErr)
 		}
+		note(err)
 	}
 	// quick-create 任务没有 issue/chat/autopilot 链接——工作区在 context JSONB 里。此前这里返回 "" 正是阻塞
 	// requireDaemonTaskAccess（daemon 的 /start、/progress、/complete、/fail 返回 404）并静默丢弃 task:dispatch /
 	// task:completed 广播的原因，也是 quick-create 任务看似卡在 queued 的原因。
 	if qc, ok := s.parseQuickCreateContext(task); ok {
-		return qc.WorkspaceID
+		return qc.WorkspaceID, nil
 	}
-	return ""
+	if lookupErr != nil {
+		return "", fmt.Errorf("resolve task workspace: %w", lookupErr)
+	}
+	return "", nil
 }
 
 // broadcastChatDone 向工作区广播 chat:done，载荷含消息内容/类型与 quick-actions 状态；消息为 nil 时只发
@@ -7105,7 +7291,6 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 	if err := tx.Commit(ctx); err != nil {
 		return
 	}
-	s.CancelDeferredEscalationsForIssueAgent(ctx, issueID, agentID)
 	for _, event := range replyEvents {
 		publishCommittedEvent(s.Bus, event)
 	}
@@ -7456,6 +7641,12 @@ func (s *TaskService) persistQuickCreateOutcome(
 		Details:       details,
 		ID:            quickCreateOutcomeID(task.ID, inboxType),
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			slog.Error("quick-create outcome: commit without recipient failed", "error", commitErr)
+		}
+		return
+	}
 	if err != nil {
 		slog.Error("quick-create outcome: create inbox failed", "task_id", util.UUIDToString(task.ID), "error", err)
 		return

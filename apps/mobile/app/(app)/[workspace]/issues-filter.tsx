@@ -22,22 +22,15 @@ import { useIssueStatuses } from "@/lib/use-issue-statuses";
 import { cn } from "@/lib/utils";
 
 // Mirrors PRIORITY_ORDER in packages/core/issues/config/priority.ts.
-const PRIORITY_ORDER: IssuePriority[] = [
-  "urgent",
-  "high",
-  "medium",
-  "low",
-  "none",
-];
+const PRIORITY_ORDER: IssuePriority[] = ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"];
 
 // Label map duplicated across several mobile files — out of scope to
 // consolidate per the SheetShell migration plan.
 const PRIORITY_LABEL: Record<IssuePriority, string> = {
-  urgent: "紧急",
-  high: "高",
-  medium: "中",
-  low: "低",
-  none: "无优先级",
+  important_urgent: "重要且紧急",
+  important_not_urgent: "重要不紧急",
+  not_important_urgent: "不重要但紧急",
+  not_important_not_urgent: "不重要不紧急",
 };
 
 type Scope = "my" | "all";

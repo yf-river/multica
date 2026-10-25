@@ -29,8 +29,10 @@ const (
 
 // ClientIdentity 捕捉已鉴权的 daemon 连接的作用域。
 type ClientIdentity struct {
-	DaemonID string
-	UserID   string
+	DaemonTokenHash    string
+	DaemonTokenOwnerID string
+	DaemonID           string
+	UserID             string
 	// WorkspaceID 是老调用方与 daemon-token 鉴权使用的“单 workspace”旧作用域。新代码应
 	// 从“该连接授权的 runtime 行”填 WorkspaceIDs。
 	WorkspaceID   string
@@ -312,7 +314,14 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, identity C
 
 // NotifyTaskAvailable 给 watch runtimeID 的 daemon 发一个尽力而为的“新任务”唤醒。
 func (h *Hub) NotifyTaskAvailable(runtimeID, taskID string) {
-	h.notifyTaskAvailable(runtimeID, taskID, "")
+	h.notifyTask(protocol.EventDaemonTaskAvailable, runtimeID, taskID, "")
+}
+
+// NotifyTaskSupplementAvailable wakes only the daemon that owns runtimeID;
+// the task ID lets that daemon wake the matching in-flight run without polling
+// or disturbing the machine-level new-task claim loop.
+func (h *Hub) NotifyTaskSupplementAvailable(runtimeID, taskID string) {
+	h.notifyTask(protocol.EventDaemonTaskSupplementAvailable, runtimeID, taskID, "")
 }
 
 // NotifyRuntimeProfilesChanged 在 create/update/disable/delete 之后，让 workspaceID
@@ -334,11 +343,18 @@ func (h *Hub) NotifyPendingWork(runtimeID, kind string) {
 	h.notifyPendingWork(runtimeID, kind, "")
 }
 
-func (h *Hub) notifyTaskAvailable(runtimeID, taskID, eventID string) {
-	if h == nil || runtimeID == "" {
+// NotifyRuntimeGone tells daemons watching runtimeID that the server deleted
+// the runtime. The existing heartbeat lookup remains the correctness fallback;
+// this notification only closes the active-connection invalidation gap.
+func (h *Hub) NotifyRuntimeGone(runtimeID string) {
+	h.notifyRuntimeGone(runtimeID, "")
+}
+
+func (h *Hub) notifyTask(eventType, runtimeID, taskID, eventID string) {
+	if h == nil || runtimeID == "" || (eventType == protocol.EventDaemonTaskSupplementAvailable && taskID == "") {
 		return
 	}
-	data, err := taskAvailableFrame(runtimeID, taskID)
+	data, err := taskWakeupFrame(eventType, runtimeID, taskID)
 	if err != nil {
 		return
 	}
@@ -388,24 +404,43 @@ func (h *Hub) notifyPendingWork(runtimeID, kind, eventID string) {
 	}
 }
 
-// DeliverDaemonRuntime 处理“从 realtime relay 转发来的”daemon 唤醒帧：先解析出类型，
-// 再按 payload 里的 runtime/workspace/user 作用域投递给本机连着的 daemon。
+func (h *Hub) notifyRuntimeGone(runtimeID, eventID string) {
+	if h == nil || runtimeID == "" {
+		return
+	}
+	data, err := runtimeGoneFrame(runtimeID)
+	if err != nil {
+		return
+	}
+	delivered, deduped := h.notifyFrame(runtimeID, data, eventID)
+	if delivered {
+		M.RuntimeGoneDeliveredHit.Add(1)
+	} else if !deduped {
+		M.RuntimeGoneDeliveredMiss.Add(1)
+	}
+}
+
 func (h *Hub) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string) {
 	if h == nil {
 		return
 	}
-	M.WakeupReceivedTotal.Add(1)
 	var msg protocol.Message
 	if err := json.Unmarshal(frame, &msg); err != nil {
+		M.WakeupReceivedTotal.Add(1)
 		slog.Debug("daemon websocket relay: invalid frame", "error", err, "scope_id", scopeID, "event_id", eventID)
 		M.WakeupDeliveredMiss.Add(1)
 		return
 	}
+	if msg.Type == protocol.EventDaemonHeartbeatAck {
+		M.RuntimeGoneReceivedTotal.Add(1)
+	} else {
+		M.WakeupReceivedTotal.Add(1)
+	}
 	switch msg.Type {
-	case protocol.EventDaemonTaskAvailable:
+	case protocol.EventDaemonTaskAvailable, protocol.EventDaemonTaskSupplementAvailable:
 		var payload protocol.TaskAvailablePayload
-		if err := json.Unmarshal(msg.Payload, &payload); err != nil || payload.RuntimeID == "" {
-			slog.Debug("daemon websocket relay: invalid task_available payload", "error", err, "scope_id", scopeID, "event_id", eventID)
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || payload.RuntimeID == "" || (msg.Type == protocol.EventDaemonTaskSupplementAvailable && payload.TaskID == "") {
+			slog.Debug("daemon websocket relay: invalid task wakeup payload", "type", msg.Type, "error", err, "scope_id", scopeID, "event_id", eventID)
 			M.WakeupDeliveredMiss.Add(1)
 			return
 		}
@@ -447,6 +482,19 @@ func (h *Hub) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string)
 			M.WakeupDeliveredHit.Add(1)
 		} else if !deduped {
 			M.WakeupDeliveredMiss.Add(1)
+		}
+	case protocol.EventDaemonHeartbeatAck:
+		var payload protocol.DaemonHeartbeatAckPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil || payload.RuntimeID == "" || payload.Status != protocol.HeartbeatStatusRuntimeGone || !payload.RuntimeGone {
+			slog.Debug("daemon websocket relay: invalid runtime_gone payload", "error", err, "scope_id", scopeID, "event_id", eventID)
+			M.RuntimeGoneDeliveredMiss.Add(1)
+			return
+		}
+		delivered, deduped := h.notifyFrame(payload.RuntimeID, frame, eventID)
+		if delivered {
+			M.RuntimeGoneDeliveredHit.Add(1)
+		} else if !deduped {
+			M.RuntimeGoneDeliveredMiss.Add(1)
 		}
 	default:
 		M.WakeupDeliveredMiss.Add(1)
@@ -542,10 +590,9 @@ func (h *Hub) notifyUserFrame(userID string, data []byte, eventID string) (deliv
 	return delivered, deduped
 }
 
-// taskAvailableFrame 组装“新任务可用”的协议帧。
-func taskAvailableFrame(runtimeID, taskID string) ([]byte, error) {
+func taskWakeupFrame(eventType, runtimeID, taskID string) ([]byte, error) {
 	return json.Marshal(protocol.Message{
-		Type: protocol.EventDaemonTaskAvailable,
+		Type: eventType,
 		Payload: mustMarshalRaw(protocol.TaskAvailablePayload{
 			RuntimeID: runtimeID,
 			TaskID:    taskID,
@@ -583,7 +630,17 @@ func pendingWorkFrame(runtimeID, kind string) ([]byte, error) {
 	})
 }
 
-// mustMarshalRaw 序列化 v；失败返回 nil（对已知可序列化载荷永不应发生）。
+func runtimeGoneFrame(runtimeID string) ([]byte, error) {
+	return json.Marshal(protocol.Message{
+		Type: protocol.EventDaemonHeartbeatAck,
+		Payload: mustMarshalRaw(protocol.DaemonHeartbeatAckPayload{
+			RuntimeID:   runtimeID,
+			Status:      protocol.HeartbeatStatusRuntimeGone,
+			RuntimeGone: true,
+		}),
+	})
+}
+
 func mustMarshalRaw(v any) json.RawMessage {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -806,6 +863,9 @@ func (c *client) handleRPCFrame(raw json.RawMessage) {
 			hctx, cancel = context.WithTimeout(c.ctx, time.Duration(req.TimeoutMs)*time.Millisecond)
 			defer cancel()
 		}
+		completion := &rpcCompletion{}
+		hctx = context.WithValue(hctx, rpcCompletionKey{}, completion)
+		defer completion.run()
 		status, body, err := handler(hctx, c.identity, req.Method, req.Body)
 		if err != nil {
 			if status < 400 {

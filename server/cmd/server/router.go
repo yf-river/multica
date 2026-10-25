@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -95,6 +97,8 @@ var corsExposedHeaders = []string{
 	"X-Request-ID",
 	handler.HeaderCommentsTruncated,
 	handler.HeaderTimelineTruncated,
+	handler.HeaderActiveRunsTruncated,
+	handler.HeaderAgentTasksNextCursor,
 }
 
 // registerPluginActionRoutes 把公开 Plugin Action API 的一整套资源路由挂到 r 上：
@@ -233,12 +237,14 @@ type RouterOptions struct {
 	// WecomMetrics 是 WeCom 适配器的健康指标接收器。nil 表示丢弃所有计数器，即关闭
 	// /metrics 的部署得到的待遇。
 	WecomMetrics *obsmetrics.WecomMetrics
+
 	DaemonHub    *daemonws.Hub
 	DaemonWakeup service.TaskWakeupNotifier
 	FeatureFlags *featureflag.Service
-	// HeartbeatScheduler 非 nil 时，替换构造出的 Handler 上默认的同步直通调度器。
-	// main.go 在这里注入一个 BatchedHeartbeatScheduler，调用方还可以驱动 Run/Stop；
-	// 测试留 nil 得到旧的同步行为。
+	// HeartbeatScheduler, when non-nil, replaces the default synchronous
+	// passthrough scheduler on the constructed Handler. main.go injects a
+	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
+	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
 	// LLMMaxRetries 携带解析后的 MULTICA_LLM_MAX_RETRIES 预算。与另外三个
 	// MULTICA_LLM_* 兄弟不同，它靠注入而非在本函数里读环境变量——非法值必须让启动
@@ -445,6 +451,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		if notifier, ok := opts.DaemonWakeup.(handler.DaemonPendingWorkNotifier); ok {
 			h.DaemonPendingWork = notifier
+		}
+		if notifier, ok := opts.DaemonWakeup.(handler.DaemonTaskSupplementNotifier); ok {
+			h.DaemonTaskSupplement = notifier
+		}
+		if notifier, ok := opts.DaemonWakeup.(handler.RuntimeGoneNotifier); ok {
+			h.DaemonRuntimeGone = notifier
 		}
 	}
 	if rdb != nil {
@@ -821,12 +833,29 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				if wecomSenders == nil {
 					wecomSenders = wecom.NewSendersRegistry()
 				}
+				// One registry, one metrics sink. Every outbound write goes
+				// through here, and so do the counters that say how the
+				// bubble ended — which is why the outbound subscriber takes
+				// no sink of its own.
+				wecomSenders.WithMetrics(wecomMetricsOrNil(opts.WecomMetrics))
+
+				// Which language the bot writes its OWN copy in for readers
+				// it cannot look a language up for — a group chat, or anyone
+				// not linked to a Multica account yet. A linked person always
+				// overrides this with their profile language. An unrecognised
+				// value leaves the default (zh-Hans) in place, which is why
+				// the resolved one is logged rather than the raw one.
+				slog.Info("wecom deployment locale",
+					"locale", wecom.SetDeploymentLocale(os.Getenv("MULTICA_WECOM_DEFAULT_LOCALE")))
 
 				wecomReplier := wecom.NewOutboundReplier(wecom.OutboundReplierConfig{
 					Binding: wecomBinding,
 					Senders: wecomSenders,
 					AppURL:  appURLFromEnv(),
-					Logger:  slog.Default(),
+					// Without this the replier has no way to read a reader's
+					// profile language and every notice falls back to the
+					// deployment's, which is the whole of what this is for.
+					Logger: slog.Default(),
 				})
 
 				// WeCom 共享 engine.ChatSession（按 channel_type 分键），使 /issue、
@@ -842,12 +871,56 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Credentials: credsResolver,
 					Senders:     wecomSenders,
 					Metrics:     wecomMetricsOrNil(opts.WecomMetrics),
-					Logger:      slog.Default(),
+					// Same store the Router claims on, so the receipt this
+					// adapter sends before the Router sees the message cannot
+					// also be answered there.
+					Dedup:  wecom.NewDeduper(wecomStore),
+					Logger: slog.Default(),
 				})
-				// 入站媒体：回调带着一条预签名的 COS URL 和每 URL 一个的 key，所以
-				// resolver 不需要任何 WeCom 凭据——只需要一处能放字节的持久存储。没有
-				// 对象存储就没有可指向的附件，resolver 保持 nil，附件保留为占位文本。
-				// 与上面 DingTalk 的 nil 守卫相同。
+				// Streaming replies: WeCom's smart-bot protocol has no
+				// typing indicator, no reaction and no read receipt, so the
+				// only way to say "working on it" is to open the reply early.
+				// The typing indicator paints a stream bubble the moment a
+				// message is ingested and the outbound subscriber replaces
+				// that same bubble with the answer. The store is the seam
+				// between them — it carries the inbound frame's req_id, which
+				// only the read loop ever sees and every stream frame must
+				// echo — so both sides are built with the one instance.
+				wecomStreams := wecom.NewStreamStore()
+				wecomTyping := wecom.NewTypingIndicator(wecom.TypingIndicatorConfig{
+					Senders: wecomSenders,
+					Streams: wecomStreams,
+					// The origin gate. A failure notice is written into a
+					// group chat, so before saying one the adapter reads the
+					// run's input batch to establish the question was asked
+					// over WeCom and not by the installer in their own
+					// browser — both runs fail on this same bus carrying the
+					// same session. Also backs the retry-clone lookup, and a
+					// fallback read of the session off the task row for a
+					// task:failed that carries none.
+					Tasks: queries,
+					// A run that fails after its bubble is gone — the process
+					// restarted mid-run, or the opening frame was refused —
+					// still gets its notice, addressed by the task's own
+					// delivery row the way the answer is.
+					Deliveries: queries,
+					// The bubble's own words are written in the reader's
+					// language, resolved when the round is opened and carried
+					// on the handle to whichever closer gets there.
+					Logger: slog.Default(),
+				})
+				// Subscribes task:failed and task:cancelled — neither a failed
+				// nor a cancelled run publishes chat:done, so this is the sole
+				// path that stops the bubble spinning once a run ends without
+				// an answer.
+				wecomTyping.Register(bus)
+
+				// Inbound media: a callback carries a pre-signed COS url and
+				// a per-url key, so the resolver needs no WeCom credential —
+				// only somewhere durable to put the bytes. Without an object
+				// store there is nothing to point an attachment at, so the
+				// resolver is left nil and attachments stay as their
+				// placeholder text. Same nil-guard as DingTalk above.
 				var wecomMedia engine.MediaResolver
 				if store != nil {
 					wecomMedia = wecom.NewMediaResolver(
@@ -857,9 +930,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						slog.Default(),
 					)
 				}
-				channelRouter.Register(wecom.TypeWecom, wecom.NewResolverSet(
-					wecomStore, wecomSession, wecomReplier, wecomMedia,
-				))
+				wecomSet := wecom.NewResolverSet(wecomStore, wecomSession, wecomReplier, wecomMedia)
+				// The bubble IS this platform's typing indicator, so the
+				// notifier slot the other adapters leave empty is the one that
+				// opens it. NewResolverSet does not take it: the set is shaped
+				// by the engine, and the engine's own tests build a WeCom set
+				// without one.
+				wecomSet.Typing = wecomTyping
+				channelRouter.Register(wecom.TypeWecom, wecomSet)
 
 				// EventChatDone 订阅者：把 agent 的聊天回复经入站循环同一条 aibot
 				// WebSocket 推回去。与 slack.NewOutbound(...).Register(bus) 对位。
@@ -889,9 +967,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				if opts.WecomRelayOutbound != nil {
 					opts.WecomRelayOutbound.SetMetrics(wecomMetricsOrNil(opts.WecomMetrics))
 					wecomOutboundOpts = append(wecomOutboundOpts, wecom.WithRelay(opts.WecomRelayOutbound))
+					// The indicator routes too. A run's ending can be produced
+					// on any replica while exactly one holds the socket, so
+					// without this a failure notice is delivered only when the
+					// two happen to coincide.
+					wecomTyping.WithRelay(opts.WecomRelayOutbound)
 					slog.Info("wecom integration: cross-replica outbound routing enabled")
 				}
-				wecomOutbound := wecom.NewOutbound(queries, wecomSenders, slog.Default(), wecomOutboundOpts...)
+				// wecomStreams is the same store the typing indicator paints
+				// into: the subscriber closes the bubble that indicator opened
+				// by writing the answer into it, so both sides must hold the
+				// one instance or the answer lands as a new message and the
+				// bubble spins until the protocol's window runs out on it.
+				wecomOutbound := wecom.NewOutbound(queries, wecomSenders, wecomStreams, slog.Default(), wecomOutboundOpts...)
 				wecomOutbound.Register(bus)
 				// dispatcher 在本路由存在之前就已在消费；这里才让它知道由谁执行投递。
 				// 它此前读到的一切都在自己的队列里等着。
@@ -1176,6 +1264,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
+	hub.SetMembershipChecker(mc)
 	pr := &patResolver{queries: queries, cache: patCache}
 	slugResolver := realtime.SlugResolver(func(ctx context.Context, slug string) (string, error) {
 		ws, err := queries.GetWorkspaceBySlug(ctx, slug)
@@ -1289,6 +1378,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
+		r.Post("/tasks/{taskId}/supplements/claim", h.ClaimTaskSupplement)
+		r.Post("/tasks/{taskId}/supplements/{commentId}/ack", h.AckTaskSupplement)
 		r.Post("/tasks/{taskId}/wait-local-directory", h.MarkTaskWaitingLocalDirectory)
 		r.Post("/tasks/{taskId}/progress", h.ReportTaskProgress)
 		r.Post("/tasks/{taskId}/complete", h.CompleteTask)
@@ -1327,7 +1418,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// 已登录用户的会话和安装头调用这条内部路由。放在 /v1 之外，防止 Public API 接受
 	// 会话 cookie。
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Route(pluginBridgePrefix, func(r chi.Router) {
 			registerPluginActionRoutes(r, h)
 			// 仅 UI/手动触发。`event` 由宿主从事件总线分发；`agent` 走 MCP 而非这条
@@ -1337,7 +1428,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 		r.Route("/api/external-credential-profiles", func(r chi.Router) {
 			r.Get("/", h.ListExternalCredentialProfiles)
@@ -1364,7 +1455,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// CreateAgent / CreateIssue 创建 Helper agent 与起始 issue，只在这里调用
 		// /complete。待 X-Client-Version 遥测确认没有 pre-v3 桌面端仍在调用后移除。
 		// handler 在 server/internal/handler/onboarding_shim.go。
-		r.Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Post("/api/auth/refresh", h.RefreshSession)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
@@ -1381,6 +1473,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// MUL-3130。下面的元数据/删除端点保持工作区作用域，因为它们是 JSON-API 消费方，
 		// 总带有工作区上下文。
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
+		// Markdown links may point to an attachment in a different workspace.
+		// Resolve that workspace from the row and check membership before minting
+		// a fresh URL; the workspace-scoped metadata route stays unchanged.
+		r.Get("/api/attachments/{id}/download-metadata", h.GetAttachmentForDownload)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -1588,6 +1684,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/share-links/join", h.JoinByShareLink)
 
 		r.Route("/api/tokens", func(r chi.Router) {
+			r.Use(handler.RequireHumanActor)
 			r.Get("/", h.ListPersonalAccessTokens)
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
@@ -1634,6 +1731,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/unsubscribe/subtree", h.UnsubscribeFromIssueSubtree)
 					r.Get("/active-task", h.GetActiveTaskForIssue)
 					r.Post("/tasks/{taskId}/cancel", h.CancelTask)
+					r.With(handler.RequireHumanActor).Post("/tasks/{taskId}/supplements", h.CreateTaskSupplement)
+					r.With(handler.RequireHumanActor).Post("/tasks/{taskId}/supplements/{commentId}/retry", h.RetryTaskSupplement)
 					r.Post("/rerun", h.RerunIssue)
 					r.Post("/quick-actions/{quickActionId}/run", h.RunQuickAction)
 					r.Post("/quick-actions/{quickActionId}/render", h.RenderQuickAction)
@@ -1871,6 +1970,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.With(handler.RequireHumanActor).Post("/sub-issues", h.CreateCommentSubIssue)
 				r.Put("/", h.UpdateComment)
 				r.Delete("/", h.DeleteComment)
+				// Same handler under a path servers from before #8296 do not
+				// route. Clients that promise "replies are kept" call this one,
+				// so a request that reaches an older server — mid-rollout, after
+				// a rollback, or self-hosted — fails instead of deleting the
+				// replies with the comment.
+				r.Delete("/keep-replies", h.DeleteComment)
 				r.Post("/resolve", h.ResolveComment)
 				r.Delete("/resolve", h.UnresolveComment)
 				r.Post("/reactions", h.AddReaction)
@@ -1984,8 +2089,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// 删除 runtime——全部在一个事务里。DeleteRuntimeDialog 在严格 DELETE
 					// 以 `runtime_has_active_agents` 拒绝、用户确认后使用它。
 					r.Post("/unbind-agents-and-delete", h.UnbindAgentsAndDeleteRuntime)
-					// 为按 archive-and-delete 契约构建的已安装客户端保留的旧路径
-					// （MUL-5559 改的是行为名，不只是路由）。同一 handler。
+					// Confirmed public-to-private transition. The normal PATCH
+					// returns a structured plan when teammates still have agents
+					// or active work on the runtime; this route applies that plan
+					// atomically after the owner reviews it.
+					r.Post("/revoke-workspace-access", h.RevokeRuntimeWorkspaceAccess)
+					// Legacy path for installed clients built against the
+					// archive-and-delete contract (MUL-5559 renamed the
+					// behaviour, not just the route). Same handler.
 					r.Post("/archive-agents-and-delete", h.UnbindAgentsAndDeleteRuntime)
 				})
 			})
@@ -2158,6 +2269,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// 归档通知，服务 inbox 的「Archived」子视图。与 "/" 分开，让主列表保持
 				// 自身契约、永不携带无界归档。
 				r.Get("/archived", h.ListArchivedInbox)
+				r.Get("/archived/page", h.ListArchivedInboxPage)
+				r.Get("/archived/facets", h.GetArchivedInboxFacets)
 				r.Get("/unread-count", h.CountUnreadInbox)
 				// 跨工作区未读汇总：账号级，按用户分键。支撑工作区切换器里「其他
 				// 工作区」的圆点。
@@ -2250,12 +2363,49 @@ type membershipChecker struct {
 	queries *db.Queries
 }
 
-func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID string) bool {
+func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID string) (bool, error) {
 	_, err := mc.queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      parseUUID(userID),
 		WorkspaceID: parseUUID(workspaceID),
 	})
-	return err == nil
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (mc *membershipChecker) Members(ctx context.Context, identities []realtime.MembershipIdentity) (map[realtime.MembershipIdentity]bool, error) {
+	params := db.GetRealtimeMembershipsParams{}
+	for _, identity := range identities {
+		userID, err := util.ParseUUID(identity.UserID)
+		if err != nil {
+			return nil, err
+		}
+		workspaceID, err := util.ParseUUID(identity.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
+		params.UserIds = append(params.UserIds, userID)
+		params.WorkspaceIds = append(params.WorkspaceIds, workspaceID)
+	}
+	rows, err := mc.queries.GetRealtimeMemberships(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	type pair struct{ workspaceID, userID pgtype.UUID }
+	current := make(map[pair]bool, len(rows))
+	for _, row := range rows {
+		current[pair{row.WorkspaceID, row.UserID}] = true
+	}
+	// Return the exact request keys, including valid UUID spellings that are
+	// different from the database's canonical lowercase rendering.
+	members := make(map[realtime.MembershipIdentity]bool, len(rows))
+	for i, identity := range identities {
+		if current[pair{params.WorkspaceIds[i], params.UserIds[i]}] {
+			members[identity] = true
+		}
+	}
+	return members, nil
 }
 
 // patResolver 基于数据库查询实现 realtime.PATResolver。

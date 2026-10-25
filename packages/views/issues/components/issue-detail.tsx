@@ -69,6 +69,7 @@ import { PropertyIcon } from "../../common/property-icon";
 import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, ListIssuesCache, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
+import { commentLandingTarget } from "@multica/core/issues/comment-deletion";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
@@ -124,8 +125,12 @@ import {
   type SubIssueRowProperties,
   type SubIssueRowPropertyKey,
 } from "@multica/core/issues/stores";
-import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { BatchActionToolbar } from "./batch-action-toolbar";
+import {
+  IssueSurfaceSelectionProvider,
+  useCreateIssueSurfaceSelection,
+  useIssueSurfaceSelection,
+} from "../surface/selection-context";
 import { useIssueTimeline } from "../hooks/use-issue-timeline";
 import { useIssueReactions } from "../hooks/use-issue-reactions";
 import { useIssueSubscribers } from "../hooks/use-issue-subscribers";
@@ -611,7 +616,16 @@ function ActivityBlock({
         } else if (isDueDateChange) {
           leadIcon = <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />;
         } else {
-          leadIcon = <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="sm" />;
+          leadIcon = (
+            <ActorAvatar
+              actorType={entry.actor_type}
+              actorId={entry.actor_id}
+              name={entry.actor_name}
+              avatarUrl={entry.actor_avatar_url}
+              profileRequiresDirectoryEntry
+              size="sm"
+            />
+          );
         }
 
         return (
@@ -620,7 +634,9 @@ function ActivityBlock({
               {leadIcon}
             </div>
             <div className="flex min-w-0 flex-1 items-center gap-1">
-              <span className="shrink-0 font-medium">{getActorName(entry.actor_type, entry.actor_id)}</span>
+              <span className="shrink-0 font-medium">
+                {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
+              </span>
               <span className="truncate">{formatActivity(entry, t, locale, getActorName, resolveStatusLabel)}</span>
               {(entry.coalesced_count ?? 1) > 1 &&
                 entry.action !== "task_completed" &&
@@ -671,10 +687,10 @@ function SubIssueRow({
   const locale = useLocale();
   const paths = useWorkspacePaths();
   const updateIssue = useUpdateIssue();
-  const selected = useIssueSelectionStore((s) => s.selectedIds.has(child.id));
-  const toggleSelected = useIssueSelectionStore((s) => s.toggle);
-  // 判断依据是"类别"而不是"键名"：处于 done/cancelled 类别的自定义状态
-  // 同样是已完成的工作，需要和其他完成状态一样显示删除线。(MUL-6243)
+  const { selectedIds, toggle: toggleSelected } = useIssueSurfaceSelection();
+  const selected = selectedIds.has(child.id);
+  // Category, not key: a custom status in the done/cancelled categories is
+  // finished work and has to strike through like any other. (MUL-6243)
   const isDone = issueBehavesAsAny(child, ["done", "cancelled"]);
   const labels = rowProps.labels ? (child.labels ?? []) : [];
   const customPropsWithValue = customProperties.filter(
@@ -1817,16 +1833,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [issueId, setSubIssuesCollapsedFor],
   );
 
-  // 选中 store 是全局的（按工作区作用域）；每当本详情页挂载或切换 issue 时都清一次，
-  // 避免主列表（或另一张子任务列表）遗留的选中项渗进当前列表。
-  const clearSelection = useIssueSelectionStore((s) => s.clear);
-  const selectedIds = useIssueSelectionStore((s) => s.selectedIds);
-  const selectIds = useIssueSelectionStore((s) => s.select);
-  const deselectIds = useIssueSelectionStore((s) => s.deselect);
-  useEffect(() => {
-    clearSelection();
-    return clearSelection;
-  }, [id, clearSelection]);
+  // The sub-issue list owns its selection, reset per issue. Rows, select-all
+  // and the inline batch toolbar must read the same one: a peek renders this
+  // inside a surface whose own selection provider would otherwise win for the
+  // toolbar while the rows wrote elsewhere.
+  const subIssueSelection = useCreateIssueSurfaceSelection(`sub-issues:${id}`);
+  const {
+    selectedIds,
+    select: selectIds,
+    deselect: deselectIds,
+  } = subIssueSelection;
 
   const childIssueIds = useMemo(() => childIssues.map((c) => c.id), [childIssues]);
   const childSelectedCount = childIssueIds.filter((cid) =>
@@ -1891,7 +1907,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       }
     }
 
-    const el = document.getElementById(`comment-${highlightCommentId}`);
+    // A deleted reply renders nothing, so the id a notification or share link
+    // carries has no anchor to scroll to and no row to flash. Land on the
+    // comment above where it was; the id itself stays this landing's identity
+    // for the guards and the memento below.
+    const threadRootId = rootId ?? highlightCommentId;
+    const landingId = commentLandingTarget(
+      highlightCommentId,
+      threadRootId,
+      timelineView.threadReplies.get(threadRootId) ?? EMPTY_REPLIES,
+    );
+    const el = document.getElementById(`comment-${landingId}`);
     const container = scrollContainerEl;
     if (!el || !container) return;
 
@@ -1926,7 +1952,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     };
     rafId = requestAnimationFrame(center);
 
-    setHighlightedId(highlightCommentId);
+    setHighlightedId(landingId);
     const fade = window.setTimeout(() => setHighlightedId(null), 2500);
     return () => {
       cancelAnimationFrame(rafId);
@@ -3086,6 +3112,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               // Provider 承载各子任务行共同委托的右键操作菜单（全局单例菜单，
               // 而非每行一个）。
               <IssueContextMenuProvider>
+              <IssueSurfaceSelectionProvider selection={subIssueSelection}>
               <div className="mt-10 group/sub-issues">
                 {/* 区块标题栏 */}
                 <div className="flex items-center gap-2 mb-2">
@@ -3148,7 +3175,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
                 {/* 内联批量工具栏——有选中项时出现在行旁，而不是一条离得很远的
                     固定长条。 */}
-                <BatchActionToolbar issues={childIssues} placement="inline" />
+                <BatchActionToolbar issues={childIssues} placement="inline" clearSelectionOnApply />
 
                 {/* 子任务列表 */}
                 {!subIssuesCollapsed && (() => {
@@ -3180,6 +3207,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   );
                 })()}
               </div>
+              </IssueSurfaceSelectionProvider>
               </IssueContextMenuProvider>
             );
           })()}

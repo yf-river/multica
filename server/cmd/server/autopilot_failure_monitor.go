@@ -421,6 +421,9 @@ func emitAutopilotPausedNotificationsTx(
 			ActorID:       pgtype.UUID{},
 			Details:       details,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("create pause inbox for %s:%s: %w", r.Type, util.UUIDToString(r.ID), err)
 		}

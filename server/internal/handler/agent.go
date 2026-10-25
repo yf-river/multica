@@ -21,10 +21,14 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -71,13 +75,21 @@ type AgentResponse struct {
 	// agent 的配置与历史得以保留，但需绑定新 runtime 才能再次运行（MUL-5559）。
 	// 线格式仍保持 string 以兼容已安装客户端；真正的信号是 RuntimeBound。
 	RuntimeID string `json:"runtime_id"`
-	// RuntimeBound 恰好只在 agent 没有 runtime 时为 false。UI 应以此字段而非
-	// RuntimeID 是否为空来判断，且不能与「已绑定但离线」（另一回事：重连机器
-	// vs 换一台新机器）混淆。
-	RuntimeBound bool   `json:"runtime_bound"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	// Instructions 是 Agent 的完整可编辑提示词。
+	// RuntimeBound is false exactly when the agent has no runtime. UI should
+	// branch on this rather than on RuntimeID being falsy, and must not confuse
+	// it with a bound-but-offline runtime (a different user story: reconnect the
+	// machine vs. pick a new one).
+	RuntimeBound bool `json:"runtime_bound"`
+	// RuntimeAvailability is the coarse liveness projection for a runtime that
+	// may be hidden from the caller's runtime list. It deliberately carries no
+	// timestamp, device, owner, configuration, or credential fields; clients
+	// use it only when the full runtime row is unavailable.
+	RuntimeAvailability string `json:"runtime_availability,omitempty"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	// Instructions is what this agent's owner wrote. For a system agent it
+	// holds only the workspace's own notes — the product half lives in
+	// SystemInstructions and is never stored on the row.
 	Instructions string `json:"instructions"`
 	// ConversationStarters 是可选的、agent 专属的第一轮建议。空列表表示
 	// 让客户端渲染本地化的兜底开场白。
@@ -327,19 +339,6 @@ type WorkspaceRepoData struct {
 // 同时与 runtime app 元数据包共享同一份规范 JSON 形状。
 type ConnectedAppData = runtimeapps.ConnectedApp
 
-// ActiveSiblingRunData 是 claim 时刻携带的、关于同一 agent 另一个进行中
-// issue 任务的受限上下文。排队的任务有意不包含——它们尚无法协调。它让
-// daemon 在新 claim 到的运行重复做别处正在做的代码/PR 工作之前给出警告。
-type ActiveSiblingRunData struct {
-	TaskID          string `json:"task_id"`
-	IssueID         string `json:"issue_id"`
-	IssueIdentifier string `json:"issue_identifier"`
-	IssueTitle      string `json:"issue_title"`
-	Status          string `json:"status"`
-	CreatedAt       string `json:"created_at"`
-	StartedAt       string `json:"started_at,omitempty"`
-}
-
 // DeliveryContextData 让每轮提示直接看到本任务的交付阶段、候选、分配环境与种子，
 // 不用去猜环境、也不要自行升级阶段或重置数据。
 type DeliveryContextData struct {
@@ -382,6 +381,7 @@ type AgentTaskResponse struct {
 	ReviewCommit         string                 `json:"review_commit,omitempty"`
 	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
 	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
+	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
 	ID                   string                 `json:"id"`
 	AgentID              string                 `json:"agent_id"`
 	RuntimeID            string                 `json:"runtime_id"`
@@ -411,8 +411,7 @@ type AgentTaskResponse struct {
 	IssueStatuses []TaskIssueStatusData `json:"issue_statuses,omitempty"`
 	// IssueStatusesOmitted 记录被上限丢弃了多少条活跃自定义状态，让 brief
 	// 能说明列表不完整，而不是把截断后的目录当成全部。
-	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
-	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
+	IssueStatusesOmitted int `json:"issue_statuses_omitted,omitempty"`
 	// DeliveryContext 只在该任务已有交付记录时存在：阶段、候选、被分配的验收环境、
 	// 当前种子和所在批次。它是本轮事实，不是权限：环境由平台分配，阶段由交付流程推进。
 	DeliveryContext *DeliveryContextData `json:"delivery_context,omitempty"`
@@ -525,8 +524,11 @@ type AgentTaskResponse struct {
 	// 用户（见 daemon/types.go）。v1 从 runtime 所有者取值，因此 daemon runtime
 	// 下有值，其余为空。daemon 将两者写入 brief 的 `## Requesting User` 段；
 	// 描述为空时整个标题段都省略。
-	RequestingUserName               string `json:"requesting_user_name,omitempty"`
-	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
+	SupplementCapability             string   `json:"supplement_capability,omitempty"`
+	SupplementCommentIDs             []string `json:"supplement_comment_ids,omitempty"`
+	CanSupplement                    bool     `json:"can_supplement,omitempty"`
+	RequestingUserName               string   `json:"requesting_user_name,omitempty"`
+	RequestingUserProfileDescription string   `json:"requesting_user_profile_description,omitempty"`
 	// Initiator* 标识触发本任务的行动者——当前评论/提及/聊天消息背后真正的
 	// 请求者——区别于以其凭据运行的 runtime 所有者。claim 时刻解析：评论触发
 	// 的任务取触发评论作者；chat 任务取会话创建者。没有可归属的人类发起者的
@@ -781,10 +783,24 @@ type TaskAgentData struct {
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
-// taskToResponse 把队列行映射为线格式。workspaceID 由外部传入，因为行本身
-// 不携带（workspace 在 agent/issue/chat 会话上）——要求调用方解析一次后传下来。
-// 它填充 WorkspaceID 并为隐私安全的 RelativeWorkDir 推导提供输入；仅在确实
-// 没有它的 daemon 面路径传 ""，此时 RelativeWorkDir 退回既有 WorkDir。
+// visibleTaskHistory omits unused assignee fallbacks created by older versions.
+// Dispatch only begins preparation, so a fallback cancelled before StartTask
+// is still unused. Keep started fallbacks and ordinary cancellations visible,
+// and retain the underlying scheduling records for audit.
+func visibleTaskHistory(tasks []db.AgentTaskQueue) []db.AgentTaskQueue {
+	return slices.DeleteFunc(tasks, func(task db.AgentTaskQueue) bool {
+		return task.EscalationForTaskID.Valid &&
+			!task.StartedAt.Valid &&
+			(task.Status == "deferred" || task.Status == "cancelled")
+	})
+}
+
+// taskToResponse maps a queue row to its wire shape. workspaceID is threaded
+// in because the row itself doesn't carry one (workspace lives on the agent
+// / issue / chat session) — we ask the caller to resolve it once and pass it
+// down. It populates WorkspaceID and powers the privacy-safe RelativeWorkDir
+// derivation; pass "" only on daemon-facing paths that genuinely don't have
+// it, in which case RelativeWorkDir falls back to the existing WorkDir.
 func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	var result any
 	if t.Result != nil {
@@ -995,10 +1011,58 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 	return "direct"
 }
 
-// ListAgents 处理 GET /api/agents（默认不含已归档）。任何工作区成员都可调用，
-// 但 private agent 仅所有者或工作区 owner/admin 可见，public_to agent 仅白名单
-// 成员可见；agent actor 走 A2A 协作放行。响应会按角色对 mcp_config 与 composio
-// 白名单脱敏。?include_archived=true 时含已归档。
+// loadAgentRuntimeAvailability returns only a coarse liveness bucket for
+// agent presence. Runtime rows are loaded internally even when the caller is
+// not allowed to list or inspect the private runtime; no runtime fields are
+// copied onto an agent response. The existing runtime-list visibility contract
+// is mirrored so the bucket is only copied when the full row is hidden.
+func (h *Handler) loadAgentRuntimeAvailability(ctx context.Context, agents []db.Agent, workspaceID, viewerID, viewerRole string, now time.Time) (map[string]string, error) {
+	// Owner/admin runtime lists already contain every row, so their normal
+	// client-side derivation is authoritative and no projection query is needed.
+	if roleAllowed(viewerRole, "owner", "admin") {
+		return map[string]string{}, nil
+	}
+
+	runtimeIDs := make([]pgtype.UUID, 0, len(agents))
+	for _, agent := range agents {
+		// Archived presence always resolves to "archived", so its runtime state
+		// is neither user-visible nor a reason for clients to keep polling.
+		if !agent.ArchivedAt.Valid && agent.RuntimeID.Valid {
+			runtimeIDs = append(runtimeIDs, agent.RuntimeID)
+		}
+	}
+	result := make(map[string]string, len(runtimeIDs))
+	if len(runtimeIDs) == 0 {
+		return result, nil
+	}
+
+	runtimes, err := h.Queries.GetAgentRuntimes(ctx, runtimeIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, runtime := range runtimes {
+		// Agent/runtime workspace consistency is normally enforced at bind time;
+		// keep the projection fail-closed if a legacy row violates it.
+		if uuidToString(runtime.WorkspaceID) != workspaceID {
+			continue
+		}
+		// ListAgentRuntimes exposes every row to workspace owner/admin and only
+		// owner/public rows to regular members. Keep the coarse bridge for the
+		// rows that the viewer's runtime list cannot carry.
+		if runtime.Visibility == "public" ||
+			(runtime.OwnerID.Valid && uuidToString(runtime.OwnerID) == viewerID) {
+			continue
+		}
+		result[uuidToString(runtime.ID)] = deriveAgentRuntimeAvailability(runtime, now)
+	}
+	return result, nil
+}
+
+func deriveAgentRuntimeAvailability(runtime db.AgentRuntime, now time.Time) string {
+	status := pgtype.Text{String: runtime.Status, Valid: runtime.Status != ""}
+	return deriveRuntimeAvailability(status, runtime.LastSeenAt, now)
+}
+
 func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -1016,6 +1080,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agents")
+		return
+	}
+	runtimeAvailabilityByID, err := h.loadAgentRuntimeAvailability(r.Context(), agents, workspaceID, userID, member.Role, time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent runtime availability")
 		return
 	}
 
@@ -1075,6 +1144,12 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp := h.agentToResponse(a)
+		// The map is keyed by runtime, and active + archived agents may share one.
+		// Keep the archived guard here as well as in the loader so an active sibling
+		// cannot leak its projection onto an archived response.
+		if availability, ok := runtimeAvailabilityByID[resp.RuntimeID]; ok && !a.ArchivedAt.Valid {
+			resp.RuntimeAvailability = availability
+		}
 		applyInvocationTargetsToResponse(&resp, targets)
 		if skills, ok := skillMap[resp.ID]; ok {
 			resp.Skills = skills
@@ -1116,12 +1191,25 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// private agent。403 让前端渲染显式「无权访问」占位而不是 404——见
 	// agent-detail-page.tsx。
 	workspaceID := uuidToString(agent.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	userID := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
 	resp := h.agentToResponse(agent)
+	viewerRole := ""
+	if member, ok := ctxMember(r.Context()); ok {
+		viewerRole = member.Role
+	}
+	runtimeAvailability, err := h.loadAgentRuntimeAvailability(r.Context(), []db.Agent{agent}, workspaceID, userID, viewerRole, time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent runtime availability")
+		return
+	}
+	if availability, ok := runtimeAvailability[resp.RuntimeID]; ok {
+		resp.RuntimeAvailability = availability
+	}
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
 		return
 	}
@@ -1132,9 +1220,8 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// mcp_config 脱敏（MUL-2600 已把 custom_env 移出该响应形状；密钥如今经
-	// GET /api/agents/{id}/env 拉取）。
-	userID := requestUserID(r)
+	// mcp_config redaction (custom_env was removed from this response shape
+	// in MUL-2600; secrets are now fetched via GET /api/agents/{id}/env).
 	ws, err := h.Queries.GetWorkspace(r.Context(), agent.WorkspaceID)
 	if err != nil {
 		slog.Warn("GetWorkspace failed for redact check", "workspace_id", uuidToString(agent.WorkspaceID), "error", err)
@@ -1428,6 +1515,27 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
+	// The preflight runtime can become private while validation is in flight.
+	// Serialize with revocation and keep the authorization lock through INSERT.
+	// Workspace teardown takes workspace -> runtime/agent locks in that order.
+	if _, err := qtx.LockWorkspaceForChatSessionCreate(r.Context(), wsUUID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "workspace not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+		}
+		return
+	}
+	runtime, err = qtx.LockAgentRuntimeForAccessChange(r.Context(), runtimeUUID)
+	if err != nil || runtime.WorkspaceID != wsUUID {
+		writeError(w, http.StatusBadRequest, "invalid runtime_id")
+		return
+	}
+	if !canUseRuntimeForAgent(member, runtime) {
+		writeError(w, http.StatusForbidden, "this runtime is private; only its owner can create agents on it")
+		return
+	}
+
 	created, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:              wsUUID,
 		Name:                     req.Name,
@@ -1459,7 +1567,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("create agent failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
-		writeError(w, http.StatusInternalServerError, "failed to create agent: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to create agent")
 		return
 	}
 	if testagents.Environment(auth.EnvironmentID()) {
@@ -1858,6 +1966,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "this runtime is private; only its owner can move agents onto it")
 			return
 		}
+		// Task delivery authorizes private runtimes against the agent owner,
+		// not the member making this update. Admin management permission must
+		// not save a binding that the existing delivery gate will reject.
+		if runtime.Visibility == "private" && runtime.OwnerID != existing.OwnerID {
+			writeError(w, http.StatusForbidden, "this runtime is private; its owner must match the agent owner")
+			return
+		}
 		params.RuntimeID = runtime.ID
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		targetRuntimeID = runtime.ID
@@ -2096,6 +2211,31 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
+	if req.RuntimeID != nil {
+		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		if !ok {
+			return
+		}
+		if _, err := qtx.LockWorkspaceForChatSessionCreate(r.Context(), existing.WorkspaceID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "workspace not found")
+			} else {
+				writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+			}
+			return
+		}
+		runtime, err := qtx.LockAgentRuntimeForAccessChange(r.Context(), params.RuntimeID)
+		if err != nil || runtime.WorkspaceID != existing.WorkspaceID {
+			writeError(w, http.StatusBadRequest, "invalid runtime_id")
+			return
+		}
+		if !canUseRuntimeForAgent(member, runtime) {
+			writeError(w, http.StatusForbidden, "this runtime is private; only its owner can move agents onto it")
+			return
+		}
+		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
+	}
+
 	updated, err := qtx.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// (workspace_id, name) 唯一约束——镜像 CreateAgent 返回清晰的冲突而不是
@@ -2111,7 +2251,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("update agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-		writeError(w, http.StatusInternalServerError, "failed to update agent: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to update agent")
 		return
 	}
 
@@ -2129,7 +2269,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		updated, err = qtx.ClearAgentMcpConfig(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent mcp_config failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config")
 			return
 		}
 	}
@@ -2137,7 +2277,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		updated, err = qtx.ClearAgentThinkingLevel(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent thinking_level failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level")
 			return
 		}
 	}
@@ -2145,7 +2285,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		updated, err = qtx.ClearAgentServiceTier(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent service_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear service_tier: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "failed to clear service_tier")
 			return
 		}
 	}
@@ -2153,7 +2293,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		updated, err = qtx.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent composio_toolkit_allowlist failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear composio_toolkit_allowlist: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "failed to clear composio_toolkit_allowlist")
 			return
 		}
 	}
@@ -2163,7 +2303,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if replacePermissionTargets {
 		if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
 			slog.Warn("update agent: persist invocation targets failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to update invocation targets: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "failed to update invocation targets")
 			return
 		}
 	}
@@ -2529,8 +2669,13 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cancelAgentTasksResponse{Cancelled: len(cancelled)})
 }
 
-// ListAgentTasks 处理 GET /api/agents/{id}/tasks，返回该 agent 的运行历史。
-// 运行历史属于 private-agent 门控的一部分（「查看历史会话」），无权限返回 403。
+// HeaderAgentTasksNextCursor preserves the array response used by installed clients.
+// An absent header means this is the last page.
+const HeaderAgentTasksNextCursor = "X-Agent-Tasks-Next-Cursor"
+
+const defaultAgentTasksLimit = 200
+const maxAgentTasksLimit = 200
+
 func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -2546,28 +2691,89 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.Queries.ListAgentTasks(r.Context(), agent.ID)
+	includeUsage := false
+	switch raw := strings.TrimSpace(r.URL.Query().Get("include_usage")); raw {
+	case "", "false":
+	case "true":
+		includeUsage = true
+	default:
+		writeError(w, http.StatusBadRequest, "include_usage must be true or false")
+		return
+	}
+
+	limit := defaultAgentTasksLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = min(n, maxAgentTasksLimit)
+	}
+	// An infinite upper bound gives both first and subsequent pages an indexed
+	// tuple comparison, without an optional-cursor OR in the query plan.
+	beforeCreatedAt := pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
+	beforeID := agent.ID
+	if raw := r.URL.Query().Get("before"); raw != "" {
+		beforeCreatedAt, beforeID = parseTranscriptCursor(raw)
+		if !beforeCreatedAt.Valid || !beforeID.Valid {
+			writeError(w, http.StatusBadRequest, "invalid before cursor")
+			return
+		}
+	}
+	tasks, err := h.Queries.ListAgentTasks(r.Context(), db.ListAgentTasksParams{
+		AgentID: agent.ID, BeforeCreatedAt: beforeCreatedAt, BeforeID: beforeID,
+		PageLimit: int32(limit + 1),
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
 		return
 	}
 
+	nextCursor := ""
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+		last := tasks[len(tasks)-1]
+		nextCursor = transcriptCursor(last.CreatedAt.Time, last.ID)
+	}
 	resp := make([]AgentTaskResponse, len(tasks))
+	var taskIDs []pgtype.UUID
+	if includeUsage {
+		taskIDs = make([]pgtype.UUID, len(tasks))
+	}
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
+		if includeUsage {
+			taskIDs[i] = t.ID
+		}
 	}
+	h.hydrateTaskSupplementMetadata(r.Context(), r, agent.WorkspaceID, tasks, resp)
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
+	if includeUsage {
+		if err := h.hydrateAgentTaskUsage(r.Context(), agent.ID, taskIDs, resp); err != nil {
+			slog.Warn("list agent task usage failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to list agent task usage")
+			return
+		}
+	}
 
+	if nextCursor != "" {
+		w.Header().Set(HeaderAgentTasksNextCursor, nextCursor)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // AgentActivityBucket 是 Agents 列表 ACTIVITY 迷你趋势图里的一个按天分桶的吞吐
 // 采样。bucket_at 是该日的 UTC 零点。
 type AgentActivityBucket struct {
-	AgentID     string `json:"agent_id"`
-	BucketAt    string `json:"bucket_at"`
-	TaskCount   int32  `json:"task_count"`
-	FailedCount int32  `json:"failed_count"`
+	AgentID        string  `json:"agent_id"`
+	BucketAt       string  `json:"bucket_at"`
+	TaskCount      int32   `json:"task_count"`
+	FailedCount    int32   `json:"failed_count"`
+	CompletedCount int32   `json:"completed_count"`
+	CancelledCount int32   `json:"cancelled_count"`
+	DurationMs     float64 `json:"duration_ms"`
+	DurationCount  int32   `json:"duration_count"`
 }
 
 // AgentRunCount 是每个 agent 近 30 天任务运行总数，支撑 Agents 列表 RUNS 列。
@@ -2773,10 +2979,14 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 			continue
 		}
 		resp = append(resp, AgentActivityBucket{
-			AgentID:     agentID,
-			BucketAt:    timestampToString(row.Bucket),
-			TaskCount:   row.TaskCount,
-			FailedCount: row.FailedCount,
+			AgentID:        agentID,
+			BucketAt:       timestampToString(row.Bucket),
+			TaskCount:      row.TaskCount,
+			FailedCount:    row.FailedCount,
+			CompletedCount: row.CompletedCount,
+			CancelledCount: row.CancelledCount,
+			DurationMs:     row.DurationMs,
+			DurationCount:  row.DurationCount,
 		})
 	}
 

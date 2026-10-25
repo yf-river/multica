@@ -232,13 +232,26 @@ function buildViewerMermaidDocument(
   return `<!doctype html><html><head><style>:root { ${cssVariables} } html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; } svg { display: block; width: ${layout.width}px; height: ${layout.height}px; max-width: none; }</style></head><body>${svg}</body></html>`;
 }
 
-/** 监听 html/body 的 class/style/data-theme 与系统深色偏好，主题变化时让
- *  Mermaid 用新变量重新渲染。 */
+/** 对比真正影响图表的主题值，弹窗滚动锁的 style 变化不触发图表重绘。 */
+function readThemeSignature(): string {
+  const root = document.documentElement;
+  const styles = getComputedStyle(root);
+  return [root.className, root.getAttribute("data-theme"), document.body?.className,
+    document.body?.getAttribute("data-theme"), styles.colorScheme, styles.fontFamily,
+    getSandboxCssVariables(root)].join("|");
+}
+
 function useThemeVersion() {
   const [themeVersion, setThemeVersion] = useState(0);
 
   useEffect(() => {
-    const bumpThemeVersion = () => setThemeVersion((version) => version + 1);
+    let signature = readThemeSignature();
+    const bumpThemeVersion = () => {
+      const next = readThemeSignature();
+      if (next === signature) return;
+      signature = next;
+      setThemeVersion((version) => version + 1);
+    };
     const observer = new MutationObserver(bumpThemeVersion);
     observer.observe(document.documentElement, {
       attributes: true,

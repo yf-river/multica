@@ -93,6 +93,7 @@ export function buildSteps(items: TimelineItem[]): TraceStep[] {
   const open = new Map<string, TraceCallStep[]>();
 
   for (const item of items) {
+    const pairingKey = item.callId ? `id:${item.callId}` : `tool:${item.tool ?? ""}`;
     if (item.type === "tool_use") {
       const tool = item.tool ?? "";
       const step: TraceCallStep = {
@@ -103,15 +104,15 @@ export function buildSteps(items: TimelineItem[]): TraceStep[] {
         startedAt: item.created_at,
       };
       steps.push(step);
-      const queue = open.get(tool);
+      const queue = open.get(pairingKey);
       if (queue) queue.push(step);
-      else open.set(tool, [step]);
+      else open.set(pairingKey, [step]);
       continue;
     }
 
     if (item.type === "tool_result") {
       const tool = item.tool ?? "";
-      const pending = open.get(tool)?.shift();
+      const pending = open.get(pairingKey)?.shift();
       if (pending) {
         pending.result = item;
         pending.endedAt = item.created_at;
@@ -152,15 +153,21 @@ export function groupSteps(steps: TraceStep[]): TraceRow[] {
       rows.push(...run);
     } else {
       const first = run[0]!;
-      const last = run[run.length - 1]!;
+      // Call order no longer implies completion order. Do not display a
+      // completed span while any member still lacks its end timestamp.
+      const endedAt = run.every((step) => timeMs(step.endedAt) !== undefined)
+        ? run.reduce((latest, step) =>
+            timeMs(step.endedAt)! > timeMs(latest)! ? step.endedAt : latest,
+          first.endedAt)
+        : undefined;
       rows.push({
         kind: "group",
         seq: first.seq,
         tool: first.tool,
         steps: run,
         startedAt: first.startedAt,
-        endedAt: last.endedAt,
-        durationMs: durationBetween(first.startedAt, last.endedAt),
+        endedAt,
+        durationMs: durationBetween(first.startedAt, endedAt),
       });
     }
     run = [];

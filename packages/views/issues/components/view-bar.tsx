@@ -7,7 +7,7 @@
 // 永远可见"。栏尾 [⧉] 菜单提供"新建视图/管理视图"；删除确认与拖拽重排分别
 // 走 DeleteViewConfirm 与 ManageViewsDialog。行宽用隐藏镜像逐帧测量（useSingleRowFit）。
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   DndContext,
@@ -276,34 +276,23 @@ export function ViewBar({
     [builtins],
   );
 
-  // --- 单行容纳度计算 ------------------------------------------------
-  // 预留宽度会反哺回容纳度，但它只在有条目被挤出去时才会变大（"更多"触发器出现、
-  // 随后被顶替的活动页签又把它加宽），这会让容纳度进一步缩小、把条目继续挡在外面——
-  // 收敛过程在两个方向上都单调，不会来回抖动。
+  // 预留宽度与候选条目数在同一次测量中计算，避免布局反馈。
   const activeBarId = activeView ? `view:${activeView.id}` : null;
-  const [reserveTier, setReserveTier] = useState<"menu" | "more" | "promoted">(
-    "menu",
+  const activeIndex = visible.findIndex((item) => item.barItemId === activeBarId);
+  const reserve = useCallback(
+    (fittingCount: number) => activeIndex >= fittingCount
+      ? RESERVE_PROMOTED
+      : fittingCount < visible.length ? RESERVE_MORE : RESERVE_MENU,
+    [activeIndex, visible.length],
   );
   const { containerRef, measureRef, fitCount } = useSingleRowFit({
-    count: visible.length,
-    gap: 4,
-    reserve:
-      reserveTier === "promoted"
-        ? RESERVE_PROMOTED
-        : reserveTier === "more"
-          ? RESERVE_MORE
-          : RESERVE_MENU,
+    count: visible.length, gap: 4, reserve,
   });
   const fitting = visible.slice(0, fitCount);
   const overflowed = visible.slice(fitCount);
   const activeOverflowed =
     !!activeBarId && overflowed.some((item) => item.barItemId === activeBarId);
-  useEffect(() => {
-    setReserveTier(
-      activeOverflowed ? "promoted" : overflowed.length > 0 ? "more" : "menu",
-    );
-  }, [activeOverflowed, overflowed.length]);
-  const promoted = reserveTier === "promoted" && activeOverflowed;
+  const promoted = activeOverflowed;
 
   const savePrefs = (next: { hidden: string[]; order: string[] }) => {
     // 拖拽可能落在视图列表加载完成之前；拿一份进行中的（空）列表去做修剪，

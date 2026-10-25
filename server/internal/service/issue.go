@@ -11,17 +11,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
-	"github.com/multica-ai/multica/server/internal/dispatch"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/issueposition"
+	"github.com/multica-ai/multica/server/internal/issueproperty"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -76,10 +78,16 @@ type IssueCreateParams struct {
 	OriginType    pgtype.Text
 	OriginID      pgtype.UUID
 	AttachmentIDs []pgtype.UUID
-	// LabelIDs 是要贴到新 issue 上的标签。它们在创建事务内被校验并写入（见 Create），所以 issue
-	// 永远不会带着残缺或错误的标签集提交。未知或非 issue 级标签 id 会让整个创建以
-	// ErrIssueLabelNotFound 失败，而不是被静默忽略。
-	LabelIDs       []pgtype.UUID
+	// LabelIDs are the issue-scoped labels to attach to the new issue. They
+	// are validated and written inside the create transaction (see Create),
+	// so the issue is never committed with a partial or wrong label set. An
+	// unknown or non-issue label id fails the whole create with
+	// ErrIssueLabelNotFound rather than being silently dropped.
+	LabelIDs []pgtype.UUID
+	// Properties is keyed only by property-definition UUID. Create validates
+	// and canonicalizes every value while holding the same per-definition locks
+	// used by the standalone PUT path, then inserts the complete bag atomically.
+	Properties     map[pgtype.UUID]json.RawMessage
 	AllowDuplicate bool
 	// Stage 把本 issue 归入父级下某个有序关卡组（NULL = 未分阶段）。见 issue_child_done.go 的
 	// 阶段关卡唤醒。
@@ -136,8 +144,25 @@ var ErrProjectNotFound = errors.New("project not found in this workspace")
 // 绝不能带着残缺或错误的标签集出生。调用方翻译成各自传输层的 400。
 var ErrIssueLabelNotFound = errors.New("issue label not found in this workspace")
 
-// ErrIssueStatusUnavailable 表示请求的自定义状态在「调用方预检」与「创建事务」之间被归档。调用方
-// 翻译成 409——请求到达时是合法的，对着刷新后的目录重试即是对症解药。
+// ErrIssuePropertiesTooLarge is the existing row-level 16KB properties-bag
+// constraint surfaced as a client error. The same database constraint applies
+// to standalone PUT and atomic create writes.
+var ErrIssuePropertiesTooLarge = errors.New("issue properties exceed the 16KB size limit")
+
+// IssuePropertyValidationError identifies the definition whose value made an
+// atomic create invalid. Unknown and foreign-workspace IDs intentionally share
+// the same message so the API does not expose tenant existence.
+type IssuePropertyValidationError struct {
+	PropertyID string
+	Message    string
+}
+
+func (e *IssuePropertyValidationError) Error() string { return e.Message }
+
+// ErrIssueStatusUnavailable signals that the requested custom status was
+// archived between the caller's pre-flight validation and the create
+// transaction. Callers translate this into a 409 — the request was valid when
+// it arrived, so retrying against the refreshed catalog is the remedy.
 var ErrIssueStatusUnavailable = errors.New("issue status is no longer available")
 
 // ErrSourceContextAlreadyAttached 表示该 quick-create 来源任务已有挂上的 source context，不能重复挂。
@@ -189,6 +214,11 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
+
+	properties, err := validateIssueCreateProperties(ctx, tx, qtx, p.WorkspaceID, p.Properties)
+	if err != nil {
+		return IssueCreateResult{}, err
+	}
 
 	if p.SourceContext != nil {
 		if _, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
@@ -316,6 +346,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			OriginType:    p.OriginType,
 			OriginID:      p.OriginID,
 			Stage:         p.Stage,
+			Properties:    properties,
 		})
 	} else {
 		issue, err = qtx.CreateIssue(ctx, db.CreateIssueParams{
@@ -336,9 +367,14 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			Number:        issueNumber,
 			ProjectID:     projectID,
 			Stage:         p.Stage,
+			Properties:    properties,
 		})
 	}
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "issue_properties_size_limit" {
+			return IssueCreateResult{}, ErrIssuePropertiesTooLarge
+		}
 		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
 	}
 
@@ -486,11 +522,86 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID}, nil
 }
 
-// validateIssueLabels 检查每个请求的标签都存在于工作区且是 issue 级，返回去重后的标签行供绑定。
-// 返回整行（而非仅 id）让 Create 能在创建响应 + issue:created 事件上回显权威标签快照，不用二次查询。
-// 它镜像 AttachLabelToIssue 已强制的 workspace + resource_type='issue' 守卫，让未知或错作用域的 id
-// 以 ErrIssueLabelNotFound 浮现，而不是静默的空插入。无效（零值）UUID 跳过。单条 issue 的标签数
-// 很小，所以按去重 id 逐个 GetLabel 即可，也避免引入新的批量查询。
+// validateIssueCreateProperties returns the canonical JSONB bag to put on the
+// issue row. Locks are acquired for every definition in UUID order before any
+// definition is read, matching definition updates and preventing two
+// multi-property creates from choosing opposite lock orders.
+func validateIssueCreateProperties(ctx context.Context, tx pgx.Tx, qtx *db.Queries, workspaceID pgtype.UUID, values map[pgtype.UUID]json.RawMessage) ([]byte, error) {
+	if len(values) == 0 {
+		return []byte(`{}`), nil
+	}
+
+	ids := make([]pgtype.UUID, 0, len(values))
+	for id := range values {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(left, right int) bool {
+		return util.UUIDToString(ids[left]) < util.UUIDToString(ids[right])
+	})
+	for _, id := range ids {
+		key := "prop:" + util.UUIDToString(id)
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", key); err != nil {
+			return nil, fmt.Errorf("lock issue property: %w", err)
+		}
+	}
+
+	canonical := make(map[string]json.RawMessage, len(ids))
+	for _, id := range ids {
+		propertyID := util.UUIDToString(id)
+		definition, err := qtx.GetIssueProperty(ctx, db.GetIssuePropertyParams{
+			ID: id, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, &IssuePropertyValidationError{PropertyID: propertyID, Message: "property not found in this workspace"}
+			}
+			return nil, fmt.Errorf("get issue property: %w", err)
+		}
+		if definition.ArchivedAt.Valid {
+			return nil, &IssuePropertyValidationError{PropertyID: propertyID, Message: fmt.Sprintf("property %q is archived and cannot receive new values", definition.Name)}
+		}
+		value, err := issueproperty.ValidateValue(definition, values[id])
+		if err != nil {
+			return nil, &IssuePropertyValidationError{PropertyID: propertyID, Message: err.Error()}
+		}
+		if issueproperty.IsActor(definition.Type) {
+			refs, err := issueproperty.ActorRefsInValue(definition.Type, value)
+			if err != nil {
+				return nil, &IssuePropertyValidationError{PropertyID: propertyID, Message: err.Error()}
+			}
+			for _, ref := range refs {
+				actorID, parseErr := util.ParseUUID(ref.ID)
+				if parseErr != nil {
+					return nil, &IssuePropertyValidationError{PropertyID: propertyID, Message: fmt.Sprintf("actor id in %q must be a UUID", ref)}
+				}
+				if _, lookupErr := qtx.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+					UserID: actorID, WorkspaceID: workspaceID,
+				}); lookupErr != nil {
+					if errors.Is(lookupErr, pgx.ErrNoRows) {
+						return nil, &IssuePropertyValidationError{PropertyID: propertyID, Message: fmt.Sprintf("%q does not refer to a member of this workspace", ref)}
+					}
+					return nil, fmt.Errorf("resolve issue property actor: %w", lookupErr)
+				}
+			}
+		}
+		canonical[propertyID] = value
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("encode issue properties: %w", err)
+	}
+	return encoded, nil
+}
+
+// validateIssueLabels checks that every requested label exists in the
+// workspace and is issue-scoped, returning the de-duplicated label rows to
+// attach. Returning the full rows (not just ids) lets Create echo an
+// authoritative label snapshot on the create response + issue:created event
+// without a second query. It mirrors the workspace + resource_type='issue'
+// guard already enforced by AttachLabelToIssue so an unknown or wrong-scope id
+// surfaces as ErrIssueLabelNotFound instead of a silent no-op insert. Invalid
+// (zero) UUIDs are skipped. The label count per issue is small, so a GetLabel
+// per distinct id is fine and avoids introducing a new batch query.
 func validateIssueLabels(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, labelIDs []pgtype.UUID) ([]db.IssueLabel, error) {
 	if len(labelIDs) == 0 {
 		return nil, nil
@@ -750,7 +861,7 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 		return pgtype.UUID{}
 	}
 	verdict, admitted := agentAssigneeVerdict(ctx, s.runtimeLookup(s.Queries), issue)
-	if !admitted && verdict.Reason == dispatch.ReasonRuntimeUnusable {
+	if !admitted && RuntimeBlockedNeedsNotice(verdict.Reason) {
 		// 指派没有一条「指派人会读」的响应来表达这个结果，所以拒绝在 issue 上自解释，而不是凭空
 		// 消失（MUL-6164）。只在这里做、不在上面的 create-with-assignee 路径里做：那条路径跑在 issue
 		// 事务内，一条关于某台机器的说明，无权决定 issue 本身是否提交。

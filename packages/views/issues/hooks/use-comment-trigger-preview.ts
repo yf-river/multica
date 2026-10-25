@@ -20,6 +20,10 @@ export interface UseCommentTriggerPreviewResult {
   blocked: CommentTriggerOutcome[];
   // 回复审查员时这条草稿会通知谁（GONG-63）。普通评论/线程为 null。
   reviewReply: CommentReviewReply | null;
+  // A structured @all mention is a member broadcast, but never starts agents
+  // by itself. This is static mention semantics, not a delivery guarantee:
+  // edits do not notify, and a new comment may have no eligible recipients.
+  hasAllMembersMention: boolean;
 }
 
 /**
@@ -107,6 +111,10 @@ export function useCommentTriggerPreview({
   content: string;
 }): UseCommentTriggerPreviewResult {
   const signature = useMemo(() => commentTriggerPreviewSignature(content), [content]);
+  const hasAllMembersMention = useMemo(
+    () => parseMentions(content).some(({ type, id }) => type === "all" && id === "all"),
+    [content],
+  );
   const debouncedSignature = useDebouncedSignature(signature);
   const contentRef = useRef(content);
   const parentKey = parentId ?? "";
@@ -136,12 +144,13 @@ export function useCommentTriggerPreview({
   // 加载中和错误都故意表现为「没有智能体」：预览只是增强功能，
   // 输入框对空列表什么都不渲染。
   if (signature === "empty" || debouncedSignature === "empty") {
-    return { agents: [], blocked: [], reviewReply: null };
+    return { agents: [], blocked: [], reviewReply: null, hasAllMembersMention };
   }
 
   return {
     agents: previewQuery.data?.agents ?? [],
     blocked: previewQuery.data?.blocked ?? [],
     reviewReply: previewQuery.data?.review_reply ?? null,
+    hasAllMembersMention,
   };
 }

@@ -34,12 +34,13 @@ func TestAgentRuntimeLookupSourcesAreDistinct(t *testing.T) {
 	runtimeID := dbfx.Runtime(t, "Lookup source runtime", testutil.Cols{
 		"workspace_id": testWorkspaceID,
 		"device_info":  "lookup source runtime",
+		"daemon_id":    "lookup-source-daemon",
 	})
 
 	before := lookupSnapshot(t, m)
 
 	if _, err := testHandler.HandleDaemonWSHeartbeat(ctx,
-		daemonws.ClientIdentity{WorkspaceID: testWorkspaceID}, runtimeID, false); err != nil {
+		daemonws.ClientIdentity{WorkspaceID: testWorkspaceID, UserID: testUserID}, runtimeID, false); err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: %v", err)
 	}
 

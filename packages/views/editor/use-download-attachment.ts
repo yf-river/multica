@@ -73,7 +73,9 @@ function triggerBrowserDownload(url: string): void {
  * 返回一个按附件 id 触发下载的回调。Web 路径直接走统一服务端端点，
  * 而不是开空白页签或在渲染进程内存里把文件物化成 Blob。
  */
-export function useDownloadAttachment(): (attachmentId: string) => Promise<void> {
+export function useDownloadAttachment(
+  source: "workspace" | "markdown-link" = "workspace",
+): (attachmentId: string) => Promise<void> {
   const { t } = useT("editor");
   const workspaceSlug = useWorkspaceSlug();
   return useCallback(
@@ -81,10 +83,13 @@ export function useDownloadAttachment(): (attachmentId: string) => Promise<void>
       const failed = () => toast.error(t(($) => $.attachment.download_failed));
 
       try {
-        // 预检元数据请求既是一次权限检查（API 失败仍会弹出既有 toast，
-        // 而不是一次静默失败的导航），也是服务端把为本次响应铸造的下载
-        // URL 交回来的地方。
-        const fresh = await api.getAttachment(attachmentId);
+        // The preflight metadata request is both the permission check (so API
+        // failures still produce the existing toast instead of a silent failed
+        // navigation) and where the server hands back the download URLs it mints
+        // for this response.
+        const fresh = await (source === "markdown-link"
+          ? api.getAttachmentForDownload(attachmentId)
+          : api.getAttachment(attachmentId));
         if (typeof document === "undefined") {
           failed();
           return;
@@ -119,6 +124,6 @@ export function useDownloadAttachment(): (attachmentId: string) => Promise<void>
         failed();
       }
     },
-    [t, workspaceSlug],
+    [t, workspaceSlug, source],
   );
 }

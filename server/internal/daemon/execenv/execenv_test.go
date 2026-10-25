@@ -1513,7 +1513,6 @@ func TestInjectRuntimeConfigAvailableCommandsCoreOnly(t *testing.T) {
 		"multica workspace member list",
 		"multica agent list",
 		"multica squad list",
-		"multica issue runs",
 		"multica issue run-messages",
 		"multica attachment download",
 		"multica autopilot list",
@@ -4208,8 +4207,8 @@ func TestResolveWindowsSandboxStateFailsClosed(t *testing.T) {
 // warned and returned success, so the task launched with the stale
 // danger-full-access — the decision failed closed while the effective config
 // failed open. prepareCodexHomeWithOpts must now return an error, which blocks
-// startup on both paths (fresh Prepare fails the task; Reuse leaves
-// env.CodexHome unset, which configureCodexTaskShellEnvironment refuses).
+// startup on both paths (fresh Prepare fails the task; Reuse declines the
+// reuse and falls back to Prepare, which re-runs this check on a fresh home).
 func TestPrepareCodexHomeFailsClosedWhenSandboxWriteFails(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root bypasses the read-only permissions this test relies on")
@@ -4810,7 +4809,7 @@ func TestPrepareCodexSeedsUserSkills(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(userSkills, "summarize", "examples"), 0o755); err != nil {
 		t.Fatalf("seed user skill dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(userSkills, "summarize", "SKILL.md"), []byte("summarize"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userSkills, "summarize", "SKILL.md"), []byte("---\nname: summarize\ndescription: Test skill.\n---\nsummarize"), 0o644); err != nil {
 		t.Fatalf("seed user SKILL.md: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userSkills, "summarize", "examples", "ex.md"), []byte("example"), 0o644); err != nil {
@@ -4819,7 +4818,7 @@ func TestPrepareCodexSeedsUserSkills(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(userSkills, "translate"), 0o755); err != nil {
 		t.Fatalf("seed second user skill: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(userSkills, "translate", "SKILL.md"), []byte("translate"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userSkills, "translate", "SKILL.md"), []byte("---\nname: translate\ndescription: Test skill.\n---\ntranslate"), 0o644); err != nil {
 		t.Fatalf("seed second user SKILL.md: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userSkills, ".DS_Store"), []byte("noise"), 0o644); err != nil {
@@ -4841,7 +4840,7 @@ func TestPrepareCodexSeedsUserSkills(t *testing.T) {
 
 	if data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "summarize", "SKILL.md")); err != nil {
 		t.Fatalf("user skill SKILL.md not seeded: %v", err)
-	} else if string(data) != "summarize" {
+	} else if string(data) != "---\nname: summarize\ndescription: Test skill.\n---\nsummarize" {
 		t.Errorf("summarize SKILL.md = %q, want %q", data, "summarize")
 	}
 	if data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "summarize", "examples", "ex.md")); err != nil {
@@ -4851,7 +4850,7 @@ func TestPrepareCodexSeedsUserSkills(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "translate", "SKILL.md")); err != nil {
 		t.Fatalf("second user skill not seeded: %v", err)
-	} else if string(data) != "translate" {
+	} else if string(data) != "---\nname: translate\ndescription: Test skill.\n---\ntranslate" {
 		t.Errorf("translate SKILL.md = %q, want %q", data, "translate")
 	}
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", ".DS_Store")); !os.IsNotExist(err) {
@@ -4957,7 +4956,7 @@ func TestPrepareCodexResolvesUserSkillSymlinks(t *testing.T) {
 	if err := os.MkdirAll(installerRoot, 0o755); err != nil {
 		t.Fatalf("seed installer dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(installerRoot, "SKILL.md"), []byte("lark"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(installerRoot, "SKILL.md"), []byte("---\nname: lark-mail\ndescription: Test skill.\n---\nlark"), 0o644); err != nil {
 		t.Fatalf("seed installer SKILL.md: %v", err)
 	}
 
@@ -5001,7 +5000,7 @@ func TestPrepareCodexResolvesUserSkillSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seeded SKILL.md missing: %v", err)
 	}
-	if string(data) != "lark" {
+	if string(data) != "---\nname: lark-mail\ndescription: Test skill.\n---\nlark" {
 		t.Errorf("seeded SKILL.md = %q, want %q", data, "lark")
 	}
 }
@@ -5018,7 +5017,7 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 	if err := os.MkdirAll(userSkill, 0o755); err != nil {
 		t.Fatalf("seed user skill: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("v1"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("---\nname: summarize\ndescription: Test skill.\n---\nv1"), 0o644); err != nil {
 		t.Fatalf("seed v1 SKILL.md: %v", err)
 	}
 
@@ -5036,7 +5035,7 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 	}
 	defer env.Cleanup(true)
 
-	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("v2"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("---\nname: summarize\ndescription: Test skill.\n---\nv2"), 0o644); err != nil {
 		t.Fatalf("update user SKILL.md: %v", err)
 	}
 
@@ -5050,7 +5049,7 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("user skill not refreshed on reuse: %v", err)
 	}
-	if string(data) != "v2" {
+	if string(data) != "---\nname: summarize\ndescription: Test skill.\n---\nv2" {
 		t.Errorf("after Reuse, user skill content = %q, want %q", data, "v2")
 	}
 }
@@ -6974,6 +6973,27 @@ func TestClaimEnvRootRecoversOwnerTempLeftBeforeRename(t *testing.T) {
 	}
 	if owner.WorkspaceID != "ws" || owner.TaskID != taskID {
 		t.Fatalf("owner = %#v, want recovered workspace and task identity", owner)
+	}
+}
+
+// TestReuseCodexRejectsUnusableHome pins the reuse contract for a task-local
+// Codex home that cannot be prepared: Reuse must decline (return nil) so the
+// caller falls back to Prepare, instead of handing back an environment with an
+// empty CodexHome that only fails later at launch.
+func TestReuseCodexRejectsUnusableHome(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	root := t.TempDir()
+	workDir := filepath.Join(root, "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file blocks home preparation deterministically without relying
+	// on permission checks or accessing a real Codex installation or account.
+	if err := os.WriteFile(filepath.Join(root, codexHomeDirName), []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if env := Reuse(ReuseParams{WorkDir: workDir, Provider: "codex"}, testLogger()); env != nil {
+		t.Fatalf("unusable Codex home must decline reuse, got environment with CodexHome=%q", env.CodexHome)
 	}
 }
 

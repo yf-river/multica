@@ -277,15 +277,17 @@ func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 
 	path := runtimeProfilesPath(workspaceID) + "/" + profileID
 	if err := client.DeleteJSON(ctx, path); err != nil {
-		// 409 = server 拒绝：仍有活跃 agent 绑定在此 profile 上。原样透出 server
-		// 的解释而不是泛化 HTTP 包装，用户才知道要去解绑什么。
+		// 409 means the server refused — usually because active agents are
+		// still bound to this profile, on machines it names. Surface that
+		// sentence rather than the raw response body: it already reads as
+		// guidance, and it is what tells the user the blockers may be sitting
+		// on a machine other than the one they were cleaning up.
+		if _, msg, isConflict := serverConflictMessage(err); isConflict {
+			return errors.New(msg)
+		}
 		var httpErr *cli.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
-			msg := strings.TrimSpace(httpErr.Body)
-			if msg == "" {
-				msg = "profile still has active agents bound to it"
-			}
-			return fmt.Errorf("cannot delete runtime profile %s: %s", profileID, msg)
+			return fmt.Errorf("cannot delete runtime profile %s: profile still has active agents bound to it", profileID)
 		}
 		return fmt.Errorf("delete runtime profile: %w", err)
 	}
