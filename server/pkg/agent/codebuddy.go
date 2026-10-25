@@ -490,7 +490,7 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 	toolUseCount := 0
 
 	// SDK 的 _messageId 标识模型调用；一个调用可拆成多个工具消息，也可更新同一用量快照。
-	if content.Usage != nil && content.Model != "" {
+	if msg.ParentToolUseID == "" && content.Usage != nil && content.Model != "" {
 		snapshot := TokenUsage{
 			InputTokens:      codebuddyUncachedInput(content.Usage.InputTokens, content.Usage.CacheReadInputTokens, content.Usage.CacheCreationInputTokens),
 			OutputTokens:     content.Usage.OutputTokens,
@@ -499,8 +499,12 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 		}
 		if codebuddyUsageHasTokens(snapshot.InputTokens, snapshot.OutputTokens, snapshot.CacheReadTokens, snapshot.CacheWriteTokens) {
 			var previous TokenUsage
-			if msg.ProviderRequestID != "" && msg.ProviderMessageID != "" {
-				key := codebuddyUsageCall{msg.ProviderRequestID, msg.ProviderMessageID, content.Model}
+			key := codebuddyUsageCall{msg.ProviderRequestID, msg.ProviderMessageID, content.Model}
+			if key.request == "" || key.message == "" {
+				// SDK 响应 ID 只用于流内去重，不冒充可关联外部轨迹的调用身份。
+				key = codebuddyUsageCall{message: content.ID, model: content.Model}
+			}
+			if key.message != "" {
 				previous = calls[key]
 				calls[key] = snapshot
 			}
@@ -676,11 +680,12 @@ func codebuddySystemIsBackgroundTask(subtype string) bool {
 // 不同的字段子集（assistant/user 用 Message，result 用 result 字段，log 用 Log，
 // control_request 用 RequestID + Request）。
 type codebuddySDKMessage struct {
-	Type      string          `json:"type"`
-	Message   json.RawMessage `json:"message,omitempty"`
-	Subtype   string          `json:"subtype,omitempty"`
-	SessionID string          `json:"session_id,omitempty"`
-	Model     string          `json:"model,omitempty"`
+	ParentToolUseID string          `json:"parent_tool_use_id,omitempty"`
+	Type            string          `json:"type"`
+	Message         json.RawMessage `json:"message,omitempty"`
+	Subtype         string          `json:"subtype,omitempty"`
+	SessionID       string          `json:"session_id,omitempty"`
+	Model           string          `json:"model,omitempty"`
 
 	// result 事件的字段
 	ResultText string                               `json:"result,omitempty"`
@@ -714,6 +719,7 @@ type codebuddyLogEntry struct {
 // codebuddyMessageContent 是 assistant/user 事件 message 字段的内容：角色 + 内容块 +
 // 可选的用量与模型名。
 type codebuddyMessageContent struct {
+	ID      string                  `json:"id"`
 	Role    string                  `json:"role"`
 	Model   string                  `json:"model"`
 	Content []codebuddyContentBlock `json:"content"`
@@ -870,6 +876,9 @@ func streamIdentityComplete(usage map[string]TokenUsage, observed map[codebuddyU
 	}
 	sum := map[string]TokenUsage{}
 	for key, value := range observed {
+		if key.request == "" || key.message == "" {
+			return false
+		}
 		merged := sum[key.model]
 		merged.InputTokens += value.InputTokens
 		merged.OutputTokens += value.OutputTokens

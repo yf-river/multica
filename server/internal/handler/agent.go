@@ -2678,6 +2678,16 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeUsage := false
+	switch raw := strings.TrimSpace(r.URL.Query().Get("include_usage")); raw {
+	case "", "false":
+	case "true":
+		includeUsage = true
+	default:
+		writeError(w, http.StatusBadRequest, "include_usage must be true or false")
+		return
+	}
+
 	tasks, err := h.Queries.ListAgentTasks(r.Context(), agent.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
@@ -2685,10 +2695,24 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := make([]AgentTaskResponse, len(tasks))
+	var taskIDs []pgtype.UUID
+	if includeUsage {
+		taskIDs = make([]pgtype.UUID, len(tasks))
+	}
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
+		if includeUsage {
+			taskIDs[i] = t.ID
+		}
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
+	if includeUsage {
+		if err := h.hydrateAgentTaskUsage(r.Context(), agent.ID, taskIDs, resp); err != nil {
+			slog.Warn("list agent task usage failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to list agent task usage")
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }

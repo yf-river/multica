@@ -97,7 +97,12 @@
     "header_tasks": "Tasks",
     "show_all": "Show all",
     "show_less": "Show top {{count}}",
-    "no_data": "No agent activity in this window."
+    "no_data": "No agent activity in this window.",
+    "usage_unreported_one": "{{count}} run did not report usage",
+    "usage_unreported_other": "{{count}} runs did not report usage",
+    "usage_unreported_pending_one": "{{count}} run did not report usage · totals are still being processed",
+    "usage_unreported_pending_other": "{{count}} runs did not report usage · totals are still being processed",
+    "usage_totals_pending": "Usage totals are still being processed"
   },
   "empty": {
     "title": "No usage yet",

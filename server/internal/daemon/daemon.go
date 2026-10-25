@@ -7580,6 +7580,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		FirstTurnNoProgressTimeout: d.cfg.CodexFirstTurnNoProgressTimeout,
 		IdleWatchdogTimeout:        idleWatchdogTimeout,
 		HandshakeTimeout:           d.cfg.CodexHandshakeTimeout,
+		TurnInterruptTimeout:       d.cfg.CodexTurnInterruptTimeout,
 		ThreadHandshakeTimeout:     d.cfg.CodexThreadHandshakeTimeout,
 		ResumeSessionID:            task.PriorSessionID,
 		// 门控后的意图：这里的 PriorSessionID 已经反映过 pre-flight resume 闸门
@@ -8601,7 +8602,7 @@ func buildTaskUsageEntries(provider string, usage map[string]agent.TokenUsage) [
 	}
 	entries := make([]TaskUsageEntry, 0, len(usage))
 	for model, u := range usage {
-		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
+		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 && u.CostUSDTicks <= 0 {
 			continue
 		}
 		entries = append(entries, TaskUsageEntry{

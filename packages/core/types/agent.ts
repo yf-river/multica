@@ -1005,6 +1005,11 @@ export interface IssueUsageSummary {
   uncosted_output_tokens?: number;
   uncosted_cache_read_tokens?: number;
   uncosted_cache_write_tokens?: number;
+  // Coverage fields are optional for compatibility with older backends.
+  // task_count remains the legacy count of runs represented by usage rows.
+  terminal_task_count?: number;
+  metered_task_count?: number;
+  unreported_task_count?: number;
   task_count: number;
 }
 
@@ -1137,7 +1142,10 @@ export interface DashboardAgentRunTime {
   total_seconds: number;
   /** 任务总数。 */
   task_count: number;
-  /** 失败任务数。 */
+  // Optional for compatibility with backends predating usage-coverage
+  // reporting. Consumers can still identify the fully-unreported case when
+  // this is absent by checking whether the agent has any usage rows.
+  metered_task_count?: number;
   failed_count: number;
   // 用户中途停掉的任务数。与 `failed_count` 互斥，二者都是 `task_count` 的
   // 子集——成功数就是余下的那部分。被停的运行也占了 agent、也花了 token，

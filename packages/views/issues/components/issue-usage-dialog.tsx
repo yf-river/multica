@@ -15,6 +15,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
 import {
+  cacheHitRatePercent,
   collectUnmappedModels,
   formatTokens,
   formatUsd,
@@ -100,9 +101,9 @@ export function IssueUsageDialog({
   // 真是 100% 时才说 100%，一个百分点的悲观比一个看着就不可能
   // 的数字便宜。
   const cacheHitRate =
-    total && total.input + total.cacheRead > 0
-      ? Math.floor((total.cacheRead / (total.input + total.cacheRead)) * 100)
-      : 0;
+    total == null
+      ? null
+      : cacheHitRatePercent(total.input, total.cacheRead, total.cacheWrite);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -144,10 +145,14 @@ export function IssueUsageDialog({
                 accent={
                   cacheSavingsKnown && total.cacheSavings > 0 ? "success" : "default"
                 }
-                hint={t(($) => $.usage_detail.kpi_cache_hint, {
-                  pct: cacheHitRate,
-                  reads: formatTokens(total.cacheRead),
-                })}
+                hint={
+                  cacheHitRate == null
+                    ? "—"
+                    : t(($) => $.usage_detail.kpi_cache_hint, {
+                        pct: cacheHitRate,
+                        reads: formatTokens(total.cacheRead),
+                      })
+                }
               />
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_tokens)}

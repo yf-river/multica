@@ -339,11 +339,12 @@ func (h *Handler) listDashboardUsageByAgent(
 // failed 与 cancelled 的任务——这样仪表盘能揭示有多少执行时间花在了没成功的运行上。
 // FailedCount 与 CancelledCount 是 TaskCount 的两个互斥子集；成功数由客户端用余数推得。
 type DashboardAgentRunTimeResponse struct {
-	AgentID        string `json:"agent_id"`
-	TotalSeconds   int64  `json:"total_seconds"`
-	TaskCount      int32  `json:"task_count"`
-	FailedCount    int32  `json:"failed_count"`
-	CancelledCount int32  `json:"cancelled_count"`
+	AgentID          string `json:"agent_id"`
+	TotalSeconds     int64  `json:"total_seconds"`
+	TaskCount        int32  `json:"task_count"`
+	MeteredTaskCount int32  `json:"metered_task_count"`
+	FailedCount      int32  `json:"failed_count"`
+	CancelledCount   int32  `json:"cancelled_count"`
 }
 
 // GetDashboardAgentRunTime 返回 workspace 各 agent 的任务总运行时长（秒）与任务数，可选按
@@ -384,11 +385,12 @@ func (h *Handler) GetDashboardAgentRunTime(w http.ResponseWriter, r *http.Reques
 	resp := make([]DashboardAgentRunTimeResponse, len(rows))
 	for i, row := range rows {
 		resp[i] = DashboardAgentRunTimeResponse{
-			AgentID:        uuidToString(row.AgentID),
-			TotalSeconds:   row.TotalSeconds,
-			TaskCount:      row.TaskCount,
-			FailedCount:    row.FailedCount,
-			CancelledCount: row.CancelledCount,
+			AgentID:          uuidToString(row.AgentID),
+			TotalSeconds:     row.TotalSeconds,
+			TaskCount:        row.TaskCount,
+			MeteredTaskCount: row.MeteredTaskCount,
+			FailedCount:      row.FailedCount,
+			CancelledCount:   row.CancelledCount,
 		}
 	}
 	writeJSON(w, http.StatusOK, foldRestrictedAgentRunTime(resp, restricted))
@@ -410,6 +412,7 @@ func foldRestrictedAgentRunTime(
 		func(dst, src DashboardAgentRunTimeResponse) DashboardAgentRunTimeResponse {
 			dst.TotalSeconds += src.TotalSeconds
 			dst.TaskCount += src.TaskCount
+			dst.MeteredTaskCount += src.MeteredTaskCount
 			dst.FailedCount += src.FailedCount
 			dst.CancelledCount += src.CancelledCount
 			return dst

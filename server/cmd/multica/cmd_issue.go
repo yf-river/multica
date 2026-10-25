@@ -424,8 +424,11 @@ var issueRunMessagesCmd = &cobra.Command{
 var issueUsageCmd = &cobra.Command{
 	Use:   "usage <issue-id>",
 	Short: "Show aggregated token usage for an issue",
-	Args:  exactArgs(1),
-	RunE:  runIssueUsage,
+	Long: "Show aggregated token usage for an issue.\n\n" +
+		"In table output, RUNS counts terminal runs. Token totals prefixed with >= " +
+		"are lower bounds because one or more terminal runs did not report usage.",
+	Args: exactArgs(1),
+	RunE: runIssueUsage,
 }
 
 var issueRerunCmd = &cobra.Command{
@@ -2743,22 +2746,53 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
-	// JSON 数字解出来是 float64；formatMetadataValue 把它们渲染成干净的整数
-	// （大数值的缓存 token 数不会出现科学计数法）。
-	headers := []string{"INPUT_TOKENS", "OUTPUT_TOKENS", "CACHE_READ", "CACHE_WRITE", "RUNS"}
+	terminal, hasTerminal := result["terminal_task_count"]
+	metered, hasMetered := result["metered_task_count"]
+	unreported, hasUnreported := result["unreported_task_count"]
+	if !hasTerminal {
+		terminal = result["task_count"]
+	}
+	if !hasMetered {
+		metered = result["task_count"]
+	}
+	if !hasUnreported {
+		unreported = "—"
+	}
+	usageRows := result["task_count"]
+
+	// JSON numbers decode to float64; formatIssueUsageTokens and
+	// formatMetadataValue render them as clean integers (no scientific
+	// notation for large cache-token counts).
+	headers := []string{"INPUT_TOKENS", "OUTPUT_TOKENS", "CACHE_READ", "CACHE_WRITE", "RUNS", "METERED_RUNS", "UNREPORTED"}
 	rows := [][]string{{
-		formatMetadataValue(result["total_input_tokens"]),
-		formatMetadataValue(result["total_output_tokens"]),
-		formatMetadataValue(result["total_cache_read_tokens"]),
-		formatMetadataValue(result["total_cache_write_tokens"]),
-		formatMetadataValue(result["task_count"]),
+		formatIssueUsageTokens(result["total_input_tokens"], terminal, metered, usageRows, hasTerminal && hasMetered),
+		formatIssueUsageTokens(result["total_output_tokens"], terminal, metered, usageRows, hasTerminal && hasMetered),
+		formatIssueUsageTokens(result["total_cache_read_tokens"], terminal, metered, usageRows, hasTerminal && hasMetered),
+		formatIssueUsageTokens(result["total_cache_write_tokens"], terminal, metered, usageRows, hasTerminal && hasMetered),
+		formatMetadataValue(terminal),
+		formatMetadataValue(metered),
+		formatMetadataValue(unreported),
 	}}
 	cli.PrintTable(os.Stdout, headers, rows)
 	return nil
 }
 
-// runIssueRunMessages 执行 `issue run-messages <task-id>`：列出某次执行产生的对话
-// 消息；--issue 限定短 task ID 的解析范围，--since 只取指定序号之后的消息。
+func formatIssueUsageTokens(value, terminal, metered, usageRows any, coverageKnown bool) string {
+	if !coverageKnown {
+		return formatMetadataValue(value)
+	}
+	terminalCount, terminalOK := terminal.(float64)
+	meteredCount, meteredOK := metered.(float64)
+	if !terminalOK || !meteredOK || terminalCount <= meteredCount {
+		return formatMetadataValue(value)
+	}
+	usageRowCount, usageRowsOK := usageRows.(float64)
+	if meteredCount == 0 && usageRowsOK && usageRowCount == 0 {
+		return "—"
+	}
+	return ">=" + formatMetadataValue(value)
+}
+
 func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {

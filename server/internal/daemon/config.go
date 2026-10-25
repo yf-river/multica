@@ -30,6 +30,7 @@ const (
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
 	DefaultCodexHandshakeTimeout          = 30 * time.Second
+	DefaultCodexTurnInterruptTimeout      = 2 * time.Second
 	DefaultCodexThreadHandshakeTimeout    = 60 * time.Second
 	// DefaultOpenCodeIdleWatchdog 缩短 OpenCode 运行在“未执行工具”时的无消息预算。
 	// OpenCode 增量地流式输出文本与工具事件，因此这里一段完全静默的间隔同时覆盖“首个
@@ -122,7 +123,9 @@ type Config struct {
 	// “首个事件确实慢”的 app-server 使用（GH #3262）。
 	CodexFirstTurnNoProgressTimeout time.Duration
 	CodexHandshakeTimeout           time.Duration
-	CodexThreadHandshakeTimeout     time.Duration
+	// Codex 取消后等待最终用量的上限；MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT。
+	CodexTurnInterruptTimeout   time.Duration
+	CodexThreadHandshakeTimeout time.Duration
 	// 运行 diff 采集的目录分类（MULTICA_RUN_DIFF_DEPENDENCY_DIRS /
 	// MULTICA_RUN_DIFF_BUILD_OUTPUT_DIRS，逗号分隔）。依赖目录只记目录级摘要，
 	// 构建产物照普通文件出补丁；两个清单重叠时构建产物优先。
@@ -365,6 +368,13 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if overrides.CodexHandshakeTimeout > 0 {
 		codexThreadHandshakeTimeout = overrides.CodexHandshakeTimeout
 	}
+	codexTurnInterruptTimeout, err := durationFromEnv("MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT", DefaultCodexTurnInterruptTimeout)
+	if err != nil {
+		return Config{}, err
+	}
+	if codexTurnInterruptTimeout <= 0 {
+		codexTurnInterruptTimeout = DefaultCodexTurnInterruptTimeout
+	}
 
 	maxConcurrentTasks, err := intFromEnv("MULTICA_DAEMON_MAX_CONCURRENT_TASKS", DefaultMaxConcurrentTasks)
 	if err != nil {
@@ -540,6 +550,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		CodexSemanticInactivityTimeout:  codexSemanticInactivityTimeout,
 		CodexFirstTurnNoProgressTimeout: codexFirstTurnNoProgressTimeout,
 		CodexHandshakeTimeout:           codexHandshakeTimeout,
+		CodexTurnInterruptTimeout:       codexTurnInterruptTimeout,
 		CodexThreadHandshakeTimeout:     codexThreadHandshakeTimeout,
 		OpenCodeIdleWatchdog:            openCodeIdleWatchdog,
 		RunDiffDependencyDirs:           splitDirList(envOrDefault("MULTICA_RUN_DIFF_DEPENDENCY_DIRS", ""), codediff.DefaultOptions().DependencyDirs),
