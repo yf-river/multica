@@ -178,7 +178,7 @@ func buildCommentReplyInstructionsSlim(provider, issueID, triggerCommentID strin
 				"do NOT reuse --parent values from previous turns in this session.\n\n"+
 				"Write the body file first — never pipe via `--content-stdin` (PowerShell drops non-ASCII; full rules: ## Comment Formatting above):\n\n"+
 				"    multica issue comment add %s --parent %s --content-file ./reply.md\n"+
-				"    Remove-Item ./reply.md\n\n"+
+				"    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Remove-Item ./reply.md\n\n"+
 				"Do NOT write literal `\\n` escapes to simulate line breaks; the file preserves real newlines.\n",
 			issueID, triggerCommentID,
 		)
@@ -187,8 +187,7 @@ func buildCommentReplyInstructionsSlim(provider, issueID, triggerCommentID strin
 		lead+
 			"do NOT reuse --parent values from previous turns in this session.\n\n"+
 			"Write the body file first (rules: ## Comment Formatting above — MUL-2904 / #4182):\n\n"+
-			"    multica issue comment add %s --parent %s --content-file ./reply.md\n"+
-			"    rm ./reply.md\n\n"+
+			"    multica issue comment add %s --parent %s --content-file ./reply.md && rm ./reply.md\n\n"+
 			"Do NOT write literal `\\n` escapes to simulate line breaks; the file preserves real newlines.\n",
 		issueID, triggerCommentID,
 	)

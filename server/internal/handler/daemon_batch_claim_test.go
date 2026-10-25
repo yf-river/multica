@@ -96,7 +96,7 @@ func TestClaimTasksByRuntime_RoutesAcrossRuntimesAndMintsTokens(t *testing.T) {
 	}
 }
 
-func TestClaimTasksByRuntime_IncludesActiveSiblingRun(t *testing.T) {
+func TestClaimTasksByRuntime_OmitsUnrelatedSiblingContext(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -145,12 +145,14 @@ func TestClaimTasksByRuntime_IncludesActiveSiblingRun(t *testing.T) {
 	if len(resp.Tasks) != 1 || resp.Tasks[0].ID != queuedID {
 		t.Fatalf("claimed task = %+v, want %s", resp.Tasks, queuedID)
 	}
-	if len(resp.Tasks[0].ActiveSiblingRuns) != 1 {
-		t.Fatalf("active_sibling_runs = %+v, want one running sibling", resp.Tasks[0].ActiveSiblingRuns)
+	var wire map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
+		t.Fatal(err)
 	}
-	sibling := resp.Tasks[0].ActiveSiblingRuns[0]
-	if sibling.IssueID != sourceIssueID || sibling.Status != "running" || sibling.IssueIdentifier == "" {
-		t.Fatalf("wrong sibling payload: %+v", sibling)
+	for _, raw := range wire["tasks"].([]any) {
+		if _, exists := raw.(map[string]any)["active_sibling_runs"]; exists {
+			t.Fatal("claim injected unrelated concurrent-task context")
+		}
 	}
 }
 

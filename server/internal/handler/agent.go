@@ -338,19 +338,6 @@ type WorkspaceRepoData struct {
 // 同时与 runtime app 元数据包共享同一份规范 JSON 形状。
 type ConnectedAppData = runtimeapps.ConnectedApp
 
-// ActiveSiblingRunData 是 claim 时刻携带的、关于同一 agent 另一个进行中
-// issue 任务的受限上下文。排队的任务有意不包含——它们尚无法协调。它让
-// daemon 在新 claim 到的运行重复做别处正在做的代码/PR 工作之前给出警告。
-type ActiveSiblingRunData struct {
-	TaskID          string `json:"task_id"`
-	IssueID         string `json:"issue_id"`
-	IssueIdentifier string `json:"issue_identifier"`
-	IssueTitle      string `json:"issue_title"`
-	Status          string `json:"status"`
-	CreatedAt       string `json:"created_at"`
-	StartedAt       string `json:"started_at,omitempty"`
-}
-
 // DeliveryContextData 让每轮提示直接看到本任务的交付阶段、候选、分配环境与种子，
 // 不用去猜环境、也不要自行升级阶段或重置数据。
 type DeliveryContextData struct {
@@ -423,8 +410,7 @@ type AgentTaskResponse struct {
 	IssueStatuses []TaskIssueStatusData `json:"issue_statuses,omitempty"`
 	// IssueStatusesOmitted 记录被上限丢弃了多少条活跃自定义状态，让 brief
 	// 能说明列表不完整，而不是把截断后的目录当成全部。
-	IssueStatusesOmitted int                    `json:"issue_statuses_omitted,omitempty"`
-	ActiveSiblingRuns    []ActiveSiblingRunData `json:"active_sibling_runs,omitempty"`
+	IssueStatusesOmitted int `json:"issue_statuses_omitted,omitempty"`
 	// DeliveryContext 只在该任务已有交付记录时存在：阶段、候选、被分配的验收环境、
 	// 当前种子和所在批次。它是本轮事实，不是权限：环境由平台分配，阶段由交付流程推进。
 	DeliveryContext *DeliveryContextData `json:"delivery_context,omitempty"`

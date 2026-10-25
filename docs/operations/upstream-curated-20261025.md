@@ -258,3 +258,11 @@ Handler 领取/启动/执行查询独立库回归通过，Daemon 终态重放/�
 - Go 全包编译通过；Alpine 实际容器安装 libcrypto3/libssl3 安全下限通过，未执行完整 Docker 多阶段镜像构建。Web Next 自动生成的类型引用一并保留。
 - 本机根分区不足导致第一次 Go 编译/扫描失败，后续临时编译目录放到本任务的 /data 制品目录后复测通过，未清理其它任务缓存。尚未部署生产。
 - 安全真源：https://nextjs.org/blog/nextjs-security-update-october-14-2026 、https://go.dev/doc/devel/release 、https://pkg.go.dev/vuln/GO-2026-6629 。
+
+### 119：按本站消费者精简提示
+
+- 删除每轮领取时注入“同一个 Agent 的其它任务”清单及其专用数据库查询；它不表示代码相关性。并发协调可按需读取现有 runs --active / --siblings，重复自指派抑制、--no-start 和生产交付上下文继续有效。领取 HTTP 检查覆盖并发任务仍能领取且不携带无关清单。
+- 修复显式评论回复示例：发帖失败保留正文文件并传播失败退出码，成功才清理。使用生成片段实际执行 POSIX stub 的失败/成功对照验证，不只匹配文本；Windows PowerShell 使用 LASTEXITCODE 门控，未在 Windows 主机执行。
+- 评论编辑帮助写明修订冲突后合并正文重试，避免用新 revision 强行覆盖他人编辑。
+- 不移植删除 handoff_note、issue_context.md、metadata 或 --no-start 的方案：本站现有交付/监督/兼容链仍有消费者；不为提示精简增加 issue_snapshot 新表列和通用评论 delta 协议。旧 builtin skill 路径不存在，不从上游重建重复指令源。
+- Daemon、Execenv、Handler、CLI 的提示/领取/修订帮助专项通过，生成回复 shell 行为检查通过。

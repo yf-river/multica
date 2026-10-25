@@ -55,7 +55,6 @@ func backendResumeContinuityNotice(task Task) string {
 // 没有任何块适用时返回 ""。
 func perTurnContextBlocks(task Task, opts promptOpts) string {
 	var b strings.Builder
-	b.WriteString(buildActiveSiblingRunsBlock(task.IssueID, task.ActiveSiblingRuns))
 	if task.DeliveryContext != nil {
 		b.WriteString(buildDeliveryContextBlock(*task.DeliveryContext))
 	}
@@ -221,39 +220,6 @@ func buildDeliveryContextBlock(d DeliveryContextData) string {
 		fmt.Fprintf(&b, "- Released as part of batch `%s` (state `%s`, %d member(s))\n", d.BatchID, d.BatchStatus, d.BatchMembers)
 	}
 	b.WriteString("\nThe environment, seed and stage are assigned by the platform: do not switch environments, reset its data, or move the delivery forward yourself. Finishing verification is not the same as releasing this task.\n\n")
-	return b.String()
-}
-
-func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunData) string {
-	// 兄弟 issue 的工作只对“另一个 issue 任务”是有用上下文。chat、autopilot 与
-	// quick-create 任务没有“可查 claim 历史的当前目标 issue”，在那里渲染这块只会造出
-	// 一条无法行动的警告。
-	if currentIssueID == "" || len(runs) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("## Active sibling runs\n\n")
-	b.WriteString("This agent has other in-flight issue tasks. Before starting overlapping code or PR work, check this issue's comment history for a claim or handoff")
-	fmt.Fprintf(&b, " (`multica issue comment list %s --roots-only --summary --compact --output json`)", currentIssueID)
-	b.WriteString(" and inspect relevant siblings with the `run-messages` commands below — coordinate with existing work instead of opening a second PR. For writes that only record ownership or status of work already underway, use `--no-start` on `multica issue assign`/`update`/`status`.\n\n")
-	for _, run := range runs {
-		issueLabel := run.IssueIdentifier
-		if issueLabel == "" {
-			issueLabel = run.IssueID
-		}
-		fmt.Fprintf(&b, "- %s — task `%s`, status `%s`", issueLabel, run.TaskID, run.Status)
-		if run.StartedAt != "" {
-			fmt.Fprintf(&b, ", started %s", run.StartedAt)
-		} else if run.CreatedAt != "" {
-			fmt.Fprintf(&b, ", created %s", run.CreatedAt)
-		}
-		title := strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(run.IssueTitle))
-		if title != "" {
-			fmt.Fprintf(&b, ": %s", title)
-		}
-		fmt.Fprintf(&b, "; inspect: `multica issue run-messages %s`\n", run.TaskID)
-	}
-	b.WriteString("\n")
 	return b.String()
 }
 
