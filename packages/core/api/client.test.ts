@@ -2563,3 +2563,20 @@ describe("clientErrorMessage", () => {
     expect(clientErrorMessage(undefined)).toBeUndefined();
   });
 });
+
+describe("run summary pagination",()=>{
+ it.each([50,96])("terminates when an older server ignores offset (%s runs)",async count=>{
+  const rows=Array.from({length:count},(_,n)=>({id:`task-${n}`,status:"completed"}));
+  const request=vi.fn(async()=>new Response(JSON.stringify(rows),{status:200,headers:{"Content-Type":"application/json"}}));
+  vi.stubGlobal("fetch",request);
+  const result=await new ApiClient("https://api.example.test").listTasksByIssue("issue");
+  expect(result).toHaveLength(count);expect(request).toHaveBeenCalledTimes(count===50?2:1);
+ });
+ it("reads subsequent pages once and keeps unique identities",async()=>{
+  const pages=[Array.from({length:50},(_,n)=>({id:`task-${n}`,status:"completed"})),[{id:"task-50",status:"completed"}]];
+  const request=vi.fn(async()=>new Response(JSON.stringify(pages.shift()),{status:200,headers:{"Content-Type":"application/json"}}));
+  vi.stubGlobal("fetch",request);
+  expect(await new ApiClient("https://api.example.test").listTasksByIssue("issue")).toHaveLength(51);
+  expect(request).toHaveBeenCalledTimes(2);
+ });
+});

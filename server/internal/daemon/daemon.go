@@ -6692,6 +6692,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// execenv。handleTask 已经为 worker 任务校验并锁过路径；leader 任务刻意跳过
 	// assignment。
 	localAssignment, _ := localDirectoryAssignmentForTask(task, d.cfg.DaemonID)
+	if task.ReviewCommit != "" {
+		task.PriorWorkDir = ""
+		task.PriorSessionID = ""
+	}
 	// local_directory 任务刻意跳过 Reuse：prior WorkDir 是用户自己的路径（总是存
 	// 在），但复用路径会丢掉 GC 循环需要的 envRoot 关联，而且对着稳定用户路径重跑
 	// Prepare 很便宜（没有 clone、没有拷贝）。Leader 任务没有 localAssignment；
@@ -7049,6 +7053,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		d.markActiveEnvRoot(env.RootDir)
 		defer d.unmarkActiveEnvRoot(env.RootDir)
 	}
+
 	// 在"每个"退出路径上收尾 worktree，成功失败都算：先提交 agent 留下的未提交
 	// 改动，再把 worktree 从用户仓库注销。挂到具名返回值上，让中途失败的任务仍能
 	// 交还持有其部分工作的分支，而不是被 `git worktree remove --force` 删掉。任务
@@ -7101,6 +7106,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				returnErr = errors.Join(returnErr, wrapped)
 			}
 		}()
+	}
+	if task.ReviewCommit != "" {
+		reviewDirectory := env.WorkDir
+		if localAssignment == nil {
+			if len(task.Repos) != 1 || d.repoCache == nil {
+				return TaskResult{}, fmt.Errorf("审查候选未绑定唯一可访问仓库，停止启动模型")
+			}
+			checked, err := d.repoCache.CreateWorktree(repocache.WorktreeParams{WorkspaceID: task.WorkspaceID, RepoURL: task.Repos[0].URL, WorkDir: env.WorkDir, Ref: task.ReviewCommit, TaskID: task.ID, AgentName: "review", IsolatedGitMetadata: true})
+			if err != nil {
+				return TaskResult{}, fmt.Errorf("准备审查候选: %w", err)
+			}
+			reviewDirectory = checked.Path
+		}
+		head, err := codediff.GitCommand(ctx, reviewDirectory, "rev-parse", "HEAD")
+		if err != nil || strings.TrimSpace(head) != task.ReviewCommit {
+			return TaskResult{}, fmt.Errorf("审查目录提交与固定候选不一致，停止启动模型")
+		}
+		task.HandoffNote += fmt.Sprintf("\n审查仓库：%s；固定提交：%s。只读取这个候选。\n", reviewDirectory, task.ReviewCommit)
 	}
 	defer func() {
 		if pauseErr := d.preserveReleaseTask(ctx, task, env, taskResult.SessionID); pauseErr != nil {
@@ -7405,6 +7428,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 1. 运行前取一次基线：workdir 的完整文件快照，加上任务相关仓库的工作树清单。
 	//    快照不再是 git 树快照——非 git 目录、被 ignore 的文件、未跟踪文件都要算进来，
 	//    而 git 基线只用来回答"checkout 出来的那些文件本来就在，不算改动"。
+	agentEnv["MULTICA_INPUT_BASELINES"] = filepath.Join(env.RootDir, "input-baselines", task.ID)
+	agentEnv["MULTICA_INPUT_ISSUE_ID"] = task.IssueID
+	agentEnv["MULTICA_INPUT_STARTED_AT"] = runStartedAt.UTC().Format(time.RFC3339Nano)
 	capture := d.startRunCapture(ctx, task, env)
 	defer func() {
 		diff := capture.finish()

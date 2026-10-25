@@ -4483,6 +4483,17 @@ func (q *Queries) GetAgentTaskInWorkspace(ctx context.Context, arg GetAgentTaskI
 	return i, err
 }
 
+const getIssueDeliveryReviewSHA = `-- name: GetIssueDeliveryReviewSHA :one
+SELECT source_commit FROM issue_delivery WHERE issue_id=$1 AND phase IN ('awaiting_review','approved','preparing_release','publishing','published') ORDER BY created_at DESC,id DESC LIMIT 1
+`
+
+func (q *Queries) GetIssueDeliveryReviewSHA(ctx context.Context, issueID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getIssueDeliveryReviewSHA, issueID)
+	var source_commit string
+	err := row.Scan(&source_commit)
+	return source_commit, err
+}
+
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
@@ -6086,6 +6097,201 @@ func (q *Queries) ListQueuedClaimCandidatesByRuntimes(ctx context.Context, runti
 	items := []AgentTaskQueue{}
 	for rows.Next() {
 		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.BranchName,
+			&i.DurableWorkDir,
+			&i.ChannelContextRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskSummariesByIssue = `-- name: ListTaskSummariesByIssue :many
+SELECT id,
+agent_id,
+issue_id,
+status,
+priority,
+dispatched_at,
+started_at,
+completed_at,
+CASE WHEN result IS NULL THEN NULL ELSE jsonb_build_object('task_id',id,'issue_id',issue_id,'has_changes',COALESCE(jsonb_array_length(result->'code_diff'->'files'),0)>0 OR COALESCE(jsonb_path_exists(result,'$.code_diff.roots[*] ? (@.files.size() > 0 || @.dirs.size() > 0 || @.truncated == true || @.unavailable == true)'),false) OR COALESCE(jsonb_array_length(result->'text_changes'),0)>0,'summary_only',true) END::jsonb AS result,
+error,
+created_at,
+NULL::jsonb AS context,
+runtime_id,
+session_id,
+work_dir,
+trigger_comment_id,
+chat_session_id,
+autopilot_run_id,
+attempt,
+max_attempts,
+parent_task_id,
+failure_reason,
+trigger_summary,
+force_fresh_session,
+is_leader_task,
+wait_reason,
+initiator_user_id,
+handoff_note,
+prepare_lease_expires_at,
+squad_id,
+NULL::jsonb AS runtime_mcp_overlay,
+escalation_for_task_id,
+fire_at,
+originator_user_id,
+NULL::jsonb AS runtime_connected_apps,
+coalesced_comment_ids,
+delivered_comment_ids,
+chat_input_task_id,
+chat_finalize_deferred_at,
+originator_source,
+delegated_from_task_id,
+retry_of_task_id,
+rerun_of_task_id,
+rule_version_id,
+trigger_evidence_kind,
+trigger_evidence_ref_id,
+accountable_user_id,
+session_rollout_missing,
+retired_session_id,
+quick_actions_disabled,
+regenerate_quick_actions_for,
+branch_name,
+durable_work_dir,
+channel_context_revision FROM agent_task_queue WHERE issue_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3
+`
+
+type ListTaskSummariesByIssueParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	Limit   int32       `json:"limit"`
+	Offset  int32       `json:"offset"`
+}
+
+type ListTaskSummariesByIssueRow struct {
+	ID                        pgtype.UUID        `json:"id"`
+	AgentID                   pgtype.UUID        `json:"agent_id"`
+	IssueID                   pgtype.UUID        `json:"issue_id"`
+	Status                    string             `json:"status"`
+	Priority                  int32              `json:"priority"`
+	DispatchedAt              pgtype.Timestamptz `json:"dispatched_at"`
+	StartedAt                 pgtype.Timestamptz `json:"started_at"`
+	CompletedAt               pgtype.Timestamptz `json:"completed_at"`
+	Result                    []byte             `json:"result"`
+	Error                     pgtype.Text        `json:"error"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	Context                   []byte             `json:"context"`
+	RuntimeID                 pgtype.UUID        `json:"runtime_id"`
+	SessionID                 pgtype.Text        `json:"session_id"`
+	WorkDir                   pgtype.Text        `json:"work_dir"`
+	TriggerCommentID          pgtype.UUID        `json:"trigger_comment_id"`
+	ChatSessionID             pgtype.UUID        `json:"chat_session_id"`
+	AutopilotRunID            pgtype.UUID        `json:"autopilot_run_id"`
+	Attempt                   int32              `json:"attempt"`
+	MaxAttempts               int32              `json:"max_attempts"`
+	ParentTaskID              pgtype.UUID        `json:"parent_task_id"`
+	FailureReason             pgtype.Text        `json:"failure_reason"`
+	TriggerSummary            pgtype.Text        `json:"trigger_summary"`
+	ForceFreshSession         bool               `json:"force_fresh_session"`
+	IsLeaderTask              bool               `json:"is_leader_task"`
+	WaitReason                pgtype.Text        `json:"wait_reason"`
+	InitiatorUserID           pgtype.UUID        `json:"initiator_user_id"`
+	HandoffNote               pgtype.Text        `json:"handoff_note"`
+	PrepareLeaseExpiresAt     pgtype.Timestamptz `json:"prepare_lease_expires_at"`
+	SquadID                   pgtype.UUID        `json:"squad_id"`
+	RuntimeMcpOverlay         []byte             `json:"runtime_mcp_overlay"`
+	EscalationForTaskID       pgtype.UUID        `json:"escalation_for_task_id"`
+	FireAt                    pgtype.Timestamptz `json:"fire_at"`
+	OriginatorUserID          pgtype.UUID        `json:"originator_user_id"`
+	RuntimeConnectedApps      []byte             `json:"runtime_connected_apps"`
+	CoalescedCommentIds       []pgtype.UUID      `json:"coalesced_comment_ids"`
+	DeliveredCommentIds       []pgtype.UUID      `json:"delivered_comment_ids"`
+	ChatInputTaskID           pgtype.UUID        `json:"chat_input_task_id"`
+	ChatFinalizeDeferredAt    pgtype.Timestamptz `json:"chat_finalize_deferred_at"`
+	OriginatorSource          pgtype.Text        `json:"originator_source"`
+	DelegatedFromTaskID       pgtype.UUID        `json:"delegated_from_task_id"`
+	RetryOfTaskID             pgtype.UUID        `json:"retry_of_task_id"`
+	RerunOfTaskID             pgtype.UUID        `json:"rerun_of_task_id"`
+	RuleVersionID             pgtype.UUID        `json:"rule_version_id"`
+	TriggerEvidenceKind       pgtype.Text        `json:"trigger_evidence_kind"`
+	TriggerEvidenceRefID      pgtype.UUID        `json:"trigger_evidence_ref_id"`
+	AccountableUserID         pgtype.UUID        `json:"accountable_user_id"`
+	SessionRolloutMissing     bool               `json:"session_rollout_missing"`
+	RetiredSessionID          pgtype.Text        `json:"retired_session_id"`
+	QuickActionsDisabled      bool               `json:"quick_actions_disabled"`
+	RegenerateQuickActionsFor pgtype.UUID        `json:"regenerate_quick_actions_for"`
+	BranchName                pgtype.Text        `json:"branch_name"`
+	DurableWorkDir            pgtype.Text        `json:"durable_work_dir"`
+	ChannelContextRevision    pgtype.Int8        `json:"channel_context_revision"`
+}
+
+func (q *Queries) ListTaskSummariesByIssue(ctx context.Context, arg ListTaskSummariesByIssueParams) ([]ListTaskSummariesByIssueRow, error) {
+	rows, err := q.db.Query(ctx, listTaskSummariesByIssue, arg.IssueID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTaskSummariesByIssueRow{}
+	for rows.Next() {
+		var i ListTaskSummariesByIssueRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.AgentID,

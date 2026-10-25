@@ -70,6 +70,17 @@ try {
  for(const agent of [id.agent,id.other])await db.query("INSERT INTO agent(id,workspace_id,runtime_id,runtime_mode,model,thinking_level,service_tier,status,name,custom_args) VALUES($1::uuid,$2,$3,'local','gpt-6.1-sol','low','default','idle',$1::text,'[]')",[agent,id.workspace,id.codex]);
  await db.query("INSERT INTO test_agent_control(workspace_id,name,desired,observed) VALUES($1,'verify-1',$2,$3)",[id.workspace,{policy:codex,overrides:{[id.other]:codex}},{daemon_id:'daemon-test'}]);
  const before=await rows();
+ // 全环境维护也必须拒绝等待目录和 deferred，不能仅保护定向入口。
+ const applyPolicy=path.join(root,'apply-policy.json');fs.writeFileSync(applyPolicy,JSON.stringify({policy:flash,overrides:{}}));
+ for(const status of ['queued','dispatched','running','waiting_local_directory','deferred']) {
+  await db.query('INSERT INTO agent_task_queue(agent_id,status) VALUES($1,$2)',[id.other,status]);
+  const applied=spawn(process.execPath,[script,'verify-1','apply',applyPolicy],{env:{...process.env,MULTICA_RELEASE_ROOT:root},stdio:['ignore','pipe','pipe']});
+  let error='';applied.stderr.on('data',data=>error+=data);applied.stdout.resume();
+  const code=await new Promise(resolve=>applied.on('close',resolve));assert.notEqual(code,0,error);
+  assert.deepEqual(await rows(),before);await db.query('DELETE FROM agent_task_queue');count++;console.log('PASS global apply refuses '+status);
+ }
+ drains=0;
+
  for(const [key,value] of [['environment','prod'],['workspace_id',randomUUID()],['agent_id',randomUUID()],['execution_id','stale'],['owner_generation',2],['generation',2],['revision',1],['candidate_id','stale'],['source_commit','stale'],['seed_id','stale'],['seed_sha256','stale']]) {
   const old=scope[key];scope[key]=value;scopeWrite();await refuses('invalid '+key);scope[key]=old;scopeWrite();
  }

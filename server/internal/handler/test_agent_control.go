@@ -169,3 +169,15 @@ func (h *Handler) applyTestAgentDefault(w http.ResponseWriter, r *http.Request, 
 	req.ServiceTier = selection.Tier
 	return true
 }
+
+// TestAgentControlCapability 只返回当前身份的入口能力，不通过403探测管理接口。
+func (h *Handler) TestAgentControlCapability(w http.ResponseWriter, r *http.Request) {
+	ws := h.resolveWorkspaceID(r)
+	available := false
+	if auth.EnvironmentID() == "prod" && ws == os.Getenv("MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID") && h.deliveryHuman(r, ws) {
+		member, err := h.getWorkspaceMember(r.Context(), requestUserID(r), ws)
+		available = err == nil && (member.Role == "owner" || member.Role == "admin")
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]bool{"available": available})
+}

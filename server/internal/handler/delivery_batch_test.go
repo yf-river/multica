@@ -714,8 +714,13 @@ func TestDeliveryBatchRepeatedNoticesPreserveUserCommentsVersion(t *testing.T) {
 	var count int
 	dbfx.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1 AND author_type='member'`, issue).Scan(&count)
 	// fixture 中的方案评论也是真实用户评论。
-	if count < 2 {
-		t.Fatalf("expected two actual platform comments, got %d", count)
+	if count != 1 {
+		t.Fatalf("platform notices must not become user comments, got %d", count)
+	}
+	var notices int
+	dbfx.QueryRow(t, `SELECT count(*) FROM comment c JOIN delivery_notice n ON n.comment_id=c.id WHERE c.issue_id=$1 AND c.author_type='system'`, issue).Scan(&notices)
+	if notices < 2 {
+		t.Fatalf("expected system notice history, got %d", notices)
 	}
 	testutil.Call(t, testHandler.CreateComment, withURLParam(newRequest("POST", "/api/issues/"+issue+"/comments", map[string]any{"content": "交付 已进入组合候选：这是真实用户新要求，不能按文案排除"}), "id", issue)).Want(201)
 	var changed string

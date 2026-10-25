@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -121,10 +122,20 @@ func (d *Daemon) startRunCapture(ctx context.Context, task Task, env *execenv.En
 	if env.LocalDirectory {
 		kind = localDirectoryResourceType
 	}
+	repos := d.captureRepos(task)
+	for _, home := range []string{env.CodexHome, env.HermesHome} {
+		if home != "" {
+			skills := filepath.Join(home, "skills")
+			if info, err := os.Stat(skills); err == nil && info.IsDir() {
+				repos = append(repos, skills)
+			}
+		}
+	}
 	spec := codediff.CaptureSpec{
 		WorkDir:              env.WorkDir,
+		InputDirectory:       filepath.Join(env.RootDir, "input-baselines", task.ID),
 		WorkDirKind:          kind,
-		Repos:                d.captureRepos(task),
+		Repos:                repos,
 		ExcludePaths:         d.captureExcludePaths(env),
 		ConcurrentLocalTasks: d.enterRunCapture(task.WorkspaceID),
 		Options:              d.captureOptions(),

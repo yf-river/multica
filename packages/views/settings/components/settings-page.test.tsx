@@ -6,7 +6,9 @@ import { configStore } from "@multica/core/config";
 import {
   PLUGINS_V1_FLAG,
 } from "@multica/core/feature-flags";
-import { renderWithI18n } from "../../test/i18n";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
+import { renderWithI18n as baseRender } from "../../test/i18n";
 
 // This file tests the settings SHELL — the chrome around the tabs — so every
 // tab panel is stubbed out. Their contents have their own test files.
@@ -138,3 +140,5 @@ describe("SettingsPage Plugin feature flag", () => {
 });
 
 it("redirects legacy MCP and quick-action links to their independent pages",()=>{navigationState.search="?tab=mcp";renderWithI18n(<SettingsPage/>);expect(replace).toHaveBeenCalledWith("/acme/mcp");});
+
+function renderWithI18n(ui:ReactElement) { return baseRender(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{ui}</QueryClientProvider>); }

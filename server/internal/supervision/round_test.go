@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -28,9 +27,9 @@ type roundFixture struct {
 func newRoundFixture(t *testing.T) *roundFixture {
 	t.Helper()
 	ctx := context.Background()
-	url := os.Getenv("DATABASE_URL")
-	if url == "" {
-		url = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
+	url, targetErr := dbfx.TestDatabaseURL()
+	if targetErr != nil {
+		t.Fatal(targetErr)
 	}
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
@@ -52,7 +51,7 @@ func newRoundFixture(t *testing.T) *roundFixture {
 	svc := New(pool, service.NewTaskService(db.New(pool), pool, nil, nil))
 	svc.Authorize = func(context.Context, string, string, string) bool { return true }
 	t.Cleanup(func() {
-		for _, table := range []string{"supervision_investigation", "supervision_action", "supervision_finding", "supervision_batch_round", "supervision_batch", "supervision_material", "supervision_round", "supervision_subject", "supervision_config"} {
+		for _, table := range []string{"supervision_frozen_material", "supervision_investigation", "supervision_action", "supervision_finding", "supervision_batch_round", "supervision_batch", "supervision_material", "supervision_round", "supervision_subject", "supervision_config"} {
 			if _, e := pool.Exec(ctx, "DELETE FROM "+table+" WHERE workspace_id=$1", f.WorkspaceID); e != nil {
 				t.Errorf("cleanup %s: %v", table, e)
 			}

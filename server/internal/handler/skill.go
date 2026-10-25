@@ -658,10 +658,10 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Record the text edits on the running task's result. Placed after the
 	//    update so a rejected edit leaves no trace in the run log.
-	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updatedSkill.WorkspaceID),
+	h.recordRunTextChangeTx(r.Context(), tx, r, uuidToString(updatedSkill.WorkspaceID),
 		runTextTarget{Kind: "skill", ID: uuidToString(updatedSkill.ID), Name: updatedSkill.Name},
 		"content", beforeContent, updatedSkill.Content)
-	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updatedSkill.WorkspaceID),
+	h.recordRunTextChangeTx(r.Context(), tx, r, uuidToString(updatedSkill.WorkspaceID),
 		runTextTarget{Kind: "skill", ID: uuidToString(updatedSkill.ID), Name: updatedSkill.Name},
 		"description", beforeDescription, updatedSkill.Description)
 	skill = updatedSkill

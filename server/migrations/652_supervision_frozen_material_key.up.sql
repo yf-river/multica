@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY supervision_frozen_material_key ON supervision_frozen_material(workspace_id,issue_id,material_cutoff,kind,source_id);

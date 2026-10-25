@@ -608,7 +608,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			}
 			mention += "验收范围与依据：" + string(validation) + "。提交证据后结束当前运行，平台会在下一阶段通知续接，禁止在本运行中等待生产重启。\n\n"
 			payload, _ := json.Marshal(map[string]any{"id": operation, "content": mention + "交付 " + body.ID + " 的联调已准备，源码提交 " + commit + "，入口 " + url + "。请按已确认计划进行实际功能验收，使用 multica issue delivery accept 提交证据；本轮不要合入主分支或发布生产。"})
-			rr := r.Clone(r.Context())
+			rr := r.Clone(context.WithValue(r.Context(), systemCommentContextKey{}, true))
 			rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(operation)))
 			route := chi.NewRouteContext()
 			route.URLParams.Add("id", issue)
