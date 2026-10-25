@@ -49,11 +49,24 @@ class MaintenanceTests(unittest.TestCase):
  def test_authorized_maintenance_reserves_before_waiting_for_active_tasks(self):
   import contextlib
   with tempfile.TemporaryDirectory() as directory:
-   r=Mock();r.RUN=Path(directory);r.lock.side_effect=lambda *args:contextlib.nullcontext()
+   r=Mock();r.RUN=Path(directory);r.lock.side_effect=lambda *args,**kwargs:contextlib.nullcontext()
    r.candidate_path.return_value=Path(directory)/'missing'
    with patch.object(m,'validate_source',return_value=(Path(directory),'commit')),patch.object(m,'authorize'),patch.object(m,'idle',side_effect=RuntimeError('active tasks')):
     with self.assertRaisesRegex(RuntimeError,'active tasks'):m.prepare(r,Path(directory),{'base_commit':'base'})
    self.assertEqual(r.save_candidate.call_args[0][0]['status'],'building')
+
+ def test_successful_controller_update_preserves_pinned_operations(self):
+  import contextlib
+  r=Mock();r.ROOT=Path('/control');r.lock.side_effect=lambda *args,**kwargs:contextlib.nullcontext()
+  r.read.return_value={'commit':'candidate'}
+  record={'commit':'candidate','maintenance':{'tool_commit':'tool'}}
+  with patch.object(m,'authorize'),patch.object(m,'idle'):
+   with m.guard(r,record):pass
+   self.assertEqual(r.run.call_count,2)
+   r.run.reset_mock()
+   with self.assertRaisesRegex(RuntimeError,'publication failed'):
+    with m.guard(r,record):raise RuntimeError('publication failed')
+   r.run.assert_not_called()
 
  def test_fenced_record_requires_no_owner_slot_or_process(self):
   import json

@@ -657,6 +657,8 @@ def reviewed_supervision_index_change(release, migration, statements):
 def reviewed_supervision_settings_change(migration):
     # 精确兼容迁移：追加提示词列，按现有配置标记托管身份；旧程序仍按原ID读取。
     reviewed = {
+        '650_review_no_action.up.sql': '6bfc249f03b371decb6bb3183b885b7b6723813e61541912588765fc6ee70c3f',
+        '653_review_input_version.up.sql': '1f2e5665a8ae787a6bb7fdb89f48b4ced1800f02c4f93eb737b72c495d322bcb',
         '617_supervision_instructions.up.sql': '695c87f6f451cd1aeb233262e4845a8301798f1fbe538b9d1daf2d8b70e46d3e',
         '618_supervision_managed_agent.up.sql': 'ba9490794ae9c5717ed1c89e08a8de46c195a5203989e929707afbb9fda6469c',
     }

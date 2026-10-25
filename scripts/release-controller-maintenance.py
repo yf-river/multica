@@ -85,7 +85,7 @@ def idle(r,production=False):
 
 # 2. Keep the normal durable candidate/request records, full operations bundle, locks, release windows and rollback.
 def prepare(r,source,evidence):
- with r.lock('delivery-worker-prod'),r.lock('publisher'):
+ with r.lock('delivery-worker-prod',wait=True),r.lock('publisher',wait=True):
   source,commit=validate_source(r,source,evidence['base_commit'])
   # Modification 1. An explicit failed-request recovery retains its identity and immutable attempt history.
   version=evidence.get('retry_request_id') or 'maintenance-'+commit
@@ -124,6 +124,10 @@ def guard(r,record):
   authorize(r,record);idle(r,production=True)
   # Ordinary release guards are database-backed; this bounded maintenance window instead holds the same queue and publisher locks.
   yield lambda:authorize(r,record)
+  # 独立版本的维护工具负责后续接力，不能被程序制品中的旧操作快照覆盖。
+  if record['maintenance'].get('tool_commit') and r.read(r.meta_path('prod')).get('commit')==record['commit']:
+   for env in ('int','prod'):
+    r.run([r.sys.executable,Path(__file__).with_name('issue-delivery-worker.py'),'--env',env,'--install'],env={**os.environ,'MULTICA_RELEASE_ROOT':str(r.ROOT)})
 
 # Modification 2. The remote maintenance history must be included in the reviewed candidate; production may lag it.
 def check_mainline(r,record):
