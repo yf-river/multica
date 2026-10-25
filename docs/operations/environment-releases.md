@@ -391,3 +391,7 @@ HTTP 失败在 `.run/publisher/http-failure-<env>-<PID>.json` 保存状态码、
 正文或 Authorization。保留 HTTPError 类型与可读错误体，409 围栏处理继续有效。
 
 维护候选必须包含当时远端维护主线，发布前 fetch 后校验祖先关系并仅快进推送。生产版本可以落后于已合入的维护提交；生产基线仍单独核对，不能覆盖后来推进的主线。
+
+### 独立验收后批准生产
+
+固定 int 保存当前候选的 integration 证据，原 verification 证据保存在同一交付的历史记录。当前 int 已完成且证据完整时，批准入口可复用同交付、同源码的完整 verification 记录；不能拼接不同候选的部分检查，也不能使用其他交付或其他源码的记录。缺少任一阶段证据仍拒绝批准。回归必须覆盖 verification→仅 int→用户批准生产的完整转换，不能仅测试到 in_review。
