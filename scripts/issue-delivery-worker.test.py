@@ -5,6 +5,16 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    def test_active_maintenance_holds_new_verification_admission(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with patch.object(r,'RUN',root):
+                r.write(root/'verification-pool.json',dict(enabled=True,controller_environment='prod'))
+                r.write(r.candidate_path(),dict(status='building',maintenance={'scope':'control'}))
+                self.assertFalse(worker.pool_enabled())
+                r.write(r.candidate_path(),dict(status='succeeded',maintenance={'scope':'control'}))
+                self.assertTrue(worker.pool_enabled())
     # 修改 1. 验证历史结果通知不会阻塞已验收交付领取固定 int。
     def test_pending_integration_precedes_historical_result_notice(self):
         worker=object.__new__(w.Worker);worker.env='prod'
