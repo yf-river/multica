@@ -1,0 +1,26 @@
+{
+  "commit": "920b48de4d443bafffdb5e0e21811bd979a7938a",
+  "release_id": "920b48de4d443bafffdb5e0e21811bd979a7938a-1792907030072571423",
+  "files_verified": 6147,
+  "mismatches": [],
+  "processes": {
+    "server": {
+      "pid": 2768473,
+      "alive": true,
+      "cwd": "/data/ida/multica/.run/runtime/verify-1/b",
+      "exe": "/data/ida/multica/.run/runtime/verify-1/b/server/bin/server"
+    },
+    "web": {
+      "pid": 2768530,
+      "alive": true,
+      "cwd": "/data/ida/multica/.run/runtime/verify-1/b/apps/web",
+      "exe": "/usr/local/bin/node"
+    },
+    "daemon": {
+      "pid": 2768560,
+      "alive": true,
+      "cwd": "/data/ida/multica/.run/runtime/verify-1/b",
+      "exe": "/data/ida/multica/.run/runtime/verify-1/b/server/bin/multica"
+    }
+  }
+}

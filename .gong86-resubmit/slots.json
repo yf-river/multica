@@ -1,0 +1,29 @@
+[
+  {
+    "name": "verify-1",
+    "state": "idle",
+    "enabled": true,
+    "seed_id": "seed-20261025-agent-control-v4",
+    "delivery_id": null,
+    "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+    "seed_verified": false
+  },
+  {
+    "name": "verify-2",
+    "state": "idle",
+    "enabled": true,
+    "seed_id": "seed-20261025-agent-control-v4",
+    "delivery_id": null,
+    "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+    "seed_verified": true
+  },
+  {
+    "name": "verify-3",
+    "state": "idle",
+    "enabled": true,
+    "seed_id": "seed-20261025-agent-control-v4",
+    "delivery_id": null,
+    "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+    "seed_verified": true
+  }
+]
