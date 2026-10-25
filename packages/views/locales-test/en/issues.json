@@ -569,7 +569,9 @@
     "reply_count_one": "{{count}} reply",
     "trigger_will_start_count_one": "{{count}} agent will start when sent",
     "trigger_blocked_runtime_access_denied": "This target's agent can't run on its private runtime — make the runtime public, or rebind/copy the agent to one its owner can use",
-    "trigger_blocked_short_runtime_access_denied": "No runtime access"
+    "trigger_blocked_short_runtime_access_denied": "No runtime access",
+    "deleted_placeholder": "This comment was deleted",
+    "delete_desc_replies_kept": "This comment will be permanently deleted. Its replies stay in the thread. This cannot be undone."
   },
   "reply": {
     "placeholder": "Leave a reply...",

@@ -69,6 +69,7 @@ import { PropertyIcon } from "../../common/property-icon";
 import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, ListIssuesCache, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
+import { commentLandingTarget } from "@multica/core/issues/comment-deletion";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
@@ -1895,7 +1896,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       }
     }
 
-    const el = document.getElementById(`comment-${highlightCommentId}`);
+    // A deleted reply renders nothing, so the id a notification or share link
+    // carries has no anchor to scroll to and no row to flash. Land on the
+    // comment above where it was; the id itself stays this landing's identity
+    // for the guards and the memento below.
+    const threadRootId = rootId ?? highlightCommentId;
+    const landingId = commentLandingTarget(
+      highlightCommentId,
+      threadRootId,
+      timelineView.threadReplies.get(threadRootId) ?? EMPTY_REPLIES,
+    );
+    const el = document.getElementById(`comment-${landingId}`);
     const container = scrollContainerEl;
     if (!el || !container) return;
 
@@ -1930,7 +1941,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     };
     rafId = requestAnimationFrame(center);
 
-    setHighlightedId(highlightCommentId);
+    setHighlightedId(landingId);
     const fade = window.setTimeout(() => setHighlightedId(null), 2500);
     return () => {
       cancelAnimationFrame(rafId);

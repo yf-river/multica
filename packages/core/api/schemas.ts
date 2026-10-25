@@ -788,6 +788,10 @@ export interface AppConfigResponse {
    * 忽略未知字段，所以字段缺失必须当作 false。 */
   agent_conversation_starters_supported?: boolean;
   issue_create_properties_supported?: boolean;
+  /** Whether deleting a comment keeps its replies and the server routes
+   * DELETE /api/comments/{id}/keep-replies. Older servers deleted the replies
+   * too, so absent must be treated as false (#8296). */
+  comment_delete_keep_replies_supported?: boolean;
   server_version?: string;
   environment_name?: string;
   environment_id?: string;
@@ -937,6 +941,9 @@ const TimelineEntrySchema = z.object({
   reactions: z.array(ReactionSchema).optional(),
   attachments: z.array(AttachmentSchema).optional(),
   source_task_id: z.string().nullable().optional(),
+  // Tombstone marker (#8296). Lenient: a malformed value reads as a live
+  // comment instead of failing the whole timeline.
+  deleted_at: z.string().nullable().optional().catch(undefined),
   coalesced_count: z.number().optional(),
 }).loose();
 
@@ -987,6 +994,7 @@ export const AppConfigSchema = z.object({
   local_worktree_supported: BooleanWithDefaultSchema(false),
   agent_conversation_starters_supported: BooleanWithDefaultSchema(false),
   issue_create_properties_supported: BooleanWithDefaultSchema(false),
+  comment_delete_keep_replies_supported: BooleanWithDefaultSchema(false),
   server_version: OptionalStringSchema,
   environment_name: OptionalStringSchema,
   environment_id: OptionalStringSchema,
@@ -1007,6 +1015,8 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   // 失败时闭锁：旧服务器当年是丢弃该字段却返回成功。
   agent_conversation_starters_supported: false,
   issue_create_properties_supported: false,
+  // Fail closed: old servers delete a comment's replies with it.
+  comment_delete_keep_replies_supported: false,
   feature_flags: {},
 };
 
@@ -1040,6 +1050,7 @@ export const CommentSchema = z.object({
   source_task_id: z.string().nullable().optional(),
   // 仅快捷指令产出的评论才设置（MUL-5465）。服务端专属，前端只读不回写。
   quick_action_id: z.string().nullable().optional(),
+  deleted_at: z.string().nullable().optional().catch(undefined),
 }).loose();
 
 /** 校验评论列表（直接是评论数组）。 */
@@ -1175,6 +1186,7 @@ const SourceContextCommentSnapshotSchema = z.object({
   updated_at: z.string(),
   revision: z.number(),
   attachments: SourceContextAttachmentsSchema,
+  deleted: z.boolean().optional().catch(undefined),
 }).loose();
 
 /** 校验「来源上下文」快照：被引用 issue/评论线程的只读副本 + 锚点。 */

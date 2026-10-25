@@ -71,6 +71,8 @@ type AppConfig struct {
 	// 声明缺省时客户端必须 fail closed。
 	AgentConversationStartersSupported bool `json:"agent_conversation_starters_supported"`
 
+	// 只删除所选评论并保留回复，客户端可使用专用路由。
+	CommentDeleteKeepRepliesSupported bool `json:"comment_delete_keep_replies_supported"`
 	// POST /api/issues 支持在同一事务内写入自定义属性。
 	IssueCreatePropertiesSupported bool `json:"issue_create_properties_supported"`
 	// ServerVersion 是运行中的 API 构建版本，自助托管运维可据此确认部署内容并在 bug 报告
@@ -89,6 +91,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		LocalWorktreeSupported:             true,
 		AgentConversationStartersSupported: true,
 		IssueCreatePropertiesSupported:     true,
+		CommentDeleteKeepRepliesSupported:  true,
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",

@@ -4,6 +4,7 @@
 // ResolvedThreadBar 等时间线 UI 共用。
 
 import type { TimelineEntry } from "@multica/core/types";
+import { isDeletedComment } from "@multica/core/issues/comment-deletion";
 import { sortTimelineEntriesAsc } from "@multica/core/issues/timeline-sort";
 
 /**
@@ -57,10 +58,10 @@ export function deriveThreadResolution(
   root: TimelineEntry,
   replies: TimelineEntry[],
 ): ThreadResolution {
-  if (root.resolved_at) return { kind: "root" };
+  if (root.resolved_at && !isDeletedComment(root)) return { kind: "root" };
   let chosen: TimelineEntry | null = null;
   for (const reply of replies) {
-    if (!reply.resolved_at) continue;
+    if (!reply.resolved_at || isDeletedComment(reply)) continue;
     if (!chosen || reply.resolved_at > chosen.resolved_at!) chosen = reply;
   }
   return chosen ? { kind: "reply", resolutionId: chosen.id } : { kind: "none" };

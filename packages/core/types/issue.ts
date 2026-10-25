@@ -105,6 +105,8 @@ export interface SourceContextCommentSnapshot {
   updated_at: string;
   revision: number;
   attachments: SourceContextAttachment[];
+  /** A comment deleted while it had replies: kept, empty, so they keep their parent. */
+  deleted?: boolean;
 }
 
 /** 议题的来源上下文快照：源议题 + 评论线程 + 锚点评论。 */

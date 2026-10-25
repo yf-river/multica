@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import type { TimelineEntry } from "@multica/core/types";
+import { isDeletedComment } from "@multica/core/issues/comment-deletion";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
@@ -426,7 +427,7 @@ export function ThreadMinimap({
   const activeThread = preview ? threads[preview.index] : undefined;
   const activePreview = preview ? previews[preview.index] : undefined;
   const activeTitle = activeThread && activePreview
-    ? activePreview.title ||
+    ? isDeletedComment(activeThread.entry) ? t(($) => $.comment.deleted_placeholder) : activePreview.title ||
       getActorName(activeThread.entry.actor_type, activeThread.entry.actor_id)
     : undefined;
 
@@ -445,7 +446,7 @@ export function ThreadMinimap({
         className="pointer-events-auto flex max-h-full flex-col overflow-hidden"
       >
         {threads.map((thread, i) => {
-          const title =
+          const title = isDeletedComment(thread.entry) ? t(($) => $.comment.deleted_placeholder) :
             previews[i]!.title ||
             getActorName(thread.entry.actor_type, thread.entry.actor_id);
           return (

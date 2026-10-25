@@ -42,6 +42,8 @@ type TimelineEntry struct {
 	ResolvedByType *string              `json:"resolved_by_type,omitempty"`
 	ResolvedByID   *string              `json:"resolved_by_id,omitempty"`
 	SourceTaskID   *string              `json:"source_task_id,omitempty"`
+	// Set only on a tombstone: a comment deleted while it still had replies.
+	DeletedAt *string `json:"deleted_at,omitempty"`
 }
 
 // timelineHardCap 限制单个 issue 时间线载荷的行数。它是防御性安全网，不是 UX 分页窗口——
@@ -272,6 +274,7 @@ func (h *Handler) commentsToEntries(r *http.Request, comments []db.Comment) []Ti
 			ResolvedByType: textToPtr(c.ResolvedByType),
 			ResolvedByID:   uuidToPtr(c.ResolvedByID),
 			SourceTaskID:   uuidToPtr(c.SourceTaskID),
+			DeletedAt:      timestampToPtr(c.DeletedAt),
 		}
 	}
 	return out
