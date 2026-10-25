@@ -66,7 +66,12 @@ def prepare(r,source,evidence):
  with r.lock('delivery-worker-prod'),r.lock('publisher'):
   idle(r)
   source,commit=validate_source(r,source,evidence['base_commit'])
-  version='maintenance-'+commit
+  # Modification 1. An explicit failed-request recovery retains its identity and immutable attempt history.
+  version=evidence.get('retry_request_id') or 'maintenance-'+commit
+  if evidence.get('retry_request_id'):
+   previous=r.read(r.request_path(version))
+   if previous['status']!='failed' or previous.get('maintenance',{}).get('issue_id')!=evidence['issue_id'] or previous['maintenance']['base_commit']!=evidence['base_commit']:raise RuntimeError('不是同一任务的失败维护请求')
+   if r.subprocess.run(['systemctl','is-active','--quiet',previous['unit']]).returncode==0:raise RuntimeError('原发布器仍在运行')
   record=dict(id=version,commit=commit,source=str(source),maintenance=evidence,status='building',environment='int',
    git_common=r.output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),branch=r.output(['git','symbolic-ref','HEAD'],cwd=source))
   authorize(r,record)

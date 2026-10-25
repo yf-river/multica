@@ -304,3 +304,11 @@ quarantined、旧租约过期且原种子仍已验证时，负责人提交：
 维护排空上限 90 秒，不进入 120 秒后的任务暂停步骤。安装完整带指纹 operations
 包，失败沿原恢复路径回旧程序，保留数据库、队列和原隔离记录。控制端维护成功
 不代表业务候选已上线，原任务仍须通过自己的 verify/int 验收。
+
+### 外部发布器 Git 认证与失败恢复
+
+发布器以 systemd 实际 User 的 HOME 读取该账号既有受控 Git 凭据。root 控制端当前使用 `/root/.config/gh/hosts.yml` 的已授权 GitHub CLI 账号，由 `gh auth setup-git --hostname github.com` 配置 credential helper；不复制模型运行环境中的临时令牌、不把凭据写进 remote URL、Git 参数或仓库。凭据文件限制为账号本人可读；失效后由来源维护方重新授权。发布前在相同 systemd User/HOME、清除临时 GH_TOKEN/GITHUB_TOKEN/GIT_ASKPASS 的环境执行 `git push --dry-run`，随后 fetch 核对基线；dry-run 成功不代表已发布。
+
+失败维护请求显式恢复时，`maintenance-int --source ... --evidence ...` 的授权证据可携带原 `retry_request_id`；入口核对同一任务、原基线、failed 状态与无活动发布器，沿用原请求编号准备新的固定候选。新候选重新验收和 accept 后执行 `retry-request <原编号>`。普通 request 不自动恢复失败；同编号 queued/publishing/succeeded 重放不会再启动发布器。历史失败尝试保存在 previous_attempts，归档按提交隔离，不覆盖旧验收产物。恢复不得绕过新用户评论复核、维护文件边界或迁移身份检查。
+
+请求记录保存 failure_stage、脱敏 error、log_path 和 journal_unit。子进程输出进入同一脱敏请求日志；原始 journal 可用 `journalctl -u <journal_unit>` 定位，仅由受控运维读取，不上传认证文件。发布器未运行时不启动第二套常驻 worker，显式恢复仍使用原单请求 systemd 执行入口。

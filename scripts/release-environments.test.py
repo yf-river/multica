@@ -324,9 +324,35 @@ class ReleaseTests(unittest.TestCase):
                     self.assertEqual((r.RUN/'publisher/v/check-release-database.mjs').read_bytes(),Path(r.__file__).with_name('check-release-database.mjs').read_bytes())
                 failed=r.read(r.request_path('v'));failed['status']='failed';r.write(r.request_path('v'),failed)
                 with patch.object(r,'run') as launch, patch.object(r,'validate_candidate'),patch.object(r,'check_delivery_approval'):
-                    with self.assertRaisesRegex(RuntimeError,'重新联调'): r.request_release('v')
+                    with self.assertRaisesRegex(RuntimeError,'retry-request'): r.request_release('v')
                     launch.assert_not_called()
             finally:r.RUN=original
+
+    # Modification 1. Child failures must reach the request log with credentials removed.
+    def test_child_error_is_logged_and_redacted(self):
+        import contextlib, io, sys
+        stream=io.StringIO()
+        with contextlib.redirect_stderr(r.ReleaseLog(stream)):
+            with self.assertRaisesRegex(RuntimeError,'denied') as error:
+                r.run([sys.executable,'-c',"import sys; print('denied https://user:fixture@example.test token=fixture',file=sys.stderr); sys.exit(128)"])
+        self.assertIn('denied',stream.getvalue())
+        self.assertNotIn('fixture',stream.getvalue())
+        self.assertNotIn('fixture',str(error.exception))
+
+    def test_failed_request_retry_is_explicit_fenced_and_idempotent(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory, patch.object(r,'RUN',Path(directory)):
+            failed=dict(id='v',status='failed',unit='owned',commit='old',error='denied')
+            r.write(r.request_path('v'),failed)
+            r.save_candidate(dict(id='v',status='accepted',commit='new'))
+            with patch.object(r,'run') as launch,patch.object(r,'validate_candidate'),patch.object(r,'check_delivery_approval'),patch.object(r.subprocess,'run',return_value=Mock(returncode=0)):
+                with self.assertRaisesRegex(RuntimeError,'仍在运行'):r.request_release('v',retry=True)
+                launch.assert_not_called()
+            with patch.object(r,'run') as launch,patch.object(r,'validate_candidate'),patch.object(r,'check_delivery_approval'),patch.object(r.subprocess,'run',return_value=Mock(returncode=3)):
+                record=r.request_release('v',retry=True)
+                self.assertEqual(record['previous_attempts'][0]['commit'],'old')
+                r.request_release('v',retry=True)
+                launch.assert_called_once()
 
     def test_business_failure_restores_exact_previous_program(self):
         with patch.object(r,'deploy') as deploy, patch.object(r,'restore') as restore, patch.object(r,'verify_browser',side_effect=RuntimeError('bad page')):

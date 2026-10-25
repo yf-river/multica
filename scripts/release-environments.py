@@ -17,8 +17,28 @@ class RecoveryRequired(RuntimeError):
 def require_environment(env):
     if env not in (*ENVS, *VERIFICATION_ENVS): raise RuntimeError(f'未知环境: {env}')
 
+def redact_failure(value):
+    # 1. Keep failure diagnostics useful without persisting bearer credentials or authenticated URLs.
+    value=re.sub(r'https?://[^/\s@]+@', 'https://[redacted]@', str(value))
+    value=re.sub(r'(?i)(authorization[=: ]+(?:bearer|basic)\s+|(?:token|password|secret)[=: ]+)[^\s]+', r'\1[redacted]', value)
+    return re.sub(r'\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b','[redacted]',value)
+
 def run(args, **kw):
+    # 2. Capture child output through the Python log stream; fd inheritance bypasses redirect_stderr.
+    if getattr(sys.stderr, 'release_log', False) and 'stdout' not in kw and 'stderr' not in kw:
+        result=subprocess.run([str(a) for a in args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,**kw)
+        detail=redact_failure(result.stdout.decode(errors='replace'))
+        if detail: print(detail, file=sys.stderr, flush=True)
+        if result.returncode:
+            raise RuntimeError('subprocess failed (exit %s): %s'%(result.returncode,detail[-4000:]))
+        return result
     return subprocess.run([str(a) for a in args], check=True, **kw)
+
+class ReleaseLog:
+    def __init__(self,stream): self.stream=stream;self.release_log=True
+    def write(self,value): return self.stream.write(redact_failure(value))
+    def flush(self): self.stream.flush()
+
 
 def output(args, **kw):
     return subprocess.check_output([str(a) for a in args], **kw).decode().strip()
@@ -1078,7 +1098,7 @@ def accept(version, evidence_file, env='int'):
             raise RuntimeError('验收记录需要 candidate、summary 和 checks')
         if any(not isinstance(c,dict) or not c.get('name') or c.get('status')!='passed' or not c.get('evidence') for c in evidence['checks']):
             raise RuntimeError('每项功能检查需要 name、passed 状态和实际 evidence')
-        archive=RUN/'accepted-artifacts'/record['id']
+        archive=RUN/'accepted-artifacts'/record['id']/record['commit']
         current=read(meta_path(env))
         if not (archive/'release.json').exists():copy_tree(current['release_dir'],archive,excludes=('**/.next/cache/***',))
         manifest=read(archive/'release.json')
@@ -1154,20 +1174,26 @@ def check_delivery_approval(record):
     if subprocess.run(['git','--git-dir',record['git_common'],'merge-base','--is-ancestor',delivery['source_commit'],record['commit']]).returncode:
         raise RuntimeError('发布候选未包含用户批准的任务提交')
 
-def request_release(version,timeout=900):
+def request_release(version,timeout=900,retry=False):
     with lock('publisher',wait=True):
         record=candidate(version)
         if record.get('maintenance'):timeout=min(timeout,90)
         target=request_path(version)
+        previous=None
+        if retry and not target.exists():raise RuntimeError('恢复请求不存在')
         if target.exists():
             previous=read(target)
             if previous['status'] in ('queued','publishing','succeeded'):
                 print(json.dumps(previous,ensure_ascii=False));return previous
-            raise RuntimeError('上次生产更新未成功，请重新联调')
+            if not retry or previous['status']!='failed':raise RuntimeError('上次生产更新未成功，请显式 retry-request')
+            if subprocess.run(['systemctl','is-active','--quiet',previous['unit']]).returncode==0:raise RuntimeError('原发布器仍在运行')
+            if record['status']!='accepted':raise RuntimeError('恢复前需要准确候选重新验收')
+            record['previous_attempts']=previous.get('previous_attempts',[])+[{k:previous.get(k) for k in ('commit','status','error','failure_stage','log_path','unit')}]
         if record['status'] != 'accepted': raise RuntimeError('先完成本次功能验收并 accept')
         check_delivery_approval(record)
         validate_candidate(record)
         # 发布来源为提交请求的这轮运行，可能与开始联调的运行不同。
+        record.pop('error',None);record.pop('failure_stage',None)
         record.update(task_id=os.environ.get('MULTICA_TASK_ID',''), server_url=os.environ.get('MULTICA_SERVER_URL',''),
                       workspace_id=os.environ.get('MULTICA_WORKSPACE_ID',''), timeout=timeout,
                       status='queued', unit='multica-publish-'+version)
@@ -1185,10 +1211,12 @@ def request_release(version,timeout=900):
         write(target,record,True);save_candidate(record)
         try:
             run(['systemd-run','--quiet','--collect','--unit',record['unit'],'--property=Type=exec','--property=KillMode=process',
-                 '--working-directory',ROOT,'--setenv=MULTICA_RELEASE_ROOT='+str(ROOT),sys.executable,runner,'worker',version])
+                 '--working-directory',ROOT,'--setenv=HOME='+pwd.getpwuid(os.getuid()).pw_dir,'--setenv=GIT_TERMINAL_PROMPT=0','--setenv=MULTICA_RELEASE_ROOT='+str(ROOT),sys.executable,runner,'worker',version])
         except Exception:
             record.update(status='accepted');save_candidate(record)
-            target.unlink();raise
+            if previous:write(target,previous,True)
+            else:target.unlink()
+            raise
         print(json.dumps(record,ensure_ascii=False));return record
 
 def task_api(record, route, body=None):
@@ -1299,7 +1327,10 @@ def publication_guard(record):
 def worker(request_id):
     if os.environ.get('MULTICA_TASK_ID'): raise RuntimeError('worker 必须由外部进程启动')
     target=request_path(request_id);record=read(target)
-    with target.with_suffix('.log').open('a') as stream,contextlib.redirect_stdout(stream),contextlib.redirect_stderr(stream):
+    # Modification 1. Child diagnostics, stage and original journal locator belong to the durable request.
+    record.update(log_path=str(target.with_suffix('.log')),journal_unit=record.get('unit'),failure_stage='waiting_source')
+    write(target,record,True)
+    with target.with_suffix('.log').open('a') as raw,contextlib.redirect_stdout(ReleaseLog(raw)),contextlib.redirect_stderr(ReleaseLog(raw)):
         try:
             if record['status']!='succeeded':
                 wait_requested_task(record)
@@ -1309,6 +1340,7 @@ def worker(request_id):
                     finish_cleanup(record);return
                 current_record=candidate(request_id)
                 if current_record['status']!='queued': raise RuntimeError('候选已释放或更新不在队列中')
+                record['failure_stage']='validate_candidate'
                 current=validate_candidate(record, allow_finalized=True)
                 check_delivery_approval(record)
                 record.update(status='publishing');write(target,record,True);save_candidate(record)
@@ -1317,16 +1349,23 @@ def worker(request_id):
                 with (controller_maintenance().guard(sys.modules[__name__],record) if record.get('maintenance') else publication_guard(record)) as fence:
                     fence()
                     if record.get('maintenance'):
+                        record['failure_stage']='git_auth_preflight';write(target,record,True)
+                        # Modification 2. Verify receive-pack authentication without updating the remote before the real push.
+                        run(['git','push','--dry-run','origin',record['commit']+':refs/heads/personal-studio-upstream'],cwd=record['source'])
+                        record['failure_stage']='git_fetch';write(target,record,True)
                         run(['git','fetch','origin','personal-studio-upstream'],cwd=record['source'])
                         if output(['git','rev-parse','origin/personal-studio-upstream'],cwd=record['source']) not in (record['maintenance']['base_commit'],record['commit']):raise RuntimeError('维护主分支已变化')
                         fence()
+                        record['failure_stage']='git_push';write(target,record,True)
                         run(['git','push','origin',record['commit']+':refs/heads/personal-studio-upstream'],cwd=record['source'])
+                    record['failure_stage']='publish_prod';write(target,record,True)
                     publish('prod',directory,record['timeout'])
                 write(RUN/'published.json',{'commit':record['commit'],'source_digest':record['source_digest'],'candidate':request_id},True)
                 record.update(status='succeeded');write(target,record,True);save_candidate(record)
                 finish_cleanup(record)
         except Exception as error:
-            record.update(status='recovery_required' if isinstance(error,RecoveryRequired) else 'failed',error=str(error))
+            record.update(status='recovery_required' if isinstance(error,RecoveryRequired) else 'failed',error=redact_failure(error))
+            print('Failed stage '+record.get('failure_stage','unknown')+': '+redact_failure(error),file=sys.stderr,flush=True)
             write(target,record,True)
             with lock('publisher',wait=True):
                 if candidate_path().exists() and candidate()['id']==request_id: save_candidate(record)
@@ -1390,7 +1429,7 @@ def require_control_directory():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['preflight','int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset','delivery-worker','maintenance-int'])
+    parser.add_argument('command',choices=['preflight','int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset','delivery-worker','maintenance-int','retry-request'])
     parser.add_argument('target',nargs='?')
     parser.add_argument('--source')
     parser.add_argument('--evidence')
@@ -1416,9 +1455,9 @@ def main():
     elif a.command=='accept':
         if not a.target or not a.evidence: parser.error('accept 需要候选编号和 --evidence 文件')
         accept(a.target,a.evidence)
-    elif a.command in ('request','request-status','worker','release','cleanup'):
+    elif a.command in ('request','retry-request','request-status','worker','release','cleanup'):
         if not a.target: parser.error('需要候选编号')
-        if a.command=='request': request_release(a.target,a.timeout)
+        if a.command in ('request','retry-request'): request_release(a.target,a.timeout,retry=a.command=='retry-request')
         elif a.command=='request-status': request_status(a.target)
         elif a.command=='worker': worker(a.target)
         elif a.command=='release': release_candidate(a.target)
