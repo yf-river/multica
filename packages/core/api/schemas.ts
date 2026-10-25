@@ -1863,10 +1863,37 @@ export const AgentTaskSchema = z.object({
   usage: z.array(TaskUsageSchema).optional().catch(undefined),
 }).loose();
 
-/** 校验 agent 任务列表（直接是数组）。 */
+// Outcome counts are required: every backend that serves this endpoint
+// reports them, so a response missing them is a contract drift, not an
+// older peer. `parseWithFallback` then degrades the whole list to `[]`
+// rather than letting a partial window masquerade as measured outcomes.
+export const AgentActivityBucketListSchema = z.array(z.object({
+  agent_id: z.string(),
+  bucket_at: z.string(),
+  task_count: z.number().int().nonnegative(),
+  failed_count: z.number().int().nonnegative(),
+  completed_count: z.number().int().nonnegative(),
+  cancelled_count: z.number().int().nonnegative(),
+  duration_ms: z.number().nonnegative().optional().catch(undefined),
+  duration_count: z.number().int().nonnegative().optional().catch(undefined),
+}).loose());
+
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
-// 任务消息负载：任务执行过程中产生的一则消息（文本/思考/工具调用等）。
+export const AgentTaskPageSchema = z.object({
+  tasks: AgentTaskListSchema,
+  nextCursor: z.string().min(1).nullable(),
+});
+
+// One row of a run transcript. `output_truncated` gates a completeness claim
+// the UI makes about a tool's output, so it stays `.optional()` with no
+// default: a server that does not send it means "unknown", and defaulting it
+// to false would turn a missing field into an assertion that the record is
+// complete. `.catch(undefined)` keeps a malformed value that far too — without
+// it a single bad boolean fails its row, the array fails with it, and
+// `parseWithFallback` hands the viewer an empty transcript. Degrading one
+// field to "unknown" is the correct loss; deleting the run is not. Every other
+// field keeps a default for the same reason.
 export const TaskMessagePayloadSchema = z.object({
   id: z.string().optional(),
   output_chars: z.number().optional(),

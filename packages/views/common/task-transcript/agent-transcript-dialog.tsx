@@ -149,6 +149,8 @@ function formatElapsedMs(ms: number): string {
 
 /** 单步自身的时长，用右列那种紧凑格式显示（秒带一位小数，分带补零秒）。 */
 function formatStepDuration(ms: number): string {
+  if (ms <= 0) return "—";
+  if (ms < 100) return "<0.1s";
   if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
   const minutes = Math.floor(ms / 60_000);
@@ -1396,8 +1398,28 @@ function DurationCell({ ms, pending }: { ms?: number; pending?: boolean }) {
   }
   if (ms === undefined) return <span className="w-12 shrink-0" />;
   return (
-    <span className="w-12 shrink-0 pt-0.5 text-right font-mono text-micro tabular-nums text-faint-foreground">
-      {formatStepDuration(ms)}
+    <StepDuration
+      ms={ms}
+      unknownLabel={t(($) => $.transcript.step_duration_unknown)}
+      className="w-12 shrink-0 pt-0.5 text-right font-mono text-micro tabular-nums text-faint-foreground"
+    />
+  );
+}
+
+function StepDuration({
+  ms,
+  unknownLabel,
+  className,
+}: {
+  ms: number;
+  unknownLabel: string;
+  className?: string;
+}) {
+  const unknown = ms <= 0;
+  return (
+    <span className={className} title={unknown ? unknownLabel : undefined}>
+      <span aria-hidden={unknown || undefined}>{formatStepDuration(ms)}</span>
+      {unknown && <span className="sr-only">{unknownLabel}</span>}
     </span>
   );
 }
@@ -1575,9 +1597,15 @@ function GroupRow({
               <span className="truncate font-mono text-muted-foreground">
                 {callSummary(step, summaryLabels) || step.tool}
               </span>
-              <span className="ml-auto shrink-0 font-mono tabular-nums text-faint-foreground">
-                {step.durationMs === undefined ? "" : formatStepDuration(step.durationMs)}
-              </span>
+              {step.durationMs === undefined ? (
+                <span className="ml-auto shrink-0" />
+              ) : (
+                <StepDuration
+                  ms={step.durationMs}
+                  unknownLabel={t(($) => $.transcript.step_duration_unknown)}
+                  className="ml-auto shrink-0 font-mono tabular-nums text-faint-foreground"
+                />
+              )}
             </button>
           ))}
         </div>
@@ -1663,7 +1691,11 @@ function StepInspector({
           {call?.durationMs !== undefined && (
             <>
               <FactDot />
-              <span className="font-mono tabular-nums">{formatStepDuration(call.durationMs)}</span>
+              <StepDuration
+                ms={call.durationMs}
+                unknownLabel={t(($) => $.transcript.step_duration_unknown)}
+                className="font-mono tabular-nums"
+              />
             </>
           )}
         </span>

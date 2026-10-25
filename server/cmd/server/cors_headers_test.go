@@ -42,6 +42,7 @@ func TestCORSExposedHeaders_IncludeTruncationSignals(t *testing.T) {
 		handler.HeaderCommentsTruncated,
 		handler.HeaderTimelineTruncated,
 		handler.HeaderActiveRunsTruncated,
+		handler.HeaderAgentTasksNextCursor,
 	} {
 		if !slices.Contains(corsExposedHeaders, want) {
 			t.Errorf("%s missing from CORS exposed headers: %v", want, corsExposedHeaders)

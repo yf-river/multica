@@ -21,9 +21,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import { Button } from "@multica/ui/components/ui/button";
 import { NumberFlow } from "@multica/ui/components/ui/number-flow";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import type { Agent, AgentTask, Issue } from "@multica/core/types";
 import {
   type AgentActivity,
@@ -44,10 +45,7 @@ import { cancelReasonLabel, failureReasonLabel } from "./task-failure";
 import { Sparkline } from "../sparkline";
 import { useT, useTimeAgo } from "../../../i18n";
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-// “最近完成”分页：先给一小批让区段保持可扫读，之后 “Show more” 每次再放 20 条。
-// 任务本来就整体缓存在客户端（整个 Agent 就一次 listAgentTasks），所以“更多”
-// 只是状态翻转——零额外请求。
+// Reveal cached rows in small batches and fetch another page only on demand.
 const RECENT_INITIAL = 10;
 const RECENT_PAGE = 20;
 // 懒加载的单 Agent 任务列表在途时先占几行骨架，让本 Tab 首屏是骨架而不是
@@ -75,11 +73,24 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
   const wsId = useWorkspaceId();
 
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  // `isLoading`（pending + fetching，且无缓存数据）只在“第一次拉取”时为真。
-  // 一旦页面其它地方已把这个缓存水合好，本 Tab 就会直接展开成数据，无骨架闪烁。
-  const { data: agentTasks = [], isLoading: isLoadingRecent } = useQuery(
-    agentTasksOptions(wsId, agent.id),
-  );
+  // `isLoading` (pending + fetching, no cached data) is true only on the
+  // very first fetch. Once the page has hydrated this cache elsewhere the
+  // tab opens straight into data with no skeleton flash.
+  const {
+    data,
+    isLoading: isLoadingRecent,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = useInfiniteQuery(agentTasksOptions(wsId, agent.id));
+  const agentTasks = useMemo(() => {
+    const tasks = new Map<string, AgentTask>();
+    for (const page of data?.pages ?? []) {
+      for (const task of page.tasks) tasks.set(task.id, task);
+    }
+    return [...tasks.values()];
+  }, [data]);
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
   const activity = activityMap.get(agent.id);
 
@@ -137,12 +148,9 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
     () => recentTasksAll.slice(0, recentDisplayLimit),
     [recentTasksAll, recentDisplayLimit],
   );
-  const hasMoreRecent = recentTasksAll.length > recentTasks.length;
+  const hasMoreRecent = recentTasksAll.length > recentTasks.length || hasNextPage;
 
-  const avgDurationMs = useMemo(
-    () => deriveAvgDurationLast30d(agentTasks, Date.now()),
-    [agentTasks],
-  );
+  const avgDurationMs = activity?.avgDurationMs ?? 0;
 
   // 解析我们渲染的每个任务关联的 issue 标识与标题。走 `issueDetailOptions` 与应用
   // 其它地方同一条查询，缓存共享，不会为重复数据花钱。
@@ -177,12 +185,22 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
       )}
       <RecentWorkSection
         tasks={recentTasks}
-        totalCount={recentTasksAll.length}
+        totalCount={hasNextPage ? undefined : recentTasksAll.length}
         hasMore={hasMoreRecent}
         loading={isLoadingRecent}
-        onShowMore={() =>
-          setRecentDisplayLimit((n) => n + RECENT_PAGE)
-        }
+        fetchingMore={isFetchingNextPage}
+        fetchMoreFailed={isFetchNextPageError}
+        onShowMore={() => {
+          if (recentDisplayLimit < recentTasksAll.length) {
+            setRecentDisplayLimit((n) => n + RECENT_PAGE);
+          } else if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage({ cancelRefetch: false }).then((result) => {
+              if (!result.isFetchNextPageError) {
+                setRecentDisplayLimit((n) => n + RECENT_PAGE);
+              }
+            });
+          }
+        }}
         issueMap={issueMap}
         agent={agent}
       />
@@ -194,23 +212,10 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
 export function AgentPerformanceSummary({ agent }: { agent: Agent }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
-  const { data: agentTasks = [] } = useQuery(
-    agentTasksOptions(wsId, agent.id),
-  );
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
   const activity = activityMap.get(agent.id);
   const summary = summarizeActivityWindow(activity, 30);
-  const avgDurationMs = useMemo(
-    () => deriveAvgDurationLast30d(agentTasks, Date.now()),
-    [agentTasks],
-  );
-  const successPct =
-    summary.totalRuns > 0
-      ? Math.round(
-          ((summary.totalRuns - summary.totalFailed) / summary.totalRuns) *
-            100,
-        )
-      : 100;
+  const avgDurationMs = activity?.avgDurationMs ?? 0;
 
   return (
     <section className="mt-5 border-t pt-5">
@@ -231,7 +236,7 @@ export function AgentPerformanceSummary({ agent }: { agent: Agent }) {
               })}
             />
             <Metric
-              value={`${successPct}%`}
+              value={<SuccessRate rate={summary.successRate} />}
               label={t(($) => $.tab_body.activity.success_label)}
             />
             <Metric
@@ -244,6 +249,13 @@ export function AgentPerformanceSummary({ agent }: { agent: Agent }) {
               destructive={summary.totalFailed > 0}
             />
           </div>
+          {summary.totalCancelled > 0 && (
+            <p className="mt-2 text-caption text-muted-foreground">
+              {t(($) => $.tab_body.activity.cancelled_count, {
+                count: summary.totalCancelled,
+              })}
+            </p>
+          )}
           <Sparkline
             buckets={summary.buckets}
             width={250}
@@ -262,7 +274,7 @@ function Metric({
   label,
   destructive = false,
 }: {
-  value: string;
+  value: ReactNode;
   label: string;
   destructive?: boolean;
 }) {
@@ -280,7 +292,32 @@ function Metric({
   );
 }
 
-/** “现在”区段：正在跑 / 已派发 / 排队 的任务清单。 */
+function SuccessRate({
+  rate,
+  labelled = false,
+}: {
+  rate: number | null;
+  labelled?: boolean;
+}) {
+  const { t } = useT("agents");
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span tabIndex={0} />}>
+        {rate === null
+          ? "—"
+          : labelled
+            ? t(($) => $.tab_body.activity.success_pct, { percent: rate })
+            : `${rate}%`}
+      </TooltipTrigger>
+      <TooltipContent>
+        {rate === null
+          ? t(($) => $.tab_body.activity.success_unavailable)
+          : t(($) => $.tab_body.activity.success_hint)}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function NowSection({
   tasks,
   issueMap,
@@ -326,10 +363,6 @@ function Last30dSection({
   const summary = summarizeActivityWindow(activity, 30);
   const { totalRuns, totalFailed } = summary;
   const locales = i18n.resolvedLanguage ?? i18n.language;
-  const successPct =
-    totalRuns > 0
-      ? Math.round(((totalRuns - totalFailed) / totalRuns) * 100)
-      : 100;
 
   return (
     <Section title={t(($) => $.tab_body.activity.section_last_30d)} subtitle={t(($) => $.tab_body.activity.subtitle_performance)}>
@@ -351,7 +384,7 @@ function Last30dSection({
               </span>
             </div>
             <div className="text-caption text-muted-foreground">
-              {t(($) => $.tab_body.activity.success_pct, { percent: successPct })}
+              <SuccessRate rate={summary.successRate} labelled />
               {avgDurationMs > 0 && (
                 <>
                   <Sep />
@@ -363,6 +396,16 @@ function Last30dSection({
                   <Sep />
                   <span className="text-destructive">
                     {t(($) => $.tab_body.activity.failed_count, { count: totalFailed })}
+                  </span>
+                </>
+              )}
+              {summary.totalCancelled > 0 && (
+                <>
+                  <Sep />
+                  <span>
+                    {t(($) => $.tab_body.activity.cancelled_count, {
+                      count: summary.totalCancelled,
+                    })}
                   </span>
                 </>
               )}
@@ -389,14 +432,19 @@ function RecentWorkSection({
   hasMore,
   loading,
   onShowMore,
+  fetchingMore,
+  fetchMoreFailed,
   issueMap,
   agent,
 }: {
   tasks: AgentTask[];
-  totalCount: number;
+  // Only known after the server has returned the final history page.
+  totalCount?: number;
   hasMore: boolean;
   loading: boolean;
   onShowMore: () => void;
+  fetchingMore: boolean;
+  fetchMoreFailed: boolean;
   issueMap: Map<string, Issue>;
   agent: Agent;
 }) {
@@ -405,8 +453,10 @@ function RecentWorkSection({
   const subtitle = loading
     ? ""
     : tasks.length === 0
-      ? t(($) => $.tab_body.activity.subtitle_no_recent)
-      : totalCount > tasks.length
+      ? hasMore
+        ? ""
+        : t(($) => $.tab_body.activity.subtitle_no_recent)
+      : totalCount !== undefined && totalCount > tasks.length
         ? t(($) => $.tab_body.activity.subtitle_recent_progress, { shown: tasks.length, total: totalCount })
         : t(($) => $.tab_body.activity.subtitle_recent_latest, { count: tasks.length });
   return (
@@ -414,25 +464,27 @@ function RecentWorkSection({
       {loading ? (
         <RecentWorkSkeleton />
       ) : tasks.length === 0 ? (
-        <EmptyText>{t(($) => $.tab_body.activity.empty_recent)}</EmptyText>
+        hasMore ? null : <EmptyText>{t(($) => $.tab_body.activity.empty_recent)}</EmptyText>
       ) : (
-        <>
-          <TaskList
-            tasks={tasks}
-            issueMap={issueMap}
-            timeMode="completed"
-            agent={agent}
-          />
-          {hasMore && (
-            <button
-              type="button"
-              onClick={onShowMore}
-              className="mt-2 self-start rounded text-caption text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {t(($) => $.tab_body.activity.show_more)}
-            </button>
-          )}
-        </>
+        <TaskList
+          tasks={tasks}
+          issueMap={issueMap}
+          timeMode="completed"
+          agent={agent}
+        />
+      )}
+      {!loading && hasMore && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onShowMore}
+          disabled={fetchingMore}
+          aria-busy={fetchingMore}
+          className="self-start"
+        >
+          {fetchMoreFailed ? t(($) => $.detail.try_again) : t(($) => $.tab_body.activity.show_more)}
+        </Button>
       )}
     </Section>
   );
@@ -811,32 +863,9 @@ function activeTaskTimeText(task: AgentTask, t: AgentsT, timeAgo: TimeAgoFn): st
 }
 
 /**
- * 完成/失败于最近 30 天内的任务的平均墙钟耗时。纯函数，测试可传确定性的 `now`。
- */
-export function deriveAvgDurationLast30d(
-  tasks: readonly AgentTask[],
-  now: number,
-): number {
-  let sum = 0;
-  let count = 0;
-  for (const t of tasks) {
-    if (!t.completed_at || !t.started_at) continue;
-    const completedAt = new Date(t.completed_at).getTime();
-    if (Number.isNaN(completedAt)) continue;
-    if (now - completedAt > THIRTY_DAYS_MS) continue;
-    const startedAt = new Date(t.started_at).getTime();
-    const dur = completedAt - startedAt;
-    if (Number.isFinite(dur) && dur > 0) {
-      sum += dur;
-      count += 1;
-    }
-  }
-  return count > 0 ? Math.round(sum / count) : 0;
-}
-
-/**
- * 紧凑的人性化时长文案（“12s”、“2m 04s”、“1h 30m”）。分档内的秒数补零，
- * 让列表视觉对齐。
+ * Compact human-readable duration ("12s", "2m 04s", "1h 30m"). Pads the
+ * seconds inside the minute formatter so the column stays visually
+ * aligned across rows.
  */
 export function formatDurationMs(ms: number): string {
   if (ms <= 0) return "—";

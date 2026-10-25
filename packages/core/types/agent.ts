@@ -266,6 +266,13 @@ export interface AgentActivityBucket {
   task_count: number;
   /** 当天失败的任务数（是 task_count 的子集）。 */
   failed_count: number;
+  // task_count = completed_count + failed_count + cancelled_count; the
+  // back-end always reports all three.
+  completed_count: number;
+  cancelled_count: number;
+  // Absent on older servers; do not estimate duration from a task page.
+  duration_ms?: number;
+  duration_count?: number;
 }
 
 /** 单个 agent 近 30 天累计运行次数，驱动 Agents 列表的 RUNS 列。 */

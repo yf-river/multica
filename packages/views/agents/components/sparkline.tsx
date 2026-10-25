@@ -5,6 +5,7 @@
 interface ActivityBucketLike {
   total: number;
   failed: number;
+  completed: number;
 }
 
 interface SparklineProps {
@@ -23,6 +24,7 @@ interface SparklineProps {
 const SUCCESS_FILL = "var(--color-brand)";
 const SUCCESS_OPACITY = 0.6;
 const FAILED_FILL = "var(--color-destructive)";
+const NEUTRAL_FILL = "var(--color-muted-foreground)";
 const BASELINE_FILL = "var(--color-muted-foreground)";
 const BASELINE_OPACITY = 0.25;
 
@@ -112,17 +114,37 @@ export function Sparkline({
                 Math.max(1, Math.round((usableH * b.failed) / scaleDenominator)),
               )
             : 0;
-        const successH = totalH - failedH;
+        // Only completed runs earn a success segment. Whatever is left over
+        // — cancellations — is neither success nor failure, so it reads
+        // neutral rather than inflating the brand-coloured share.
+        const completedH =
+          b.completed > 0
+            ? Math.min(
+                totalH - failedH,
+                Math.max(1, Math.round((usableH * b.completed) / scaleDenominator)),
+              )
+            : 0;
+        const neutralH = totalH - failedH - completedH;
         const colTop = baselineY - totalH;
         return (
           <g key={i}>
-            {successH > 0 && (
+            {completedH > 0 && (
+              <rect
+                x={x}
+                y={colTop + failedH + neutralH}
+                width={colWidth}
+                height={completedH}
+                fill={SUCCESS_FILL}
+                fillOpacity={SUCCESS_OPACITY}
+              />
+            )}
+            {neutralH > 0 && (
               <rect
                 x={x}
                 y={colTop + failedH}
                 width={colWidth}
-                height={successH}
-                fill={SUCCESS_FILL}
+                height={neutralH}
+                fill={NEUTRAL_FILL}
                 fillOpacity={SUCCESS_OPACITY}
               />
             )}

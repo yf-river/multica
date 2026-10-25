@@ -501,6 +501,8 @@ type TaskMessageData struct {
 	Content string         `json:"content,omitempty"`
 	Input   map[string]any `json:"input,omitempty"`
 	Output  string         `json:"output,omitempty"`
+	// Daemon 观察到事件的时间，早于批量上报。
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ReportTaskMessages 批量上报任务执行过程中的消息。

@@ -698,7 +698,7 @@
       "show_more": "Show more →",
       "runs_other": "runs",
       "success_pct": "{{percent}}% success",
-      "success_label": "succeeded",
+      "success_label": "success rate",
       "avg_duration": "avg {{value}}",
       "avg_duration_label": "average duration",
       "failed_count": "{{count}} failed",
@@ -724,7 +724,10 @@
       "dispatched_prefix": "Dispatched {{when}}",
       "queued_prefix": "Queued {{when}}",
       "subtitle_active_one": "{{count}} active task",
-      "runs_one": "run"
+      "runs_one": "run",
+      "success_hint": "Completed runs divided by completed and failed runs. Cancelled runs are excluded.",
+      "success_unavailable": "No completed or failed runs in this period, so there is no success rate to show.",
+      "cancelled_count": "{{count}} cancelled"
     },
     "runtime_config": {}
   },
@@ -876,7 +879,8 @@
     "outcome_files_one": "{{count}} file",
     "outcome_commands_one": "{{count}} command",
     "group_calls_one": "{{count}} call",
-    "steps_count_one": "{{count}} step"
+    "steps_count_one": "{{count}} step",
+    "step_duration_unknown": "Exact duration is unavailable."
   },
   "task_failure": {
     "cancelled_by_system": "Cancelled by the system",

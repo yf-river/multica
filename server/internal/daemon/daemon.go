@@ -8207,6 +8207,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var mu sync.Mutex
 		var pendingText strings.Builder
 		var pendingThinking strings.Builder
+		var pendingTextAt time.Time
+		var pendingThinkingAt time.Time
 		var batch []TaskMessageData
 		callIDToTool := map[string]string{}
 		callIDStartedAt := map[string]time.Time{}
@@ -8218,20 +8220,24 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			if pendingThinking.Len() > 0 {
 				s := msgSeq.Add(1)
 				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "thinking",
-					Content: pendingThinking.String(),
+					Seq:       int(s),
+					Type:      "thinking",
+					Content:   pendingThinking.String(),
+					CreatedAt: pendingThinkingAt,
 				})
 				pendingThinking.Reset()
+				pendingThinkingAt = time.Time{}
 			}
 			if pendingText.Len() > 0 {
 				s := msgSeq.Add(1)
 				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "text",
-					Content: pendingText.String(),
+					Seq:       int(s),
+					Type:      "text",
+					Content:   pendingText.String(),
+					CreatedAt: pendingTextAt,
 				})
 				pendingText.Reset()
+				pendingTextAt = time.Time{}
 			}
 			toSend := batch
 			batch = nil
@@ -8280,7 +8286,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				// 消息一落地就盖活动时间戳。空闲看门狗读它判断 backend 是否静默——
 				// 在处理前盖戳，保证慢的下游调用（mu.Lock 争用、batch 扩容）不会被
 				// 误判成 backend 静默。
-				lastActivityAt.Store(time.Now().UnixNano())
+				observedAt := time.Now().UTC()
+				lastActivityAt.Store(observedAt.UnixNano())
 				if firstEventLogged.CompareAndSwap(false, true) {
 					taskLog.Info("backend first event",
 						"first_event_duration", time.Since(backendStartedAt).Round(time.Millisecond),
@@ -8328,14 +8335,19 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					s := msgSeq.Add(1)
 					mu.Lock()
 					batch = append(batch, TaskMessageData{
-						Seq:  int(s),
-						Type: "tool_use",
-						Tool: msg.Tool,
-						// 载荷在离开本进程之前就脱敏，而不仅仅在到达时。服务器在其 ingest
-						// 处理器里会再次脱敏，但那是*远端*：一个比服务器先自更新的 daemon
-						// ——或正对多轮 rollout 中服务器说话的 daemon——会把整文件编辑内容
-						// （删掉的 .env、打过补丁的凭据）发给还没深脱敏嵌套值的对端。
-						// 部署顺序不是我们能控制的，因此这一侧必须自己安全。
+						Seq:       int(s),
+						Type:      "tool_use",
+						Tool:      msg.Tool,
+						CreatedAt: observedAt,
+						// Redact before the payload leaves this process, not
+						// only on arrival. The server redacts again in its
+						// ingest handler, but that is the *remote* side: a
+						// daemon that self-updated ahead of the server — or one
+						// talking to a server mid-rollout — would otherwise ship
+						// whole-file edit contents (a deleted .env, a patched
+						// credential) to a peer that does not scrub nested
+						// values yet. Deployment order is not a control we
+						// have, so this side has to be safe on its own.
 						Input: redact.InputMap(msg.Input),
 					})
 					mu.Unlock()
@@ -8374,16 +8386,20 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					taskLog.Info("tool_result observed", "seq", s, "tool", toolName, "call_id", msg.CallID)
 					mu.Lock()
 					batch = append(batch, TaskMessageData{
-						Seq:    int(s),
-						Type:   "tool_result",
-						Tool:   toolName,
-						Output: output,
+						Seq:       int(s),
+						Type:      "tool_result",
+						Tool:      toolName,
+						Output:    output,
+						CreatedAt: observedAt,
 					})
 					mu.Unlock()
 				case agent.MessageThinking:
 					if msg.Content != "" {
 						mu.Lock()
 						pendingThinking.WriteString(msg.Content)
+						if pendingThinkingAt.IsZero() {
+							pendingThinkingAt = observedAt
+						}
 						mu.Unlock()
 					}
 				case agent.MessageText:
@@ -8391,6 +8407,9 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
 						mu.Lock()
 						pendingText.WriteString(msg.Content)
+						if pendingTextAt.IsZero() {
+							pendingTextAt = observedAt
+						}
 						mu.Unlock()
 					}
 				case agent.MessageError:
@@ -8398,9 +8417,10 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					s := msgSeq.Add(1)
 					mu.Lock()
 					batch = append(batch, TaskMessageData{
-						Seq:     int(s),
-						Type:    "error",
-						Content: msg.Content,
+						Seq:       int(s),
+						Type:      "error",
+						Content:   msg.Content,
+						CreatedAt: observedAt,
 					})
 					mu.Unlock()
 				}
