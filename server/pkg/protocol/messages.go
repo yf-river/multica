@@ -178,6 +178,7 @@ type TaskMessagePayload struct {
 	Input           map[string]any `json:"input,omitempty"`   // 工具入参（仅 tool_use）
 	Output          string         `json:"output,omitempty"`  // 工具输出（仅 tool_result）
 	CreatedAt       string         `json:"created_at,omitempty"`
+	CallID          string         `json:"call_id,omitempty"` // 单次执行内的工具调用标识
 }
 
 // DaemonRegisterPayload 是 daemon 连接建立时发给 server 的注册消息。

@@ -1,6 +1,6 @@
 -- name: CreateTaskMessage :one
-INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, call_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: CreateTaskMessages :many
@@ -54,12 +54,13 @@ WITH incoming AS (
         unnest(sqlc.arg('seqs')::int4[]) AS seq,
         unnest(sqlc.arg('types')::text[]) AS type,
         unnest(sqlc.arg('tools')::text[]) AS tool,
+        unnest(sqlc.arg('call_ids')::text[]) AS call_id,
         unnest(sqlc.arg('contents')::text[]) AS content,
         unnest(sqlc.arg('inputs')::text[]) AS input,
         unnest(sqlc.arg('outputs')::text[]) AS output,
         unnest(sqlc.arg('created_ats')::text[]) AS created_at
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, call_id)
     SELECT
         m.id,
         sqlc.arg('task_id')::uuid,
@@ -69,7 +70,8 @@ WITH incoming AS (
         NULLIF(m.content, ''),
         NULLIF(m.input, '')::jsonb,
         NULLIF(m.output, ''),
-        COALESCE(NULLIF(m.created_at, '')::timestamptz, now())
+        COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
+        NULLIF(m.call_id, '')
     FROM incoming AS m
     RETURNING *
 )

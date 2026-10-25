@@ -13,6 +13,7 @@ import { redactSecrets } from "./redact";
 export interface TimelineItem {
   id?: string;
   taskId?: string;
+  callId?: string;
   outputChars?: number;
   outputTruncated?: boolean;
   /** 全局递增序号，用于排序（不同来源的消息共用同一把序号）。 */
@@ -102,6 +103,7 @@ export function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
       seq: msg.seq,
       type: msg.type,
       tool: msg.tool,
+      callId: msg.call_id,
       content: msg.content,
       input: msg.input,
       output: msg.output,

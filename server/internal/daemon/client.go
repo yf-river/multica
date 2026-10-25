@@ -496,6 +496,8 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData 表示批量上报中的一条 agent 执行消息。
 type TaskMessageData struct {
+	// CallID is an opaque tool-call identity scoped to one backend execution.
+	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
 	Type    string         `json:"type"`
 	Tool    string         `json:"tool,omitempty"`

@@ -322,6 +322,8 @@ export interface TaskMessagePayload {
   id?: string;
   output_chars?: number;
   output_truncated?: boolean;
+  /** 单次执行内的工具调用标识。 */
+  call_id?: string;
   task_id: string;
   issue_id: string;
   chat_session_id?: string;

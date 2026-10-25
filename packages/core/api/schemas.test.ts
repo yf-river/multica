@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
+  TaskMessagePayloadSchema,
   WecomInstallationSchema,
   ListWecomInstallationsResponseSchema,
   RedeemWecomBindingTokenResponseSchema,
@@ -2208,4 +2209,13 @@ describe("AgentActivityBucketListSchema duration", () => {
     expect(parsed[0]?.duration_ms).toBeUndefined();
     expect(parsed[0]?.duration_count).toBeUndefined();
   });
+});
+
+describe("tool call identity compatibility", () => {
+ it("preserves valid identity and keeps legacy or malformed optional values readable", () => {
+  const base={task_id:"task-1",seq:1,type:"tool_result",output:"ok"};
+  const rows=TaskMessagePayloadSchema.array().parse(["execution:A",undefined,null,42,{}].map(call_id=>({...base,call_id})));
+  expect(rows.map(row=>row.call_id)).toEqual(["execution:A",undefined,undefined,undefined,undefined]);
+  expect(rows.every(row=>row.output==="ok")).toBe(true);
+ });
 });

@@ -35,6 +35,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
@@ -8368,6 +8370,21 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var batch []TaskMessageData
 		callIDToTool := map[string]string{}
 		callIDStartedAt := map[string]time.Time{}
+		// Provider IDs can restart on a same-task retry (for example item_0).
+		// Allocate opaque transcript IDs per execution, including orphan results,
+		// so neither a retry nor a missing call can steal another call's result.
+		transcriptCallIDs := map[string]string{}
+		transcriptCallID := func(providerID string) string {
+			if providerID == "" {
+				return ""
+			}
+			if id, ok := transcriptCallIDs[providerID]; ok {
+				return id
+			}
+			id := uuid.NewString()
+			transcriptCallIDs[providerID] = id
+			return id
+		}
 
 		flush := func() {
 			// 把积累的 thinking/text 与工具消息按序打包上报；失败只记 debug 日志，
@@ -8499,6 +8516,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "tool_use",
+						CallID:    transcriptCallID(msg.CallID),
 						Tool:      msg.Tool,
 						CreatedAt: observedAt,
 						// Redact before the payload leaves this process, not
@@ -8550,6 +8568,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					batch = append(batch, TaskMessageData{
 						Seq:       int(s),
 						Type:      "tool_result",
+						CallID:    transcriptCallID(msg.CallID),
 						Tool:      toolName,
 						Output:    output,
 						CreatedAt: observedAt,
