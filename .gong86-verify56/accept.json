@@ -1,0 +1,36 @@
+{
+  "revision": 3,
+  "candidate_id": "56e6c5ea30b660805b6079604af5d29647f58d77-1792910529284684621",
+  "evidence": [
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-4b71f016c788/worktree/.gong86-verify56/REPORT.md；完整必验组尚未通过，见局部实测与阻塞。"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-4b71f016c788/worktree/.gong86-verify56/REPORT.md；完整必验组尚未通过，见局部实测与阻塞。"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-4b71f016c788/worktree/.gong86-verify56/REPORT.md；完整必验组尚未通过，见局部实测与阻塞。"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-4b71f016c788/worktree/.gong86-verify56/REPORT.md；完整必验组尚未通过，见局部实测与阻塞。"
+    },
+    {
+      "name": "JSON监督组合修复及真实模型、技能内联、MCP调用",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-4b71f016c788/worktree/.gong86-verify56/REPORT.md；subject-final.json、supervisor-messages.json、loaded-skill.json。"
+    },
+    {
+      "name": "Codex本地材料8页及浏览器登录刷新",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-4b71f016c788/worktree/.gong86-verify56/REPORT.md；material-pages.json、browser.log及截图；仅局部范围。"
+    }
+  ]
+}
