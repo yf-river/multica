@@ -641,12 +641,6 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]string{
-			"id":       "",
-			"url":      link,
-			"filename": header.Filename,
-		})
-		return
 	}
 
 	// 没有 workspace 上下文（例如头像上传）——直接上传，返回裸地址。
