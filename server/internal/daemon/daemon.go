@@ -228,8 +228,9 @@ type terminalTaskReport struct {
 	retiredSessionID string
 }
 
-// executionEnvironmentCommand 返回拉起执行环境助手进程的命令。这个助手进程是
-// 可被整体杀死的执行单元，daemon 通过它实现 Prepare/Reuse 的隔离。
+type terminalReportSendFunc func(context.Context, terminalTaskReport, []time.Duration) error
+
+// executionEnvironmentCommand 用于启动可整体终止的执行环境助手进程。
 type executionEnvironmentCommand func() ([]string, error)
 
 func defaultExecutionEnvironmentCommand() ([]string, error) {
@@ -370,6 +371,16 @@ type Daemon struct {
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
 	logger     *slog.Logger
+
+	// terminalReports is the durable outbox for complete/fail callbacks. The
+	// sender hook is production-wired through Client and overridable in focused
+	// tests; terminalReportWakeup coalesces new-report and reconnect nudges.
+	terminalReports      *terminalReportStore
+	terminalReportSend   terminalReportSendFunc
+	terminalReportWakeup chan struct{}
+	terminalReportNow    func() time.Time
+	terminalReportMu     sync.Mutex
+	terminalReportFlight map[string]struct{}
 
 	mu           sync.Mutex
 	workspaces   map[string]*workspaceState
@@ -606,6 +617,10 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		repoCache:                 repocache.New(cacheRoot, logger),
 		skillCache:                NewSkillBundleCache(skillCacheRoot),
 		logger:                    logger,
+		terminalReports:           newTerminalReportStore(cfg),
+		terminalReportWakeup:      make(chan struct{}, 1),
+		terminalReportNow:         time.Now,
+		terminalReportFlight:      make(map[string]struct{}),
 		workspaces:                make(map[string]*workspaceState),
 		runtimeIndex:              make(map[string]Runtime),
 		profileLaunchSpecs:        make(map[string]profileLaunchSpec),
@@ -1873,6 +1888,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// 启动 workspace 同步循环，发现新建的工作区。
 	go d.workspaceSyncLoop(ctx)
+	go d.terminalReportReplayLoop(ctx)
 
 	// 发现启动之后新安装的 agent CLI（MUL-5439）。与 workspace 同步循环分开，
 	// 因为后者跑在 30 分钟的一致性间隔上——对"装个 CLI 就出现在 Runtimes 里"
@@ -1891,7 +1907,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// 的就绪等待所阻塞的信号，因此只有在启动真正完成后才上报成功，而不是因为
 	// 健康端口起来了就上报。
 	d.ready.Store(true)
-	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
+	d.logger.Debug("background loops launched (workspace-sync, terminal-report-replay, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
 	return err
@@ -5407,39 +5423,11 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		if err == nil {
 			return
 		}
-		// CompleteTask 内部会重试瞬态错误。能到我们这里的瞬态错误，说明排期在上游
-		// 仍然 5xx / 不可达时被耗尽。把它转成 fail 会丢掉 agent 的真实结果、并在 UI
-		// 上浮出一个误导性的红标——不如让任务保持 running，等将来的修复（服务器侧
-		// 卡死任务收割器，或 daemon 侧的持久化 pending 队列）来恢复它。只有服务器侧
-		// 的永久拒绝（408/429 之外的 4xx）才值得走旧的兜底，因为到那一步服务器已经
-		// 拒过这个任务，唯一有用的 UI 信号就剩下一个明确的失败。
-		if isTransientError(err) {
-			taskLog.Error("complete task failed after retries; leaving task in running rather than falling back to fail", "error", err)
-			return
-		}
-		taskLog.Error("complete task rejected by server, falling back to fail", "error", err)
-		// MUL-2946：这个兜底在"服务器侧 complete 回调被永久拒绝（408/429 之外的
-		// 4xx）"时触发——agent 本身成功了，所以这里的 err 描述的是服务器响应而不是
-		// agent 失败。分类器不太可能命中服务器错误文本里的任何东西，会落在
-		// ReasonAgentUnknown（"agent_error.unknown"）——它正是旧 "agent_error" 粗
-		// 桶的规范替代。
-		fallbackErrMsg := fmt.Sprintf("complete task failed: %s", err.Error())
-		if failErr := d.reportTerminalTask(ctx, terminalTaskReport{
-			kind:         terminalTaskReportFail,
-			taskID:       taskID,
-			errorMessage: fallbackErrMsg,
-			// agent 在这里是成功的——只是服务器侧的 complete 回调被拒。它的分支是
-			// 真实且已提交的，所以它必须熬过这次降级成失败上报。
-			branchName:            result.BranchName,
-			sessionID:             result.SessionID,
-			workDir:               result.WorkDir,
-			durableWorkDir:        result.DurableWorkDir,
-			failureReason:         taskfailure.Classify(fallbackErrMsg).String(),
-			sessionRolloutMissing: result.SessionRolloutMissing,
-			retiredSessionID:      result.RetiredSessionID,
-		}); failErr != nil {
-			taskLog.Error("fail task fallback also failed", "error", failErr)
-		}
+		// The original completion is already durable. Never overwrite it with a
+		// synthetic failure: a temporary auth/config skew can make a 4xx recover
+		// after restart just as a transport outage can make a 5xx recover, and the
+		// user's successful output must remain authoritative in both cases.
+		taskLog.Error("complete task callback not acknowledged; durable report remains queued", "error", err)
 	default:
 		failureReason := result.FailureReason
 		if failureReason == "" {
@@ -5481,14 +5469,90 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 // context，但终态回调仍要使用剩下的窗口。显式超时让这份"脱离主体"的工作在正常
 // 运行期间保持有界。
 func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTaskReport) error {
+	if _, err := persistedTerminalReport(report, time.Now()); err != nil {
+		return err
+	}
+	release, ok := d.beginTerminalReportDelivery(report.taskID)
+	if !ok {
+		return fmt.Errorf("terminal task report for %s is already being delivered", report.taskID)
+	}
+	defer release()
+
+	persisted := false
+	if d.terminalReports != nil {
+		if err := d.terminalReports.enqueue(report); err != nil {
+			// Durability is an availability improvement, not a prerequisite for
+			// the online callback. A read-only/full disk must not turn a request
+			// that the server could accept right now into a stuck task.
+			d.logger.Error("persist terminal task report; continuing with direct delivery",
+				"task", report.taskID,
+				"kind", report.kind,
+				"error", err,
+			)
+		} else {
+			persisted = true
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), terminalTaskReportTimeout)
 	defer cancel()
+	err := d.sendTerminalTaskReport(ctx, report, defaultTerminalRetrySchedule)
+	if err != nil {
+		quarantined := false
+		if persisted {
+			item := pendingTerminalTaskReport{fileName: terminalReportFileName(report.taskID), report: report}
+			quarantined = d.handleTerminalReportDeliveryError(ctx, item, err)
+		}
+		if persisted && !quarantined {
+			d.signalTerminalReportReplay()
+		}
+		return err
+	}
+	if !persisted {
+		return nil
+	}
+	item := pendingTerminalTaskReport{fileName: terminalReportFileName(report.taskID), report: report}
+	if err := d.terminalReports.acknowledge(item); err != nil {
+		d.signalTerminalReportReplay()
+		return fmt.Errorf("acknowledge terminal task report: %w", err)
+	}
+	return nil
+}
 
+func (d *Daemon) beginTerminalReportDelivery(taskID string) (func(), bool) {
+	d.terminalReportMu.Lock()
+	if d.terminalReportFlight == nil {
+		d.terminalReportFlight = make(map[string]struct{})
+	}
+	if _, exists := d.terminalReportFlight[taskID]; exists {
+		d.terminalReportMu.Unlock()
+		return nil, false
+	}
+	d.terminalReportFlight[taskID] = struct{}{}
+	d.terminalReportMu.Unlock()
+	return func() {
+		d.terminalReportMu.Lock()
+		delete(d.terminalReportFlight, taskID)
+		d.terminalReportMu.Unlock()
+	}, true
+}
+
+func (d *Daemon) terminalReportClock() time.Time {
+	if d.terminalReportNow != nil {
+		return d.terminalReportNow()
+	}
+	return time.Now()
+}
+
+func (d *Daemon) sendTerminalTaskReport(ctx context.Context, report terminalTaskReport, schedule []time.Duration) error {
+	if d.terminalReportSend != nil {
+		return d.terminalReportSend(ctx, report, schedule)
+	}
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff)
+		return d.client.completeTaskWithRetrySchedule(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff, schedule)
 	case terminalTaskReportFail:
-		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff)
+		return d.client.failTaskWithRetrySchedule(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff, schedule)
 	default:
 		return fmt.Errorf("unsupported terminal task report kind %d", report.kind)
 	}

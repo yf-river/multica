@@ -270,7 +270,7 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 	clientID := os.Getenv("GOOGLE_CLIENT_ID")
 	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	if clientID == "" || clientSecret == "" {
-		writeError(w, http.StatusServiceUnavailable, "Google login is not configured")
+		writeFeatureDisabled(w, "google_login_not_configured", "Google login is not configured")
 		return
 	}
 

@@ -92,7 +92,7 @@ type RegisterTelegramRequest struct {
 // agent 安装用户提供的 Telegram bot。路由层限定 admin。镜像 RegisterSlackBYO。
 func (h *Handler) RegisterTelegramBot(w http.ResponseWriter, r *http.Request) {
 	if h.TelegramInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "telegram integration not enabled")
+		writeFeatureDisabled(w, "telegram_not_configured", "telegram integration not enabled")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -169,7 +169,7 @@ func (h *Handler) RegisterTelegramBot(w http.ResponseWriter, r *http.Request) {
 // 安装（再次粘 bot token）会把状态翻回 'active'。
 func (h *Handler) RevokeTelegramInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.TelegramInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "telegram integration not configured")
+		writeFeatureDisabled(w, "telegram_not_configured", "telegram integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -220,7 +220,7 @@ type RedeemTelegramBindingTokenResponse struct {
 // 状态码镜像 Slack 的赎回 handler。
 func (h *Handler) RedeemTelegramBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.TelegramBindingTokens == nil {
-		writeError(w, http.StatusServiceUnavailable, "telegram integration not configured")
+		writeFeatureDisabled(w, "telegram_not_configured", "telegram integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)

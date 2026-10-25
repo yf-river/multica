@@ -4268,6 +4268,15 @@ func startsWithAbsolutePath(s string) bool {
 // 陈旧（或 NULL）会话恢复”的竞态。durableWorkDir 是终态投递元数据而非恢复指针：仅在 daemon 确认一次性
 // worktree 已删除后才会填充。
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, error) {
+	task, _, err := s.CompleteTaskWithTransition(ctx, taskID, result, sessionID, workDir, branchName, sessionRolloutMissing, retiredSessionID, durableWorkDir)
+	return task, err
+}
+
+// CompleteTaskWithTransition reports whether this call won the running ->
+// completed compare-and-swap. Callers with transaction-external side effects
+// must only run them when transitioned is true; a replay against an already
+// terminal task is still an idempotent success but must not emit them again.
+func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir, branchName string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, bool, error) {
 	// Life 后台任务只有在 life_job_complete 校验并持久化其结构化领域输出后才算完成。daemon 在 agent 进程退出后
 	// 仍会发普通终态回调；此处拒绝这第二次完成，并把任务原子地交回其自身重试生命周期，避免队列行与认知行分叉。
 	if current, err := s.Queries.GetAgentTask(ctx, taskID); err == nil {
@@ -4276,9 +4285,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				ErrLifeStructuredOutputRequired.Error(),
 				string(taskfailure.ReasonAgentEmptyOrUnparseableOutput))
 			if failErr != nil {
-				return nil, failErr
+				return nil, false, failErr
 			}
-			return failed, ErrLifeStructuredOutputRequired
+			return failed, false, ErrLifeStructuredOutputRequired
 		}
 	}
 
@@ -4378,7 +4387,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 					"current_status", existing.Status,
 					"agent_id", util.UUIDToString(existing.AgentID),
 				)
-				return &existing, nil
+				return &existing, false, nil
 			}
 			slog.Warn("complete task failed",
 				"task_id", util.UUIDToString(taskID),
@@ -4394,7 +4403,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				"lookup_error", lookupErr,
 			)
 		}
-		return nil, fmt.Errorf("complete task: %w", err)
+		return nil, false, fmt.Errorf("complete task: %w", err)
 	}
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
@@ -4446,7 +4455,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
 	}
 
-	return &task, nil
+	return &task, true, nil
 }
 
 // CompleteLifeTaskInTx 用调用方持有的事务收尾一个后台 Life 认知任务。Life 输出与任务终态事件必须一起提交；
@@ -4645,9 +4654,19 @@ func (s *TaskService) observeChatOutputLocalPath(task db.AgentTaskQueue, body st
 // taskfailure.Classify，使持久化的 failure_reason 落在规范的精分类体系，而不是 legacy 的 "agent_error" 粗桶。
 // daemon 调用方已产出精化原因时（classifyPoisonedError、超时/runtime 分类器等），其值会被原样保留。
 func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, error) {
-	// 在任何东西读到 errMsg 之前，先剥掉 PostgreSQL 无法存储的字节，让分类器、事务与所有下游消费方看到的都是
-	// 我们将实际持久化的那份文本（GH #7098）。放在服务边界而非仅 /fail handler，是因为 failClaimedTaskBefore
-	// Launch 不经请求解码也能到达 FailTask。
+	task, _, err := s.FailTaskWithTransition(ctx, taskID, errMsg, sessionID, workDir, branchName, failureReason, sessionRolloutMissing, retiredSessionID, durableWorkDir)
+	return task, err
+}
+
+// FailTaskWithTransition is the failure counterpart to
+// CompleteTaskWithTransition. The bool is false for an idempotent replay that
+// observed an already-terminal row.
+func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) (*db.AgentTaskQueue, bool, error) {
+	// Strip bytes PostgreSQL cannot store before anything else reads errMsg, so
+	// the classifier, the transaction and every downstream consumer see the one
+	// text we will actually persist (GH #7098). Kept at the service boundary
+	// rather than only in the /fail handler because failClaimedTaskBeforeLaunch
+	// reaches FailTask without going through request decoding.
 	errMsg = util.SanitizeTextForPostgres(errMsg)
 
 	// MUL-2946：调用方未给原因时，从错误文本综合出精化原因。这是防止 "agent_error" 粗行进入
@@ -4667,7 +4686,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// 运行到调和器发现为止。改为在单个事务里同时收尾两行。
 	if current, err := s.Queries.GetAgentTask(ctx, taskID); err == nil {
 		if _, governed := lifeTaskEnvelopeForQueue(current); governed && lifeTaskActive(current.Status) {
-			return s.failLifeCognitionTask(ctx, taskID, errMsg, failureReason)
+			return s.failLifeCognitionTaskWithTransition(ctx, taskID, errMsg, failureReason)
 		}
 	}
 
@@ -4907,7 +4926,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 					"current_status", existing.Status,
 					"agent_id", util.UUIDToString(existing.AgentID),
 				)
-				return &existing, nil
+				return &existing, false, nil
 			}
 			slog.Warn("fail task failed",
 				"task_id", util.UUIDToString(taskID),
@@ -4923,7 +4942,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				"lookup_error", lookupErr,
 			)
 		}
-		return nil, fmt.Errorf("fail task: %w", err)
+		return nil, false, fmt.Errorf("fail task: %w", err)
 	}
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
@@ -5004,7 +5023,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		s.broadcastTaskFailedEvent(ctx, task, errMsg, failureReason, retried != nil)
 	}
 
-	return &task, nil
+	return &task, true, nil
 }
 
 // retryableReasons 枚举自动重试路径允许处理的失败原因。agent 侧错误（编译失败、模型拒绝等）被刻意排除——

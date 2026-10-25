@@ -34,9 +34,26 @@ var (
 	httpCapacityCodeRe = regexp.MustCompile(`(^|[^0-9a-z])(429|529)([^0-9a-z]|$)`)
 )
 
-// Classify 把来自 agent runtime / CLI 的自由文本错误映射到 14 个
-// agent_error.* 子原因之一。永远返回一个合法 Reason；没有任何规则命中或输入
-// 为空时回落到 ReasonAgentUnknown。
+// concurrentRequestLimitWitness is emitted by Anthropic-compatible providers
+// that use HTTP 403 for a transient concurrency rejection. Claude Code may
+// prefix it with an authentication or access-token failure, but credentials
+// remain valid and a later request can succeed. Match the semantic witness
+// before both token-window and generic auth rules so the persisted reason and
+// member-facing recovery guidance describe the actual failure.
+const concurrentRequestLimitWitness = "concurrent request limit"
+
+var httpForbiddenCodeRe = regexp.MustCompile(`(^|[^0-9])403([^0-9]|$)`)
+
+// isUsageLimit403 is shared by Classify and NormalizeDaemonReason so new and
+// old daemons land on the same reason.
+func isUsageLimit403(lower string) bool {
+	return httpForbiddenCodeRe.MatchString(lower) && strings.Contains(lower, "usage limit")
+}
+
+// Classify maps a free-form error string from the agent runtime / CLI
+// to one of the 14 agent_error.* sub-reasons. Always returns a valid
+// Reason; falls back to ReasonAgentUnknown when no rule matches and for
+// empty input.
 //
 // 规则顺序镜像 MUL-1949 的 SQL CASE 表达式（db-boy 的离线回填查询）。SQL 才是
 // 事实来源：两者一旦分叉，错的是这个 Go 分类器，应改它对齐。保持两者同步是
@@ -61,8 +78,22 @@ func Classify(rawError string) Reason {
 	lower := strings.ToLower(trimmed)
 
 	switch {
-	// 1. 上下文 / token 窗口溢出。提前检查，免得 "token limit" 被下面更宽泛
-	//    的 "limit" / "quota" 规则吞掉。
+	// A concurrent-request rejection can contain both "access token" and HTTP
+	// 403. Its specific semantic witness must beat the broader context and auth
+	// rules below; this classification does not itself make the reason retryable.
+	case strings.Contains(lower, concurrentRequestLimitWitness):
+		return ReasonAgentProviderCapacityOrRateLimit
+
+	// Some providers (e.g. Kimi Code) report an exhausted usage window as HTTP
+	// 403, and Claude Code may prefix it with an access-token failure. It must
+	// beat both the token-window rule (the text has "token" and "limit") and
+	// the bare 403 auth rule, or valid credentials get blamed.
+	case isUsageLimit403(lower):
+		return ReasonAgentProviderQuotaLimit
+
+	// 1. Context / token window overflow. Checked early so "token
+	//    limit" doesn't get swallowed by the broader "limit" / "quota"
+	//    rule below.
 	case containsAny(lower,
 		"context length",
 		"context_length_exceeded",
@@ -370,8 +401,30 @@ var legacyOpencodeStreamEndedReasons = map[string]bool{
 	"agent_error":                     true,
 }
 
-// NormalizeDaemonReason 把老版本 daemon 上报的 failure_reason 升级到本 server
-// 理解的分类体系上，用原始错误文本作证人。没有任何规则适用时原样返回原因。
+// legacyConcurrentRequestLimitReasons are the stale buckets emitted by daemons
+// whose classifiers let a generic token/context or HTTP 403 rule win over this
+// more specific wire shape. The raw witness keeps the upgrade narrow; unrelated
+// context overflows and authentication failures retain their original reason.
+var legacyConcurrentRequestLimitReasons = map[string]bool{
+	string(ReasonAgentContextOverflow):      true,
+	string(ReasonAgentProviderAuthOrAccess): true,
+	string(ReasonAgentUnknown):              true,
+	"agent_error":                           true,
+}
+
+// legacyUsageLimit403Reasons are the stale buckets an older daemon lands a
+// 403 usage-limit rejection in: the bare 403 auth rule, the token-window rule
+// when an access-token prefix is present, or the catchalls.
+var legacyUsageLimit403Reasons = map[string]bool{
+	string(ReasonAgentContextOverflow):      true,
+	string(ReasonAgentProviderAuthOrAccess): true,
+	string(ReasonAgentUnknown):              true,
+	"agent_error":                           true,
+}
+
+// NormalizeDaemonReason upgrades a failure_reason reported by an older daemon
+// onto the taxonomy this server understands, using the raw error text as the
+// witness. It returns the reason unchanged when nothing applies.
 //
 // 为什么存在（MUL-5370）：已安装的 daemon 按自己的节奏升级，所以一个只在
 // daemon 侧正确贴标签的修复，要等每台主机都更新才有人受益。daemon 上报了
@@ -382,6 +435,13 @@ var legacyOpencodeStreamEndedReasons = map[string]bool{
 // 这是边界兼容垫片，不是内部兜底逻辑：每条规则一旦等不到还能产出那种线形态
 // 的老 daemon 在报，就可以删除。
 func NormalizeDaemonReason(reason, rawError string) Reason {
+	if legacyConcurrentRequestLimitReasons[reason] &&
+		strings.Contains(strings.ToLower(rawError), concurrentRequestLimitWitness) {
+		return ReasonAgentProviderCapacityOrRateLimit
+	}
+	if legacyUsageLimit403Reasons[reason] && isUsageLimit403(strings.ToLower(rawError)) {
+		return ReasonAgentProviderQuotaLimit
+	}
 	if legacySkillBundleReasons[reason] &&
 		strings.HasPrefix(strings.TrimSpace(rawError), legacySkillBundlePrefix) {
 		return ReasonSkillBundleUnavailable

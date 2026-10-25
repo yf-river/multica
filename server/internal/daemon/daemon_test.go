@@ -4468,10 +4468,10 @@ func TestReportTaskResult_TransientCompleteExhaustedDoesNotFallback(t *testing.T
 	}
 }
 
-// On permanent 4xx from /complete (e.g. 400 bad body, 404 task not found)
-// the helper bails immediately and the daemon falls back to /fail so the
-// UI shows a concrete failure rather than a perpetually-running task.
-func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
+// A permanent response can become recoverable after a daemon/server upgrade
+// or credential refresh. Preserve the successful result instead of replacing
+// it with a synthetic failure payload.
+func TestReportTaskResult_PermanentCompleteDoesNotReplaceOriginal(t *testing.T) {
 	defer noSleepRetry(t)()
 
 	var completeCalls, failCalls atomic.Int32
@@ -4498,12 +4498,12 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 	if got := completeCalls.Load(); got != 1 {
 		t.Fatalf("permanent 400 should not retry, got %d complete attempts", got)
 	}
-	if got := failCalls.Load(); got != 1 {
-		t.Fatalf("permanent /complete should fall back to /fail exactly once, got %d", got)
+	if got := failCalls.Load(); got != 0 {
+		t.Fatalf("permanent /complete must not replace the original with /fail, got %d calls", got)
 	}
 }
 
-func TestReportTaskResult_CancelledParentStillRunsPermanentFailureFallback(t *testing.T) {
+func TestReportTaskResult_CancelledParentStillPreservesPermanentCompletion(t *testing.T) {
 	defer noSleepRetry(t)()
 
 	var completeCalls, failCalls atomic.Int32
@@ -4533,8 +4533,8 @@ func TestReportTaskResult_CancelledParentStillRunsPermanentFailureFallback(t *te
 	if got := completeCalls.Load(); got != 1 {
 		t.Fatalf("complete calls = %d, want 1", got)
 	}
-	if got := failCalls.Load(); got != 1 {
-		t.Fatalf("fallback fail calls = %d, want 1", got)
+	if got := failCalls.Load(); got != 0 {
+		t.Fatalf("fallback fail calls = %d, want 0", got)
 	}
 }
 

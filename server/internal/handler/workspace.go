@@ -307,7 +307,8 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "workspace slug already exists")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to create workspace: "+err.Error())
+		slog.Warn("create workspace failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to create workspace")
 		return
 	}
 
@@ -317,14 +318,16 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		Role:        "owner",
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add owner: "+err.Error())
+		slog.Warn("add owner failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to add owner")
 		return
 	}
 
 	// 在同一事务里播种 7 个内置 issue 状态，保证 workspace 从不以"没有状态
 	// 目录"的形态出现——issue 得先能解析到状态才能被创建。（MUL-6243）
 	if err := issuestatus.Ensure(r.Context(), qtx, ws.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to seed issue statuses: "+err.Error())
+		slog.Warn("seed issue statuses failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to seed issue statuses")
 		return
 	}
 	workspaceEvent, err := service.RecordDurableEventTx(r.Context(), qtx, buildWorkspaceDomainEvent(
@@ -460,7 +463,7 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws, err := qtx.UpdateWorkspace(r.Context(), params)
 	if err != nil {
 		slog.Warn("update workspace failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", id)...)
-		writeError(w, http.StatusInternalServerError, "failed to update workspace: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to update workspace")
 		return
 	}
 	repos, err := repositoryConfigs(r.Context(), qtx, idUUID, false)

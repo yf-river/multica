@@ -520,8 +520,13 @@ func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg, "code": code})
 }
 
-// writeRevisionConflict 返回 409：调用方基于旧 revision 加载的资源已被改动，
-// 实际 revision 与预期不符，写入应中止。
+// writeFeatureDisabled reports a deliberate deployment or feature gate as a
+// non-retryable refusal. A disabled capability is not a transient service
+// failure: returning 503 would invite retries and pollute availability alerts.
+func writeFeatureDisabled(w http.ResponseWriter, code, msg string) {
+	writeErrorCode(w, http.StatusForbidden, code, msg)
+}
+
 func writeRevisionConflict(w http.ResponseWriter, resourceType string, resourceID pgtype.UUID, expected, actual int64) {
 	writeJSON(w, http.StatusConflict, map[string]any{
 		"error":             "resource changed since it was loaded",

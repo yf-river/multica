@@ -43,14 +43,23 @@ type HealthResponse struct {
 	ActiveTaskCount       int64 `json:"active_task_count"`
 	RunningTaskCount      int64 `json:"running_task_count"`
 	ResourceWaitTaskCount int64 `json:"resource_wait_task_count"`
-	// 仓库维护是“不影响存活性”的后台活动，因此健康仍是 HTTP 200/running。下面这些
-	// 可累加计数器向运维解释仓库检出能力为何下降，同时不暴露本地缓存路径。
-	RepoMaintenanceActive int      `json:"repo_maintenance_active,omitempty"`
-	RepoCheckoutWaiters   int      `json:"repo_checkout_waiters,omitempty"`
-	Agents                []string `json:"agents"`
-	// SkippedAgents 记录“本机确实发现了某 provider，但上一轮注册把它丢掉”的原因
-	// （版本探不出来、低于最低支持版本）。纯诊断用途，为空时省略，让老消费端看不出
-	// 变化。
+	// Repo maintenance stays a liveness-safe background activity, so health
+	// remains HTTP 200/running. These additive counters explain degraded repo
+	// checkout capacity to operators without exposing local cache paths.
+	RepoMaintenanceActive int `json:"repo_maintenance_active,omitempty"`
+	RepoCheckoutWaiters   int `json:"repo_checkout_waiters,omitempty"`
+	// Terminal report queue diagnostics are additive and expose only counts and
+	// bytes, never payloads or local paths. Failed records require operator
+	// attention; pending records are still being replayed automatically.
+	PendingTerminalReportCount int      `json:"pending_terminal_report_count"`
+	PendingTerminalReportBytes int64    `json:"pending_terminal_report_bytes"`
+	FailedTerminalReportCount  int      `json:"failed_terminal_report_count"`
+	FailedTerminalReportBytes  int64    `json:"failed_terminal_report_bytes"`
+	Agents                     []string `json:"agents"`
+	// SkippedAgents maps a provider that WAS discovered on this machine to the
+	// reason the last registration round dropped it (version undetectable,
+	// below the minimum supported version). Purely diagnostic, and omitted when
+	// empty so older consumers see no change.
 	//
 	// 没有它，“CLI 没装”和“装了但被拒”都会渲染成 runtime 缺席——这正是 GH #6077
 	// 让反馈者无从下手的原因（MUL-5439）。
@@ -322,6 +331,14 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			activity := reporter.Activity()
 			resp.RepoMaintenanceActive = activity.MaintenanceActive
 			resp.RepoCheckoutWaiters = activity.ForegroundWaiters
+		}
+		if stats, err := d.terminalReports.stats(); err != nil {
+			d.logger.Warn("health: scan terminal report queue", "error", err)
+		} else {
+			resp.PendingTerminalReportCount = stats.PendingCount
+			resp.PendingTerminalReportBytes = stats.PendingBytes
+			resp.FailedTerminalReportCount = stats.FailedCount
+			resp.FailedTerminalReportBytes = stats.FailedBytes
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -478,8 +478,12 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-// CompleteTask 上报任务成功完成及结果。
+// CompleteTask 上报任务完成；差异数据随终态一起持久化。
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff) error {
+	return c.completeTaskWithRetrySchedule(ctx, taskID, output, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, durableWorkDir, codeDiff, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) completeTaskWithRetrySchedule(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff, schedule []time.Duration) error {
 	body := map[string]any{"output": output}
 	if codeDiff != nil {
 		body["code_diff"] = codeDiff
@@ -502,7 +506,7 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	if retiredSessionID != "" {
 		body["retired_session_id"] = retiredSessionID
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, defaultTerminalRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, schedule)
 }
 
 // ReportTaskUsage 上报任务中各模型的 token 用量。
@@ -526,8 +530,11 @@ func (c *Client) ReportTaskTraces(ctx context.Context, taskID string, traces []T
 	}, nil)
 }
 
-// FailTask 上报任务失败及原因。
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff) error {
+	return c.failTaskWithRetrySchedule(ctx, taskID, errMsg, sessionID, workDir, branchName, failureReason, sessionRolloutMissing, retiredSessionID, durableWorkDir, codeDiff, defaultTerminalRetrySchedule)
+}
+
+func (c *Client) failTaskWithRetrySchedule(ctx context.Context, taskID, errMsg, sessionID, workDir, branchName, failureReason string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string, codeDiff *codediff.Diff, schedule []time.Duration) error {
 	body := map[string]any{"error": errMsg}
 	// 1. 失败的运行也可能已经改过文件：把 diff 一起上报，用户才看得到它停在
 	//    哪一步。服务器把它写到失败任务的 result 上。
@@ -557,7 +564,7 @@ func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDi
 	if retiredSessionID != "" {
 		body["retired_session_id"] = retiredSessionID
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, defaultTerminalRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, schedule)
 }
 
 // PinTaskSession 在运行中途把 agent 的 session_id 与 work_dir 持久化到任务行上，

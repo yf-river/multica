@@ -1031,3 +1031,16 @@ On the API, both endpoints accept `?include=content` and `?include=metadata`.
 A request that sends neither still gets `content`, on both endpoints, so a
 server upgrade never changes what an un-upgraded client receives — it is the
 CLI that asks for the smaller shape.
+
+
+## 终态回传恢复
+
+Daemon 将完成和失败结果先写入 `<workspaces_root>/.pending-terminal-reports/v1/<namespace>/`，再向 API 回传。
+命名空间由服务地址、profile 和 daemon ID 确定，文件包含结果和差异数据，不保存登录凭据。
+网络暂时失败后自动补报；Daemon 重启和 WebSocket 重连也会触发恢复，使用当前有效凭据。
+服务端重复接收同一终态时不重复创建评论后续执行或发送收尾通知。
+
+健康检查提供 pending/failed 记录数与字节数，不返回内容和文件路径。
+永久拒绝经过有界核验后移入 `failed/`，原始结果供排查恢复，不自动删除。
+完整成功结果被隔离时，补偿请求只携带简短失败原因及差异保存位置说明，避免再次提交被拒的大体积结果。
+更换服务或 profile 后不会向新服务重放旧命名空间的结果；排查时须先核对目标、任务和原始记录。

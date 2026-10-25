@@ -150,6 +150,8 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 
 	d.logger.Info("task wakeup websocket connected", "runtimes", len(runtimeIDs))
 	signalTaskWakeup(taskWakeups, "")
+	// 连接恢复后唤醒持久化回传队列。
+	d.signalTerminalReportReplay()
 	// signalTaskWakeup 只唤醒空闲的 ClaimTask 轮询器。在途任务与 workspace 同步循环
 	// 是挂在粗粒度 ticker（5s 与 30s）上、观察不到唤醒 channel 的，因此 WS 断线期间
 	// 服务器改了什么——任务取消或 runtime 更新——在下一 tick 前对它们都不可见。

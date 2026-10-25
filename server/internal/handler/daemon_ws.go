@@ -35,7 +35,7 @@ import (
 // user id / 客户端版本与能力头，一起打包成 identity 交给 hub。
 func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 	if h.DaemonHub == nil {
-		writeError(w, http.StatusServiceUnavailable, "daemon websocket unavailable")
+		writeErrorCode(w, http.StatusInternalServerError, "daemon_websocket_misconfigured", "daemon websocket unavailable")
 		return
 	}
 

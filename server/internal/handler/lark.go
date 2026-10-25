@@ -114,7 +114,7 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 // 又不把孤儿行权利交给普通成员。
 func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.LarkInstallations == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -189,7 +189,7 @@ type RedeemLarkBindingTokenResponse struct {
 //   - 403 Forbidden:  兑换者不是 workspace 成员
 func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.LarkBindingTokens == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -253,7 +253,7 @@ type BeginLarkInstallResponse struct {
 // 隐藏绑定按钮，正常流程走不到这里。
 func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark install not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark install not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -346,7 +346,7 @@ type LarkInstallStatusResponse struct {
 // 淘汰条目之前）；读取是幂等的。
 func (h *Handler) GetLarkInstallStatus(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
-		writeError(w, http.StatusServiceUnavailable, "lark install not configured")
+		writeFeatureDisabled(w, "lark_not_configured", "lark install not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
