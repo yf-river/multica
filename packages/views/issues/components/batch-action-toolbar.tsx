@@ -40,6 +40,7 @@ import { useIssueSurfaceSelection } from "../surface/selection-context";
 export function BatchActionToolbar({
   issues,
   placement = "fixed-bottom",
+  clearSelectionOnApply = false,
 }: {
   /**
    * 本调用点的可选中问题全集（与渲染行同一份列表）。工具条按当前表面
@@ -53,6 +54,14 @@ export function BatchActionToolbar({
    *（可滚动区段如子问题内用）。
    */
   placement?: "fixed-bottom" | "inline";
+  /**
+   * Drop the selection once a status / priority / assignee change fully
+   * applies. Off for full-screen lists, where the selection stays so several
+   * edits can be chained; on for sub-issues, where a batch edit is a one-shot
+   * dispatch and a lingering inline toolbar reads as unfinished. A partial or
+   * failed write keeps the selection so the user can retry.
+   */
+  clearSelectionOnApply?: boolean;
 }) {
   const { t } = useT("issues");
   const selection = useIssueSurfaceSelection();
@@ -99,11 +108,14 @@ export function BatchActionToolbar({
 
   const handleBatchUpdate = async (updates: Partial<UpdateIssueRequest>) => {
     try {
-      if (surfaceActions) {
-        await surfaceActions.batchUpdate(ids, updates);
-      } else {
-        await batchUpdate.mutateAsync({ ids, updates });
+      const result = surfaceActions
+        ? await surfaceActions.batchUpdate(ids, updates)
+        : await batchUpdate.mutateAsync({ ids, updates });
+      if (result && result.updated < count) {
+        toast.warning(t(($) => $.batch.update_partial, { updated: result.updated, count }));
+        return;
       }
+      if (clearSelectionOnApply) clear();
       toast.success(t(($) => $.batch.update_success, { count }));
     } catch (err) {
       toast.error(
@@ -141,6 +153,7 @@ export function BatchActionToolbar({
           mode: "assign",
           assigneeType: updates.assignee_type,
           assigneeId: updates.assignee_id,
+          onApplied: clearSelectionOnApply ? clear : undefined,
         });
         return;
       }

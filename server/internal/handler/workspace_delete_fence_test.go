@@ -438,7 +438,7 @@ func TestMergeLegacyRuntime_KeepsOldRuntimeWhenFenceRefuses(t *testing.T) {
 	// the target's workspace was torn down a moment ago.
 	vanishedTarget := parseUUID("00000000-0000-0000-0000-0000000000fe")
 
-	err := testHandler.mergeLegacyRuntime(ctx, vanishedTarget, parseUUID(f.victimRuntime), "legacy-daemon", "delete-test")
+	err := testHandler.mergeLegacyRuntime(ctx, vanishedTarget, parseUUID(f.victimRuntime), "legacy-daemon", "delete-test", parseUUID(testUserID))
 	if !errors.Is(err, errRuntimeMergeFenced) {
 		t.Fatalf("mergeLegacyRuntime = %v, want errRuntimeMergeFenced", err)
 	}
@@ -469,7 +469,7 @@ RETURNING id
 		t.Fatalf("create merge target: %v", err)
 	}
 	if err := testHandler.mergeLegacyRuntime(ctx, parseUUID(freshRuntime), parseUUID(f.victimRuntime),
-		"legacy-daemon", "delete-test"); err != nil {
+		"legacy-daemon", "delete-test", parseUUID(testUserID)); err != nil {
 		t.Fatalf("merge onto a live runtime: %v", err)
 	}
 	if rowExists(t, "agent_runtime", f.victimRuntime) {
@@ -536,7 +536,7 @@ FOR EACH ROW EXECUTE FUNCTION mul5999_fail_agent_move()
 	})
 
 	err := testHandler.mergeLegacyRuntime(ctx, parseUUID(target), parseUUID(f.victimRuntime),
-		"legacy-daemon", "delete-test")
+		"legacy-daemon", "delete-test", parseUUID(testUserID))
 	if err == nil {
 		t.Fatal("merge reported success even though the agent reassignment failed")
 	}
@@ -581,7 +581,7 @@ FOR EACH ROW EXECUTE FUNCTION mul5999_fail_agent_move()
 		t.Fatalf("drop injection trigger: %v", err)
 	}
 	if err := testHandler.mergeLegacyRuntime(ctx, parseUUID(target), parseUUID(f.victimRuntime),
-		"legacy-daemon", "delete-test"); err != nil {
+		"legacy-daemon", "delete-test", parseUUID(testUserID)); err != nil {
 		t.Fatalf("merge after removing the injection: %v", err)
 	}
 	if rowExists(t, "agent_runtime", f.victimRuntime) {

@@ -136,6 +136,10 @@ describe("deduplicateArchivedInboxItems", () => {
   });
 });
 
+describe("archived inbox options", () => {
+
+});
+
 describe("hasOtherWorkspaceUnread", () => {
   const summary = (entries: InboxWorkspaceUnread[]) => entries;
 

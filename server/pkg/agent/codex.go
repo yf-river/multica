@@ -1613,7 +1613,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		{
 			taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 			if scanned := scanCodexSessionUsage(startTime, taskCodexHome, threadID, resumed); scanned != nil {
-				u = scanned.usage
+				if scanned.usage.InputTokens > 0 || scanned.usage.OutputTokens > 0 || scanned.usage.CacheReadTokens > 0 || scanned.usage.CacheWriteTokens > 0 {
+					u = scanned.usage
+				}
 				if scanned.model != "" {
 					opts.Model = scanned.model
 				}
@@ -3273,7 +3275,7 @@ func scanCodexSessionUsage(startTime time.Time, codexHome, threadID string, resu
 	// 取最新的一个，且绝不跨进别的线程的 rollout。
 	result := parseCodexSessionFileSince(files[len(files)-1].path, startTime, resumed)
 	if result == nil || (result.usage.InputTokens == 0 && result.usage.OutputTokens == 0 &&
-		result.usage.CacheReadTokens == 0 && result.usage.CacheWriteTokens == 0) {
+		result.usage.CacheReadTokens == 0 && result.usage.CacheWriteTokens == 0 && result.model == "") {
 		return nil
 	}
 	return result
@@ -3496,6 +3498,9 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 	}
 
 	if !finalUsageFound {
+		if result.model != "" {
+			return &result
+		}
 		return nil
 	}
 	cachedTokens := finalUsage.CachedInputTokens

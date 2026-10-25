@@ -1603,6 +1603,7 @@ RETURNING *;
 UPDATE agent_task_queue AS task
 SET status = 'cancelled',
     completed_at = now(),
+    context = COALESCE(task.context, '{}'::jsonb) || '{"explicit_cancel": true}'::jsonb,
     prepare_lease_expires_at = NULL,
     delivered_comment_ids = CASE
       -- Chat and ordinary issue tasks almost never carry a delegated-failure

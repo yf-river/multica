@@ -20,7 +20,8 @@
     "clear": "Clear filters",
     "empty": "No notifications match your filters",
     "active_count_one": "{{count}} active filter",
-    "notification_count_one": "{{count}} notification"
+    "notification_count_one": "{{count}} notification",
+    "no_agents_working": "No agents working"
   },
   "context_menu": {
     "mark_read": "Mark as read",

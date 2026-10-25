@@ -60,7 +60,7 @@ export function CreateFormAttributeRow() {
     ? getName(assignee.type, assignee.id)
     : "负责人";
   const priorityLabel =
-    priority === "none" ? "优先级" : PRIORITY_LABEL[priority];
+    PRIORITY_LABEL[priority];
 
   const open = (field: NewIssuePickerField) => {
     if (!wsSlug) return;
@@ -89,7 +89,7 @@ export function CreateFormAttributeRow() {
         <AttributeChip
           icon={<PriorityIcon priority={priority} />}
           label={priorityLabel}
-          variant={priority === "none" ? "dimmed" : "filled"}
+          variant={"filled"}
           onPress={() => open("priority")}
         />
         <AttributeChip

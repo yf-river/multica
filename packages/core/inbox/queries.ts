@@ -1,7 +1,7 @@
 // 本文件封装收件箱的 React Query 查询：未读列表、归档列表、跨工作区未读汇总，
 // 以及若干对 InboxItem 的按 issue 去重/未读派生逻辑。
 
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import { focusManager, queryOptions, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import type { InboxItem, InboxWorkspaceUnread } from "../types";
 
@@ -45,6 +45,8 @@ export function inboxUnreadSummaryOptions() {
   return queryOptions({
     queryKey: inboxKeys.unreadSummary(),
     queryFn: () => api.getInboxUnreadSummary(),
+    enabled: () => focusManager.isFocused(),
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -85,13 +87,15 @@ export function unreadWorkspaceIds(summary: InboxWorkspaceUnread[]): Set<string>
  * @param wsId - 工作区 id（可为空，为空时不请求）
  * @returns 未读数
  */
-export function useInboxUnreadCount(wsId: string | null | undefined): number {
+export function inboxUnreadSummaryEnabled(wsId: string | null | undefined, { whileHidden = false }: { whileHidden?: boolean } = {}) {
+  return () => !!wsId && (whileHidden || focusManager.isFocused());
+}
+
+export function useInboxUnreadCount(wsId: string | null | undefined, options: { whileHidden?: boolean } = {}): number {
   const { data } = useQuery({
-    queryKey: inboxKeys.list(wsId ?? ""),
-    queryFn: () => api.listInbox(),
-    enabled: !!wsId,
-    select: (items: InboxItem[]) =>
-      deduplicateInboxItems(items).filter((i) => !i.read).length,
+    ...inboxUnreadSummaryOptions(),
+    enabled: inboxUnreadSummaryEnabled(wsId, options),
+    select: (items: InboxWorkspaceUnread[]) => items.find(item => item.workspace_id === wsId)?.count ?? 0,
   });
   return data ?? 0;
 }

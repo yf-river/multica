@@ -494,6 +494,7 @@ func init() {
 	issueListCmd.Flags().String("assignee-id", "", "Filter by assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueListCmd.Flags().String("project", "", "Filter by project ID")
 	issueListCmd.Flags().StringSlice("metadata", nil, "Filter by metadata key=value (repeatable; combined with AND). Value is JSON-parsed: 'true'/'false' → bool, numbers → number, otherwise string. Wrap as '\"42\"' to force a string when the value would otherwise sniff as a number.")
+	issueListCmd.Flags().StringArray("property", nil, "按属性筛选：Name=Value、Score>=3、Date<2026-01-01、Notes~=text；重复同属性按 OR，不同属性按 AND；含操作符的名字用 UUID")
 	issueListCmd.Flags().Int("limit", 50, "Maximum number of issues to return in one page (the server caps a page at 100; use --offset to page through more)")
 	issueListCmd.Flags().Int("offset", 0, "Number of issues to skip (for pagination)")
 	issueListCmd.Flags().String("sort", "", "Sort column: position (default, manual board order), title, created_at, start_date, due_date, priority")
@@ -723,6 +724,14 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("--direction requires --sort to be one of %s; position (the default manual board order) is always ascending", strings.Join(directionalIssueSortColumns, ", "))
 		}
 		params.Set("direction", d)
+	}
+
+	if pairs, _ := cmd.Flags().GetStringArray("property"); len(pairs) > 0 {
+		filters, err := resolveIssuePropertyFilters(ctx, client, pairs)
+		if err != nil {
+			return err
+		}
+		params.Set("properties", filters)
 	}
 
 	path := "/api/issues"

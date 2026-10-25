@@ -1,5 +1,6 @@
+import { toast } from "sonner";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 
@@ -31,7 +32,7 @@ vi.mock("@multica/core/modals", () => ({
 }));
 
 vi.mock("../../i18n", () => ({ useT: () => ({ t: () => "label" }) }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
 // Interactive picker stubs: each renders buttons that fire the real onUpdate the
 // toolbar passes in, so we exercise handleBatchStatus / handleBatchAssignee.
@@ -97,6 +98,9 @@ beforeEach(() => {
   batchUpdate.mockClear();
   batchDelete.mockClear();
   openModal.mockClear();
+  selection.clear.mockClear();
+  vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.warning).mockClear();
 });
 
 describe("BatchActionToolbar status routing (MUL-4155)", () => {
@@ -140,5 +144,43 @@ describe("BatchActionToolbar status routing (MUL-4155)", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(openModal).not.toHaveBeenCalled();
     expect(batchDelete).not.toHaveBeenCalled();
+  });
+});
+
+describe("BatchActionToolbar selection after apply (MUL-8179)", () => {
+  it("keeps the selection after an update by default, so edits can be chained", async () => {
+    render(<BatchActionToolbar issues={[makeIssue()]} />);
+    fireEvent.click(screen.getByTestId("status-done"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(selection.clear).not.toHaveBeenCalled();
+  });
+
+  it("clears the selection once an update fully applies when opted in", async () => {
+    render(<BatchActionToolbar issues={[makeIssue()]} clearSelectionOnApply />);
+    fireEvent.click(screen.getByTestId("status-done"));
+    await waitFor(() => expect(selection.clear).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the selection after a partial update so it can be retried", async () => {
+    selection.selectedIds = new Set(["a", "b"]);
+    batchUpdate.mockResolvedValueOnce({ updated: 1 });
+    render(
+      <BatchActionToolbar
+        issues={[makeIssue({ id: "a" }), makeIssue({ id: "b" })]}
+        clearSelectionOnApply
+      />,
+    );
+    fireEvent.click(screen.getByTestId("status-done"));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    expect(selection.clear).not.toHaveBeenCalled();
+  });
+
+  it("hands the run-confirm modal a clear callback instead of clearing up front", () => {
+    render(<BatchActionToolbar issues={[makeIssue({ status: "todo" })]} clearSelectionOnApply />);
+    fireEvent.click(screen.getByTestId("assign-agent"));
+    expect(selection.clear).not.toHaveBeenCalled();
+    const data = openModal.mock.calls[0]![1] as { onApplied?: () => void };
+    data.onApplied?.();
+    expect(selection.clear).toHaveBeenCalledTimes(1);
   });
 });

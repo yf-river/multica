@@ -7,7 +7,7 @@
 //   - 把地址栏改写为规范标识符 URL。这属于路由、只属于路由——收件箱在侧栏
 //     面板里渲染 IssueDetail，若在那里替换 URL 会把用户导航出收件箱。
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -56,17 +56,10 @@ export function parseCommentHighlightHash(hash: string): string | undefined {
 }
 
 /**
- * 订阅 location.hash 变化，把 `#comment-<id>` 解析成 commentId 供高亮。
+ * 订阅平台导航的 hash 变化，把 `#comment-<id>` 解析成 commentId 供高亮。
  */
 function useCommentHighlightHash(): { hash: string; commentId?: string } {
-  const read = () => typeof window === "undefined" ? "" : window.location.hash;
-  const [hash, setHash] = useState(read);
-
-  useEffect(() => {
-    const onHashChange = () => setHash(read());
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+  const { hash } = useNavigation();
 
   return { hash, commentId: parseCommentHighlightHash(hash) };
 }

@@ -11,12 +11,12 @@ import (
 )
 
 // providerHTTP5xxRe 匹配「以 5 开头的三位数（HTTP 5xx 状态码）」且两侧不是
-// 数字。镜像 MUL-1949 里的 SQL 正则 `(^|[^0-9])5[0-9][0-9]([^0-9]|$)`——防止
+// 数字。镜像 MUL-1949 里的 SQL 正则 `(^|[^0-9a-z])5[0-9][0-9]([^0-9a-z]|$)`——防止
 // "1500ms" 或 "1.5.0" 这种词意外落进 provider_server_error。
 //
 // 在包初始化时编译：分类器处于每个失败任务的在途写入路径上，
 // 启动时付一次正则编译成本、而不是每次调用都编，值得。
-var providerHTTP5xxRe = regexp.MustCompile(`(^|[^0-9])5[0-9][0-9]([^0-9]|$)`)
+var providerHTTP5xxRe = regexp.MustCompile(`(^|[^0-9a-z])5[0-9][0-9]([^0-9a-z]|$)`)
 
 // httpAuthCodeRe / httpQuotaCodeRe / httpCapacityCodeRe 只在特定 3 位 HTTP
 // 状态码「没有嵌进更长的数字」时才匹配，用与 providerHTTP5xxRe 相同的数字边界
@@ -29,9 +29,9 @@ var providerHTTP5xxRe = regexp.MustCompile(`(^|[^0-9])5[0-9][0-9]([^0-9]|$)`)
 // provider_network——MUL-4910——而这些正则永远不会路由到它。）5xx 桶当初正是
 // 为此加了锚点（MUL-1949）；这几个码当时没加。
 var (
-	httpAuthCodeRe     = regexp.MustCompile(`(^|[^0-9])(401|403)([^0-9]|$)`)
-	httpQuotaCodeRe    = regexp.MustCompile(`(^|[^0-9])402([^0-9]|$)`)
-	httpCapacityCodeRe = regexp.MustCompile(`(^|[^0-9])(429|529)([^0-9]|$)`)
+	httpAuthCodeRe     = regexp.MustCompile(`(^|[^0-9a-z])(401|403)([^0-9a-z]|$)`)
+	httpQuotaCodeRe    = regexp.MustCompile(`(^|[^0-9a-z])402([^0-9a-z]|$)`)
+	httpCapacityCodeRe = regexp.MustCompile(`(^|[^0-9a-z])(429|529)([^0-9a-z]|$)`)
 )
 
 // Classify 把来自 agent runtime / CLI 的自由文本错误映射到 14 个

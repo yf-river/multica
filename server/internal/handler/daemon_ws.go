@@ -46,19 +46,27 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	identity, ok := h.buildDaemonWebSocketIdentity(w, r, runtimeIDs, userID)
+	if !ok {
+		return
+	}
+	h.DaemonHub.HandleWebSocket(w, r, identity)
+}
+
+func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Request, runtimeIDs []string, userID string) (daemonws.ClientIdentity, bool) {
 	workspaceIDs := make([]string, 0, len(runtimeIDs))
 	seenWorkspaceIDs := make(map[string]struct{}, len(runtimeIDs))
 	for _, runtimeID := range runtimeIDs {
 		rt, ok := h.requireDaemonRuntimeAccess(w, r, runtimeID)
 		if !ok {
-			return
+			return daemonws.ClientIdentity{}, false
 		}
 		// daemon token 作用域兜底：即便 requireDaemonRuntimeAccess 放行了 workspace
 		// 归属，这条 runtime 也必须属于当前 daemon 自己，否则回 404——防止一台 daemon
 		// 通过 WS 订阅到同 workspace 里另一台 daemon 的 runtime 推送。
 		if daemonID := middleware.DaemonIDFromContext(r.Context()); daemonID != "" && rt.DaemonID.Valid && rt.DaemonID.String != daemonID {
 			writeError(w, http.StatusNotFound, "runtime not found")
-			return
+			return daemonws.ClientIdentity{}, false
 		}
 		workspaceID := uuidToString(rt.WorkspaceID)
 		if workspaceID != "" {
@@ -74,15 +82,17 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 		primaryWorkspaceID = workspaceIDs[0]
 	}
 
-	h.DaemonHub.HandleWebSocket(w, r, daemonws.ClientIdentity{
-		DaemonID:      middleware.DaemonIDFromContext(r.Context()),
-		UserID:        userID,
-		WorkspaceID:   primaryWorkspaceID,
-		WorkspaceIDs:  workspaceIDs,
-		RuntimeIDs:    runtimeIDs,
-		ClientVersion: r.Header.Get("X-Client-Version"),
-		Capabilities:  r.Header.Get("X-Client-Capabilities"),
-	})
+	return daemonws.ClientIdentity{
+		DaemonID:           middleware.DaemonIDFromContext(r.Context()),
+		DaemonTokenHash:    middleware.DaemonTokenHashFromContext(r.Context()),
+		DaemonTokenOwnerID: middleware.DaemonTokenOwnerIDFromContext(r.Context()),
+		UserID:             userID,
+		WorkspaceID:        primaryWorkspaceID,
+		WorkspaceIDs:       workspaceIDs,
+		RuntimeIDs:         runtimeIDs,
+		ClientVersion:      r.Header.Get("X-Client-Version"),
+		Capabilities:       r.Header.Get("X-Client-Capabilities"),
+	}, true
 }
 
 // parseRuntimeIDs 从 URL 查询参数收集 daemon 想订阅的 runtime id 列表：兼容

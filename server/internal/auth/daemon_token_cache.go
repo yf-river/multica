@@ -13,10 +13,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// daemonTokenCachePrefix 给 daemon-token 缓存键单独加命名空间，与 PAT
-// （mul:auth:pat:*）的键空间隔开——两套键互不撞车，也不会出现「失效一种 token 的
-// 缓存误删另一种」。
-const daemonTokenCachePrefix = "mul:auth:daemon:"
+// daemonTokenCachePrefix namespaces daemon-token cache keys separately
+// from PAT (mul:auth:pat:*) so the two key spaces can't collide and an
+// invalidation on one kind of token doesn't accidentally hit the other.
+//
+// v2 (MUL-8154) added OwnerID; entries written before it are never read, so a
+// pre-upgrade entry cannot authorize a token without its owner binding.
+const daemonTokenCachePrefix = "mul:auth:daemon:v2:"
 
 // DaemonTokenIdentity 是 DaemonAuth 从缓存命中结果里需要的字段——中间件要把
 // workspace_id 与 daemon_id 注入请求 context。刻意不缓存 token_hash、expires_at 和
@@ -24,6 +27,9 @@ const daemonTokenCachePrefix = "mul:auth:daemon:"
 type DaemonTokenIdentity struct {
 	WorkspaceID string `json:"w"`
 	DaemonID    string `json:"d"`
+	// OwnerID is the runtime owner the token was issued for ("" for
+	// Qoder-managed tokens). MUL-8154.
+	OwnerID string `json:"o,omitempty"`
 }
 
 // DaemonTokenCache 在 Redis 里缓存已解析的 daemon-token（mdt_）查询。

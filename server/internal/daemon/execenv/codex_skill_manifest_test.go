@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -70,19 +71,26 @@ func TestCodexSkillManifestRecordsInvalidMetadataWithoutBlockingHydration(t *tes
 			if err := json.Unmarshal(data, &entries); err != nil {
 				t.Fatal(err)
 			}
-			if len(entries) != 2 {
-				t.Fatalf("entries=%d", len(entries))
+			malformed := strings.Contains(body, "[unterminated")
+			want := 2
+			if malformed {
+				want = 1
 			}
-			if entries[0].Name != "invalid" || entries[0].MetadataError == "" || entries[0].SHA256 == "" {
-				t.Fatalf("missing invalid skill diagnostic: %+v", entries[0])
+			if len(entries) != want {
+				t.Fatalf("entries=%d want=%d", len(entries), want)
 			}
-			if entries[1].Name != "valid" || entries[1].Description != "readable skill" || entries[1].MetadataError != "" {
-				t.Fatalf("valid skill damaged: %+v", entries[1])
+			valid := entries[len(entries)-1]
+			if valid.Name != "valid" || valid.Description != "readable skill" || valid.MetadataError != "" {
+				t.Fatalf("valid skill damaged: %+v", valid)
 			}
-			original, err := os.ReadFile(entries[0].ResolvedPath)
+			if !malformed && (entries[0].MetadataError != "" || entries[0].SHA256 == "" || entries[0].Description == "") {
+				t.Fatalf("safe normalization did not produce valid metadata: %+v", entries[0])
+			}
+			original, err := os.ReadFile(filepath.Join(shared, "skills", "invalid", "SKILL.md"))
 			if err != nil || string(original) != body {
 				t.Fatal("source skill was modified")
 			}
+
 		})
 	}
 }

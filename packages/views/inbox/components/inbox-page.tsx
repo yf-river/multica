@@ -15,6 +15,7 @@ import {
 } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import { useQuery } from "@tanstack/react-query";
+import { workspaceWorkingAgentsOptions } from "@multica/core/agents/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { ApiError, errorCode } from "@multica/core/api";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -47,6 +48,7 @@ import {
 } from "@multica/core/inbox/mutations";
 import {
   filterInboxItems,
+  inboxFiltersForArchive,
   inboxFiltersForPrioritySupport,
   inboxFilterCount,
   inboxPriorityFilterSupport,
@@ -120,6 +122,8 @@ export function InboxPage() {
   const wsPaths = useWorkspacePaths();
 
   const [selectedKey, setSelectedKeyState] = useState(() => urlIssue);
+  const pinnedUnreadKeyRef = useRef<string | null>(null);
+  const pinnedIdleKeyRef = useRef<string | null>(null);
   const [view, setViewState] = useState<InboxView>(() => urlView);
 
   // URL 变化（例如导航）时把选中同步回 state。
@@ -156,18 +160,32 @@ export function InboxPage() {
     () => inboxPriorityFilterSupport([...rawItems, ...rawArchivedItems]),
     [rawItems, rawArchivedItems],
   );
-  const effectiveFilters = useMemo(
-    () => inboxFiltersForPrioritySupport(filters, priorityFilterSupport),
-    [filters, priorityFilterSupport],
-  );
+  const effectiveFilters = useMemo(() => {
+    const supported = inboxFiltersForPrioritySupport(filters, priorityFilterSupport);
+    return isArchivedView ? inboxFiltersForArchive(supported) : supported;
+  }, [filters, priorityFilterSupport, isArchivedView]);
+  const { data: workingAgents } = useQuery({
+    ...workspaceWorkingAgentsOptions(wsId, "issue"),
+    enabled: !isArchivedView && effectiveFilters.idleOnly,
+  });
+  const activeIssueIds = useMemo(() => new Set(workingAgents?.flatMap((agent) => agent.issue_ids) ?? []), [workingAgents]);
+  const pinnedUnreadKey = effectiveFilters.unreadOnly && pinnedUnreadKeyRef.current === selectedKey ? selectedKey : null;
+  const pinnedIdleKey = effectiveFilters.idleOnly && pinnedIdleKeyRef.current === selectedKey ? selectedKey : null;
+  const filterContext = useMemo(() => ({activeIssueIds, pinnedUnreadKey, pinnedIdleKey}), [activeIssueIds, pinnedUnreadKey, pinnedIdleKey]);
   const visibleItems = useMemo(
-    () => filterInboxItems(viewItems, effectiveFilters),
-    [viewItems, effectiveFilters],
+    () => filterInboxItems(viewItems, effectiveFilters, filterContext),
+    [viewItems, effectiveFilters, filterContext],
   );
   const hasActiveFilters = inboxFilterCount(effectiveFilters) > 0;
 
   const selected =
     visibleItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
+  useEffect(() => {
+    if (pinnedUnreadKeyRef.current !== selectedKey || !effectiveFilters.unreadOnly) pinnedUnreadKeyRef.current = null;
+    if (pinnedIdleKeyRef.current !== selectedKey || !effectiveFilters.idleOnly) pinnedIdleKeyRef.current = null;
+    if (effectiveFilters.idleOnly && selected && workingAgents) pinnedIdleKeyRef.current = selectedKey;
+  }, [selectedKey, selected, workingAgents, effectiveFilters.unreadOnly, effectiveFilters.idleOnly]);
+
   const selectedInView =
     viewItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
   const selectionFilteredOut =
@@ -320,6 +338,7 @@ export function InboxPage() {
   useEffect(() => {
     if (!selectedId || selectedRead) return;
     if (manualUnreadIdRef.current === selectedId) return;
+    pinnedUnreadKeyRef.current = selectedKey;
     markReadMutate(selectedId, {
       onError: (err) =>
         toast.error(
@@ -328,7 +347,7 @@ export function InboxPage() {
             : t(($) => $.errors.mark_read_failed),
         ),
     });
-  }, [selectedId, selectedRead, markReadMutate, t]);
+  }, [selectedId, selectedKey, selectedRead, markReadMutate, t]);
 
   // 选中一离开被「留住」的行，就释放守卫。
   useEffect(() => {
@@ -517,6 +536,7 @@ export function InboxPage() {
         wsId={wsId}
         items={viewItems}
         priorityFilterSupport={priorityFilterSupport}
+        archived={isArchivedView}
       />
       {/* 批量操作只出现在主视图。每条入口都是「从主收件箱归档」——在归档列表
           上提供它们会被读成「把这些全部归档」，做出来的事正好和字面相反。 */}

@@ -2675,13 +2675,20 @@ func (h *Handler) routeConversationOwnersForRoot(ctx context.Context, issue db.I
 	}
 	routedAgents := make(map[string]conversationRoutedAgentInfo)
 	for _, task := range tasks {
-		if !task.TriggerCommentID.Valid || !task.AgentID.Valid {
+		if !task.AgentID.Valid {
 			continue
 		}
 		if excludedID != "" && uuidToString(task.TriggerCommentID) == excludedID {
 			continue
 		}
-		if uuidToString(task.TriggerCommentID) != rootID {
+		ownsRoot := task.TriggerCommentID.Valid && uuidToString(task.TriggerCommentID) == rootID
+		for _, deliveredID := range task.DeliveredCommentIds {
+			if deliveredID.Valid && uuidToString(deliveredID) == rootID {
+				ownsRoot = true
+				break
+			}
+		}
+		if !ownsRoot {
 			continue
 		}
 		agentID := uuidToString(task.AgentID)

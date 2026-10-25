@@ -423,6 +423,10 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 // IssueCliToken 给已认证用户发一枚全新 JWT。用途：让 cookie 认证的浏览器会话能拿到一个
 // bearer token，经 cli_callback 重定向交给 CLI 使用。
 func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
+	if isMachineCredentialActor(r) {
+		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useAuthStore } from "@multica/core/auth";
+import { getCurrentWsId } from "@multica/core/platform";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { canAssignAgent } from "@multica/views/issues/components";
@@ -309,10 +310,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // 一个项目可能在别的客户端被删除，而本工作区"下一条新聊天"的偏好还持久化在
   // 本地。等权威的项目列表落定后尽快把它归一化，免得未来一次发送带上过期的选中。
   useEffect(() => {
+    if (getCurrentWsId() !== wsId) return;
     if (!projectsLoaded || !selectedProjectId) return;
     if (projects.some((project) => project.id === selectedProjectId)) return;
     setSelectedProjectId(null);
-  }, [projectsLoaded, projects, selectedProjectId, setSelectedProjectId]);
+  }, [wsId, projectsLoaded, projects, selectedProjectId, setSelectedProjectId]);
 
   const qc = useQueryClient();
   const createSession = useCreateChatSession();
@@ -453,12 +455,13 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // 清掉它能阻止两个界面（标签页 + 悬浮窗口）都渲染一个可编辑的空聊天，
   // 发消息就会 POST 进一个不存在的会话。放在共享控制器里，每个界面都能自愈。
   useEffect(() => {
+    if (getCurrentWsId() !== wsId) return;
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
     if (hasInFlightPendingTask(qc, activeSessionId)) return;
     uiLogger.info("clearing dangling activeSessionId", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
+  }, [wsId, activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
 
   // 上传传输已并入 ChatInput 内部的协调式上传引擎（MUL-5181 L2）；
   // 界面层只转发"有没有这个入口"。
@@ -530,7 +533,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
             ? t(($) => $.input.send_blocked_toast)
             : reason === "agent_runtime_required"
               ? t(($) => $.input.runtime_required_toast)
-              : t(($) => $.input.send_failed_toast),
+              : reason === "runtime_access_denied"
+                ? t(($) => $.input.runtime_access_denied_toast)
+                : t(($) => $.input.send_failed_toast),
         );
         return false;
       }
@@ -557,7 +562,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
             ? t(($) => $.input.send_blocked_toast)
             : reason === "agent_runtime_required"
               ? t(($) => $.input.runtime_required_toast)
-              : t(($) => $.input.send_failed_toast),
+              : reason === "runtime_access_denied"
+                ? t(($) => $.input.runtime_access_denied_toast)
+                : t(($) => $.input.send_failed_toast),
         );
         return false;
       }

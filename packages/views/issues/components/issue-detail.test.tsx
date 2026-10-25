@@ -72,7 +72,8 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 }));
 
 // Mock workspace queries
-vi.mock("@multica/core/workspace/queries", () => ({
+vi.mock("@multica/core/workspace/queries", async () => ({
+  ...(await vi.importActual<typeof import("@multica/core/workspace/queries")>("@multica/core/workspace/queries")),
   memberListOptions: () => ({
     queryKey: ["workspaces", "ws-1", "members"],
     queryFn: () => Promise.resolve([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
@@ -106,6 +107,7 @@ vi.mock("@multica/core/paths", async () => {
     ...actual,
     useCurrentWorkspace: () => ({ id: "ws-1", name: "Test WS", slug: "test" }),
     useWorkspacePaths: () => actual.paths.workspace("test"),
+    useIssuePaths: () => actual.paths.workspace("test"),
   };
 });
 
@@ -346,14 +348,13 @@ vi.mock("@multica/core/issues/config", () => ({
     blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
     cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
   },
-  PRIORITY_ORDER: ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent", "not_important_not_urgent"],
-  PRIORITY_DISPLAY_ORDER: ["not_important_not_urgent", "important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"],
+  PRIORITY_ORDER: ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"],
+  PRIORITY_DISPLAY_ORDER: ["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"],
   PRIORITY_CONFIG: {
-    urgent: { label: "Urgent", bars: 4, color: "text-destructive", badgeBg: "bg-destructive/10", badgeText: "text-destructive" },
-    high: { label: "High", bars: 3, color: "text-warning", badgeBg: "bg-warning/10", badgeText: "text-warning" },
-    medium: { label: "Medium", bars: 2, color: "text-warning", badgeBg: "bg-warning/10", badgeText: "text-warning" },
-    low: { label: "Low", bars: 1, color: "text-info", badgeBg: "bg-info/10", badgeText: "text-info" },
-    none: { label: "No priority", bars: 0, color: "text-muted-foreground", badgeBg: "bg-muted", badgeText: "text-muted-foreground" },
+    important_urgent: { label: "Important and urgent", bars: 4, color: "text-destructive", badgeBg: "bg-destructive/10", badgeText: "text-destructive" },
+    important_not_urgent: { label: "Important, not urgent", bars: 3, color: "text-warning", badgeBg: "bg-warning/10", badgeText: "text-warning" },
+    not_important_urgent: { label: "Urgent, not important", bars: 2, color: "text-warning", badgeBg: "bg-warning/10", badgeText: "text-warning" },
+    not_important_not_urgent: { label: "Neither important nor urgent", bars: 1, color: "text-muted-foreground", badgeBg: "bg-muted", badgeText: "text-muted-foreground" },
   },
 }));
 
@@ -595,6 +596,10 @@ const mockTimeline: TimelineEntry[] = [
 // ---------------------------------------------------------------------------
 
 import { IssueDetail, groupSubIssuesByStage } from "./issue-detail";
+import {
+  IssueSurfaceSelectionProvider,
+  useCreateIssueSurfaceSelection,
+} from "../surface/selection-context";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1052,7 +1057,7 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText("Add property")).toBeInTheDocument();
   });
 
-  it("hides every optional property row when none are set", async () => {
+  it("shows the assigned priority while hiding unset optional properties", async () => {
     // Override the default fixture: nothing optional set.
     mockApiObj.getIssue.mockResolvedValue({
       ...mockIssue,
@@ -1067,7 +1072,7 @@ describe("IssueDetail (shared)", () => {
       expect(screen.getByText("Properties")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("Priority")).not.toBeInTheDocument();
+    expect(screen.getByText("Priority")).toBeInTheDocument();
     expect(screen.queryByText("Due date")).not.toBeInTheDocument();
     expect(screen.queryByText("Labels")).not.toBeInTheDocument();
     // Project stays as a core row regardless of value.
@@ -1610,7 +1615,7 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText(/from In Progress to In Review/i)).toBeInTheDocument(); // act-3
     expect(screen.getByText(/set due date to/i)).toBeInTheDocument(); // act-10
     expect(screen.queryByText(/from Todo to In Progress/i)).not.toBeInTheDocument(); // act-1
-    expect(screen.queryByText(/from Low to Medium/i)).not.toBeInTheDocument(); // act-2
+    expect(screen.queryByText(/from Not important, not urgent to Not important, urgent/i)).not.toBeInTheDocument(); // act-2
 
     // Clicking the toggle reveals the older entries in place and brings the
     // full "N activities" header back (so the user can fold the block).
@@ -1618,7 +1623,7 @@ describe("IssueDetail (shared)", () => {
     await waitFor(() => {
       expect(screen.getByText(/from Todo to In Progress/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/from Low to Medium/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Not important, not urgent to Not important, urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/set due date to/i)).toBeInTheDocument();
     expect(screen.getByText("10 activities")).toBeInTheDocument();
     expect(screen.queryByText(/Show \d+ more activit/i)).not.toBeInTheDocument();
@@ -1645,11 +1650,11 @@ describe("IssueDetail (shared)", () => {
     // Every one of the 8 entries should be visible — the trailing block fits
     // exactly within the limit, so no "Show N more activities" line appears.
     expect(screen.getByText(/from Todo to In Progress/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Low to High/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Not important, not urgent to Important, not urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/from In Progress to In Review/i)).toBeInTheDocument();
-    expect(screen.getByText(/from High to Urgent/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Important, not urgent to Important and urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/from In Review to Done/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Urgent to Low/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Important and urgent to Not important, not urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/from Done to Blocked/i)).toBeInTheDocument();
     expect(screen.getByText(/set due date to/i)).toBeInTheDocument();
     expect(screen.queryByText(/Show \d+ more activit/i)).not.toBeInTheDocument();
@@ -1661,11 +1666,11 @@ describe("IssueDetail (shared)", () => {
     // truncate-to-8 rule applies only to the trailing block.
     const timeline: TimelineEntry[] = [
       { type: "activity", id: "old-1", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "backlog", to: "todo" }, created_at: "2026-01-16T00:00:00Z" },
-      { type: "activity", id: "old-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_not_urgent", to: "not_important_not_urgent" }, created_at: "2026-01-16T00:01:00Z" },
+      { type: "activity", id: "old-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_not_urgent", to: "not_important_urgent" }, created_at: "2026-01-16T00:01:00Z" },
       { type: "activity", id: "old-3", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "todo", to: "in_progress" }, created_at: "2026-01-16T00:02:00Z" },
-      { type: "activity", id: "old-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_not_urgent", to: "not_important_urgent" }, created_at: "2026-01-16T00:03:00Z" },
+      { type: "activity", id: "old-4", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_urgent", to: "important_not_urgent" }, created_at: "2026-01-16T00:03:00Z" },
       { type: "activity", id: "old-5", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_progress", to: "in_review" }, created_at: "2026-01-16T00:04:00Z" },
-      { type: "activity", id: "old-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "not_important_urgent", to: "important_not_urgent" }, created_at: "2026-01-16T00:05:00Z" },
+      { type: "activity", id: "old-6", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_not_urgent", to: "not_important_urgent" }, created_at: "2026-01-16T00:05:00Z" },
       { type: "activity", id: "old-7", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "in_review", to: "done" }, created_at: "2026-01-16T00:06:00Z" },
       { type: "activity", id: "old-8", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "important_not_urgent", to: "important_urgent" }, created_at: "2026-01-16T00:07:00Z" },
       { type: "activity", id: "old-9", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "done", to: "blocked" }, created_at: "2026-01-16T00:08:00Z" },
@@ -1698,15 +1703,15 @@ describe("IssueDetail (shared)", () => {
     await waitFor(() => {
       expect(screen.getByText(/from Backlog to Todo/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/from No priority to Low/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Not important, not urgent to Not important, urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/from Todo to In Progress/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Low to Medium/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Not important, urgent to Important, not urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/from In Progress to In Review/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Medium to High/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Important, not urgent to Not important, urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/from In Review to Done/i)).toBeInTheDocument();
-    expect(screen.getByText(/from High to Urgent/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Important, not urgent to Important and urgent/i)).toBeInTheDocument();
     expect(screen.getByText(/from Done to Blocked/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Urgent to Low/i)).toBeInTheDocument();
+    expect(screen.getByText(/from Important and urgent to Not important, not urgent/i)).toBeInTheDocument();
     expect(screen.queryByText(/Show \d+ more activit/i)).not.toBeInTheDocument();
   });
 
@@ -1915,7 +1920,8 @@ describe("IssueDetail (shared)", () => {
           description: "",
           description_base: "Add JWT auth to the backend",
         }),
-      );
+      undefined,
+    );
     });
   });
 
@@ -1936,7 +1942,8 @@ describe("IssueDetail (shared)", () => {
           description: "My local description",
           description_base: "Add JWT auth to the backend",
         }),
-      ),
+      undefined,
+    ),
     );
     expect(
       await screen.findByText("The description was changed concurrently. Compare both versions."),
@@ -2008,6 +2015,7 @@ describe("IssueDetail (shared)", () => {
         description: "Second local description",
         description_base: "First local description",
       }),
+      undefined,
     );
   });
 
@@ -2086,6 +2094,7 @@ describe("IssueDetail (shared)", () => {
       2,
       "issue-2",
       expect.objectContaining({ description_base: "Second issue description" }),
+      undefined,
     );
 
     await act(async () => {
@@ -2115,7 +2124,8 @@ describe("IssueDetail (shared)", () => {
           title: "My local title",
           title_base: "Implement authentication",
         }),
-      ),
+      undefined,
+    ),
     );
     expect(
       await screen.findByText("The title was changed concurrently. Compare both versions."),
@@ -2292,6 +2302,37 @@ describe("IssueDetail (shared)", () => {
       // Chip renders only on the row that has a value for the property.
       expect(await screen.findByText("Sprint 3")).toBeInTheDocument();
       expect(screen.getAllByText("Sprint 3")).toHaveLength(1);
+    });
+
+    it("drives the inline batch toolbar from row checkboxes inside a surface peek", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({
+        issues: [
+          subIssue({ id: "child-1", number: 11, identifier: "TES-11", title: "Fix login flow" }),
+          subIssue({ id: "child-2", number: 12, identifier: "TES-12", title: "Ship dashboards" }),
+        ],
+      });
+      function SurfaceHost() {
+        const selection = useCreateIssueSurfaceSelection("surface");
+        return (
+          <IssueSurfaceSelectionProvider selection={selection}>
+            <IssueDetail issueId="issue-1" />
+          </IssueSurfaceSelectionProvider>
+        );
+      }
+      render(
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <QueryClientProvider client={createTestQueryClient()}>
+            <SurfaceHost />
+          </QueryClientProvider>
+        </I18nProvider>,
+      );
+
+      fireEvent.click(await screen.findByRole("checkbox", { name: "Select TES-11" }));
+      expect(await screen.findByText("1 selected")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all sub-issues" }));
+      expect(await screen.findByText("2 selected")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Select TES-12" })).toBeChecked();
     });
 
     it("mutes the due date on done sub-issues even when past", async () => {

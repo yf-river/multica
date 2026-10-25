@@ -50,6 +50,14 @@ WHERE id = $1 AND workspace_id = $2;
 -- (xmax = 0) AS inserted distinguishes a fresh insert (true) from an upsert
 -- that updated an existing row (false). Analytics reads this to fire
 -- runtime_registered/runtime_ready only on first-time registration.
+--
+-- Ownership fence (MUL-8154): when required_owner_id is set (user-credential
+-- registration), the conflict branch only updates a row already owned by that
+-- user. A row owned by someone else - or by nobody - is left untouched and the
+-- statement returns no row, so a workspace member cannot take over another
+-- member's runtime by re-registering its (daemon_id, provider). Daemon-token
+-- registration passes NULL here and NULL owner_id, which keeps the existing
+-- owner via the COALESCE below.
 INSERT INTO agent_runtime (
     workspace_id,
     daemon_id,
@@ -61,7 +69,10 @@ INSERT INTO agent_runtime (
     metadata,
     owner_id,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+) VALUES (
+    @workspace_id, @daemon_id, @name, @runtime_mode, @provider, @status,
+    @device_info, @metadata, @owner_id, now()
+)
 -- Built-in runtimes carry no profile_id. The arbiter is the partial unique
 -- index from migration 121 (WHERE profile_id IS NULL); the predicate must be
 -- spelled out so Postgres selects that partial index, not the custom-runtime
@@ -76,6 +87,8 @@ DO UPDATE SET
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
+WHERE sqlc.narg('required_owner_id')::uuid IS NULL
+   OR agent_runtime.owner_id = sqlc.narg('required_owner_id')::uuid
 RETURNING *, (xmax = 0) AS inserted;
 
 -- name: UpsertAgentRuntimeWithProfile :one
@@ -98,7 +111,10 @@ INSERT INTO agent_runtime (
     owner_id,
     profile_id,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+) VALUES (
+    @workspace_id, @daemon_id, @name, @runtime_mode, @provider, @status,
+    @device_info, @metadata, @owner_id, @profile_id, now()
+)
 ON CONFLICT (workspace_id, daemon_id, profile_id) WHERE profile_id IS NOT NULL
 DO UPDATE SET
     name = EXCLUDED.name,
@@ -110,6 +126,8 @@ DO UPDATE SET
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
+WHERE sqlc.narg('required_owner_id')::uuid IS NULL
+   OR agent_runtime.owner_id = sqlc.narg('required_owner_id')::uuid
 RETURNING *, (xmax = 0) AS inserted;
 
 -- name: UpdateAgentRuntimeVisibility :one
@@ -437,7 +455,9 @@ FOR KEY SHARE;
 --
 -- Returns the ids it actually locked: a caller that asked for two and got fewer
 -- knows a runtime disappeared before it got there and must abandon the merge.
-SELECT id FROM agent_runtime
+-- workspace_id and owner_id come back with the lock so the merge can verify,
+-- against the locked rows, that the caller owns both sides (MUL-8154).
+SELECT id, workspace_id, owner_id FROM agent_runtime
 WHERE id = ANY(@runtime_ids::uuid[])
 ORDER BY id
 FOR UPDATE;
@@ -530,3 +550,10 @@ SELECT EXISTS (
 -- Final fail-closed assertion after UnbindTasksFromRuntime. A non-zero result
 -- aborts the transaction instead of relying on the legacy ON DELETE CASCADE.
 SELECT count(*) FROM agent_task_queue WHERE runtime_id = $1;
+
+-- name: ListRuntimeOwnersByDaemon :many
+-- Registration pre-check (MUL-8154): every runtime row a daemon_id already
+-- holds in a workspace, with its owner. A user-credential registration is
+-- refused before any write when any of them belongs to someone else.
+SELECT id, owner_id FROM agent_runtime
+WHERE workspace_id = @workspace_id AND daemon_id = @daemon_id;

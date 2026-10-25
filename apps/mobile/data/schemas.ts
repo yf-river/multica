@@ -723,7 +723,7 @@ export const EMPTY_ISSUE_FALLBACK: import("@multica/core/types").Issue = {
   title: "",
   description: null,
   status: "backlog",
-  priority: "none",
+  priority: "not_important_not_urgent",
   assignee_type: null,
   assignee_id: null,
   creator_type: "member",

@@ -23,11 +23,13 @@ const listData: { active: InboxItem[]; archived: InboxItem[] } = {
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey: readonly unknown[] }) => ({
-    data: options.queryKey.includes("archived") ? listData.archived : listData.active,
+    data: options.queryKey.includes("working-agents") ? [] : options.queryKey.includes("archived") ? listData.archived : listData.active,
     isLoading: false,
     isError: false,
   }),
 }));
+
+vi.mock("@multica/core/agents/queries", () => ({ workspaceWorkingAgentsOptions: () => ({queryKey:["working-agents"]}) }));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",

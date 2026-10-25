@@ -454,9 +454,9 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	heartbeatReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+	heartbeatReq := newOwnerDaemonRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id": runtimeID,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
+	})
 	testHandler.DaemonHeartbeat(w, heartbeatReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -485,7 +485,7 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	reportReq := withURLParams(
-		newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
+		newOwnerDaemonRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
 			"status": "completed",
 			"skill": map[string]any{
 				"name":        "Original Review Helper",
@@ -500,7 +500,7 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 					},
 				},
 			},
-		}, testWorkspaceID, "runtime-local-skills-daemon"),
+		}),
 		"runtimeId", runtimeID,
 		"requestId", importReq.ID,
 	)
@@ -578,10 +578,10 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 
 	// Single heartbeat should return all 5 via the plural field.
 	w := httptest.NewRecorder()
-	heartbeatReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+	heartbeatReq := newOwnerDaemonRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id":            runtimeID,
 		"supports_batch_import": true,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
+	})
 	testHandler.DaemonHeartbeat(w, heartbeatReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -627,10 +627,10 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 
 	// Second heartbeat should return nothing (all were claimed).
 	w = httptest.NewRecorder()
-	heartbeatReq2 := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+	heartbeatReq2 := newOwnerDaemonRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id":            runtimeID,
 		"supports_batch_import": true,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
+	})
 	testHandler.DaemonHeartbeat(w, heartbeatReq2)
 	if w.Code != http.StatusOK {
 		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -681,7 +681,7 @@ func TestReportLocalSkillImportResult_IgnoresTimedOutRequests(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	reportReq := withURLParams(
-		newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
+		newOwnerDaemonRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
 			"status": "completed",
 			"skill": map[string]any{
 				"name":        "Original Review Helper",
@@ -690,7 +690,7 @@ func TestReportLocalSkillImportResult_IgnoresTimedOutRequests(t *testing.T) {
 				"source_path": "~/.claude/skills/review-helper",
 				"provider":    "claude",
 			},
-		}, testWorkspaceID, "runtime-local-skills-daemon"),
+		}),
 		"runtimeId", runtimeID,
 		"requestId", importReq.ID,
 	)

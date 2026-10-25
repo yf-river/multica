@@ -50,7 +50,7 @@ function clipTitle(title: string): string {
  * @returns 完整文档标题。
  */
 export function formatDocumentTitle(pageTitle: string | null | undefined, environmentName = ""): string {
-  const trimmed = pageTitle?.trim();
+  const trimmed = pageTitle?.replace(/[\t\n\f\r ]+/g, " ").trim();
   const title = trimmed ? `${clipTitle(trimmed)}${TITLE_SUFFIX}` : SITE_TITLE;
   return environmentName ? `[${environmentName}] ${title}` : title;
 }

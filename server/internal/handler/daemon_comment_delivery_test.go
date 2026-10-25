@@ -230,8 +230,7 @@ func createCommentDeliveryFixture(t *testing.T, label string) commentDeliveryFix
 func claimCommentDeliveryFixture(t *testing.T, fixture commentDeliveryFixture, capabilities string) AgentTaskResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "comment-delivery-matrix")
+	req := newOwnerDaemonRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil)
 	if capabilities != "" {
 		req.Header.Set("X-Client-Capabilities", capabilities)
 	}
@@ -355,8 +354,7 @@ func TestClaimTaskByRuntime_CoalescedOnlyStaleTaskDoesNotReuseDeletedTriggerCapa
 	}
 
 	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "stale-comment-plan-repair")
+	req := newOwnerDaemonRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil)
 	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1)
 	req = withURLParam(req, "runtimeId", fixture.runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
@@ -901,8 +899,7 @@ func TestClaimTaskByRuntime_FinalizationFailureRequeuesImmediately(t *testing.T)
 	defer func() { testHandler.TaskService.TxStarter = originalTxStarter }()
 
 	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "comment-delivery-finalize-failure")
+	req := newOwnerDaemonRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil)
 	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1)
 	req = withURLParam(req, "runtimeId", fixture.runtimeID)
 	failingHandler.ClaimTaskByRuntime(w, req)

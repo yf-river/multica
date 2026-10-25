@@ -81,6 +81,8 @@ interface RunConfirmData {
   assigneeId?: string;
   assigneeName?: string;
   issueRevision?: number;
+  /** Runs after every write applies; never on dismiss, failure, or a partial batch. */
+  onApplied?: () => void;
 }
 
 /**
@@ -190,8 +192,19 @@ export function RunConfirmModal({
           ...payload,
         });
       } else {
-        await batchUpdate.mutateAsync({ ids: issueIds, updates: payload });
+        const { updated } = await batchUpdate.mutateAsync({ ids: issueIds, updates: payload });
+        // A partial batch still closes (the applied writes are real), but it
+        // warns with the real count and skips onApplied so the caller keeps
+        // its selection for a retry.
+        if (updated < issueIds.length) {
+          toast.warning(
+            tIssues(($) => $.batch.update_partial, { updated, count: issueIds.length }),
+          );
+          onClose();
+          return;
+        }
       }
+      d.onApplied?.();
       onClose();
     } catch (err) {
       toast.error(

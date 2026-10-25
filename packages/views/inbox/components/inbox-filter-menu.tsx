@@ -73,9 +73,11 @@ function actorCounts(items: InboxItem[]): Map<string, number> {
 /** 对当前去重后的列表做分面筛选的菜单组件。 */
 export function InboxFilterMenu({
   wsId,
+  archived = false,
   items,
   priorityFilterSupport,
 }: {
+  archived?: boolean;
   wsId: string;
   items: InboxItem[];
   priorityFilterSupport: InboxPriorityFilterSupport;
@@ -83,6 +85,7 @@ export function InboxFilterMenu({
   const { t } = useT("inbox");
   const { t: tIssues } = useT("issues");
   const filters = useInboxFilters(wsId);
+  const toggleIdleOnly = useInboxFilterStore((state) => state.toggleIdleOnly);
   const toggleStatus = useInboxFilterStore((state) => state.toggleStatusFilter);
   const togglePriority = useInboxFilterStore(
     (state) => state.togglePriorityFilter,
@@ -111,7 +114,7 @@ export function InboxFilterMenu({
     () => inboxFiltersForPrioritySupport(filters, priorityFilterSupport),
     [filters, priorityFilterSupport],
   );
-  const activeCount = inboxFilterCount(effectiveFilters);
+  const activeCount = inboxFilterCount(archived ? {...effectiveFilters, idleOnly:false} : effectiveFilters);
   const priorityFilteringSupported = priorityFilterSupport === "supported";
 
   // 一个工作区可能在后端变化后仍留着旧筛选（切了桌面服务端、自托管降级、或滚动
@@ -219,6 +222,9 @@ export function InboxFilterMenu({
             </span>
           )}
         </DropdownMenuCheckboxItem>
+        {!archived && <DropdownMenuCheckboxItem checked={effectiveFilters.idleOnly} onCheckedChange={() => toggleIdleOnly(wsId)}>
+          <span className="flex-1">{t(($) => $.filters.no_agents_working)}</span>
+        </DropdownMenuCheckboxItem>}
         <DropdownMenuSeparator />
 
         {actorOptions.length > 0 && (

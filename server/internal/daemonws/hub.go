@@ -29,8 +29,10 @@ const (
 
 // ClientIdentity 捕捉已鉴权的 daemon 连接的作用域。
 type ClientIdentity struct {
-	DaemonID string
-	UserID   string
+	DaemonTokenHash    string
+	DaemonTokenOwnerID string
+	DaemonID           string
+	UserID             string
 	// WorkspaceID 是老调用方与 daemon-token 鉴权使用的“单 workspace”旧作用域。新代码应
 	// 从“该连接授权的 runtime 行”填 WorkspaceIDs。
 	WorkspaceID   string

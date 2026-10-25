@@ -48,7 +48,7 @@ const INITIAL: Pick<
   "status" | "priority" | "assignee" | "dueDate" | "project"
 > = {
   status: "todo",
-  priority: "none",
+  priority: "not_important_not_urgent",
   assignee: null,
   dueDate: null,
   project: null,

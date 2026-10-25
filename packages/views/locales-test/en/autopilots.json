@@ -189,7 +189,8 @@
       "cancel": "Cancel",
       "confirm": "Delete",
       "deleting": "Deleting..."
-    }
+    },
+    "edit_schedule": "Edit schedule"
   },
   "deliveries": {
     "section_title": "Webhook Deliveries",
@@ -326,7 +327,8 @@
         "label": "Run only",
         "description": "Silent run, no issue created"
       }
-    }
+    },
+    "schedule_multiple_notice": "This autopilot has {{count}} schedules. Close this dialog and edit each one under Triggers below."
   },
   "schedule_editor": {
     "time_label": "Time",
@@ -459,5 +461,15 @@
       "description_one": "This will permanently delete \"{{name}}\" and its run history."
     },
     "selected_one": "{{count}} selected"
+  },
+  "edit_trigger_dialog": {
+    "title": "Edit schedule",
+    "label_field": "Label (optional)",
+    "label_placeholder": "e.g. Weekday morning",
+    "enabled_label": "Enabled",
+    "submit": "Save",
+    "submitting": "Saving...",
+    "toast_updated": "Schedule updated",
+    "toast_update_failed": "Failed to update schedule"
   }
 }

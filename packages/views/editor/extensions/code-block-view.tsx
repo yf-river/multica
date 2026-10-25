@@ -11,7 +11,9 @@
 import { useState } from "react";
 import { NodeViewWrapper, NodeViewContent } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
-import { Code as CodeIcon, Copy, Check, Eye } from "lucide-react";
+import { Code as CodeIcon, Copy, Check, Eye, Maximize2, RotateCw } from "lucide-react";
+import { Button } from "@multica/ui/components/ui/button";
+import { HtmlPreviewSurface } from "../html-preview-surface";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useDebouncedValue } from "../../common/use-debounced-value";
@@ -26,18 +28,22 @@ import { CodeBlockIframe } from "../code-block-iframe";
 // iframe.srcDoc 会让 iframe 反复加载并闪烁。
 const PREVIEW_DEBOUNCE_MS = 200;
 
-const HTML_PREVIEW_HEIGHT = "h-[480px]";
+const HTML_PREVIEW_HEIGHT_PX = 480;
 
 function CodeBlockView({ node }: NodeViewProps) {
   const { t } = useT("editor");
   const [copied, setCopied] = useState(false);
-  // HTML 块默认「预览」；用户可切到「源码」直接改标记。注意：源码 `<pre>`
-  // 必须保持挂载（只是隐藏）让 ProseMirror 保住 NodeView 绑定——卸载它会
-  // 破坏编辑。
+  const [fullscreen, setFullscreen] = useState(false);
+  const [previewRevision, setPreviewRevision] = useState(0);
+  // HTML blocks default to "preview"; the user can flip to "source" to
+  // edit the markup directly. Note: the source `<pre>` MUST stay mounted
+  // (just hidden) so ProseMirror keeps its NodeView bindings — unmounting
+  // it would break editing.
   const [view, setView] = useState<"preview" | "source">("preview");
   const language = node.attrs.language || "";
   const isMermaid = language === "mermaid";
   const isHtml = language === "html";
+  const showHtmlPreview = isHtml && view === "preview";
   const chart = node.textContent;
   const debouncedChart = useDebouncedValue(
     isMermaid ? chart : "",
@@ -46,6 +52,7 @@ function CodeBlockView({ node }: NodeViewProps) {
   const debouncedHtml = useDebouncedValue(
     isHtml ? chart : "",
     PREVIEW_DEBOUNCE_MS,
+    showHtmlPreview || fullscreen,
   );
 
   const handleCopy = async () => {
@@ -57,7 +64,6 @@ function CodeBlockView({ node }: NodeViewProps) {
     }
   };
 
-  const showHtmlPreview = isHtml && view === "preview";
   const toggleView = () =>
     setView((v) => (v === "preview" ? "source" : "preview"));
 
@@ -71,16 +77,29 @@ function CodeBlockView({ node }: NodeViewProps) {
           <MermaidDiagram chart={debouncedChart} />
         </div>
       )}
-      {isHtml && showHtmlPreview && (
-        // 切换走时用 CSS 隐藏，保证下面的 `<pre>` 一直挂载——任何一边被
-        // 卸载都会要么丢 ProseMirror 绑定（源码侧），要么让 iframe.srcDoc
-        // 反复重载（预览侧）。
-        <div contentEditable={false} className="mb-1">
-          <CodeBlockIframe
-            html={debouncedHtml}
+      {isHtml && (
+        // CSS-hidden when toggled off so the `<pre>` below stays mounted —
+        // unmounting either side would either lose ProseMirror bindings
+        // (source) or thrash iframe.srcDoc (preview).
+        <div
+          contentEditable={false}
+          className={showHtmlPreview ? "mb-1" : undefined}
+          hidden={!showHtmlPreview && !fullscreen}
+        >
+          <HtmlPreviewSurface
+            open={fullscreen}
+            inlineHeight={showHtmlPreview ? HTML_PREVIEW_HEIGHT_PX : 0}
+            onOpenChange={setFullscreen}
+            onReload={() => setPreviewRevision(value => value + 1)}
             title={t(($) => $.code_block.html_preview)}
-            heightClassName={HTML_PREVIEW_HEIGHT}
-          />
+          >
+            <CodeBlockIframe key={previewRevision}
+              html={debouncedHtml}
+              title={t(($) => $.code_block.html_preview)}
+              heightClassName={fullscreen ? "h-full" : "h-[480px]"}
+              className={fullscreen ? "rounded-none border-0" : undefined}
+            />
+          </HtmlPreviewSurface>
         </div>
       )}
       <div
@@ -92,6 +111,12 @@ function CodeBlockView({ node }: NodeViewProps) {
             {language}
           </span>
         )}
+        {isHtml && <button type="button" disabled={!showHtmlPreview && !fullscreen}
+          title={t(($) => $.attachment.reload)} aria-label={t(($) => $.attachment.reload)}
+          onClick={() => setPreviewRevision(value => value + 1)}
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-50">
+          <RotateCw className="h-3.5 w-3.5" />
+        </button>}
         {isHtml && (
           <button
             type="button"
@@ -114,6 +139,19 @@ function CodeBlockView({ node }: NodeViewProps) {
               <Eye className="h-3.5 w-3.5" />
             )}
           </button>
+        )}
+        {isHtml && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground"
+            title={t(($) => $.code_block.fullscreen)}
+            aria-label={t(($) => $.code_block.fullscreen)}
+            onClick={() => setFullscreen(true)}
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </Button>
         )}
         <button
           type="button"

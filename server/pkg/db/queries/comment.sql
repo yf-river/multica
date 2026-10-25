@@ -379,21 +379,33 @@ LIMIT 1;
 -- an agent comment can never fan out to an unrelated agent. Ordered ASC so
 -- replaying in order lets later comments coalesce onto the follow-up created by
 -- the first.
-SELECT * FROM comment
-WHERE issue_id = @issue_id
+SELECT c.* FROM comment c
+WHERE c.issue_id = @issue_id
   AND (
       (
-          author_type IN ('member', 'agent')
-          AND (created_at > @since OR id = ANY(@planned_comment_ids::uuid[]))
+          c.author_type IN ('member', 'agent')
+          AND (c.created_at > @since OR c.id = ANY(@planned_comment_ids::uuid[]))
       )
       OR (
-          author_type = 'system'
-          AND type = 'progress_update'
-          AND source_task_id IS NOT NULL
-          AND id = ANY(@planned_comment_ids::uuid[])
+          c.author_type = 'system'
+          AND c.type = 'progress_update'
+          AND c.source_task_id IS NOT NULL
+          AND c.id = ANY(@planned_comment_ids::uuid[])
       )
   )
-ORDER BY created_at ASC, id ASC;
+  -- 显式取消确认当前输入；仅约束同一个 Agent，编辑后的新内容仍可处理。
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue cancelled
+      WHERE cancelled.issue_id = c.issue_id
+        AND cancelled.agent_id = @agent_id
+        AND cancelled.status = 'cancelled'
+        AND cancelled.context @> '{"explicit_cancel": true}'::jsonb
+        AND cancelled.completed_at >= @since
+        AND cancelled.completed_at >= GREATEST(c.created_at, c.updated_at)
+        AND (cancelled.trigger_comment_id = c.id
+             OR c.id = ANY(cancelled.coalesced_comment_ids))
+  )
+ORDER BY c.created_at ASC, c.id ASC;
 
 -- name: GetComment :one
 SELECT * FROM comment

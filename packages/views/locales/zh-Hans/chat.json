@@ -33,7 +33,8 @@
     "change_project_context": "更改项目上下文",
     "remove_project_context": "移除项目上下文",
     "no_projects": "还没有项目",
-    "project_context_unsupported": "项目描述不会生效——该智能体的守护进程版本过旧，需要升级"
+    "project_context_unsupported": "项目描述不会生效——该智能体的守护进程版本过旧，需要升级",
+    "runtime_access_denied_toast": "无权使用此运行时，请重新选择可用的 Agent"
   },
   "queue": {
     "title_other": "{{count}} 条排队消息",
@@ -71,7 +72,9 @@
       "context_overflow": "这次对话超出了模型的上下文长度。开一个新会话，或把需求拆得更小一些。",
       "runtime_missing_executable": "无法在这台设备上运行智能体的 CLI。确认已正确安装并且在 PATH 中，然后重试。",
       "runtime_version_unsupported": "智能体的 CLI 版本过低。升级后重试。",
-      "fallback": "出了点问题，智能体未能完成回复。请重试。"
+      "fallback": "出了点问题，智能体未能完成回复。请重试。",
+      "runtime_access_denied": "运行时访问权限已撤销",
+      "environment_prepare_failed": "执行环境准备失败"
     },
     "tools_other": "{{count}} 个工具",
     "tool_result_named": "{{tool}} 结果：",

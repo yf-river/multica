@@ -104,13 +104,24 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				if rejectTemporarilyDisabledUser(w, r, userID, "", "task_token") {
 					return
 				}
+				boundWorkspaceID := uuidToString(tt.WorkspaceID)
+				// An explicit workspace selector that disagrees with the
+				// token's binding is rejected here, BEFORE the overwrite
+				// below erases what the client asked for. Silently
+				// swapping the target let a request for workspace B run
+				// against A (GitHub #9403).
+				if checkTaskTokenWorkspaceTarget(w, r, queries, boundWorkspaceID) {
+					return
+				}
 				r.Header.Set("X-User-ID", userID)
 				r.Header.Set("X-Agent-ID", uuidToString(tt.AgentID))
 				r.Header.Set("X-Task-ID", uuidToString(tt.TaskID))
-				r.Header.Set("X-Workspace-ID", uuidToString(tt.WorkspaceID))
-				// X-Actor-Source 标记鉴权路径，使 resolveActor 与任何仅限 owner 的 handler
-				// 无需再查 token 表就能直接拒绝。这个头只允许携带 "task_token" 一个值——
-				// 客户端试图塞的任何其它内容都已在上方被剥掉。
+				r.Header.Set("X-Workspace-ID", boundWorkspaceID)
+				// X-Actor-Source flags the auth path so resolveActor and
+				// any owner-only handler can deny without re-querying the
+				// token table. The value "task_token" is the only signal
+				// this header is allowed to carry — strip anything else a
+				// client tried to send.
 				r.Header.Set("X-Actor-Source", "task_token")
 				next.ServeHTTP(w, r)
 				return

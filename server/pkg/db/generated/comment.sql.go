@@ -1294,27 +1294,40 @@ func (q *Queries) ListRecentThreadCommentsForIssue(ctx context.Context, arg List
 }
 
 const listReconcilableCommentsForIssueSince = `-- name: ListReconcilableCommentsForIssueSince :many
-SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, via_plugin_id, revision, recovery_settled_at FROM comment
-WHERE issue_id = $1
+SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type, c.created_at, c.updated_at, c.parent_id, c.workspace_id, c.resolved_at, c.resolved_by_type, c.resolved_by_id, c.source_task_id, c.quick_action_id, c.via_plugin_id, c.revision, c.recovery_settled_at FROM comment c
+WHERE c.issue_id = $1
   AND (
       (
-          author_type IN ('member', 'agent')
-          AND (created_at > $2 OR id = ANY($3::uuid[]))
+          c.author_type IN ('member', 'agent')
+          AND (c.created_at > $2 OR c.id = ANY($3::uuid[]))
       )
       OR (
-          author_type = 'system'
-          AND type = 'progress_update'
-          AND source_task_id IS NOT NULL
-          AND id = ANY($3::uuid[])
+          c.author_type = 'system'
+          AND c.type = 'progress_update'
+          AND c.source_task_id IS NOT NULL
+          AND c.id = ANY($3::uuid[])
       )
   )
-ORDER BY created_at ASC, id ASC
+  -- 显式取消确认当前输入；仅约束同一个 Agent，编辑后的新内容仍可处理。
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_task_queue cancelled
+      WHERE cancelled.issue_id = c.issue_id
+        AND cancelled.agent_id = $4
+        AND cancelled.status = 'cancelled'
+        AND cancelled.context @> '{"explicit_cancel": true}'::jsonb
+        AND cancelled.completed_at >= $2
+        AND cancelled.completed_at >= GREATEST(c.created_at, c.updated_at)
+        AND (cancelled.trigger_comment_id = c.id
+             OR c.id = ANY(cancelled.coalesced_comment_ids))
+  )
+ORDER BY c.created_at ASC, c.id ASC
 `
 
 type ListReconcilableCommentsForIssueSinceParams struct {
 	IssueID           pgtype.UUID        `json:"issue_id"`
 	Since             pgtype.Timestamptz `json:"since"`
 	PlannedCommentIds []pgtype.UUID      `json:"planned_comment_ids"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
 }
 
 // MUL-4195 / MUL-4304 completion reconciliation: every MEMBER- or AGENT-authored
@@ -1350,7 +1363,12 @@ type ListReconcilableCommentsForIssueSinceParams struct {
 // replaying in order lets later comments coalesce onto the follow-up created by
 // the first.
 func (q *Queries) ListReconcilableCommentsForIssueSince(ctx context.Context, arg ListReconcilableCommentsForIssueSinceParams) ([]Comment, error) {
-	rows, err := q.db.Query(ctx, listReconcilableCommentsForIssueSince, arg.IssueID, arg.Since, arg.PlannedCommentIds)
+	rows, err := q.db.Query(ctx, listReconcilableCommentsForIssueSince,
+		arg.IssueID,
+		arg.Since,
+		arg.PlannedCommentIds,
+		arg.AgentID,
+	)
 	if err != nil {
 		return nil, err
 	}

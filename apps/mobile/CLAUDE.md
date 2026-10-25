@@ -80,8 +80,8 @@ This pattern repeats: timeline coalescing (`buildTimelineGroups`), inbox dedup, 
 Start minimal. Add to this list when actually adopted — do NOT pre-list libraries.
 
 - **Expo SDK 55**
-- **React Native 0.82**
-- **React 19.1** — whatever Expo SDK 55 ships. Pinned in `apps/mobile/package.json` directly, NOT via root `catalog:`.
+- **React Native 0.83.6**
+- **React 19.2** — whatever Expo SDK 55 ships. Pinned in `apps/mobile/package.json` directly, NOT via root `catalog:`.
 - **TypeScript** strict
 - **Expo Router 55** (file-based routing — version aligns with Expo SDK)
 - **NativeWind 4** + **Tailwind 3.4** — NativeWind 5 is unstable; stay on v4. (Note: web/desktop use Tailwind v4 — versions intentionally differ.)

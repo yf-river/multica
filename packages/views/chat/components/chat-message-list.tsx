@@ -60,6 +60,8 @@ import { useT } from "../../i18n";
 // ─── 公开组件 ────────────────────────────────────────────────────────────
 
 interface ChatMessageListProps {
+  /** Pause bottom-stick effects while a closing floating window fades out. */
+  active?: boolean;
   messages: ChatMessage[];
   /**
    * 服务端权威的 pending 任务快照。`null` / undefined 表示没有在途任务——
@@ -169,6 +171,7 @@ const LIST_COMPONENTS: Components<ChatRenderItem, ChatListContext> = {
  * 实时/持久化 timeline 的原地交接都在这里编排。详见 Props 各字段。
  */
 export function ChatMessageList({
+  active = true,
   messages,
   pendingTask,
   availability,
@@ -198,6 +201,7 @@ export function ChatMessageList({
   const { isFollowing, onContentHeightChanged, hasReachedLiveEnd } = useStickToBottom(
     scrollContainerEl,
     pinToLiveEnd,
+    active,
   );
   // 上下沿的柔和渐隐提示更多内容。保持很小，几乎不碰边缘的整幅预览
   // （图片 / HTML）。
@@ -942,11 +946,13 @@ function FailureBubble({
     timeout: t(($) => $.message_list.failure.timeout),
     codex_semantic_inactivity: t(($) => $.message_list.failure.codex_semantic_inactivity),
     runtime_offline: t(($) => $.message_list.failure.runtime_offline),
+    runtime_access_denied: t(($) => $.message_list.failure.runtime_access_denied),
     runtime_recovery: t(($) => $.message_list.failure.runtime_recovery),
     manual: t(($) => $.message_list.failure.manual),
     cancelled: t(($) => $.message_list.failure.manual),
     skill_bundle_unavailable: t(($) => $.message_list.failure.skill_bundle_unavailable),
     runtime_cli_timeout: t(($) => $.message_list.failure.runtime_cli_timeout),
+    environment_prepare_failed: t(($) => $.message_list.failure.environment_prepare_failed),
     "agent_error.provider_network": t(($) => $.message_list.failure.provider_network),
     "agent_error.provider_auth_or_access": t(($) => $.message_list.failure.provider_auth_or_access),
     "agent_error.provider_quota_limit": t(($) => $.message_list.failure.provider_quota_limit),

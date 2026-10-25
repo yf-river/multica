@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -237,9 +238,17 @@ func writeRuntimeConfigFile(path, brief string) error {
 
 	existingStr := string(existing)
 	if start, end, ok := locateMarkerBlock(existingStr); ok {
-		// 原地替换既有区块。locateMarkerBlock 已把上一个区块收尾的换行一起
-		// 吞掉，所以连续运行不会在区块周围累积空行。托管分隔符（若有）位于
-		// existingStr[:start]，原样保留不受影响。
+		// Carry the boundary metadata recorded by the first Inject forward
+		// so a re-injection never re-baselines against the already-injected
+		// file (whose "original" bytes would include our own separator).
+		if meta, ok := parseRuntimeBoundaryMeta(existingStr[start:end]); ok {
+			block = runtimeBlockWithBoundaryMeta(block, meta)
+		}
+		// Replace the existing block in place. locateMarkerBlock already
+		// consumes the trailing newline that closed the previous block, so
+		// successive runs don't accumulate blank lines around the block.
+		// The managed separator (if any) lives in existingStr[:start] and
+		// is preserved untouched.
 		newContent := existingStr[:start] + block + existingStr[end:]
 		if newContent == existingStr {
 			return nil
@@ -247,15 +256,120 @@ func writeRuntimeConfigFile(path, brief string) error {
 		return os.WriteFile(path, []byte(newContent), 0o644)
 	}
 
-	// 没有标记区块。先追加定宽托管分隔符再加区块。分隔符是无条件的——包括
-	// 那些本来就以两个以上换行结尾的文件——因此用户内容与托管区域之间的
-	// 字节边界是确定的，这正是 Cleanup 能回滚到用户精确原始字节的根据。
+	// No marker block present. Append the fixed managed separator followed
+	// by the block. The separator is unconditional — including for files
+	// that already end in two or more newlines — so the byte boundary
+	// between user content and the managed region is deterministic, which
+	// is what lets Cleanup roll back to the user's exact original bytes.
+	//
+	// The separator alone is not enough once a Markdown formatter runs
+	// between Inject and Cleanup: formatters collapse the blank lines in
+	// front of the block (or drop them entirely for a blank file), so the
+	// user's own trailing newlines become indistinguishable from ours.
+	// Record them inside the block, which formatters leave alone.
+	trimmed := strings.TrimRight(existingStr, "\r\n")
+	block = runtimeBlockWithBoundaryMeta(block, runtimeBoundaryMeta{
+		boundary: existingStr[len(trimmed):],
+		blank:    trimmed == "",
+	})
 	return os.WriteFile(path, []byte(existingStr+runtimeManagedSeparator+block), 0o644)
 }
 
-// locateMarkerBlock 在 content 中定位 Multica 标记区块的 [start, end) 字节
-// 区间。返回的 end 越过区块的尾随换行（若有），使调用方切除区块后不会留下
-// 一行孤立的空行。
+// runtimeBoundaryPrefix opens the metadata line written as the first line
+// inside the marker block whenever Inject appends to a pre-existing file:
+//
+//	<!-- MULTICA-RUNTIME original-boundary: "<quoted CR/LF bytes>"[ blank] -->
+//
+// Its presence also means "the file existed before Inject", so Cleanup never
+// deletes a file that carries it. Daemons that predate the metadata strip it
+// together with the block, so mixed-version inject/cleanup stays safe.
+const runtimeBoundaryPrefix = "<!-- MULTICA-RUNTIME original-boundary: "
+
+// runtimeBoundaryMeta is the pre-injection state Cleanup needs to undo a
+// formatter-normalised separator.
+type runtimeBoundaryMeta struct {
+	// boundary is the run of trailing CR/LF bytes the user's file ended with.
+	boundary string
+	// blank reports that the file held nothing but those bytes. Cleanup
+	// only restores the boundary into an empty prefix when this is set;
+	// otherwise an empty prefix means the agent legitimately removed or
+	// moved the original content, and re-adding the old newlines would
+	// leak a stray blank line into the user's file.
+	blank bool
+}
+
+func runtimeBlockWithBoundaryMeta(block string, meta runtimeBoundaryMeta) string {
+	line := runtimeBoundaryPrefix + strconv.Quote(meta.boundary)
+	if meta.blank {
+		line += " blank"
+	}
+	line += " -->\n"
+	return strings.Replace(block, runtimeMarkerBegin+"\n", runtimeMarkerBegin+"\n"+line, 1)
+}
+
+// parseRuntimeBoundaryMeta reads the metadata line from a marker block.
+// Anything malformed is treated as absent so Cleanup falls back to the
+// legacy fixed-separator behaviour instead of guessing.
+func parseRuntimeBoundaryMeta(block string) (runtimeBoundaryMeta, bool) {
+	line := strings.TrimLeft(strings.TrimPrefix(block, runtimeMarkerBegin), "\r\n")
+	if !strings.HasPrefix(line, runtimeBoundaryPrefix) {
+		return runtimeBoundaryMeta{}, false
+	}
+	rest := strings.TrimPrefix(line, runtimeBoundaryPrefix)
+	quoted, err := strconv.QuotedPrefix(rest)
+	if err != nil {
+		return runtimeBoundaryMeta{}, false
+	}
+	boundary, err := strconv.Unquote(quoted)
+	if err != nil || strings.Trim(boundary, "\r\n") != "" {
+		return runtimeBoundaryMeta{}, false
+	}
+	meta := runtimeBoundaryMeta{boundary: boundary}
+	switch tail := rest[len(quoted):]; {
+	case strings.HasPrefix(tail, " blank -->"):
+		meta.blank = true
+	case strings.HasPrefix(tail, " -->"):
+	default:
+		return runtimeBoundaryMeta{}, false
+	}
+	return meta, true
+}
+
+// runtimeIsCollapsedSeparator reports whether gap (the CR/LF run between the
+// user's last content byte and the marker block) is exactly two line breaks,
+// i.e. the single blank line a Markdown formatter leaves before an HTML block.
+// Line breaks may be LF or CRLF since formatters may rewrite line endings.
+func runtimeIsCollapsedSeparator(gap string) bool {
+	breaks := 0
+	for rest := gap; rest != ""; breaks++ {
+		switch {
+		case strings.HasPrefix(rest, "\r\n"):
+			rest = rest[2:]
+		case rest[0] == '\n':
+			rest = rest[1:]
+		default:
+			return false
+		}
+	}
+	return breaks == 2
+}
+
+// runtimeBoundaryInStyle rewrites the recorded boundary into the line-ending
+// style of the gap the formatter left behind, so restoring an original CRLF
+// boundary into a file the formatter converted to LF (or vice versa) does
+// not produce mixed line endings.
+func runtimeBoundaryInStyle(boundary, gap string) string {
+	lf := strings.ReplaceAll(boundary, "\r\n", "\n")
+	if strings.HasPrefix(gap, "\r\n") {
+		return strings.ReplaceAll(lf, "\n", "\r\n")
+	}
+	return lf
+}
+
+// locateMarkerBlock finds the [start, end) byte range of the Multica marker
+// block inside content. The returned `end` is one past the block's trailing
+// newline (if any) so callers can splice the block out without leaving an
+// orphan blank line behind.
 //
 // 结束标记被"严格在开始标记之后"搜索。这对两种旧实现用朴素 strings.Index
 // 会处理错的畸形情况很关键：
@@ -280,7 +394,11 @@ func locateMarkerBlock(content string) (start, end int, found bool) {
 		return start, len(content), true
 	}
 	end = afterBegin + endRel + len(runtimeMarkerEnd)
-	if end < len(content) && content[end] == '\n' {
+	// Consume the line break closing the block. A formatter that rewrites
+	// the file to CRLF also rewrites the block's own LF, so accept both.
+	if strings.HasPrefix(content[end:], "\r\n") {
+		end += 2
+	} else if end < len(content) && content[end] == '\n' {
 		end++
 	}
 	return start, end, true
@@ -333,14 +451,22 @@ func CleanupRuntimeConfig(workDir, provider string) error {
 	// 托管分隔符。"分隔符缺失"即"Inject 是从零创建这个文件"的标记，也是
 	// Cleanup 唯一允许删除文件的情形。
 	hadManagedSeparator := strings.HasSuffix(pre, runtimeManagedSeparator)
-	if hadManagedSeparator {
+	meta, hasMeta := parseRuntimeBoundaryMeta(existingStr[start:end])
+	trimmedPre := strings.TrimRight(pre, "\r\n")
+	gap := pre[len(trimmedPre):]
+	switch {
+	case hasMeta && trimmedPre != "" && runtimeIsCollapsedSeparator(gap):
+		pre = trimmedPre + runtimeBoundaryInStyle(meta.boundary, gap)
+	case hasMeta && meta.blank && pre == "" && post == "":
+		pre = meta.boundary
+	case hadManagedSeparator:
 		pre = pre[:len(pre)-len(runtimeManagedSeparator)]
 	}
 	remainder := pre + post
 
-	if !hadManagedSeparator && remainder == "" {
-		// 文件是 Inject 创建的（无托管分隔符 → 区块是唯一内容）。
-		// 还原"文件缺失"状态。
+	if !hadManagedSeparator && !hasMeta && remainder == "" {
+		// Inject created the file (no managed separator → block was the
+		// only content). Restore the missing-file state.
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove runtime config %s: %w", path, err)
 		}
