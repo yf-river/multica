@@ -50,7 +50,7 @@ jobs:
         with:
           # Deliberately independent from the minimum patch in server/go.mod:
           # releases follow the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          go-version: "~1.26.10"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -94,7 +94,7 @@ jobs:
         with:
           # Deliberately independent from the minimum patch in server/go.mod:
           # releases follow the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          go-version: "~1.26.10"
           check-latest: true
           cache-dependency-path: server/go.sum
 

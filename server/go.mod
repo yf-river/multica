@@ -1,6 +1,6 @@
 module github.com/multica-ai/multica/server
 
-go 1.26.6
+go 1.26.10
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
@@ -75,7 +75,7 @@ require (
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260708182218-49f421fb7959 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	golang.org/x/vuln v1.6.0 // indirect
 )
