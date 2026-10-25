@@ -497,7 +497,11 @@ func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issu
 	if s != nil && s.Queries != nil && issue.OriginType.Valid &&
 		issue.OriginType.String == "autopilot" && issue.OriginID.Valid {
 		var triggerID pgtype.UUID
-		if run, err := s.Queries.GetAutopilotRunByIssue(ctx, issue.ID); err == nil {
+		if run, err := s.Queries.GetLatestAutopilotRunForIssueAttribution(ctx, db.GetLatestAutopilotRunForIssueAttributionParams{
+			IssueID:     issue.ID,
+			AutopilotID: issue.OriginID,
+			WorkspaceID: issue.WorkspaceID,
+		}); err == nil {
 			triggerID = run.TriggerID
 		}
 		return triggerOwnerAttribution(ctx, s.Queries, triggerID, issue.WorkspaceID, issue.OriginID, attribution.EvidenceIssueAssignment, issue.ID)
