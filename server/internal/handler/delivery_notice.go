@@ -42,7 +42,8 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 		return false, err
 	}
 	var ownerTx pgx.Tx
-	if stage == "batch_ready" {
+	var externalCloseout bool
+	if stage == "batch_ready" || stage == "published" {
 		ownerTx, err = h.TxStarter.Begin(r.Context())
 		if err != nil {
 			return false, err
@@ -53,11 +54,20 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 			return false, checkErr
 		}
 		if external {
-			return true, nil
+			if stage == "published" {
+				// 外部执行者收尾期间由其验收；完成时间必须晚于该交付发布。
+				err = ownerTx.QueryRow(r.Context(), `SELECT i.status='done' AND i.updated_at>=d.updated_at FROM issue_delivery d JOIN issue i ON i.id=d.issue_id WHERE d.id=$1 AND d.workspace_id=$2 AND d.phase='published'`, delivery, ws).Scan(&externalCloseout)
+				if err != nil {
+					return false, err
+				}
+			}
+			if !externalCloseout {
+				return true, nil
+			}
 		}
 	}
 	var completedAudit bool
-	if stage == "published" {
+	if stage == "published" && !externalCloseout {
 		pending, completed, checkErr := h.resumedPublishedCloseout(r.Context(), ws, issue, delivery, candidate)
 		if checkErr != nil {
 			return false, checkErr
@@ -90,6 +100,10 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 			// 便签在创建、完成补派和评论重放路径都持久免触发。
 			mention = ""
 			text = fmt.Sprintf("/note 交付 %s 的候选 %s 已发布；本次发布恢复执行已完成生产验收，任务已完成。", delivery, candidate)
+		}
+		if externalCloseout {
+			mention = ""
+			text = fmt.Sprintf("/note 交付 %s 的候选 %s 已发布；当前外部执行者已在发布后完成任务收尾。", delivery, candidate)
 		}
 		payload, _ := json.Marshal(map[string]any{"id": id, "content": mention + text})
 		rr := r.Clone(context.WithValue(r.Context(), systemCommentContextKey{}, true))

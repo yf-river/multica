@@ -268,3 +268,40 @@ func TestVerificationQueueRegistrationRunIsNotAcceptance(t *testing.T) {
 	}
 	t.Fatal("交付未返回")
 }
+
+func TestExternalPublishedCloseoutDefersThenAuditsWithoutAgent(t *testing.T) {
+	f := newPublishedResumeFixture(t)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status='failed',completed_at=now() WHERE id=$1`, f.resumed)
+	var owner coordinationOwner
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(f.issue, "claim", "external-production-closeout", owner, "")).Want(200).JSON(&owner)
+	for n := 0; n < 2; n++ {
+		if !f.notify(t) {
+			t.Fatal("外部收尾应等待验收")
+		}
+		f.assertNotice(t, false, 0)
+	}
+	dbfx.Exec(t, `UPDATE issue SET status='done',updated_at=now() WHERE id=$1`, f.issue)
+	for n := 0; n < 2; n++ {
+		if f.notify(t) {
+			t.Fatal("完成后应写审计")
+		}
+		f.assertNotice(t, true, 0)
+	}
+	var content string
+	dbfx.QueryRow(t, `SELECT c.content FROM comment c JOIN delivery_notice n ON n.comment_id=c.id WHERE n.delivery_id=$1 AND n.stage='published'`, f.delivery).Scan(&content)
+	if !strings.HasPrefix(content, "/note ") || strings.Contains(content, "mention://") {
+		t.Fatalf("收尾审计不应触发Agent: %s", content)
+	}
+}
+
+func TestExternalPublishedCloseoutRejectsOldDoneState(t *testing.T) {
+	f := newPublishedResumeFixture(t)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status='failed',completed_at=now() WHERE id=$1`, f.resumed)
+	dbfx.Exec(t, `UPDATE issue SET status='done',updated_at=now()-interval '1 day' WHERE id=$1`, f.issue)
+	var owner coordinationOwner
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(f.issue, "claim", "external-old-done", owner, "")).Want(200).JSON(&owner)
+	if !f.notify(t) {
+		t.Fatal("历史done不能冒充本次发布收尾")
+	}
+	f.assertNotice(t, false, 0)
+}
