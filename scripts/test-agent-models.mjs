@@ -2,14 +2,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { createHash } from 'node:crypto';
 
-const [environment, mode = 'audit', policyFile] = process.argv.slice(2);
+const [environment, mode = 'audit', policyFile, scopeFile] = process.argv.slice(2);
 const policyRoot = path.join(process.env.MULTICA_RELEASE_ROOT || '', '.run');
 const cachedPolicy = path.join(policyRoot,'test-agent-policy-'+environment+'.json');
-const desired = JSON.parse(fs.readFileSync(policyFile || (fs.existsSync(cachedPolicy) ? cachedPolicy : path.join(policyRoot,'test-agent-policy.json')),'utf8'));
+const desired = mode === 'target' ? null : JSON.parse(fs.readFileSync(policyFile || (fs.existsSync(cachedPolicy) ? cachedPolicy : path.join(policyRoot,'test-agent-policy.json')),'utf8'));
 const valid = p => p && ((p.provider === 'codebuddy' && p.model === 'deepseek-v4.1-flash' && p.thinking_level === '' && p.service_tier === '') || (p.provider === 'codex' && p.model === 'gpt-6.1-sol' && p.thinking_level === 'low' && p.service_tier === 'default'));
-if (!valid(desired.policy) || Object.values(desired.overrides || {}).some(p => !valid(p))) throw Error('测试模型配置不受支持');
-if (!['int', 'verify-1', 'verify-2', 'verify-3'].includes(environment) || !['audit', 'apply'].includes(mode)) throw Error('仅接受固定测试环境及 audit/apply');
+if (desired && (!valid(desired.policy) || Object.values(desired.overrides || {}).some(p => !valid(p)))) throw Error('测试模型配置不受支持');
+if (!['int', 'verify-1', 'verify-2', 'verify-3'].includes(environment) || !['audit', 'apply', 'target'].includes(mode)) throw Error('仅接受固定测试环境及 audit/apply/target');
 const root = process.env.MULTICA_RELEASE_ROOT;
 if (!root) throw Error('缺少控制目录 MULTICA_RELEASE_ROOT');
 const read = file => JSON.parse(fs.readFileSync(path.join(root, '.run', file), 'utf8'));
@@ -31,6 +32,11 @@ const backend = await request(meta.backend_url,'/health');
 const config = await request(meta.backend_url,'/api/config');
 if (config.environment_id !== environment || backend.commit !== meta.commit) throw Error('运行环境与部署记录不符');
 const health = await request(daemon,'/health');
+// 1. The targeted path shares the existing inventory and provider selection but never drains an environment.
+if (mode === 'target') {
+ await targeted(JSON.parse(fs.readFileSync(scopeFile,'utf8')));
+ process.exit(0);
+}
 let wasDraining = true;
 const client = new pg.Client({connectionString:cfg.server.DATABASE_URL});
 await client.connect();
@@ -77,4 +83,129 @@ try {
 } finally {
  await client.end();
  if (mode === 'apply' && !wasDraining) await request(daemon,'/drain','DELETE');
+}
+
+async function targeted(scope) {
+ // 2. Pin control rows for the entire target transaction; lease expiry is rechecked immediately before commit.
+ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+ for (const key of ['delivery_id','workspace_id','agent_id','operation_id']) {
+  if (!uuid.test(scope[key] || '')) throw Error('Invalid scope '+key);
+ }
+ if (scope.environment !== environment || scope.execution_id !== process.env.MULTICA_TASK_ID || !scope.execution_id
+     || !scope.candidate_id || !scope.source_commit || !scope.seed_id || !scope.seed_sha256
+     || !Number.isSafeInteger(scope.owner_generation) || !Number.isSafeInteger(scope.revision)) throw Error('Invalid maintenance scope');
+ const candidate=read(environment==='int'?'candidate.json':'candidates/'+environment+'/current.json');
+ if (candidate.status!=='verifying' || candidate.id!==scope.candidate_id || candidate.delivery_id!==scope.delivery_id
+     || (candidate.source_commit || candidate.approved_source || candidate.commit)!==scope.source_commit || candidate.commit!==meta.commit
+     || candidate.release_id!==meta.release_id
+     || (environment==='int'?candidate.publication_lease?.generation:candidate.generation)!==scope.generation) throw Error('Deployed candidate differs');
+ const control = new pg.Client({connectionString:prod.server.DATABASE_URL});
+ const db = new pg.Client({connectionString:cfg.server.DATABASE_URL});
+ let controlConnected=false, targetConnected=false;
+ try {
+  await control.connect();controlConnected=true;
+  await control.query('BEGIN');
+  await control.query("SET LOCAL lock_timeout='3s'");
+  await control.query("SET LOCAL statement_timeout='10s'");
+  await control.query("SET LOCAL idle_in_transaction_session_timeout='20s'");
+  const one = async (sql,args) => {
+   const result=await control.query(sql,args);
+   if (result.rows.length !== 1) throw Error('Control identity missing or ambiguous');
+   return result.rows[0];
+  };
+  const delivery=await one('SELECT * FROM issue_delivery WHERE id=$1 FOR SHARE',[scope.delivery_id]);
+  if (delivery.phase!=='testing' || delivery.candidate_id!==scope.candidate_id || delivery.source_commit!==scope.source_commit) throw Error('Inactive delivery/candidate/source');
+  const owner=await one('SELECT * FROM delivery_owner WHERE workspace_id=$1 AND issue_id=$2 FOR SHARE',[delivery.workspace_id,delivery.issue_id]);
+  if (owner.execution_id!==scope.execution_id || Number(owner.generation)!==scope.owner_generation) throw Error('Stale owner');
+  const deadlines=[owner.expires_at];
+  if (environment==='int') {
+   const lease=await one("SELECT * FROM delivery_publication WHERE resource='int-prod' FOR SHARE",[]);
+   if (lease.delivery_id!==delivery.id || lease.workspace_id!==delivery.workspace_id || lease.worker_token!==delivery.worker_token || lease.state!=='active'
+       || Number(lease.generation)!==scope.generation) throw Error('Stale integration lease');
+   deadlines.push(lease.expires_at);
+  } else {
+   const lease=await one('SELECT * FROM verification_slot WHERE name=$1 FOR SHARE',[environment]);
+   if (!lease.enabled || lease.state!=='verifying' || lease.delivery_id!==delivery.id || lease.workspace_id!==delivery.workspace_id
+       || lease.worker_token!==delivery.worker_token || lease.candidate_id!==scope.candidate_id
+       || lease.source_commit!==scope.source_commit || Number(lease.generation)!==scope.generation) throw Error('Stale verification lease');
+   deadlines.push(lease.lease_expires_at);
+   const seed=await one('SELECT * FROM verification_slot_seed WHERE name=$1 FOR SHARE',[environment]);
+   if (!seed.verified || seed.seed_id!==scope.seed_id || seed.seed_sha256!==scope.seed_sha256) throw Error('Stale seed');
+   const installation=read('verification-install/'+environment+'.json');
+   if (installation.seed_id!==scope.seed_id || installation.seed_sha256!==scope.seed_sha256) throw Error('Installed seed differs');
+  }
+  const seed=read('verification-seed.json');
+  if (seed.seed_id!==scope.seed_id || seed.dump_sha256!==scope.seed_sha256) throw Error('Current seed differs');
+  const checkExpiry=()=>{
+   if (deadlines.some(value=>!value || !Number.isFinite(new Date(value).getTime()) || new Date(value).getTime()<=Date.now()+1000)) throw Error('Expired maintenance ownership');
+   const currentSeed=read('verification-seed.json');
+   if (currentSeed.seed_id!==scope.seed_id || currentSeed.dump_sha256!==scope.seed_sha256) throw Error('Current seed changed during maintenance');
+  };
+  checkExpiry();
+  const policy=await one('SELECT * FROM test_agent_control WHERE workspace_id=$1 AND name=$2 FOR SHARE',[prod.server.MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID,environment]);
+  const selected=policy.desired?.overrides?.[scope.agent_id];
+  if (Number(policy.revision)!==scope.revision || !valid(selected)) throw Error('Desired single-Agent override missing or changed');
+  const profile=JSON.parse(fs.readFileSync(meta.daemon_profile_path,'utf8'));
+  if (profile.workspace_id!==scope.workspace_id || health.daemon_id!==profile.daemon_id && profile.daemon_id) throw Error('Target workspace/daemon differs');
+  await db.connect();targetConnected=true;
+  await db.query('BEGIN');
+  await db.query("SET LOCAL lock_timeout='3s'");
+  await db.query("SET LOCAL statement_timeout='10s'");
+  await db.query("SET LOCAL idle_in_transaction_session_timeout='20s'");
+  // 3. Existing enqueue/claim/update SQL takes conflicting table locks; a short transaction closes all three races.
+  await db.query('LOCK TABLE test_agent_control IN ACCESS EXCLUSIVE MODE');
+  await db.query('LOCK TABLE agent_task_queue, agent, agent_runtime IN SHARE ROW EXCLUSIVE MODE');
+  const agents=await db.query('SELECT * FROM agent WHERE id=$1 AND workspace_id=$2',[scope.agent_id,scope.workspace_id]);
+  if (agents.rows.length!==1) throw Error('Agent does not belong to target test workspace');
+  const before=agents.rows[0];
+  const busy=await db.query("SELECT id FROM agent_task_queue WHERE agent_id=$1 AND status NOT IN ('completed','failed','cancelled') LIMIT 1",[scope.agent_id]);
+  if (busy.rows.length || before.status==='running') throw Error('Target Agent has queued/running/claiming work');
+  if ((before.custom_args || []).some(x=>/^(?:-m|-c)|^--(?:model|config)(?:=|$)|fast_mode/.test(x))) throw Error('Target Agent has model launch overrides');
+  const runtimes=await db.query("SELECT id,runtime_mode FROM agent_runtime WHERE workspace_id=$1 AND provider=$2 AND daemon_id=$3 AND status='online' AND profile_id IS NULL",[scope.workspace_id,selected.provider,health.daemon_id]);
+  if (runtimes.rows.length!==1) throw Error('Target runtime missing or ambiguous');
+  const runtime=runtimes.rows[0];
+  const mirrors=await db.query('SELECT * FROM test_agent_control WHERE workspace_id=$1 AND name=$2 FOR UPDATE',[scope.workspace_id,environment]);
+  if (mirrors.rows.length!==1 || mirrors.rows[0].observed?.daemon_id!==health.daemon_id) throw Error('Target policy mirror not initialized for daemon');
+  const mirror=mirrors.rows[0];
+  const digest=createHash('sha256').update(JSON.stringify(scope)).digest('hex');
+  const previous=mirror.observed?.targeted_operations?.[scope.operation_id];
+  const persistReceipt=(receipt,state)=>{
+   const directory=path.join(root,'.run','test-agent-maintenance');
+   fs.mkdirSync(directory,{recursive:true,mode:0o700});
+   const file=path.join(directory,scope.operation_id+'.json');
+   const temporary=file+'.'+process.pid+'.tmp';
+   fs.writeFileSync(temporary,JSON.stringify({state,...receipt},null,2),{mode:0o600});
+   const fd=fs.openSync(temporary,'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+   fs.renameSync(temporary,file);
+   const dir=fs.openSync(directory,'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
+  };
+  const fields=a=>Object.fromEntries(['runtime_id','runtime_mode','model','thinking_level','service_tier'].map(k=>[k,a[k]]));
+  const after={runtime_id:runtime.id,runtime_mode:runtime.runtime_mode,model:selected.model,thinking_level:selected.thinking_level,service_tier:selected.service_tier};
+  if (previous) {
+   if (previous.scope_sha256!==digest || JSON.stringify(fields(before))!==JSON.stringify(after)
+       || JSON.stringify(mirror.desired?.overrides?.[scope.agent_id])!==JSON.stringify(selected)) throw Error('Operation replay differs from committed state');
+   await db.query('ROLLBACK');checkExpiry();
+   persistReceipt(previous,'applied');
+   console.log(JSON.stringify({environment,mode:'target',replayed:true,receipt:previous}));return;
+  }
+  // 4. Agent, single override and audit receipt commit together; disconnects roll back or replay the same operation.
+  const receipt={operation_id:scope.operation_id,scope_sha256:digest,scope,source_revision:Number(policy.revision),
+   maintenance_script_sha256:createHash('sha256').update(fs.readFileSync(new URL(import.meta.url))).digest('hex'),
+   before:fields(before),after,previous_override:mirror.desired?.overrides?.[scope.agent_id] ?? null,
+   applied_override:selected,at:new Date().toISOString()};
+  await db.query('UPDATE agent SET runtime_id=$3,runtime_mode=$4,model=$5,thinking_level=$6,service_tier=$7,updated_at=now() WHERE id=$1 AND workspace_id=$2',
+   [scope.agent_id,scope.workspace_id,runtime.id,runtime.runtime_mode,selected.model,selected.thinking_level,selected.service_tier]);
+  await db.query(`UPDATE test_agent_control SET desired=jsonb_set(desired,'{overrides}',COALESCE(desired->'overrides','{}'::jsonb)||jsonb_build_object($3::text,$4::jsonb)),
+   observed=jsonb_set(observed,'{targeted_operations}',COALESCE(observed->'targeted_operations','{}'::jsonb)||jsonb_build_object($5::text,$6::jsonb)),updated_at=now()
+   WHERE workspace_id=$1 AND name=$2`,[scope.workspace_id,environment,scope.agent_id,JSON.stringify(selected),scope.operation_id,JSON.stringify(receipt)]);
+  checkExpiry();
+  persistReceipt(receipt,'prepared');
+  checkExpiry();
+  await db.query('COMMIT');
+  persistReceipt(receipt,'applied');
+  console.log(JSON.stringify({environment,mode:'target',replayed:false,receipt}));
+ } finally {
+  if (targetConnected) {await db.query('ROLLBACK').catch(()=>{});await db.end();}
+  if (controlConnected) {await control.query('ROLLBACK').catch(()=>{});await control.end();}
+ }
 }

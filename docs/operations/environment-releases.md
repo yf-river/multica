@@ -259,6 +259,44 @@ GONG-67 把自动监督从“持续追踪所有任务的材料变化”改为“
 - 原生 Codex 使用已有账号登录；各验收槽位复制授权账号凭据到隔离目录，不共享可写的账号主目录。可配置调用使用所选参数；供应商内部不可观察的调用如实注明。
 - 临时环境需要先核实安装归属并接入受控注册，当前界面只管理四个固定环境，未知环境不自动操作。
 
+### 活动候选内的单 Agent 应用
+
+全环境 `test-agent-models.py --apply` 仍拒绝未释放候选。任务验收需要同候选内的
+供应商对照时，先经生产 `POST /api/test-agent-control` 的 `configure` 保存指定
+环境、指定 Agent 的 override，再从已安装完整 operations 包执行：
+
+```bash
+MULTICA_RELEASE_ROOT=/data/ida/multica python3 <installed-operations>/test-agent-models.py \
+  --environment verify-1 --apply --scope-file <private-scope.json>
+```
+
+scope 必须含 `environment`、`delivery_id`、`candidate_id`、`source_commit`、
+目标测试 `workspace_id`、`agent_id`、当前 `execution_id`、`owner_generation`、
+槽位或 int publication `generation`、`seed_id`、`seed_sha256`、控制端 `revision`，
+以及本次唯一 UUID `operation_id`。执行身份必须等于当前 `MULTICA_TASK_ID`。
+int 使用真实 `int-prod` 发布占用及候选 `approved_source`，verify 使用槽位占用。
+已释放、过期、种子不符或 desired 版本变化时拒绝，不修改或续租交付记录。
+
+入口持有候选及部署文件锁，核对实际服务/数据库，再在控制库只读事务中锁定交付、
+归属、占用、种子与策略。目标库短事务先独占策略镜像，阻止旧 Resolve 事务跨过
+维护，再锁住入队/认领、Agent 和 runtime 写入；只要求目标 Agent 无非终态任务。
+不排空、不暂停其他 Agent，不修改默认值、其他 override 或其他工作区镜像。
+所选 runtime 必须唯一、在线且绑定本环境 daemon。整个操作不接受自定义策略文件。
+
+Agent、单项镜像和原值审计在目标库同事务提交；同 operation 重试核对当前实际状态，
+不得作为重新覆盖的新操作。`.run/test-agent-maintenance/<operation_id>.json` 保留
+独立 0600 回执、来源 revision、脚本摘要及 before/after。`prepared` 仅表示准备，
+不能当作生效；中断后用同 scope 重试，事务若已提交则恢复 `applied` 回执，否则
+重新校验后执行。恢复模型须经正式控制入口保存原有效 override，再以新 revision
+和 operation 应用；原审计不删除。候选/归属失效时停止，不能为了 cleanup 绕过围栏。
+仍须检查 Agent 和实际 task.started/runtime/provider/model、供应商请求及轨迹，
+不能把 desired 保存或维护回执当作业务验收。
+
+开发回归使用新建的专用 PostgreSQL 实例，显式设置
+`TEST_AGENT_MODELS_DATABASE_URL=postgres://…/test_agent_models_<unique>` 后执行
+`node scripts/test-agent-models.test.mjs`；脚本创建并删除自己的 `_target` 库，
+不得指向固定 int/verify/prod。Python 入口保护另由 `scripts/test-agent-models.test.py` 验证。
+
 ### 未批准生产的失败候选修复
 
 `retest` 复用原交付，不借 `approve` 恢复测试。尚未部署候选、原槽位为
