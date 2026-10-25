@@ -9,6 +9,8 @@ import urllib.request
 
 # 1. Maintenance is confined to control-plane recovery; application migrations and supervision implementation are excluded.
 ALLOWED={
+ # Modification 1. The controller index retry hook changes no migration SQL or supervision behavior.
+ 'server/cmd/migrate/main.go',
  # Existing installed target-Agent maintenance and bounded repair protocol are preserved byte-for-byte.
  'scripts/test-agent-models.py','scripts/test-agent-models.mjs','scripts/test-agent-models.test.py','scripts/test-agent-models.test.mjs',
  # Modification 1. Integration scheduling is control-plane maintenance, with no supervision or migration changes.

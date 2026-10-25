@@ -118,11 +118,13 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
-	"647_supervision_manual_preparation_id":       "supervision_manual_preparation_id",
-	"648_supervision_manual_preparation_open":     "supervision_manual_preparation_open",
-	"641_supervision_trace_material_key":          "supervision_trace_material_run_key",
-	"642_supervision_trace_material_pending":      "supervision_trace_material_pending",
-	"644_supervision_trace_material_id":           "supervision_trace_material_id",
+	"647_supervision_manual_preparation_id":   "supervision_manual_preparation_id",
+	"648_supervision_manual_preparation_open": "supervision_manual_preparation_open",
+	"641_supervision_trace_material_key":      "supervision_trace_material_run_key",
+	"642_supervision_trace_material_pending":  "supervision_trace_material_pending",
+	"644_supervision_trace_material_id":       "supervision_trace_material_id",
+	// Modification 1. Register control-policy index retry cleanup so interrupted builds cannot be recorded as successful.
+	"639_test_agent_control_key":                  "test_agent_control_key",
 	"637_run_text_change_task_idx":                "run_text_change_task_idx",
 	"568_upstream_sync_absorption_item":           "upstream_sync_absorption_task_item",
 	"566_task_trace_identity_compatibility":       "task_trace_event_pkey",

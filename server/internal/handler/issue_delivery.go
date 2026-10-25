@@ -500,6 +500,38 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "retest":
+		// Modification 1. Resume failed int-only acceptance through the owner-fenced action while preserving the failed candidate.
+		if phase == "needs_changes" && body.Repair == nil {
+			var eligible bool
+			err = tx.QueryRow(r.Context(), `SELECT approved_by IS NULL AND approved_at IS NULL AND candidate_id<>'' AND candidate_id=$2 AND plan_snapshot->>'integration_only'='true' AND plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND NOT EXISTS(SELECT 1 FROM delivery_publication WHERE delivery_id=$1 AND state<>'idle') FROM issue_delivery WHERE id=$1`, id, body.CandidateID).Scan(&eligible)
+			if err != nil || !eligible || !validDeliveryChecks(body.Checks) {
+				writeError(w, 409, "仅集成恢复需要准确失败候选、检查证据且无活动占用或生产批准")
+				return
+			}
+			var verificationCandidate string
+			var verificationSnapshot json.RawMessage
+			var verificationChecks []deliveryCheck
+			if err = tx.QueryRow(r.Context(), `SELECT d.plan_snapshot,e.candidate_id,e.evidence FROM issue_delivery d JOIN delivery_evidence e ON e.delivery_id=d.id WHERE d.id=$1 ORDER BY e.created_at,e.id LIMIT 1`, id).Scan(&verificationSnapshot, &verificationCandidate, &verificationChecks); err != nil {
+				writeError(w, 409, "缺少已保存的独立验收证据")
+				return
+			}
+			required, readErr := deliveryRequiredChecks(verificationSnapshot)
+			if readErr == nil {
+				readErr = missingDeliveryChecks(required, verificationChecks, "verification")
+			}
+			if readErr != nil || verificationCandidate == "" {
+				err = readErr
+				if err == nil {
+					err = fmt.Errorf("缺少独立验收候选")
+				}
+				writeError(w, 409, err.Error())
+				return
+			}
+			evidence, _ := json.Marshal(body.Checks)
+			verificationEvidence, _ := json.Marshal(verificationChecks)
+			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot||jsonb_build_object('integration_failures',COALESCE(plan_snapshot->'integration_failures','[]'::jsonb)||jsonb_build_array(jsonb_build_object('candidate_id',candidate_id,'revision',revision,'error',error,'execution',plan_snapshot->'execution','recovery_checks',$2::jsonb,'recovered_at',now()))),phase='awaiting_review',acceptance_submitted=true,candidate_id=$3,evidence=$4,candidate_url='',worker_token=NULL,error='',revision=revision+1,updated_at=now() WHERE id=$1`, id, evidence, verificationCandidate, verificationEvidence)
+			break
+		}
 		// 2. A failed verification is repaired in place without granting production approval.
 		if body.Repair != nil {
 			if phase != "needs_changes" {
