@@ -442,6 +442,24 @@ class ReleaseTests(unittest.TestCase):
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
     # Modification 1. A changed or unknown migration cannot inherit trace compatibility approval.
+    def test_curated_nullable_columns_require_exact_review(self):
+        source=Path(__file__).parent.parent/'server/migrations'
+        names=('654_daemon_token_owner.up.sql','656_comment_deleted_at.up.sql','667_task_message_call_id.up.sql')
+        with tempfile.TemporaryDirectory() as folder:
+            old=Path(folder)/'old';new=Path(folder)/'new'
+            (old/'server/migrations').mkdir(parents=True)
+            target=new/'server/migrations';target.mkdir(parents=True)
+            for name in names:
+                migration=target/name;migration.write_bytes((source/name).read_bytes())
+                self.assertTrue(r.reviewed_curated_nullable_columns(migration))
+            r.validate_pending_migrations(new,old)
+            migration.write_text(migration.read_text()+'\nDELETE FROM task_message;\n')
+            self.assertFalse(r.reviewed_curated_nullable_columns(migration))
+            with self.assertRaisesRegex(RuntimeError,'需要单独的数据库兼容方案'):
+                r.validate_pending_migrations(new,old)
+            unknown=target/'999_unknown.up.sql';unknown.write_bytes((source/names[0]).read_bytes())
+            self.assertFalse(r.reviewed_curated_nullable_columns(unknown))
+
     def test_reviewed_trace_migrations_reject_changed_sql(self):
         source=Path(__file__).parent.parent/'server/migrations'
         names=('643_supervision_material_trace_usage.up.sql', '645_supervision_round_preparation_budget.up.sql', '649_supervision_trace_scope.up.sql')
