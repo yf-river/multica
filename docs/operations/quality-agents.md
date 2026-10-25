@@ -68,7 +68,7 @@ AgentLens 凭据由服务端 `MULTICA_AGENTLENS_CREDENTIAL_FILE` 指向私有普
 
 ### 新种子的受控监督验收前置
 
-新种子默认关闭监督、没有监督模型绑定是正常初始状态，不能作为监督业务失败的结论。正式队列部署候选并授予当前执行归属后，使用测试账号自己的在线 runtime 初始化；不修改生产监督或测试模型策略，不重置种子，不使用旧候选的已释放租约。
+新种子默认关闭监督、没有监督模型绑定是正常初始状态，不能作为监督业务失败的结论。正式队列部署候选并授予当前执行归属后，使用测试账号自己的在线 runtime 初始化；不修改生产监督或全局测试模型策略；任务明确授权的临时选择仅作用于本任务测试环境并恢复原值，不重置种子，不使用旧候选的已释放租约。
 
 `scripts/prepare-supervision-acceptance.py` 复用 `release-environments.py` 的环境、进程、配置、PID 启停与候选校验，以及 `test-agent-policy.py` 的测试模型选择。当前脚本只处理 verify-1；固定 int 必须另按最终组合候选和集成归属核对，不能沿用 verify 的候选或租约。设置与技能通过正式 API 写入，控制端生产 profile 只用于读取交付和槽位。先执行不带 `--apply` 的预检：
 
@@ -77,6 +77,18 @@ MULTICA_RELEASE_ROOT=/data/ida/multica python3 scripts/prepare-supervision-accep
   --environment verify-1 --issue <任务UUID> --delivery <当前交付UUID> \
   --candidate <当前候选ID> --runtime <测试账号自有runtimeUUID>
 ```
+
+执行机必须有 `psql`。若宿主没有客户端，先用 `docker image inspect postgres:17-alpine` 确认已有镜像与 Docker 权限，再在本任务私有目录建立名为 `psql` 的可执行包装器，将该目录加入本次命令的 PATH：
+
+```sh
+#!/bin/sh
+exec docker run --rm --network host --read-only --cap-drop ALL \
+  -e PGDATABASE postgres:17-alpine psql "$@"
+```
+
+脚本通过环境变量传入已核实测试服务的连接，不把连接串写入命令或日志；容器仅运行客户端，不启动 PostgreSQL、不挂载数据卷、不拉取未知镜像。只读调查 SQL 使用 `BEGIN READ ONLY`，活动任务计数由脚本执行。镜像缺失或权限不足时先修复客户端前置，不反复猜容器名或数据库名。
+
+CodeBuddy 样本创建前检查 `server/internal/handler/test_agent_control.go` 的测试策略入口及目标环境 `test_agent_control.desired`；请求 runtime 会被有效默认策略覆盖。`scripts/test-agent-models.mjs` 读取环境专用缓存（优先）或全局缓存，按 Agent override/default 绑定在线、无 profile 的本地 runtime。临时选择只能限当前验收环境，保存原 desired 与 Agent 绑定并按原值恢复；不能修改生产业务 Agent 或全局默认。创建后核对返回 Agent、task.started provider、响应模型和 SDK/外部请求身份，任一实际为 Codex 的样本不得计入 CodeBuddy。当前 `test-agent-policy.py` 辅助函数仅读取全局缓存，不能据其输出证明已应用环境 override。
 
 核对本执行仍持有 owner、槽位为 verifying、准确候选到 release_id 的映射、实际数据库连接及已验证种子。使用 ida-development 的 AgentLens 已授权来源，在受控私有目录准备声明当前**测试 workspace_id** 的 0600 JSON 文件，再追加 `--apply --credential-file <私有文件>`。短期凭据只复制到测试服务账号 HOME 的 0600 文件，种子不保存凭据。无活动测试任务后，保存原配置，通过正式服务配置文件仅重启准确 backend PID；失败尝试恢复原服务配置。配置临时启用时间后才创建真实样本，不批量重审历史任务。
 

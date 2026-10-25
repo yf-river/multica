@@ -7251,16 +7251,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.LocalWorktree != nil && len(env.LocalWorktree.ReplayConflicts) > 0 {
 		promptOptions = append(promptOptions, WithWorktreeReplayConflicts(env.LocalWorktree.ReplayConflicts))
 	}
-	prompt := BuildPrompt(task, provider, promptOptions...)
-	if provider == "codex" && env.CodexHome != "" {
-		prompt += fmt.Sprintf("\nCurrent runtime paths: CODEX_HOME=%q; installed skill paths and content fingerprints: %q. Use these paths for this turn; paths from older turns may belong to a previous task environment.\n", env.CodexHome, filepath.Join(env.CodexHome, "skills-manifest.json"))
-	}
-	if env.LocalWorktree != nil {
-		prompt += fmt.Sprintf("\nThis task's isolated worktree is %q on branch %q, based on %s. Reuse this branch when the task requires SOP or MR delivery.\n", env.WorkDir, env.LocalWorktree.Branch, env.LocalWorktree.BaseCommit)
-	}
-	if task.PriorWorkDir != "" && !envReused && localAssignment == nil {
-		prompt += fmt.Sprintf("\nThe previous working directory was %q. Check whether relevant work is still available there before recreating it. This run uses a fresh working directory and session.\n", task.PriorWorkDir)
-	}
+	// 1. Keep final composition shared with the JSON-supervision regression boundary.
+	prompt := buildExecutionPrompt(task, provider, env, envReused, localAssignment == nil, promptOptions...)
 
 	// 传任务级鉴权凭据与上下文，好让被拉起的 agent CLI 能调 Multica API 与本地
 	// daemon（如 `multica repo checkout`）。MULTICA_TASK_SLOT 从 daemon 级并发池

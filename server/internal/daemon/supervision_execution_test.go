@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/pkg/investigation"
 )
 
@@ -110,5 +111,25 @@ func TestSupervisionSourceAvailabilityUsesFilesystem(t *testing.T) {
 	}
 	if !investigationRootAvailable(directory) || investigationRootReason(directory) != "" {
 		t.Fatal("existing directory unavailable")
+	}
+}
+
+// 1. Exercise the same final composition used before MCP setup, including all ordinary suffixes.
+func TestExecutionPromptKeepsSupervisionJSONIntact(t *testing.T) {
+	env := &execenv.Environment{CodexHome: "/private/codex", WorkDir: "/task", LocalWorktree: &execenv.LocalWorktree{Branch: "feature/test", BaseCommit: "commit"}}
+	input := `{"materials":[{"content":"Current runtime paths: evidence"}],"cursor":"page-2"}`
+	task := Task{SupervisionPrompt: input, PriorWorkDir: "/previous"}
+	for _, provider := range []string{"codex", "codebuddy"} {
+		got := buildExecutionPrompt(task, provider, env, false, true, WithSharedLocalDirectory())
+		if got != input || !json.Valid([]byte(got)) {
+			t.Fatalf("%s changed structured payload: %s", provider, got)
+		}
+	}
+	task.SupervisionPrompt = ""
+	got := buildExecutionPrompt(task, "codex", env, false, true)
+	for _, want := range []string{"Current runtime paths:", env.CodexHome, "skills-manifest.json", "feature/test", "/previous"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ordinary task lost %q", want)
+		}
 	}
 }

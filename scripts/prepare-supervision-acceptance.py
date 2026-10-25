@@ -121,6 +121,12 @@ def validate_identity(environment, delivery, candidate, metadata, owner, executi
         raise RuntimeError('Verified seed checksum differs')
 
 
+def candidate_skill(candidate):
+    # 1. Resolve the role skill from the pinned source tree, not the unrelated built-in skill registry.
+    source = Path(candidate['source']) / 'skills/delivery-supervision'
+    return source, (source / 'SKILL.md').read_text()
+
+
 def prepare(args):
     r = load('supervision_release', Path(__file__).with_name('release-environments.py'))
     if args.environment != 'verify-1':
@@ -204,8 +210,7 @@ def prepare(args):
             raise RuntimeError('Managed supervision settings were not persisted')
 
         # 8. Import the pinned candidate skill additively; never overwrite an existing custom skill.
-        source = Path(candidate['source']) / 'server/internal/service/builtin_skills/delivery-supervision'
-        content = (source / 'SKILL.md').read_text()
+        source, content = candidate_skill(candidate)
         digest = hashlib.sha256(content.encode()).hexdigest()
         name = 'delivery-supervision'
         skills = api(meta, profile, 'GET', 'skills')

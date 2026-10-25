@@ -25,6 +25,14 @@ class OwnershipTests(unittest.TestCase):
             seed=dict(seed_verified=True, seed_id='seed', seed_sha256='sha'),
             installation=dict(seed_id='seed', seed_sha256='sha'))
 
+    # 1. Check the candidate repository layout, so a nonexistent built-in skill path cannot regress.
+    def test_pinned_candidate_skill_source(self):
+        root = Path(__file__).resolve().parent.parent
+        source, content = setup.candidate_skill({'source': str(root)})
+        self.assertEqual(source, root / 'skills/delivery-supervision')
+        self.assertEqual(content, (source / 'SKILL.md').read_text())
+        self.assertTrue(content)
+
     def test_distinct_candidate_and_release_ids_are_valid(self):
         setup.validate_identity(**self.values)
 
