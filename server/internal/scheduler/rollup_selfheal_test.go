@@ -119,6 +119,17 @@ func TestRollupTaskUsageHourlyHandlerCatchesUpBounded(t *testing.T) {
 	ctx := context.Background()
 	lockRollupSingleton(t, pool)
 
+	// 90天上限针对有真实变更的区间；空白前缀由自愈跳过，不能靠空库要求慢爬。
+	ws, _, _, task := seedRollupFixture(t, pool)
+	t.Cleanup(func() { cleanupRollupFixture(t, pool, ws) })
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_usage(task_id,provider,model,output_tokens,created_at,updated_at)
+		SELECT $1,'p','bounded-day-'||n,1,now()-n*interval '1 day',now()-n*interval '1 day'
+		FROM generate_series(1,91) n
+	`, task); err != nil {
+		t.Fatal(err)
+	}
+
 	var original time.Time
 	if err := pool.QueryRow(ctx,
 		`SELECT watermark_at FROM task_usage_hourly_rollup_state WHERE id = 1`).Scan(&original); err != nil {
@@ -177,6 +188,17 @@ func TestRollupTaskUsageHourlyHandlerStopsWhenLockHeld(t *testing.T) {
 	ctx := context.Background()
 	lockRollupSingleton(t, pool)
 
+	var original time.Time
+	if err := pool.QueryRow(ctx, `SELECT watermark_at FROM task_usage_hourly_rollup_state WHERE id=1`).Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `UPDATE task_usage_hourly_rollup_state SET watermark_at=$1 WHERE id=1`, original)
+	})
+	if _, err := pool.Exec(ctx, `UPDATE task_usage_hourly_rollup_state SET watermark_at='1973-09-17' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+
 	blocker, err := pool.Acquire(ctx)
 	if err != nil {
 		t.Fatalf("acquire blocker conn: %v", err)
@@ -191,6 +213,14 @@ func TestRollupTaskUsageHourlyHandlerStopsWhenLockHeld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler while lock held: %v", err)
 	}
+	var blockedWatermark time.Time
+	if err := pool.QueryRow(ctx, `SELECT watermark_at FROM task_usage_hourly_rollup_state WHERE id=1`).Scan(&blockedWatermark); err != nil {
+		t.Fatal(err)
+	}
+	if blockedWatermark.Year() != 1973 {
+		t.Fatalf("backfill lock did not protect empty-interval jump: %v", blockedWatermark)
+	}
+
 	ticks, ok := res.Result["rollup_ticks"].(int)
 	if !ok {
 		t.Fatalf("expected rollup_ticks in result, got %#v", res.Result)

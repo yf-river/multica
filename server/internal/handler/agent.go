@@ -739,18 +739,21 @@ type TaskUsageData struct {
 	CostUsdTicks     *int64 `json:"cost_usd_ticks,omitempty"`
 }
 
-// TaskTraceData 是一次运行在外部链路观测系统里的一条根请求记录。
+// TaskTraceData 是一次运行的 provider 请求关联及其可选 SDK 来源。
 //
-// ProviderTraceID 是观测系统的 trace id；ObservationSpace 是它所在的空间（daemon
-// 自报时为空，由事后补齐或解析填充）。Correlation 说明这条关联是精确记录
+// ProviderTraceID 是子进程实际请求标识；CodeBuddy的conversationRequestId与SDK traceId分开。
+// ObservationSpace 是观测空间；Correlation 说明这条关联是精确记录
 // （exact）还是事后按会话+时间窗检索的候选（inferred_window）。
 type TaskTraceData struct {
-	Provider         string `json:"provider,omitempty"`
-	ObservationSpace string `json:"observation_space,omitempty"`
-	SessionID        string `json:"session_id,omitempty"`
-	ProviderTraceID  string `json:"provider_trace_id"`
-	Correlation      string `json:"correlation"`
-	Source           string `json:"source,omitempty"`
+	Provider             string `json:"provider,omitempty"`
+	ObservationSpace     string `json:"observation_space,omitempty"`
+	SessionID            string `json:"session_id,omitempty"`
+	ProviderTraceID      string `json:"provider_trace_id"`
+	Correlation          string `json:"correlation"`
+	Source               string `json:"source,omitempty"`
+	SDKTraceID           string `json:"sdk_trace_id,omitempty"`
+	SDKTraceSourceSHA256 string `json:"sdk_trace_source_sha256,omitempty"`
+	SDKTraceSourcePath   string `json:"sdk_trace_source_path,omitempty"`
 }
 
 // TaskAgentData 携带 claim 响应里的 agent 信息，daemon 据此搭好执行环境

@@ -140,6 +140,26 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	timeout := opts.Timeout
 	runCtx, cancel := runContext(ctx, timeout)
 
+	// 续接一个本地已经没有记录的会话时，CLI 会起来但一个事件都不发（2.125.5 实测：
+	// 进程在，stdout 静默，任务一直 running）。这种情况下马上按"续跑被拒"返回，
+	// 让 daemon 走既有的换新会话重试，而不是让一个任务挂到超时。
+	if opts.ResumeSessionID != "" && codebuddySessionTranscriptMissing(b.cfg.Env, opts.ResumeSessionID) {
+		cancel()
+		b.cfg.Logger.Info("codebuddy resume target missing locally; asking for a fresh session",
+			"session_id", opts.ResumeSessionID)
+		messages := make(chan Message)
+		close(messages)
+		result := make(chan Result, 1)
+		result <- Result{
+			Status:         "failed",
+			Error:          "codebuddy: resume transcript not found locally",
+			SessionID:      "",
+			ResumeRejected: true,
+		}
+		close(result)
+		return &Session{Messages: messages, Result: result}, nil
+	}
+
 	args := buildCodebuddyArgs(opts, b.cfg.Logger)
 
 	// 托管 agent 配置会写到临时文件、用 --mcp-config 传入——它是在 CodeBuddy 从自身
@@ -203,6 +223,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	}
 
 	b.cfg.Logger.Info("codebuddy started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
+	// 进程一旦 Wait 完，/proc 条目就没了；CLI 身份必须在 Start 之后立刻记下来，
+	// 退出后的越组后代回收才有可信下界。
+	cliIdentity := captureCLIIdentity(cmd.Process.Pid)
 
 	// cmd.Start() 已成功——临时文件所有权转给下面的 goroutine。
 	mcpFileCleanup = nil
@@ -238,6 +261,8 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		var sessionID string
 		var requestID string
 		usage := make(map[string]TokenUsage)
+		usageCalls := make(map[codebuddyUsageCall]TokenUsage)
+		var resultUsage map[string]TokenUsage
 		eventCount := 0
 		invalidEventCount := 0
 		assistantEventCount := 0
@@ -266,18 +291,28 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			}
 			eventCount++
 
-			// `_requestId` 由子进程自己生成并写在 status/result 事件上，等于它在
-			// AgentLens 里的 trace id。取第一条非空值即可：同一个 CLI 进程只有一个
+			// `_requestId` 由子进程自己生成并写在 assistant/status/result 事件上，作为 provider 请求标识保存；
+			// AgentLens 的 trace/span 对应另行验收。取第一条非空值即可：同一个 CLI 进程只有一个
 			// 根请求，后续事件重复的是同一个值。绝不能拿父进程环境变量
 			// CODEBUDDY_ROOT_REQUEST_ID 顶替——那是 daemon 自己的请求标识。
 			if requestID == "" && msg.ProviderRequestID != "" {
 				requestID = msg.ProviderRequestID
 			}
 
+			// 初次SDK会话标识绑定根会话；其它信封的不同会话不能悄悄替换它。
+			if msg.SessionID != "" {
+				if sessionID != "" && msg.SessionID != sessionID {
+					b.cfg.Logger.Warn("codebuddy SDK session conflict", "root_session", sessionID, "event_session", msg.SessionID, "event_type", msg.Type)
+				}
+				if sessionID == "" || msg.Type == "result" {
+					sessionID = msg.SessionID
+				}
+			}
+
 			switch msg.Type {
 			case "assistant":
 				assistantEventCount++
-				turn := b.handleAssistant(msg, msgCh, usage)
+				turn := b.handleAssistant(msg, msgCh, usage, usageCalls)
 				toolUseCount += turn.toolUses
 				if !turn.understood {
 					unreadableAssistantCount++
@@ -286,18 +321,12 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			case "user":
 				b.handleUser(msg, msgCh)
 			case "system":
-				if msg.SessionID != "" {
-					sessionID = msg.SessionID
-				}
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
 				sawResult = true
 				finalResultText = msg.ResultText
 				resultIsError = msg.IsError
-				sessionID = msg.SessionID
-				if resultUsage := codebuddyResultUsage(msg, opts.Model); len(resultUsage) > 0 {
-					usage = resultUsage
-				}
+				resultUsage = codebuddyResultUsage(msg, opts.Model)
 				closeStdin()
 			case "log":
 				if msg.Log != nil {
@@ -377,15 +406,54 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			)
 		}
 
+		// 只在"没正常收尾"时回收越组后代：正常完成的运行可能故意留下后台服务，
+		// 不能因为我们看不出意图就杀掉。异常退出、被杀、超时、取消才清理。
+		if exitErr != nil || runCtx.Err() != nil || finalStatus != "completed" {
+			reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], cliIdentity, b.cfg.Logger)
+		}
+		usage = codebuddySelectUsage(usage, resultUsage, opts.ResumeSessionID != "", b.cfg.Logger)
+		// 子 Agent 的调用记录在父 session 目录下的 subagents/ 里，属于本次执行的 0:N 链路。
+		// 只有路径、CID、trace 都唯一时才并入；并入的是各自独立的用量行，不覆盖父链路。
+		subUsage, subTraces, subCalls := codebuddyCollectSubagentUsage(b.cfg.Env, reportedSessionID, requestID)
+		// 子 Agent 的 assistant 信封也会进 stream，所以同一个调用可能已经被记过一次。
+		// 只在"stream 没有提供逐调用身份"或"这个 key 确实没被观测到"时才补用量；
+		// 已观测的只补那条独立 trace。判不准就不加，绝不按最大值/差值猜。
+		switch {
+		case len(subCalls) == 0:
+			// 没有可比对的调用集合，子用量未知：保留 stream 已知量，只让 traces 落地。
+			if len(subTraces) > 0 {
+				b.cfg.Logger.Info("subagent usage stays unknown: no per-call identity in stream",
+					"traces", len(subTraces))
+			}
+		default:
+			if usage == nil {
+				usage = map[string]TokenUsage{}
+			}
+			usage = mergeSubagentUsage(usage, usageCalls, subCalls, streamIdentityComplete(usage, usageCalls))
+			_ = subUsage // 逐调用合并已经完成，聚合值只用于日志
+		}
+		// SDK 侧溯源：只在 session 文件唯一、文件内 trace id 唯一时附上；任何歧义
+		// 都留空，让上层把这条链路当作"只有 CID 的准确关联"。
+		sdkTraceID, sdkSum, sdkSource, sdkFile := codebuddySDKProvenanceWithSource(
+			b.cfg.Env, reportedSessionID, opts.Cwd, requestID,
+		)
+		if sdkTraceID != "" {
+			// 文件位置只留在日志与私有证据里；API 字段要用固定标记。
+			b.cfg.Logger.Info("codebuddy SDK trace provenance", "cid", requestID, "sdk_trace_id", sdkTraceID, "source_file", sdkFile)
+		}
 		resCh <- Result{
-			Status:          finalStatus,
-			Output:          finalOutput,
-			Error:           finalError,
-			DurationMs:      duration.Milliseconds(),
-			SessionID:       reportedSessionID,
-			Usage:           usage,
-			ProviderTraceID: requestID,
-			ResumeRejected:  resumeRejected,
+			Status:               finalStatus,
+			Output:               finalOutput,
+			Error:                finalError,
+			DurationMs:           duration.Milliseconds(),
+			SessionID:            reportedSessionID,
+			Usage:                usage,
+			ProviderTraceID:      requestID,
+			SDKTraceID:           sdkTraceID,
+			SDKTraceSourceSHA256: sdkSum,
+			SDKTraceSourcePath:   sdkSource,
+			ExtraTraces:          subTraces,
+			ResumeRejected:       resumeRejected,
 		}
 	}()
 
@@ -398,7 +466,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 //
 // 理解不了正文时（JSON 解析失败或出现未知块类型），返回的 turn.understood 为 false，
 // 调用方就不会让旧回合的文本来顶替本回合。
-func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage) assistantTurn {
+func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage, calls map[codebuddyUsageCall]TokenUsage) assistantTurn {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
 		// 正文读不懂：understood 保持 false，调用方会丢弃任何 fallback，而不是让更早的
@@ -409,14 +477,28 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 	var assistantText strings.Builder
 	toolUseCount := 0
 
-	// 按模型累计 token 用量。
+	// SDK 的 _messageId 标识模型调用；一个调用可拆成多个工具消息，也可更新同一用量快照。
 	if content.Usage != nil && content.Model != "" {
-		u := usage[content.Model]
-		u.InputTokens += codebuddyUncachedInput(content.Usage.InputTokens, content.Usage.CacheReadInputTokens, content.Usage.CacheCreationInputTokens)
-		u.OutputTokens += content.Usage.OutputTokens
-		u.CacheReadTokens += content.Usage.CacheReadInputTokens
-		u.CacheWriteTokens += content.Usage.CacheCreationInputTokens
-		usage[content.Model] = u
+		snapshot := TokenUsage{
+			InputTokens:      codebuddyUncachedInput(content.Usage.InputTokens, content.Usage.CacheReadInputTokens, content.Usage.CacheCreationInputTokens),
+			OutputTokens:     content.Usage.OutputTokens,
+			CacheReadTokens:  content.Usage.CacheReadInputTokens,
+			CacheWriteTokens: content.Usage.CacheCreationInputTokens,
+		}
+		if codebuddyUsageHasTokens(snapshot.InputTokens, snapshot.OutputTokens, snapshot.CacheReadTokens, snapshot.CacheWriteTokens) {
+			var previous TokenUsage
+			if msg.ProviderRequestID != "" && msg.ProviderMessageID != "" {
+				key := codebuddyUsageCall{msg.ProviderRequestID, msg.ProviderMessageID, content.Model}
+				previous = calls[key]
+				calls[key] = snapshot
+			}
+			u := usage[content.Model]
+			u.InputTokens += snapshot.InputTokens - previous.InputTokens
+			u.OutputTokens += snapshot.OutputTokens - previous.OutputTokens
+			u.CacheReadTokens += snapshot.CacheReadTokens - previous.CacheReadTokens
+			u.CacheWriteTokens += snapshot.CacheWriteTokens - previous.CacheWriteTokens
+			usage[content.Model] = u
+		}
 	}
 
 	for _, block := range content.Content {
@@ -574,10 +656,11 @@ type codebuddySDKMessage struct {
 	Request   json.RawMessage `json:"request,omitempty"`
 
 	// ProviderRequestID 是事件上的 `_requestId`：子进程为本次根请求生成的标识，
-	// 与服务端链路（AgentLens trace id）一致。它不是父进程环境里的
+	// 外部观测系统的具体解析对应须另行验证。它不是父进程环境里的
 	// CODEBUDDY_ROOT_REQUEST_ID（那是调用方的请求），也不是 control_request 的
-	// `request_id`（那是权限桥的应答序号）。init 事件没有该字段，status/result 才有。
+	// `request_id`（那是权限桥的应答序号）；assistant/status/result 从子进程事件取证。
 	ProviderRequestID string `json:"_requestId,omitempty"`
+	ProviderMessageID string `json:"_messageId,omitempty"`
 }
 
 // codebuddyLogEntry 是 log 事件里的日志条目。
@@ -673,6 +756,44 @@ func codebuddyResultUsage(msg codebuddySDKMessage, fallbackModel string) map[str
 	}
 }
 
+type codebuddyUsageCall struct {
+	request, message, model string
+}
+
+// assistant 流属于本轮实际调用；result 摘要可能跨会话轮次累计，不能覆盖已观测流。
+func codebuddySelectUsage(stream, summary map[string]TokenUsage, resumed bool, logger *slog.Logger) map[string]TokenUsage {
+	if len(stream) == 0 {
+		if !resumed || len(summary) == 0 {
+			return summary
+		}
+		logger.Warn("codebuddy usage source conflict", "reason", "resumed_summary_scope_unknown", "stream_usage", stream, "result_usage", summary, "chosen_source", "none", "scope", "session summary cannot establish current run usage")
+		return stream
+	}
+	if len(summary) == 0 {
+		return stream
+	}
+	reason := "result_summary_differs_from_observed_stream"
+	equal := len(stream) == len(summary)
+	for model, observed := range stream {
+		reported, ok := summary[model]
+		if !ok {
+			reason = "model_identity_conflict"
+			equal = false
+			break
+		}
+		if reported != observed {
+			equal = false
+		}
+	}
+	if len(stream) != len(summary) {
+		reason = "model_identity_conflict"
+	}
+	if !equal {
+		logger.Warn("codebuddy usage source conflict", "reason", reason, "stream_usage", stream, "result_usage", summary, "chosen_source", "assistant_stream_observed", "scope", "observed SDK calls; calls absent from stream remain unknown")
+	}
+	return stream
+}
+
 // codebuddyUncachedInput 把 CodeBuddy 的 input_tokens 归一成"不含缓存的输入"，
 // 与 modelUsage.inputTokens 和服务端 task_usage.input_tokens 的口径一致。
 //
@@ -696,4 +817,57 @@ func codebuddyUncachedInput(input, cacheRead, cacheWrite int64) int64 {
 // 「字段齐全但全零」的用量当有效数据。
 func codebuddyUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+}
+
+// streamIdentityComplete 判断 stream 里的用量是否都能被逐调用身份解释完。
+// 只有完整时才敢按 key 判断"这个子调用没被观测过"；只要有一个模型对不上，
+// 就说明有未知调用混在里面，此时任何增量都可能重复记账。
+func streamIdentityComplete(usage map[string]TokenUsage, observed map[codebuddyUsageCall]TokenUsage) bool {
+	if len(observed) == 0 || len(usage) == 0 {
+		return false
+	}
+	sum := map[string]TokenUsage{}
+	for key, value := range observed {
+		merged := sum[key.model]
+		merged.InputTokens += value.InputTokens
+		merged.OutputTokens += value.OutputTokens
+		merged.CacheReadTokens += value.CacheReadTokens
+		merged.CacheWriteTokens += value.CacheWriteTokens
+		sum[key.model] = merged
+	}
+	if len(sum) != len(usage) {
+		return false
+	}
+	for model, total := range usage {
+		if sum[model] != total {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeSubagentUsage 把"stream 里还没观测到"的子调用增量并入用量。
+//
+// 前提是 stream 的逐调用身份完整：只有那时"没在 observed 里"才等于"没被记账"。
+// 身份不完整时保留 stream 已知量、不加任何子增量，避免同一调用被记两次。
+func mergeSubagentUsage(usage map[string]TokenUsage, observed map[codebuddyUsageCall]TokenUsage, calls []SubagentCall, identityComplete bool) map[string]TokenUsage {
+	if len(calls) == 0 || !identityComplete {
+		return usage
+	}
+	if usage == nil {
+		usage = map[string]TokenUsage{}
+	}
+	for _, call := range calls {
+		key := codebuddyUsageCall{request: call.CID, message: call.MessageID, model: call.Model}
+		if _, seen := observed[key]; seen {
+			continue
+		}
+		merged := usage[call.Model]
+		merged.InputTokens += call.Usage.InputTokens
+		merged.OutputTokens += call.Usage.OutputTokens
+		merged.CacheReadTokens += call.Usage.CacheReadTokens
+		merged.CacheWriteTokens += call.Usage.CacheWriteTokens
+		usage[call.Model] = merged
+	}
+	return usage
 }

@@ -4604,7 +4604,7 @@ func formatLegacyCommentEntry(comment CoalescedCommentData) string {
 	return b.String()
 }
 
-// TaskTracePayload 是 daemon 上报的一条外部链路标识。
+// TaskTracePayload 是 daemon 上报的一条 provider 请求关联。
 //
 // ProviderTraceID 必须来自被启动的子进程本身（例如 CodeBuddy stream-json 事件上的
 // `_requestId`）；服务端不做任何"从别的字段推算"的补写，缺就是缺。
@@ -4617,9 +4617,13 @@ type TaskTracePayload struct {
 	// 检索得到）。留空按 exact 处理，因为只有 daemon 自报的通道会走这个接口。
 	Correlation string `json:"correlation"`
 	Source      string `json:"source"`
+	// SDK原始文件中providerData.traceId及其不可变来源，不代表外部AgentLens已验证。
+	SDKTraceID           string `json:"sdk_trace_id,omitempty"`
+	SDKTraceSourceSHA256 string `json:"sdk_trace_source_sha256,omitempty"`
+	SDKTraceSourcePath   string `json:"sdk_trace_source_path,omitempty"`
 }
 
-// ReportTaskTraces 保存一次执行在外部观测系统里的根请求标识，0..N 条。
+// ReportTaskTraces 保存一次执行的 provider 实际请求关联，0..N 条。
 //
 // 与 /usage 独立：用量可能为空（没发出模型请求、或 provider 不上报用量），链路也可能
 // 缺失（backend 不暴露标识）；两者都不是对方的写入前提。重复上报按
@@ -4643,12 +4647,15 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 	// 先把整批校验完再动库：逐条边写边校验会出现"前几条已经落库、后面一条被 400 拒绝"
 	// 的半成品批次，调用方既不能当成功也不能当全失败。请求要么整批合法、要么整批拒绝。
 	type plannedTrace struct {
-		Provider        string
-		ObservationStar string
-		SessionID       string
-		TraceID         string
-		Correlation     string
-		Source          string
+		Provider             string
+		ObservationStar      string
+		SessionID            string
+		TraceID              string
+		Correlation          string
+		Source               string
+		SDKTraceID           string
+		SDKTraceSourceSHA256 string
+		SDKTraceSourcePath   string
 	}
 	planned := make([]plannedTrace, 0, len(req.Traces))
 	for _, t := range req.Traces {
@@ -4671,20 +4678,49 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 		if source == "" {
 			source = "stream_json"
 		}
+		sdkID := strings.TrimSpace(t.SDKTraceID)
+		sdkHash := strings.TrimSpace(t.SDKTraceSourceSHA256)
+		sdkPath := strings.TrimSpace(t.SDKTraceSourcePath)
+		if sdkID != "" || sdkHash != "" || sdkPath != "" {
+			idBytes, idErr := hex.DecodeString(sdkID)
+			hashBytes, hashErr := hex.DecodeString(sdkHash)
+			if normalizeProvider(t.Provider) != "codebuddy" || correlation != "exact" || source != "local_session_jsonl" || idErr != nil || len(idBytes) != 16 || hashErr != nil || len(hashBytes) != sha256.Size || sdkPath != "providerData.traceId" || strings.TrimSpace(t.SessionID) == "" {
+				writeError(w, http.StatusBadRequest, "SDK trace requires exact CodeBuddy local_session_jsonl source, 32 hex ID, SHA256 and providerData.traceId path")
+				return
+			}
+		}
 		planned = append(planned, plannedTrace{
-			Provider:        normalizeProvider(t.Provider),
-			ObservationStar: strings.TrimSpace(t.ObservationSpace),
-			SessionID:       strings.TrimSpace(t.SessionID),
-			TraceID:         traceID,
-			Correlation:     correlation,
-			Source:          source,
+			Provider:             normalizeProvider(t.Provider),
+			ObservationStar:      strings.TrimSpace(t.ObservationSpace),
+			SessionID:            strings.TrimSpace(t.SessionID),
+			TraceID:              traceID,
+			Correlation:          correlation,
+			Source:               source,
+			SDKTraceID:           sdkID,
+			SDKTraceSourceSHA256: sdkHash,
+			SDKTraceSourcePath:   sdkPath,
 		})
 	}
 
+	// 多关联请求按同一顺序锁行，避免并发批次逆序写入时互相等待。
+	sort.SliceStable(planned, func(i, j int) bool {
+		if planned[i].Provider != planned[j].Provider {
+			return planned[i].Provider < planned[j].Provider
+		}
+		return planned[i].TraceID < planned[j].TraceID
+	})
+
 	// 存储失败必须让调用方看见：204 只代表"整批已确认落账"。补齐流程靠这个状态判断
 	// 要不要重试，把 Warn 吞掉会让一次失败的补齐被记成成功。
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start trace transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
 	for _, p := range planned {
-		if err := h.Queries.UpsertTaskProviderTrace(r.Context(), db.UpsertTaskProviderTraceParams{
+		if err := qtx.UpsertTaskProviderTrace(r.Context(), db.UpsertTaskProviderTraceParams{
 			WorkspaceID:      parseUUID(workspaceID),
 			TaskID:           parseUUID(taskID),
 			Provider:         p.Provider,
@@ -4699,11 +4735,25 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to store trace "+p.TraceID)
 			return
 		}
+		if p.SDKTraceID != "" {
+			n, err := qtx.SetTaskProviderSDKTrace(r.Context(), db.SetTaskProviderSDKTraceParams{
+				TaskID: parseUUID(taskID), ProviderTraceID: p.TraceID, SessionID: p.SessionID,
+				SdkTraceID: p.SDKTraceID, SdkTraceSourceSha256: p.SDKTraceSourceSHA256, SdkTraceSourcePath: p.SDKTraceSourcePath,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to store SDK trace provenance")
+				return
+			}
+			if n != 1 {
+				writeError(w, http.StatusConflict, "SDK trace conflicts with existing exact source: "+p.TraceID)
+				return
+			}
+		}
 	}
 
 	// 回读核对：说"已落账"之前先证明这些行真的在，且关联强度没有被弱来源覆盖。
 	if len(planned) > 0 {
-		stored, err := h.Queries.ListTaskProviderTraces(r.Context(), parseUUID(taskID))
+		stored, err := qtx.ListTaskProviderTraces(r.Context(), parseUUID(taskID))
 		if err != nil {
 			slog.Error("read back task provider traces failed", "task_id", taskID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to verify stored traces")
@@ -4719,16 +4769,40 @@ func (h *Handler) ReportTaskTraces(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "trace not persisted: "+p.TraceID)
 				return
 			}
+			if p.SDKTraceID != "" {
+				var sdk TaskTracePayload
+				if json.Unmarshal(got.Metadata, &sdk) != nil || sdk.SDKTraceID != p.SDKTraceID || sdk.SDKTraceSourceSHA256 != p.SDKTraceSourceSHA256 || sdk.SDKTraceSourcePath != p.SDKTraceSourcePath {
+					writeError(w, http.StatusInternalServerError, "SDK trace provenance not persisted: "+p.TraceID)
+					return
+				}
+			}
+
 			// exact 请求被推断覆盖、或写成了未知强度，都说明落账不符预期。
 			if p.Correlation == "exact" && got.Correlation != "exact" {
 				writeError(w, http.StatusInternalServerError, "trace correlation downgraded: "+p.TraceID)
 				return
 			}
 			if p.Correlation == "exact" && p.SessionID != "" && got.SessionID != p.SessionID {
+				// 409不保留同批新增关联；审计只记录已存在的精确行，不改其身份或来源。
+				if err := tx.Rollback(r.Context()); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to roll back conflicting traces")
+					return
+				}
+				if err := h.Queries.RecordTaskProviderSessionConflict(r.Context(), db.RecordTaskProviderSessionConflictParams{
+					TaskID: parseUUID(taskID), Provider: p.Provider, ProviderTraceID: p.TraceID, SessionID: p.SessionID, ExpectedSessionID: got.SessionID,
+				}); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to record trace session conflict")
+					return
+				}
 				writeError(w, http.StatusConflict, "trace session conflicts with existing exact association: "+p.TraceID)
 				return
 			}
 		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit trace transaction")
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -4826,7 +4900,36 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			}
 			provider = runtimeProvider
 		}
-		if err := h.Queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
+		req.Usage[i].Provider = provider
+	}
+
+	// 一次 run 的完整报告共用一把锁；首报、重试与多模型更正原子提交，失败不发布监控计数。
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to begin usage report")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "task-usage:"+uuidToString(task.ID)); err != nil {
+		writeError(w, 500, "failed to lock usage report")
+		return
+	}
+	queries := h.Queries.WithTx(tx)
+	previous, err := queries.GetTaskUsage(r.Context(), parseUUID(taskID))
+	if err != nil {
+		writeError(w, 500, "failed to load previous usage")
+		return
+	}
+	type usageKey struct{ provider, model string }
+	known := make(map[usageKey]bool, len(previous))
+	for _, row := range previous {
+		known[usageKey{row.Provider, row.Model}] = true
+	}
+	var firstRealtime []TaskUsagePayload
+
+	for i, u := range req.Usage {
+		provider := u.Provider
+		if err := queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
 			TaskID:           parseUUID(taskID),
 			Provider:         provider,
 			Model:            u.Model,
@@ -4841,7 +4944,12 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to store usage for model "+u.Model)
 			return
 		}
-		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.CostUSDTicks)
+		key := usageKey{provider, u.Model}
+		if !known[key] && !executedAt[i].Valid {
+			u.Provider = provider
+			firstRealtime = append(firstRealtime, u)
+		}
+		known[key] = true
 
 		// Surface prompt-cache effectiveness per run so cache hit rates are
 		// observable in logs, not just queryable from runtime_usage. The ratio
@@ -4866,22 +4974,18 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	// 数值与本次请求一致。被更早的权威值覆盖（例如已有行只更正数值）时数值应相等；
 	// 入账时间只在首次插入时采用，已有行保留原 created_at，因此不比较它。
 	if len(req.Usage) > 0 {
-		stored, err := h.Queries.GetTaskUsage(r.Context(), parseUUID(taskID))
+		stored, err := queries.GetTaskUsage(r.Context(), parseUUID(taskID))
 		if err != nil {
 			slog.Error("read back task usage failed", "task_id", taskID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to verify stored usage")
 			return
 		}
-		type usageKey struct{ provider, model string }
 		byKey := make(map[usageKey]db.TaskUsage, len(stored))
 		for _, row := range stored {
 			byKey[usageKey{row.Provider, row.Model}] = row
 		}
 		for _, u := range req.Usage {
-			provider := normalizeProvider(u.Provider)
-			if provider == "" {
-				provider = runtimeProvider
-			}
+			provider := u.Provider
 			row, ok := byKey[usageKey{provider, u.Model}]
 			if !ok {
 				writeError(w, http.StatusInternalServerError, "usage not persisted for model "+u.Model)
@@ -4895,6 +4999,14 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to commit usage report")
+		return
+	}
+	// Counter 表达实时首次观测；更正与历史账本由数据库读取，不向当前 counter 重放。
+	for _, u := range firstRealtime {
+		h.TaskService.CaptureTaskUsage(r.Context(), task, u.Provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.CostUSDTicks)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -5498,7 +5610,7 @@ func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, res
 	}
 }
 
-// hydrateTaskTraces 把每个运行的外部链路标识挂到执行日志行上。查不到就留空——
+// hydrateTaskTraces 把每个运行的 provider 请求关联挂到执行日志行上。查不到就留空——
 // 空数组与"没有链路"是同一个意思，UI 不能因此显示"0 条"当作已覆盖。
 func (h *Handler) hydrateTaskTraces(ctx context.Context, issueID pgtype.UUID, resp []AgentTaskResponse) {
 	if len(resp) == 0 {
@@ -5513,6 +5625,8 @@ func (h *Handler) hydrateTaskTraces(ctx context.Context, issueID pgtype.UUID, re
 	byTask := make(map[string][]TaskTraceData, len(resp))
 	for _, row := range rows {
 		taskID := uuidToString(row.TaskID)
+		var sdk TaskTracePayload
+		_ = json.Unmarshal(row.Metadata, &sdk)
 		byTask[taskID] = append(byTask[taskID], TaskTraceData{
 			Provider:         row.Provider,
 			ObservationSpace: row.ObservationSpace,
@@ -5520,6 +5634,7 @@ func (h *Handler) hydrateTaskTraces(ctx context.Context, issueID pgtype.UUID, re
 			ProviderTraceID:  row.ProviderTraceID,
 			Correlation:      row.Correlation,
 			Source:           row.Source,
+			SDKTraceID:       sdk.SDKTraceID, SDKTraceSourceSHA256: sdk.SDKTraceSourceSHA256, SDKTraceSourcePath: sdk.SDKTraceSourcePath,
 		})
 	}
 

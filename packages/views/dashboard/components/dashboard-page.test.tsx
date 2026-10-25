@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider } from "../../navigation";
 import type { NavigationAdapter } from "../../navigation";
@@ -23,6 +24,10 @@ const manyAgentsRef = vi.hoisted(() => ({ current: false }));
 // — what a plain member actually receives once the backend folds the agents
 // they may not view (MUL-5409).
 const restrictedBucketRef = vi.hoisted(() => ({ current: false }));
+// 覆盖默认的按日用量行，用来构造"全部不可定价""行内部分已知"这类窗口。
+const dailyRowsRef = vi.hoisted(
+  () => ({ current: null as null | Record<string, unknown>[] }),
+);
 
 // Kept out of the fixture ternary so the sentinel's shape reads at a glance.
 // Unlike the deleted-agents bucket this one carries real seconds / tasks: the
@@ -129,7 +134,9 @@ vi.mock("@tanstack/react-query", async () => {
           return { data: bulkRows, isLoading: false, isSuccess: true };
         }
         const data =
-          kind === "daily"
+          kind === "daily" && dailyRowsRef.current
+            ? dailyRowsRef.current
+            : kind === "daily"
             ? [
                 {
                   date: todayIso(),
@@ -236,14 +243,45 @@ vi.mock("@multica/core/auth", () => {
   return { useAuthStore };
 });
 
-vi.mock("@multica/core/runtimes/custom-pricing-store", () => {
-  const state = () => ({ pricings: {} });
+// 可变的补价 store：页面订阅它，测试里改价必须真的触发重渲染——否则
+// "保存补价后页面仍显示未计价"这个缺陷就没法在组件层复现。
+vi.mock("@multica/core/runtimes/custom-pricing-store", async () => {
+  const React = await import("react");
+  type Pricing = { input: number; output: number; cacheRead: number; cacheWrite: number };
+  let pricings: Record<string, Pricing> = {};
+  const listeners = new Set<() => void>();
+  const emit = () => listeners.forEach((l) => l());
+  const setCustomPricing = (model: string, pricing: Pricing) => {
+    pricings = { ...pricings, [model]: pricing };
+    emit();
+  };
+  const removeCustomPricing = (model: string) => {
+    if (!(model in pricings)) return;
+    const next = { ...pricings };
+    delete next[model];
+    pricings = next;
+    emit();
+  };
+  const state = () => ({ pricings, setCustomPricing, removeCustomPricing });
   const useCustomPricingStore = Object.assign(
-    (sel?: (s: ReturnType<typeof state>) => unknown) =>
-      sel ? sel(state()) : state(),
+    (sel?: (s: ReturnType<typeof state>) => unknown) => {
+      const snapshot = React.useSyncExternalStore(
+        (cb: () => void) => {
+          listeners.add(cb);
+          return () => listeners.delete(cb);
+        },
+        () => pricings,
+        () => pricings,
+      );
+      const value = { pricings: snapshot, setCustomPricing, removeCustomPricing };
+      return sel ? sel(value) : value;
+    },
     { getState: state },
   );
-  return { useCustomPricingStore };
+  return {
+    useCustomPricingStore,
+    getCustomPricing: (model: string) => (model in pricings ? pricings[model] : undefined),
+  };
 });
 
 import { DashboardPage } from "./dashboard-page";
@@ -783,5 +821,121 @@ describe("DashboardPage — leaderboard density", () => {
       gridTemplateColumns:
         "minmax(10rem, 1.6fr) minmax(6rem, 1fr) 5rem 5rem 5rem 4rem",
     });
+  });
+});
+
+// 价格来源变化必须影响判定：dashboard 订阅了 useCustomPricingStore，但如果
+// costKnown / 金额 memo 的依赖里没有 pricings，补价或删除补价只会触发重渲染、
+// 复用旧判断——用户保存了价格，页面却还写着"未计价"。
+describe("DashboardPage — 补价变化会重新判定费用", () => {
+  const unknownModel = "acc-unknown-model";
+  beforeEach(() => {
+    dashboardDataRef.current = true;
+    manyAgentsRef.current = false;
+    restrictedBucketRef.current = false;
+    tzRef.current = "UTC";
+    dailyRowsRef.current = [
+      {
+        date: todayIso(),
+        provider: "codebuddy",
+        model: unknownModel,
+        input_tokens: 1_000_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_usd_ticks: 0,
+        uncosted_input_tokens: 1_000_000,
+        task_count: 1,
+      },
+    ];
+    cleanup();
+  });
+
+  afterEach(() => {
+    dailyRowsRef.current = null;
+    useCustomPricingStore.getState().removeCustomPricing(unknownModel);
+  });
+
+  it("同一批用量下，保存补价后从 — 变成金额，删除后又回到 —", async () => {
+    renderDashboard();
+    // 没有任何价格来源时，费用位置是未知，而不是 $0.00。
+    expect(screen.queryByText(/^\$0\.00$/)).not.toBeInTheDocument();
+
+    act(() => {
+      useCustomPricingStore.getState().setCustomPricing(unknownModel, {
+        input: 1,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+      });
+    });
+
+    // 100 万输入 × $1/M = $1.00
+    expect(await screen.findByText(/\$1\.00/)).toBeInTheDocument();
+
+    act(() => {
+      useCustomPricingStore.getState().removeCustomPricing(unknownModel);
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/\$1\.00/)).not.toBeInTheDocument(),
+    );
+  });
+});
+
+// 一行可以"部分已知"：厂商给了报价（cost_usd_ticks>0），同时还有一段未被任何价格
+// 覆盖的 token。只看 hasKnownCost([row]) 会把这种行判成完全已知，合计里那部分未知
+// 就被悄悄吞掉。
+describe("DashboardPage — 行内部分已知的提示", () => {
+  const partialModel = "acc-partial-model";
+  beforeEach(() => {
+    dashboardDataRef.current = true;
+    manyAgentsRef.current = false;
+    restrictedBucketRef.current = false;
+    tzRef.current = "UTC";
+    dailyRowsRef.current = [
+      {
+        date: todayIso(),
+        provider: "codebuddy",
+        model: partialModel,
+        input_tokens: 2_000_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        // 一半有厂商报价，另一半仍在 uncosted_* 里且模型没有费率。
+        cost_usd_ticks: 5_000_000_000,
+        uncosted_input_tokens: 1_000_000,
+        task_count: 1,
+      },
+    ];
+    cleanup();
+  });
+
+  afterEach(() => {
+    dailyRowsRef.current = null;
+    useCustomPricingStore.getState().removeCustomPricing(partialModel);
+  });
+
+  it("提示只含已定价部分；补价覆盖剩余 token 后提示消失", async () => {
+    renderDashboard();
+    // 测试环境用英文文案；这里断言的就是那条"只含已定价部分"的提示。
+    expect(
+      await screen.findByText(/amount covers priced usage only/),
+    ).toBeInTheDocument();
+
+    act(() => {
+      useCustomPricingStore.getState().setCustomPricing(partialModel, {
+        input: 1,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      });
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/amount covers priced usage only/),
+      ).not.toBeInTheDocument(),
+    );
   });
 });

@@ -666,6 +666,31 @@ export function hasKnownCost(rows: Priceable[]): boolean {
   return false;
 }
 
+// 缓存节省需要每笔缓存读取对应的输入价与缓存价；厂商总费用无法推导这项差额。
+// 无缓存读取的行贡献真实的 0；有读取却缺费率时，合计也不能用部分已知金额代替。
+export function hasKnownCacheSavings(rows: Priceable[]): boolean {
+  return (
+    rows.length > 0 &&
+    rows.every(
+      (row) => row.cache_read_tokens === 0 || !!resolvePricing(row.model, row.provider),
+    )
+  );
+}
+
+// hasUnknownCostRemainder 报告这一行里是否还有"已经计过 token、但没有价格能覆盖"的部分。
+//
+// 一行可以同时携带厂商报价（cost_usd_ticks>0）和未计价的 token（补报、换模型、混合
+// 网关都会这样）。此时 hasKnownCost 为 true——确实有可用的价格——但这一行的金额仍然
+// 只覆盖了一部分。判断"部分已知"必须看剩下的 token 能不能被费率表或自定义价覆盖，
+// 而不是看这一行有没有价格。
+export function hasUnknownCostRemainder(usage: Priceable): boolean {
+  const uncosted = uncostedTokens(usage);
+  const remaining =
+    uncosted.input + uncosted.output + uncosted.cacheRead + uncosted.cacheWrite;
+  if (remaining === 0) return false;
+  return !resolvePricing(usage.model, usage.provider);
+}
+
 export function estimateCost(usage: Priceable): number {
   const authoritative = (usage.cost_usd_ticks ?? 0) / COST_USD_TICKS_PER_USD;
   const pricing = resolvePricing(usage.model, usage.provider);
