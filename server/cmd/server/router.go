@@ -95,6 +95,7 @@ var corsExposedHeaders = []string{
 	"X-Request-ID",
 	handler.HeaderCommentsTruncated,
 	handler.HeaderTimelineTruncated,
+	handler.HeaderActiveRunsTruncated,
 }
 
 // registerPluginActionRoutes 把公开 Plugin Action API 的一整套资源路由挂到 r 上：

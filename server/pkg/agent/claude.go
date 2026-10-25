@@ -714,10 +714,12 @@ type claudeControlRequestPayload struct {
 
 // trySend 尝试往通道发一条消息；通道已满（消费者跟不上）就丢弃。Result.Output 是独立定稿的，
 // 所以受影响只限于“实时会话转播”的接收方。
-func trySend(ch chan<- Message, msg Message) {
+func trySend(ch chan<- Message, msg Message) bool {
 	select {
 	case ch <- msg:
+		return true
 	default:
+		return false
 	}
 }
 

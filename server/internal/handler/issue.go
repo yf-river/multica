@@ -1554,7 +1554,9 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		if writeClientClosedIfCanceled(w, err) {
 			return
 		}
-		total = int64(len(issues))
+		slog.Warn("ListIssues count failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to count issues")
+		return
 	}
 
 	prefix := h.getIssuePrefix(ctx, wsUUID)

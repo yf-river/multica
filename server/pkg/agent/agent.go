@@ -47,6 +47,7 @@ type ExecOptions struct {
 	ThreadName                string        // 会话/线程名，用于命名 agent 侧的会话
 	MaxTurns                  int           // 最多允许的回合数；0 表示不限
 	Timeout                   time.Duration // 整体执行超时（墙钟时间）
+	TurnInterruptTimeout      time.Duration // Codex 中断回合并等待计量收尾的预算，默认两秒
 	SemanticInactivityTimeout time.Duration // 语义无进展超时：长时间没有任何实质产出的上限
 	// FirstTurnNoProgressTimeout 可选地覆盖 Codex 的"首回合无进展"上限——即在
 	// app-server 上报 turn/started 之后、看门狗判定失败之前，允许一个回合完全静默的

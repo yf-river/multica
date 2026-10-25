@@ -381,6 +381,7 @@ type TaskIssueStatusData struct {
 type AgentTaskResponse struct {
 	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
 	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
+	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
 	ID                   string                 `json:"id"`
 	AgentID              string                 `json:"agent_id"`
 	RuntimeID            string                 `json:"runtime_id"`

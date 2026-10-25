@@ -239,14 +239,17 @@ func (c *Client) ResolveRemoteMCPCredential(ctx context.Context, daemonToken, ta
 	return headers, nil
 }
 
-// batchClaimRequestTimeout 是机器级 batch claim（MUL-4257）的短请求级截止时间。
-// 与按 runtime 的 claim——那里给满 30s 控制面超时，因为卡住只堵那一个 runtime 的
-// goroutine——不同，batch 调用一个请求就覆盖 daemon 承载的所有 runtime，一次慢
-// claim 会拖住它们全部（这正是按 runtime 轮询器要拆开的队头耦合，MUL-1744）。把
-// batch 限到几秒就封顶了这个最坏饿死情形；客户端放弃后服务端仍提交的 claim，由
-// 下一轮 ReclaimStaleDispatchedTasksForRuntimes 兜底。保持明显高于 p99 claim 延迟，
-// 让恢复成为例外。
-const batchClaimRequestTimeout = 5 * time.Second
+// batchClaimRequestTimeout is the short, request-scoped deadline for the
+// machine-level batch claim (MUL-4257). Unlike the per-runtime claim — which
+// gets the full 30s control-plane timeout because a stall there only blocks
+// that one runtime's goroutine — the batch call covers every runtime the
+// daemon hosts in a single request, so a slow claim would delay ALL of them
+// (the head-of-line coupling the per-runtime pollers were split to avoid,
+// MUL-1744). Bounding the batch to a few seconds caps that worst-case
+// starvation; a claim that commits server-side after the client gives up is
+// recovered by ReclaimStaleDispatchedTasksForRuntimes on the next poll. Kept
+// comfortably above p99 claim latency so recovery stays the exception.
+const batchClaimRequestTimeout = protocol.DaemonBatchClaimRequestTimeout
 
 // ClaimTasks 是 ClaimTask 的机器级（MUL-4257）batch 对应物：它用一个请求让服务器在
 // daemon 承载的每个 runtime 上最多认领 maxTasks 个任务。daemonID 把请求限定到这台
@@ -396,9 +399,38 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/prepare-lease", runtimeID, taskID), map[string]any{}, nil)
 }
 
-// StartTask 通知服务器任务已开始执行。
-func (c *Client) StartTask(ctx context.Context, taskID string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+// startTaskRetrySchedule allows two short reconnects without the terminal
+// callbacks' 124s backoff. The whole start has a 30s budget (not 3 x the HTTP
+// client's 30s timeout). Preparation keeps renewing its 45s lease every 15s
+// throughout requests and backoff; its own deadline can end this sooner.
+// runTask calls this once. Task-level retries are separate executions, with
+// fresh claims, and cannot reuse this acknowledgement.
+var startTaskRetrySchedule = []time.Duration{500 * time.Millisecond, 2 * time.Second}
+
+const startTaskTimeout = 30 * time.Second
+
+var errStartClaimRejected = errors.New("task start claim rejected")
+
+func (c *Client) StartTask(ctx context.Context, task Task) error {
+	path := fmt.Sprintf("/api/daemon/tasks/%s/start", task.ID)
+	if !task.StartClaimSupported {
+		// Old servers have no safe replay contract. Preserve one attempt.
+		return c.postJSON(ctx, path, map[string]any{}, nil)
+	}
+	if task.RuntimeID == "" || task.DispatchedAt == "" {
+		return fmt.Errorf("start task: claim is missing runtime_id or dispatched_at")
+	}
+	ctx, cancel := context.WithTimeout(ctx, startTaskTimeout)
+	defer cancel()
+	err := c.postJSONWithRetry(ctx, path, map[string]any{
+		"runtime_id":    task.RuntimeID,
+		"dispatched_at": task.DispatchedAt,
+	}, nil, startTaskRetrySchedule)
+	var reqErr *requestError
+	if errors.As(err, &reqErr) && reqErr.StatusCode == http.StatusConflict {
+		return fmt.Errorf("%w: %w", errStartClaimRejected, err)
+	}
+	return err
 }
 
 // MarkTaskWaitingLocalDirectory 把刚派发的任务在服务器上停进 waiting_local_directory

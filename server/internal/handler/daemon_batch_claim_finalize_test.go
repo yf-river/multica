@@ -26,7 +26,7 @@ func TestClaimTasksByRuntime_MaxTasksZeroClaimsNothing(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	rt := createClaimReclaimRuntime(t, ctx, "Batch max0 rt")
+	rt := createBatchClaimRuntime(t, ctx, "Batch max0 rt")
 	a, i := createClaimReclaimAgentAndIssue(t, ctx, rt, "Batch max0 agent")
 	taskID := seedQueuedIssueTask(t, ctx, a, rt, i)
 
@@ -56,7 +56,7 @@ func TestClaimTasksByRuntime_MaxTasksNegativeIsBadRequest(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	rt := createClaimReclaimRuntime(t, context.Background(), "Batch neg rt")
+	rt := createBatchClaimRuntime(t, context.Background(), "Batch neg rt")
 	w := postBatchClaim(t, testWorkspaceID, []string{rt}, -1)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for negative max_tasks, got %d: %s", w.Code, w.Body.String())
@@ -71,7 +71,7 @@ func TestClaimTasksByRuntime_SkipsInvalidRuntimeID(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	rt := createClaimReclaimRuntime(t, ctx, "Batch badid rt")
+	rt := createBatchClaimRuntime(t, ctx, "Batch badid rt")
 	a, i := createClaimReclaimAgentAndIssue(t, ctx, rt, "Batch badid agent")
 	seedQueuedIssueTask(t, ctx, a, rt, i)
 
@@ -136,7 +136,7 @@ func TestClaimTasksByRuntime_PersistsCommentDeliveryReceipt(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	rt := createClaimReclaimRuntime(t, ctx, "Batch receipt rt")
+	rt := createBatchClaimRuntime(t, ctx, "Batch receipt rt")
 	a, i := createClaimReclaimAgentAndIssue(t, ctx, rt, "Batch receipt agent")
 	taskID, commentID := seedCommentBackedQueuedTask(t, ctx, a, rt, i)
 
@@ -172,7 +172,7 @@ func TestClaimTasksByRuntime_StaleReclaimRecordsDeliveryReceipt(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	rt := createClaimReclaimRuntime(t, ctx, "Batch stale-receipt rt")
+	rt := createBatchClaimRuntime(t, ctx, "Batch stale-receipt rt")
 	a, i := createClaimReclaimAgentAndIssue(t, ctx, rt, "Batch stale-receipt agent")
 
 	var commentID string
@@ -282,7 +282,7 @@ func TestClaimTasksByRuntime_RepairsStaleCommentPlan(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	rt := createClaimReclaimRuntime(t, ctx, "Stale plan rt")
+	rt := createBatchClaimRuntime(t, ctx, "Stale plan rt")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, rt, "Stale plan agent")
 	// Assign the issue to the agent so the surviving comment re-routes to it.
 	if _, err := testPool.Exec(ctx, `UPDATE issue SET assignee_type='agent', assignee_id=$1 WHERE id=$2`, agentID, issueID); err != nil {

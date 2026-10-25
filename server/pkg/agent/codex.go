@@ -71,10 +71,20 @@ const (
 	// 的默认值，又不拖慢轻量 RPC 的失败速度。
 	defaultCodexThreadHandshakeTimeout = 60 * time.Second
 	codexVersionDiagnosticTimeout      = 2 * time.Second
-	// codexGracefulShutdownTimeout 限制生命周期 goroutine 在关闭 stdin 后、强杀进程前，
-	// 愿意等 codex 自行退出的时长。干净退出能触发 codex 的收尾逻辑并冲刷缓存的遥测——
-	// OTEL 批量导出器只在优雅停机时强制 flush，立刻杀掉（旧行为）会丢掉本次任务的
-	// span/指标/日志。
+	// Keep a raw agent-message tail small enough that a slow daemon does not
+	// make the stdout reader retain token-sized channel entries indefinitely.
+	// At one sixty-fourth of the scanner's maximum completed-snapshot line, any
+	// reconcilable item occupies at most 65 of the 256 message slots (the leading
+	// delta plus 64 aggregates), reserving the rest for status and tool events.
+	// A single provider event may be larger, in which case that event is flushed
+	// as one chunk rather than split at an arbitrary byte boundary.
+	codexAgentMessageAggregateBytes = agentStreamMaxLineBytes / 64
+	// codexGracefulShutdownTimeout bounds how long the lifecycle goroutine
+	// waits for codex to exit on its own after stdin is closed, before forcing
+	// a context-cancel kill. A clean exit lets codex run its shutdown path and
+	// flush buffered telemetry — OTEL batch exporters only force-flush on
+	// graceful shutdown, so killing it immediately (the prior behavior) drops
+	// the task's spans/metrics/logs.
 	codexGracefulShutdownTimeout = 10 * time.Second
 )
 
@@ -156,9 +166,63 @@ const CodexFirstTurnNoProgressMarker = "codex app-server no progress timeout"
 // CodexHandshakeTimeoutMarker 标识 Codex app-server 启动类 RPC 在限定的握手窗口内没有应答。
 const CodexHandshakeTimeoutMarker = "codex app-server handshake timeout"
 
-// codexResumeMarker 与 codexLineOverflowMarker 是「resume 溢出」错误文本的两半：
-// 失败的方法名（由 startOrResumeThread 写入）与 bufio 自带的 ErrTooLong 措辞
-// （经读取 goroutine 进到错误串里）。
+// CodexGuardianRateLimitMarker identifies an in-turn approval retry loop that
+// the adapter stopped after repeated reviewer failures.
+const CodexGuardianRateLimitMarker = "codex Guardian approval rate-limit circuit open"
+
+const codexGuardianRateLimitThreshold = 2
+const codexGuardianReviewDedupWindow = 32
+const codexGuardianRateLimitError = CodexGuardianRateLimitMarker + ": two consecutive Guardian approval reviews failed with 429 Too Many Requests; check completed work before continuing after the provider limit clears"
+
+type codexGuardianRateLimitCircuit struct {
+	consecutive      int
+	recentReviewIDs  [codexGuardianReviewDedupWindow]string
+	nextReviewIDSlot int
+	tripped          bool
+}
+
+// observeReview consumes the Guardian-specific app-server notification. A
+// synthesized commandExecution item may have no output when approval fails,
+// so inspecting tool output would miss the failure we need to stop.
+func (c *codexGuardianRateLimitCircuit) observeReview(params map[string]any) bool {
+	reviewID, _ := params["reviewId"].(string)
+	review, _ := params["review"].(map[string]any)
+	if reviewID == "" || review == nil {
+		return false
+	}
+	status, _ := review["status"].(string)
+	if status == "" || status == "inProgress" {
+		return false
+	}
+	for _, recentID := range c.recentReviewIDs {
+		if reviewID == recentID {
+			return false
+		}
+	}
+	c.recentReviewIDs[c.nextReviewIDSlot] = reviewID
+	c.nextReviewIDSlot = (c.nextReviewIDSlot + 1) % len(c.recentReviewIDs)
+	rationale, _ := review["rationale"].(string)
+	lower := strings.ToLower(rationale)
+	// A policy denial carries a risk level; a reviewer failure does not. Keep
+	// the 429 signal as a narrow gate, without depending on Codex's English
+	// failure prefix (the review notification schema is unstable).
+	if status != "denied" || review["riskLevel"] != nil ||
+		(!strings.Contains(lower, "429") && !strings.Contains(lower, "too many requests")) {
+		c.consecutive = 0
+		return false
+	}
+	c.consecutive++
+	if c.consecutive < codexGuardianRateLimitThreshold || c.tripped {
+		return false
+	}
+	c.tripped = true
+	return true
+}
+
+// codexResumeMarker and codexLineOverflowMarker are the two halves of the
+// error text a resume-overflow produces: the method that failed (written by
+// startOrResumeThread) and bufio's own ErrTooLong wording, which reaches the
+// string through the reader goroutine.
 const (
 	codexResumeMarker       = "thread/resume failed"
 	codexLineOverflowMarker = "token too long"
@@ -1017,6 +1081,8 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 	semanticActivityCh := make(chan string, 256)
+	guardianRateLimitTrip := make(chan struct{}, 1)
+	var guardianRateLimitTripped atomic.Bool
 
 	var outputMu sync.Mutex
 	// Result.Output 是「后端选出的最终面向用户输出」（见 agent.go），所以它只装交付物。
@@ -1032,44 +1098,69 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// 读取之间产生竞态。
 	turnDone := make(chan bool, 1) // true = 被中止
 
+	observeMessage := func(msg Message) {
+		logCodexAgentMessage(b.cfg.Logger, msg)
+		activity := describeCodexSemanticActivity(msg)
+		if activity == "status:running" {
+			firstItemWait.start(time.Now())
+		}
+		trySendString(semanticActivityCh, activity)
+		if activity != "" {
+			semanticObserved.Store(true)
+		}
+	}
+
 	c := &codexClient{
-		cfg:                    b.cfg,
-		stdin:                  stdin,
-		pending:                make(map[int]*pendingRPC),
-		processDone:            make(chan struct{}),
-		handshakeTimeout:       handshakeTimeout,
-		threadHandshakeTimeout: threadHandshakeTimeout,
-		pid:                    cmd.Process.Pid,
-		attempt:                attempt,
-		activeLaunches:         activeLaunches,
-		notificationProtocol:   "unknown",
-		acceptNotification:     turnNotificationGate.accept,
+		cfg:                      b.cfg,
+		stdin:                    stdin,
+		pending:                  make(map[int]*pendingRPC),
+		processDone:              make(chan struct{}),
+		handshakeTimeout:         handshakeTimeout,
+		threadHandshakeTimeout:   threadHandshakeTimeout,
+		pid:                      cmd.Process.Pid,
+		attempt:                  attempt,
+		activeLaunches:           activeLaunches,
+		notificationProtocol:     "unknown",
+		acceptNotification:       turnNotificationGate.accept,
+		guardianRateLimitCircuit: &codexGuardianRateLimitCircuit{},
+		onGuardianRateLimit: func() {
+			guardianRateLimitTripped.Store(true)
+			b.cfg.Logger.Warn("codex Guardian approval rate-limit circuit opened",
+				"task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID,
+				"failure_count", codexGuardianRateLimitThreshold)
+			guardianRateLimitTrip <- struct{}{}
+		},
 		onDiscardedNotification: func(string, map[string]any) {
 			// 任何 app-server 通知都证明进程做了语义进展——即使它被有意排除在当前回合外。
 			// 借此保住 initialize 重试的安全性，又不用重放内容。
 			semanticObserved.Store(true)
 		},
 		onMessage: func(msg Message) {
-			logCodexAgentMessage(b.cfg.Logger, msg)
-			if msg.Type == MessageText {
-				outputMu.Lock()
-				lastAgentMessage = msg.Content
-				outputMu.Unlock()
-			}
-			activity := describeCodexSemanticActivity(msg)
-			if activity == "status:running" {
-				firstItemWait.start(time.Now())
-			}
-			// 工具证据与消息共用记录链；消费缓慢时施加背压，取消时释放读取方。
+			observeMessage(msg)
 			select {
 			case msgCh <- msg:
 			case <-runCtx.Done():
 				return
 			}
-			trySendString(semanticActivityCh, activity)
-			if activity != "" {
-				semanticObserved.Store(true)
-			}
+		},
+		onAgentMessageChunk: func(text string) bool {
+			msg := Message{Type: MessageText, Content: text}
+			observeMessage(msg)
+			// Agent text is the user-visible transcript, so unlike auxiliary
+			// progress events it participates in reconciliation. A false return
+			// leaves the text pending for completed/terminal/EOF retry. Keep the
+			// send non-blocking because Session.Messages is optional; bounded
+			// coalescing prevents a token burst from filling the channel while
+			// preserving the reader's EOF and cancellation liveness.
+			return trySend(msgCh, msg)
+		},
+		onAgentMessage: func(text string) {
+			// Delta events make MessageText incremental. Keep Result.Output's
+			// legacy fallback authoritative by updating it from the completed
+			// agent-message snapshot, not whichever delta happened to arrive last.
+			outputMu.Lock()
+			lastAgentMessage = text
+			outputMu.Unlock()
 		},
 		onFinalAnswer: func(text string) {
 			outputMu.Lock()
@@ -1101,6 +1192,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			}
 			c.handleLine(line)
 		}
+		// A cancelled or crashed app-server may close stdout without an
+		// item/completed snapshot. Preserve every complete delta JSON event
+		// already parsed; an incomplete final JSON token is ignored by
+		// handleLine and can never enter this buffer.
+		c.flushAgentMessageDeltas()
 		if err := scanner.Err(); err != nil {
 			// 两个都要 %w：调用方用 errCodexProcessExited 判断进程没了，用
 			// bufio.ErrTooLong 区分「读不到响应」和「codex 死了」。startOrResumeThread
@@ -1333,7 +1429,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			}
 			return
 		}
-		c.threadID = threadID
+		c.setThreadID(threadID)
 		if resumed {
 			b.cfg.Logger.Info("codex thread resumed", "thread_id", threadID)
 		} else {
@@ -1438,6 +1534,14 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			select {
 			case aborted := <-turnDone:
 				finishTurn(aborted)
+			case <-guardianRateLimitTrip:
+				waitingForTurn = false
+				finishFirstItemWait("guardian_rate_limit")
+				finalStatus = "failed"
+				finalError = codexGuardianRateLimitError
+				if !interruptCodexTurn(c, threadID, turnDone, opts.TurnInterruptTimeout, b.cfg.Logger) {
+					cancel()
+				}
 			case activity := <-semanticActivityCh:
 				lastSemanticActivity = time.Now()
 				lastSemanticActivityDescription = activity
@@ -1465,13 +1569,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					Timeout:      firstTurnNoProgressTimeout,
 					LastActivity: lastSemanticActivityDescription,
 					ThreadID:     threadID,
-					TurnID:       c.turnID,
+					TurnID:       c.activeTurnID(),
 					Model:        opts.Model,
 				}
 				b.cfg.Logger.Warn(CodexFirstTurnNoProgressMarker,
 					"pid", cmd.Process.Pid,
 					"thread_id", threadID,
-					"turn_id", c.turnID,
+					"turn_id", c.activeTurnID(),
 					"timeout", firstTurnNoProgressTimeout.String(),
 					"last_activity", lastSemanticActivityDescription,
 				)
@@ -1484,13 +1588,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					Timeout:      semanticInactivityTimeout,
 					LastActivity: lastSemanticActivityDescription,
 					ThreadID:     threadID,
-					TurnID:       c.turnID,
+					TurnID:       c.activeTurnID(),
 					Model:        opts.Model,
 				}
 				b.cfg.Logger.Warn(CodexSemanticInactivityMarker,
 					"pid", cmd.Process.Pid,
 					"thread_id", threadID,
-					"turn_id", c.turnID,
+					"turn_id", c.activeTurnID(),
 					"timeout", semanticInactivityTimeout.String(),
 					"last_activity", lastSemanticActivityDescription,
 					"idle_for", time.Since(lastSemanticActivity).Round(time.Millisecond).String(),
@@ -1516,6 +1620,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					}
 				}
 			}
+		}
+		// A turn/completed notification can race the circuit signal in the
+		// select above. The already-observed repeated failures still win.
+		if guardianRateLimitTripped.Load() {
+			finalStatus = "failed"
+			finalError = codexGuardianRateLimitError
 		}
 
 		duration := time.Since(startTime)
@@ -1570,7 +1680,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"active_launches", activeLaunches,
 				"method", "turn/start",
 				"thread_id", threadID,
-				"turn_id", c.turnID,
+				"turn_id", c.activeTurnID(),
 				"outcome", outcome,
 				"latency", waitLatency.Round(time.Millisecond).String(),
 				"latency_ms", waitLatency.Milliseconds(),
@@ -1694,6 +1804,9 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 			"cwd":                   opts.Cwd,
 			"model":                 nilIfEmpty(opts.Model),
 			"developerInstructions": nil,
+			// Only omit history from the response, not the resumed model context.
+			// We need the thread ID, not an unbounded single-line turns payload.
+			"excludeTurns": true,
 		}
 		// 显式覆盖持久化的推理强度：不加这个，codex resume 会静默沿用旧会话建时的档位，
 		// 即使 agent 的 thinking_level 之后已被用户改过。参见 MUL-2339——resume 必须
@@ -2042,14 +2155,29 @@ type codexClient struct {
 	activeLaunches         int64
 	threadSetupMethod      string
 	threadSetupStarted     time.Time
+	threadIDMu             sync.RWMutex
+	turnIDMu               sync.RWMutex
 	threadID               string
 	turnID                 string
 	onMessage              func(Message)
-	onSemanticActivity     func(description string)
-	onTurnDone             func(aborted bool)
-	// onFinalAnswer 只在 app-server 亲自标注 `phase: "final_answer"` 的 agent 消息时触发
-	// ——即本回合的「交付物」，区别于叙述工具调用过程的中间 agent 消息。两类都仍会到
-	// onMessage：transcript 保留完整时间线，只有 Result.Output 收窄为交付物（GH #6006）。
+	// onAgentMessageChunk reports whether a text chunk was handed to the
+	// daemon-facing message channel. Raw delta reconciliation advances only on
+	// true, so channel pressure cannot turn observed provider bytes into a false
+	// delivered prefix. Unit clients may leave this nil and use onMessage.
+	onAgentMessageChunk func(text string) bool
+	// onAgentMessage receives the authoritative completed text for one agent
+	// message. onAgentMessageChunk may deliver that text incrementally, so
+	// Result.Output fallbacks must use this callback rather than the last chunk.
+	onAgentMessage           func(text string)
+	onSemanticActivity       func(description string)
+	onTurnDone               func(aborted bool)
+	guardianRateLimitCircuit *codexGuardianRateLimitCircuit
+	onGuardianRateLimit      func()
+	// onFinalAnswer fires only for an agent message the app-server itself
+	// labelled `phase: "final_answer"` — the turn's deliverable, as opposed to
+	// the intermediate agent messages that narrate work between tool calls.
+	// Both still reach onMessage: the transcript keeps the whole timeline, only
+	// Result.Output is narrowed to the deliverable (GH #6006).
 	onFinalAnswer func(text string)
 	// acceptNotification 把当前回合与 thread/resume 恢复旧对话时重放的「同线程历史」
 	// 隔离开。协议级单测把它留为 nil，直接驱动 dispatch。
@@ -2057,6 +2185,12 @@ type codexClient struct {
 	// onDiscardedNotification 保留带外安全信号（比如观测到活动后抑制 initialize 重试），
 	// 同时不让被过滤掉的历史去改动当前回合的输出或生命周期状态。
 	onDiscardedNotification func(method string, params map[string]any)
+	// agentMessageStreams tracks raw-v2 agent text on the single stdout reader.
+	// The first delta is handed off immediately; subsequent deltas are aggregated
+	// into bounded chunks and reconciled against item/completed. delivered is
+	// advanced only after onAgentMessageChunk confirms daemon handoff.
+	agentMessageStreams map[string]*codexAgentMessageStream
+	agentMessageOrder   []string
 
 	notificationProtocol string // "unknown"、"legacy"、"raw"
 	turnCompleted        bool
@@ -2067,17 +2201,26 @@ type codexClient struct {
 	lastUsageTotal int64
 
 	turnErrorMu sync.Mutex
-	turnError   string // 从 turn/completed status=failed 或终态错误通知里捕获
+	turnError   string // captured from turn/completed status=failed or terminal error notifications
 }
 
-// codexTurnNotificationGate 防止 resume 期间的历史重放改动当前回合的输出或结束新回合。
-// codex app-server 可能在 turn/start RPC 响应之前就发通知，所以门在发起该请求前上闩，
-// 并以 turn/started（或旧式 task_started）作为真正的当前回合边界。省略这些 start 事件
-// 的协议也没有可靠的当前回合 ID；为兼容起见，上闩之后的事件保持放行。因此我们依赖
-// stdout 单读取方提供的顺序保证：resume 历史总是在门还关着时（thread/resume 响应之前）
-// 被处理。上闩后、start 事件前发出的重放，与合法旧式当前回合事件无法区分——除非破坏
-// 那些更老的协议流。它的可变生命周期字段只由 stdout 读取 goroutine 触碰；
-// armed 是原子的，因为生命周期 goroutine 会翻转它。
+type codexAgentMessageStream struct {
+	delivered strings.Builder
+	pending   strings.Builder
+}
+
+// codexTurnNotificationGate keeps resume-time history replay from mutating the
+// output or ending the new turn. Codex app-server can emit notifications before
+// the turn/start RPC response, so the gate is armed before that request and uses
+// turn/started (or legacy task_started) as the actual current-turn boundary.
+// Protocols that omit those start events also omit a reliable current-turn ID;
+// for compatibility, their post-arm events remain accepted. We therefore rely
+// on the single stdout reader's ordering guarantee that resume history emitted
+// before the thread/resume response is processed while the gate is still closed.
+// A replay emitted after arm but before a start event cannot be distinguished
+// from a valid legacy current-turn event without breaking those older streams.
+// Its mutable lifecycle fields are only touched by the stdout reader goroutine;
+// armed is atomic because the lifecycle goroutine flips it.
 type codexTurnNotificationGate struct {
 	armed   atomic.Bool
 	started bool
@@ -2146,6 +2289,22 @@ func (c *codexClient) getTurnError() string {
 	c.turnErrorMu.Lock()
 	defer c.turnErrorMu.Unlock()
 	return c.turnError
+}
+
+// setThreadID publishes the thread ID resolved by thread/start or
+// thread/resume. The task goroutine writes it while the stdout goroutine is
+// already dispatching notifications for that same thread, so the field needs
+// the same synchronization as turnID (GH #8422).
+func (c *codexClient) setThreadID(threadID string) {
+	c.threadIDMu.Lock()
+	c.threadID = threadID
+	c.threadIDMu.Unlock()
+}
+
+func (c *codexClient) getThreadID() string {
+	c.threadIDMu.RLock()
+	defer c.threadIDMu.RUnlock()
+	return c.threadID
 }
 
 type pendingRPC struct {
@@ -2882,12 +3041,15 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 	switch msgType {
 	case "task_started":
 		if c.onMessage != nil {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
+			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.getThreadID()})
 		}
 	case "agent_message":
 		text, _ := msg["message"].(string)
 		if text != "" && c.onMessage != nil {
 			c.onMessage(Message{Type: MessageText, Content: text})
+		}
+		if text != "" && c.onAgentMessage != nil {
+			c.onAgentMessage(text)
 		}
 	case "exec_command_begin":
 		callID, _ := msg["call_id"].(string)
@@ -2995,10 +3157,10 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 
 	case "turn/started":
 		if turnID := extractNestedString(params, "turn", "id"); turnID != "" {
-			c.turnID = turnID
+			c.setActiveTurnID(turnID)
 		}
 		if c.onMessage != nil {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
+			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.getThreadID()})
 		}
 
 	case "turn/completed":
@@ -3026,6 +3188,11 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		if turn, ok := params["turn"].(map[string]any); ok && !c.modernUsage {
 			c.extractUsageFromMap(turn)
 		}
+
+		// Some cancellation and transport-failure paths do not emit an
+		// item/completed snapshot. Flush the aggregate of every complete delta
+		// notification before publishing the terminal boundary.
+		c.flushAgentMessageDeltas()
 
 		if c.onTurnDone != nil {
 			c.onTurnDone(aborted)
@@ -3056,6 +3223,16 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	case "thread/status/changed":
 		// 状态变更只是信息性的。只有 turn/completed 携带原始协议回合的权威终态。
 
+	case "item/autoApprovalReview/completed":
+		// This item notification also signals semantic progress. Preserve the
+		// existing watchdog behavior when handling it specially below.
+		c.handleItemNotification(method, params)
+		if c.guardianRateLimitCircuit != nil &&
+			c.guardianRateLimitCircuit.observeReview(params) &&
+			c.onGuardianRateLimit != nil {
+			c.onGuardianRateLimit()
+		}
+
 	default:
 		if strings.HasPrefix(method, "item/") {
 			c.handleItemNotification(method, params)
@@ -3065,21 +3242,164 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 
 func (c *codexClient) isNotificationFromOtherThread(params map[string]any) bool {
 	threadID, ok := params["threadId"].(string)
-	return ok && c.threadID != "" && threadID != c.threadID
+	if !ok {
+		return false
+	}
+	// Compare against one snapshot: this runs on the stdout goroutine, ahead of
+	// the current-turn gate, so the gate's state cannot serialize the read.
+	currentThreadID := c.getThreadID()
+	return currentThreadID != "" && threadID != currentThreadID
+}
+
+func (c *codexClient) emitAgentMessageChunk(text string) bool {
+	if text == "" {
+		return true
+	}
+	if c.onAgentMessageChunk != nil {
+		return c.onAgentMessageChunk(text)
+	}
+	if c.onMessage != nil {
+		c.onMessage(Message{Type: MessageText, Content: text})
+		return true
+	}
+	return false
+}
+
+func (c *codexClient) agentMessageStream(itemID string) *codexAgentMessageStream {
+	if c.agentMessageStreams == nil {
+		c.agentMessageStreams = make(map[string]*codexAgentMessageStream)
+	}
+	stream := c.agentMessageStreams[itemID]
+	if stream == nil {
+		stream = &codexAgentMessageStream{}
+		c.agentMessageStreams[itemID] = stream
+		c.agentMessageOrder = append(c.agentMessageOrder, itemID)
+	}
+	return stream
+}
+
+func (c *codexClient) handleAgentMessageDelta(itemID, delta string) {
+	if itemID == "" || delta == "" {
+		return
+	}
+
+	stream := c.agentMessageStream(itemID)
+	// The leading delta is the latency-critical event. Deliver it immediately;
+	// coalesce the rest so a burst of token notifications cannot fill the
+	// daemon channel before its consumer is scheduled.
+	if stream.delivered.Len() == 0 && stream.pending.Len() == 0 {
+		if c.emitAgentMessageChunk(delta) {
+			stream.delivered.WriteString(delta)
+			return
+		}
+	}
+
+	stream.pending.WriteString(delta)
+	if stream.pending.Len() >= codexAgentMessageAggregateBytes {
+		c.flushAgentMessageStream(stream)
+	}
+}
+
+func (c *codexClient) flushAgentMessageStream(stream *codexAgentMessageStream) bool {
+	if stream == nil || stream.pending.Len() == 0 {
+		return true
+	}
+	text := stream.pending.String()
+	if !c.emitAgentMessageChunk(text) {
+		return false
+	}
+	stream.delivered.WriteString(text)
+	stream.pending.Reset()
+	return true
+}
+
+// flushAgentMessageDeltas preserves complete delta events when a turn is
+// cancelled or stdout ends before item/completed. agentMessageOrder retains
+// provider order; iterating the map directly would make two unfinished items
+// nondeterministic.
+func (c *codexClient) flushAgentMessageDeltas() {
+	for _, itemID := range c.agentMessageOrder {
+		stream := c.agentMessageStreams[itemID]
+		if stream == nil {
+			continue
+		}
+		if c.flushAgentMessageStream(stream) {
+			delete(c.agentMessageStreams, itemID)
+		}
+	}
+}
+
+func (c *codexClient) completeAgentMessage(itemID, text string) {
+	stream := c.agentMessageStreams[itemID]
+	if text == "" {
+		if c.flushAgentMessageStream(stream) {
+			delete(c.agentMessageStreams, itemID)
+		}
+		return
+	}
+
+	delivered := ""
+	if stream != nil {
+		delivered = stream.delivered.String()
+	} else {
+		stream = c.agentMessageStream(itemID)
+	}
+
+	if !strings.HasPrefix(text, delivered) {
+		// Already-persisted text cannot be retracted without a new event/schema.
+		// Appending the full snapshot would duplicate it, but every complete delta
+		// event still belongs in the append-only transcript. Flush pending normally;
+		// if the channel refuses it, leave the stream intact for terminal/EOF retry.
+		// onAgentMessage remains the authoritative Result.Output fallback.
+		if c.cfg.Logger != nil {
+			c.cfg.Logger.Warn("codex agent-message delta did not match completed text",
+				"item_id", itemID, "delivered_bytes", len(delivered), "completed_bytes", len(text))
+		}
+		if c.flushAgentMessageStream(stream) {
+			delete(c.agentMessageStreams, itemID)
+		}
+		return
+	}
+
+	// With an acknowledged prefix match, the completed snapshot supersedes
+	// observed-but-unacknowledged bytes and supplies their authoritative suffix.
+	stream.pending.Reset()
+	suffix := strings.TrimPrefix(text, delivered)
+	if suffix == "" || c.emitAgentMessageChunk(suffix) {
+		delete(c.agentMessageStreams, itemID)
+		return
+	}
+	// A process cancellation can race the final handoff. Keep the authoritative
+	// suffix so the stdout-EOF flush gets one more chance without duplicating the
+	// prefix that was already accepted.
+	stream.pending.WriteString(suffix)
 }
 
 func (c *codexClient) handleItemNotification(method string, params map[string]any) {
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
 	itemID, _ := item["id"].(string)
+	if method == "item/agentMessage/delta" {
+		// Unlike item/started and item/completed, the real app-server delta
+		// schema is flat: {threadId, turnId, itemId, delta}.
+		itemType = "agentMessage"
+		itemID, _ = params["itemId"].(string)
+	}
 	if isCodexItemProgressActivity(method) && c.onSemanticActivity != nil {
 		c.onSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
 	}
-	if item == nil {
+	if item == nil && method != "item/agentMessage/delta" {
 		return
 	}
 
 	switch {
+	case method == "item/agentMessage/delta" && itemType == "agentMessage":
+		// JSON-RPC framing remains authoritative: handleLine invokes us only
+		// after a whole newline-delimited JSON event parsed successfully. Stream
+		// the event's text payload, not arbitrary stdout bytes.
+		delta, _ := params["delta"].(string)
+		c.handleAgentMessageDelta(itemID, delta)
+
 	case method == "item/started" && itemType == "commandExecution":
 		command, _ := item["command"].(string)
 		if c.onMessage != nil {
@@ -3148,9 +3468,10 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 
 	case method == "item/completed" && itemType == "agentMessage":
 		text, _ := item["text"].(string)
-		if text != "" && c.onMessage != nil {
-			c.onMessage(Message{Type: MessageText, Content: text})
+		if text != "" && c.onAgentMessage != nil {
+			c.onAgentMessage(text)
 		}
+		c.completeAgentMessage(itemID, text)
 		phase, _ := item["phase"].(string)
 		if phase == "final_answer" {
 			// 门的存在是为了防止子 agent 或重放的历史回合提前结束「我们的」回合；本函数
@@ -3610,5 +3931,63 @@ func readCodexUsageLine(reader *bufio.Reader) ([]byte, error) {
 		if !more || err != nil {
 			return line, err
 		}
+	}
+}
+
+func (c *codexClient) setActiveTurnID(turnID string) {
+	if turnID == "" {
+		return
+	}
+	c.turnIDMu.Lock()
+	c.turnID = turnID
+	c.turnIDMu.Unlock()
+}
+func (c *codexClient) activeTurnID() string {
+	c.turnIDMu.RLock()
+	defer c.turnIDMu.RUnlock()
+	return c.turnID
+}
+
+const defaultCodexTurnInterruptTimeout = 2 * time.Second
+
+func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, configuredTimeout time.Duration, logger *slog.Logger) bool {
+	select {
+	case <-turnDone:
+		// Completion won the cancellation race; usage has already been captured.
+		return true
+	default:
+	}
+
+	turnID := c.activeTurnID()
+	if threadID == "" || turnID == "" {
+		return false
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	interruptTimeout := configuredTimeout
+	if interruptTimeout <= 0 {
+		interruptTimeout = defaultCodexTurnInterruptTimeout
+	}
+	started := time.Now()
+
+	interruptCtx, cancelInterrupt := context.WithTimeout(context.Background(), interruptTimeout)
+	defer cancelInterrupt()
+	_, err := c.request(interruptCtx, "turn/interrupt", map[string]any{
+		"threadId": threadID,
+		"turnId":   turnID,
+	})
+	if err != nil {
+		logger.Warn("codex turn interrupt failed", "thread_id", threadID, "turn_id", turnID, "error", err, "latency", time.Since(started).Round(time.Millisecond).String(), "timeout", interruptTimeout.String())
+		return false
+	}
+
+	select {
+	case <-turnDone:
+		logger.Info("codex turn interrupted", "thread_id", threadID, "turn_id", turnID, "latency", time.Since(started).Round(time.Millisecond).String(), "timeout", interruptTimeout.String())
+		return true
+	case <-interruptCtx.Done():
+		logger.Warn("codex turn interrupt completion timed out", "thread_id", threadID, "turn_id", turnID, "latency", time.Since(started).Round(time.Millisecond).String(), "timeout", interruptTimeout.String())
+		return false
 	}
 }

@@ -4094,6 +4094,49 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	if err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
 	}
+	s.taskStarted(ctx, task, runningEvent)
+	return &task, nil
+}
+
+// StartTaskForClaim serializes the ownership check and transition with reclaim,
+// cancellation and other start requests. A replay linearizes at the locked read;
+// a cancellation that commits later can still cancel the acknowledged task.
+func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentTaskStartClaimParams) (*db.AgentTaskQueue, error) {
+	if !claim.ID.Valid || !claim.RuntimeID.Valid || !claim.DispatchedAt.Valid {
+		return nil, fmt.Errorf("start task: incomplete claim")
+	}
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin task start: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	task, err := qtx.LockAgentTaskStartClaim(ctx, claim)
+	if err != nil {
+		return nil, fmt.Errorf("lock task start claim: %w", err)
+	}
+	var runningEvent events.Event
+	replay := task.Status == "running"
+	if !replay {
+		task, err = qtx.StartAgentTask(ctx, task.ID)
+		if err != nil {
+			return nil, fmt.Errorf("start claimed task: %w", err)
+		}
+		runningEvent, err = RecordTaskLifecycleEventTx(ctx, qtx, protocol.EventTaskRunning, task)
+		if err != nil {
+			return nil, fmt.Errorf("record claimed task running event: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit task start: %w", err)
+	}
+	if !replay {
+		s.taskStarted(ctx, task, runningEvent)
+	}
+	return &task, nil
+}
+
+func (s *TaskService) taskStarted(ctx context.Context, task db.AgentTaskQueue, runningEvent events.Event) {
 	s.forgetTaskReclaim(task)
 	s.cancelDeferredEscalationsForTask(ctx, task.ID)
 
@@ -4110,7 +4153,6 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	} else {
 		s.broadcastTaskEvent(ctx, protocol.EventTaskRunning, task)
 	}
-	return &task, nil
 }
 
 // cancelDeferredEscalationsForTask 在任务被“主运行”真正接管（started）时，取消针对它的全部延时降级

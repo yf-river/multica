@@ -5070,6 +5070,12 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}()
 
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+	if errors.Is(err, errStartClaimRejected) {
+		// The row belongs to another claim (or is terminal). A task-id-only
+		// failure callback from this stale delivery could kill its new owner.
+		taskLog.Info("discarding rejected start claim", "error", err)
+		return
+	}
 
 	// 取消与停止路径同样记录已经发生的用量及链路；上报有独立的总时限。
 	d.reportTaskAccounting(ctx, task.ID, provider, result, taskLog)
@@ -6638,7 +6644,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	prepareComplete := false
 	defer func() {
 		cancelPrepare()
-		if prepareComplete || returnErr == nil || !errors.Is(context.Cause(prepareCtx), errTaskPrepareTimeout) {
+		if prepareComplete || returnErr == nil || errors.Is(returnErr, errStartClaimRejected) || !errors.Is(context.Cause(prepareCtx), errTaskPrepareTimeout) {
 			return
 		}
 		// 把每种截止形态（context deadline、HTTP 取消、或显式的
@@ -7310,10 +7316,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// /multica_workspaces/{ws}/{short-id}/workdir"的消费者，在 os.MkdirAll 跑之前
 	// 的微秒窗口里撞上 FileNotFoundError。
 	//
-	// 出错时我们提前返回，让 handleTask 既有的 FailTask + taskfailure.Classify 路径
-	// 用与以前相同的 "start task failed: <…>" 字符串、同一套 failure_reason 分类法
-	// 记录失败——分类器契约见 MUL-2946。
-	if err := d.client.StartTask(prepareCtx, task.ID); err != nil {
+	// On error we return early. A rejected claim is discarded by handleTask;
+	// other errors use its existing FailTask + taskfailure.Classify path with the same
+	// "start task failed: <…>" string and the same failure_reason
+	// taxonomy as before — see MUL-2946 for the classifier contract.
+	if err := d.client.StartTask(prepareCtx, task); err != nil {
 		stopPrepareLease()
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
 	}
@@ -8240,6 +8247,9 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			}
 		}
 
+		firstVisible := make(chan struct{}, 1)
+		var firstVisibleOnce sync.Once
+		flushFirstVisible := func() { firstVisibleOnce.Do(func() { firstVisible <- struct{}{} }) }
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 
@@ -8250,6 +8260,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			for {
 				select {
 				case <-ticker.C:
+					flush()
+				case <-firstVisible:
 					flush()
 				case <-done:
 					return
@@ -8390,6 +8402,14 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						Content: msg.Content,
 					})
 					mu.Unlock()
+				}
+				switch msg.Type {
+				case agent.MessageToolUse, agent.MessageToolResult, agent.MessageError:
+					flushFirstVisible()
+				case agent.MessageText, agent.MessageThinking:
+					if msg.Content != "" {
+						flushFirstVisible()
+					}
 				}
 			case <-messageCtx.Done():
 				goto drainDone
