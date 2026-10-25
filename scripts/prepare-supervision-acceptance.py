@@ -137,20 +137,31 @@ def validate_identity(environment, delivery, candidate, metadata, owner, executi
     # 5. Released candidates and another execution's lease must fail before any test write.
     now = datetime.datetime.now(datetime.timezone.utc)
     expires = datetime.datetime.fromisoformat(owner['expires_at'].replace('Z', '+00:00'))
-    if environment != 'verify-1':
-        raise RuntimeError('This recipe is limited to verify-1; final int requires its own integration ownership check')
+    # Modification 1. Int-only preparation uses the real publication lease, never a verification-slot surrogate.
+    integration = environment == 'int'
+    if environment not in ('verify-1', 'int'):
+        raise RuntimeError('Only verify-1 and owned int-only acceptance are supported')
     if not execution or owner.get('execution_id') != execution or expires <= now:
         raise RuntimeError('Current execution does not hold a live delivery owner lease')
-    if delivery.get('phase') != 'testing' or candidate.get('status') != 'verifying':
+    expected_phase = 'preparing_release' if integration else 'testing'
+    if integration and delivery.get('plan_snapshot', {}).get('integration_only') is not True:
+        raise RuntimeError('Int preparation requires the explicit integration-only scope')
+    if delivery.get('phase') != expected_phase or candidate.get('status') != 'verifying':
         raise RuntimeError('Candidate is not in active verification')
     if (candidate.get('id') != delivery.get('candidate_id')
             or candidate.get('delivery_id') != delivery.get('id')
-            or candidate.get('environment') != environment
+            or candidate.get('environment', candidate.get('delivery_env', 'int')) != environment
             or candidate.get('release_id', candidate['id']) != metadata.get('release_id')
             or candidate.get('commit') != metadata.get('commit')
-            or delivery.get('source_commit') != candidate.get('source_commit', candidate.get('commit'))):
+            or delivery.get('source_commit') != candidate.get('source_commit', candidate.get('approved_source', candidate.get('commit')))):
         raise RuntimeError('Delivery/candidate/release mapping differs')
-    if (lease.get('state') != 'verifying' or lease.get('name') != environment
+    if integration:
+        expiry = datetime.datetime.fromisoformat(lease.get('expires_at', '1970-01-01T00:00:00Z').replace('Z', '+00:00'))
+        if (lease.get('state') != 'active' or lease.get('delivery_id') != delivery['id']
+                or lease.get('generation') != candidate.get('publication_lease', {}).get('generation')
+                or expiry <= now):
+            raise RuntimeError('Integration publication lease does not cover the candidate')
+    elif (lease.get('state') != 'verifying' or lease.get('name') != environment
             or lease.get('delivery_id') != delivery['id']
             or lease.get('candidate_id') != candidate['id']
             or lease.get('source_commit') != delivery['source_commit']):
@@ -169,8 +180,8 @@ def candidate_skill(candidate):
 
 def prepare(args):
     r = load('supervision_release', Path(__file__).with_name('release-environments.py'))
-    if args.environment != 'verify-1':
-        raise RuntimeError('Only verify-1 is supported by this recipe')
+    if args.environment not in ('verify-1', 'int'):
+        raise RuntimeError('Only verify-1 and int are supported by this recipe')
     control = r.read(r.meta_path('prod'))
     control_profile = r.read(control['daemon_profile_path'])
     meta = r.read(r.meta_path(args.environment))
@@ -180,14 +191,28 @@ def prepare(args):
     def guard():
         status = api(control, control_profile, 'GET', 'issues/' + args.issue + '/deliveries')
         delivery = next(x for x in status['deliveries'] if x['id'] == args.delivery)
-        lease = api(control, control_profile, 'GET', 'delivery-queue/slots?delivery_id=' + args.delivery)
-        seed = next(x for x in api(control, control_profile, 'GET', 'delivery-queue/slots') if x['name'] == args.environment)
+        if args.environment == 'int':
+            lease = status['publication']
+            current_seed = r.read(r.RUN / 'verification-seed.json')
+            identity = candidate.get('validation_identity', {})
+            seed = dict(seed_verified=True, seed_id=current_seed['seed_id'], seed_sha256=current_seed['dump_sha256'])
+            installation = dict(seed_id=identity.get('seed'), seed_sha256=identity.get('seed_sha256'))
+        else:
+            lease = api(control, control_profile, 'GET', 'delivery-queue/slots?delivery_id=' + args.delivery)
+            seed = next(x for x in api(control, control_profile, 'GET', 'delivery-queue/slots') if x['name'] == args.environment)
+            installation = r.read(r.RUN / 'verification-install' / (args.environment + '.json'))
         validate_identity(args.environment, delivery, candidate, r.read(r.meta_path(args.environment)),
-                          status['owner'], os.environ.get('MULTICA_TASK_ID'), lease, seed,
-                          r.read(r.RUN / 'verification-install' / (args.environment + '.json')))
+                          status['owner'], os.environ.get('MULTICA_TASK_ID'), lease, seed, installation)
         r.validate_candidate(candidate)
         cfg = r.read(r.config_path(args.environment))
         r.validate_verification_config(args.environment, cfg)
+        if args.environment == 'int':
+            from urllib.parse import urlparse
+            identity = lambda value: (urlparse(value).hostname, urlparse(value).port, urlparse(value).path)
+            prod_cfg = r.read(r.config_path('prod'))
+            if (cfg['server'].get('MULTICA_ENV_ID') != 'int'
+                    or identity(cfg['server']['DATABASE_URL']) == identity(prod_cfg['server']['DATABASE_URL'])):
+                raise RuntimeError('Int service database overlaps production or has the wrong identity')
         r.check_process_ownership(args.environment, meta)
         actual = r.process_env(meta['pids']['server'])
         if actual.get('DATABASE_URL') != cfg['server']['DATABASE_URL']:

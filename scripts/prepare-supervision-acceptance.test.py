@@ -79,6 +79,27 @@ class OwnershipTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     setup.validate_identity(**values)
 
+    # 1. Real int-only phase and publication generation must agree before configuration writes.
+    def test_int_only_publication_contract(self):
+        values = copy.deepcopy(self.values)
+        values.update(environment='int')
+        values['delivery'].update(phase='preparing_release', plan_snapshot=dict(integration_only=True))
+        values['candidate'].update(environment='int', publication_lease=dict(generation=9))
+        values['lease'] = dict(state='active', delivery_id='delivery', generation=9,
+                              expires_at=values['owner']['expires_at'])
+        setup.validate_identity(**values)
+        for root, field, value in [('delivery', 'phase', 'testing'),
+                                  ('delivery', 'plan_snapshot', {}),
+                                  ('lease', 'state', 'idle'), ('lease', 'generation', 8),
+                                  ('lease', 'expires_at', '2020-01-01T00:00:00Z'),
+                                  ('lease', 'delivery_id', 'foreign'),
+                                  ('candidate', 'commit', 'foreign'),
+                                  ('installation', 'seed_sha256', 'foreign')]:
+            with self.subTest(root=root, field=field), self.assertRaises(RuntimeError):
+                changed = copy.deepcopy(values)
+                changed[root][field] = value
+                setup.validate_identity(**changed)
+
     def test_active_or_unavailable_task_inventory_refuses_restart(self):
         for code, output in ((0, '1'), (1, ''), (0, '')):
             with self.subTest(code=code, output=output), patch.object(setup.subprocess, 'run',
