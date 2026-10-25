@@ -38,6 +38,7 @@ class MaintenanceTests(unittest.TestCase):
  def test_pending_queue_yields_to_maintenance_but_live_publication_does_not(self):
   with tempfile.TemporaryDirectory() as directory:
    r=Mock();r.candidate_path.return_value=Path(directory)/'missing'
+   r.health_url.return_value='http://fixture'
    r.http.return_value=dict(active_tasks=0,claims_in_flight=0)
    def query(_,path):
     return [{'phase':'waiting_int'},{'phase':'approved'}] if path=='delivery-queue' else {'state':'idle'}
