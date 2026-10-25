@@ -12,6 +12,31 @@ spec.loader.exec_module(setup)
 
 
 class OwnershipTests(unittest.TestCase):
+    # 1. Accept the real source's default syntax without executing shell or using unresolved expressions.
+    def test_skill_token_defaults_and_literals(self):
+        for assignment in ('TOKEN=${AGENTLENS_TOKEN:-test-token}',
+                           'TOKEN="${AGENTLENS_TOKEN:-test-token}"', "TOKEN='test-token'"):
+            self.assertEqual(setup.skill_token(assignment), 'test-token')
+        for assignment in ('TOKEN=${AGENTLENS_TOKEN}', 'TOKEN=$(command)',
+                           'TOKEN=`command`', 'TOKEN=a b', 'OTHER=value'):
+            with self.subTest(assignment=assignment), self.assertRaises(RuntimeError):
+                setup.skill_token(assignment)
+
+    def test_skill_credential_source_removed_on_setup_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            release = Mock(RUN=Path(folder))
+            def fail(*args):
+                source = args[-1]
+                self.assertEqual(source.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(setup.json.loads(source.read_text()),
+                                 dict(workspace_id='test-workspace', token='test-token'))
+                raise RuntimeError('test setup failure')
+            with patch.object(setup, 'api', return_value='TOKEN=${KEY:-test-token}'), \
+                    patch.object(setup, 'configure_service', side_effect=fail):
+                with self.assertRaisesRegex(RuntimeError, 'test setup failure'):
+                    setup.configure_from_skill(release, 'verify-1', {}, {}, 'test-workspace', {}, {})
+            self.assertEqual(list(Path(folder).rglob('source-*.json')), [])
+
     # 1. Exercise the safety boundary independently of real accounts, processes, and service credentials.
     def setUp(self):
         self.values = dict(environment='verify-1', execution='run',

@@ -7,8 +7,11 @@ import importlib.util
 import json
 import os
 import pwd
+import re
+import shlex
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -21,7 +24,7 @@ def load(name, path):
     return module
 
 
-def api(meta, profile, method, route, body=None):
+def api(meta, profile, method, route, body=None, raw_response=False):
     request = urllib.request.Request(
         meta['backend_url'] + '/api/' + route, method=method,
         data=None if body is None else json.dumps(body).encode(),
@@ -30,10 +33,45 @@ def api(meta, profile, method, route, body=None):
     try:
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=30) as response:
             raw = response.read()
-            return json.loads(raw) if raw else None
+            return raw.decode() if raw_response else (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as error:
         # 1. Report the exact failing operation without leaking response bodies or credentials.
         raise RuntimeError(f'{method} /api/{route}: HTTP {error.code}') from None
+
+
+def skill_token(content):
+    # 1. Parse only a literal or a shell default value; never execute the source or retain ${...} as a token.
+    match = re.search(r'^TOKEN=(.+)$', content, re.MULTILINE)
+    if not match:
+        raise RuntimeError('Authorized skill source has no TOKEN assignment')
+    words = shlex.split(match[1])
+    if len(words) != 1:
+        raise RuntimeError('Authorized skill TOKEN format is unsupported')
+    value = words[0]
+    default = re.fullmatch(r'\$\{[A-Za-z_][A-Za-z_0-9]*:-([^{}]+)\}', value)
+    if default:
+        value = default[1]
+    if not value or re.search(r'[\s$`{}]', value):
+        raise RuntimeError('Authorized skill TOKEN must resolve to a literal value')
+    return value
+
+
+def configure_from_skill(r, environment, meta, cfg, workspace, control, profile):
+    # 2. Retrieve the approved file through authenticated API; only the scoped 0600 service copy survives setup.
+    content = api(control, profile, 'GET',
+        'skills/c541de42-d421-4ba8-83e4-6bb964927090/files/06558c95-8dec-40c4-9706-c165ecfcf2ea/content',
+        raw_response=True)
+    token = skill_token(content)
+    private = r.RUN / 'supervision-acceptance' / environment
+    private.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, name = tempfile.mkstemp(prefix='source-', suffix='.json', dir=private)
+    source = Path(name)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(dict(workspace_id=workspace, token=token), stream)
+        return configure_service(r, environment, meta, cfg, workspace, source)
+    finally:
+        source.unlink(missing_ok=True)
 
 
 def require_idle(cfg):
@@ -194,10 +232,14 @@ def prepare(args):
                       commit=meta['commit'], runtime_id=args.runtime, mode='preflight')
         if not args.apply:
             print(json.dumps(report)); return
-        if not args.credential_file:
-            raise RuntimeError('--apply requires a scoped 0600 --credential-file')
+        if not args.credential_file and not args.credential_from_skill:
+            raise RuntimeError('--apply requires --credential-from-skill or a scoped 0600 --credential-file')
         guard()
-        backup = configure_service(r, args.environment, meta, cfg, profile['workspace_id'], args.credential_file)
+        # 3. Seed scrubbing intentionally removes credentials; restore them from the approved source before samples.
+        if args.credential_from_skill:
+            backup = configure_from_skill(r, args.environment, meta, cfg, profile['workspace_id'], control, control_profile)
+        else:
+            backup = configure_service(r, args.environment, meta, cfg, profile['workspace_id'], args.credential_file)
 
         # 7. Use the official managed-agent setting and preserve custom instructions and intervals.
         before = api(meta, profile, 'GET', 'supervision/')
@@ -247,7 +289,10 @@ if __name__ == '__main__':
     for name in ('environment', 'issue', 'delivery', 'candidate', 'runtime'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--apply', action='store_true')
-    parser.add_argument('--credential-file', type=Path)
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument('--credential-file', type=Path)
+    credentials.add_argument('--credential-from-skill', action='store_true',
+        help='Read the authorized AgentLens skill file through authenticated control API without printing its content')
     parser.add_argument('--cleanup', action='store_true')
     try:
         prepare(parser.parse_args())

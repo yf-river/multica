@@ -78,19 +78,22 @@ MULTICA_RELEASE_ROOT=/data/ida/multica python3 scripts/prepare-supervision-accep
   --candidate <当前候选ID> --runtime <测试账号自有runtimeUUID>
 ```
 
-执行机必须有 `psql`。若宿主没有客户端，先用 `docker image inspect postgres:17-alpine` 确认已有镜像与 Docker 权限，再在本任务私有目录建立名为 `psql` 的可执行包装器，将该目录加入本次命令的 PATH：
-
-```sh
-#!/bin/sh
-exec docker run --rm --network host --read-only --cap-drop ALL \
-  -e PGDATABASE postgres:17-alpine psql "$@"
-```
-
-脚本通过环境变量传入已核实测试服务的连接，不把连接串写入命令或日志；容器仅运行客户端，不启动 PostgreSQL、不挂载数据卷、不拉取未知镜像。只读调查 SQL 使用 `BEGIN READ ONLY`，活动任务计数由脚本执行。镜像缺失或权限不足时先修复客户端前置，不反复猜容器名或数据库名。
+执行机使用已安装 operations 对应的 Node/pg 客户端检查活动任务，不依赖宿主 `psql` 或 PATH 包装器。连接只通过子进程环境传入，不写入命令或日志。客户端缺失时修复 operations 依赖，不反复猜容器名或数据库名。
 
 CodeBuddy 样本创建前检查 `server/internal/handler/test_agent_control.go` 的测试策略入口及目标环境 `test_agent_control.desired`；请求 runtime 会被有效默认策略覆盖。`scripts/test-agent-models.mjs` 读取环境专用缓存（优先）或全局缓存，按 Agent override/default 绑定在线、无 profile 的本地 runtime。临时选择只能限当前验收环境，保存原 desired 与 Agent 绑定并按原值恢复；不能修改生产业务 Agent 或全局默认。创建后核对返回 Agent、task.started provider、响应模型和 SDK/外部请求身份，任一实际为 Codex 的样本不得计入 CodeBuddy。当前 `test-agent-policy.py` 辅助函数仅读取全局缓存，不能据其输出证明已应用环境 override。
 
 核对本执行仍持有 owner、槽位为 verifying、准确候选到 release_id 的映射、实际数据库连接及已验证种子。使用 ida-development 的 AgentLens 已授权来源，在受控私有目录准备声明当前**测试 workspace_id** 的 0600 JSON 文件，再追加 `--apply --credential-file <私有文件>`。短期凭据只复制到测试服务账号 HOME 的 0600 文件，种子不保存凭据。无活动测试任务后，保存原配置，通过正式服务配置文件仅重启准确 backend PID；失败尝试恢复原服务配置。配置临时启用时间后才创建真实样本，不批量重审历史任务。
+
+已有受控来源可直接追加 `--apply --credential-from-skill`。脚本通过控制端认证 API 读取 ida-development 的 `scripts/agentlens_query.sh`（skill `c541de42-d421-4ba8-83e4-6bb964927090`，file `06558c95-8dec-40c4-9706-c165ecfcf2ea`），只在内存解析 TOKEN 字面值或 `${变量:-默认值}` 的默认值，不执行脚本、不打印正文、不把 shell 表达式当密钥。中转文件为 0600，成功或失败均删除；测试服务副本在 cleanup 时删除。该读取不修改控制端或生产服务，也不改网络、SSH。来源格式不受支持时安全退出，不输出原文。
+
+验收按以下顺序串行接续，前置未就绪先准备，不提交业务失败或空样本：
+
+1. 读取当前 delivery、owner、实际候选和槽位。若上一执行结束已使交付进入 `needs_changes`，保留其失败报告；通过正式 submit 开新 attempt，由既有队列部署，禁止更改 phase、复用已释放 lease 或并发创建任务。排队后由平台下一阶段通知接续，不在自身执行里等待切换。
+2. 新候选进入 testing 后续用当前 owner，运行上述预检及 apply，再创建隔离测试 Agent。新 Agent 先遵守当前测试默认值。需要 Flash/Codex 对照时，复用 verify87 setup 的 `test-agent-control configure`（指定 environment 与 agent_id），生成当前 owner_generation、candidate、generation、seed、revision 与唯一 operation_id 的 scope，通过已安装 `test-agent-models.py --apply --scope-file` 应用；恢复也走同一路径。不得把旧 Agent/runtime UUID 或旧 scope 原样复制。
+3. 先执行一个真实小样，核对 task.started/provider/model、真实请求身份与监督技能加载，再扩展监督、材料和浏览器矩阵。已存在活动样本先复用和收集结果，不重复入队。HTTP 200/code0 只证明凭据与接口可用；旧证据仅按未变路径声明适用范围，不代表新候选完整通过。
+4. 真实运行均终态后恢复目标 Agent 原有效策略、核对默认及其他 Agent 未变，再执行 cleanup、核对服务配置恢复与凭据删除。保留失败样本和材料，正式 accept 后交由队列进入固定 int。int 另核准确集成候选和 publication 归属，补五项真实监督测试、CodeBuddy 同 session 续接与运行中取消、刷新持久化和审查回归；通过后 in_review，无生产授权不得发布或 done。
+
+G86 已执行配方与证据位于 `/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/`：`setup.py` 为定向模型配置与 scope 生成；`samples.py`、`cancel-resume.py`、`cancel-retry.py` 为真实样本；`supervisor-evidence.py`、`boundaries.py`、`restart-check.py` 为模型、权限和恢复检查；`restore-policy.py`、`finalize.py` 为恢复与清理；`REPORT.md` 说明已实测范围与缺口。脚本中的旧工作目录、delivery/candidate、Agent/runtime 和样本 ID 必须从本轮记录重新解析。最终 int 五项测试配方位于任务已有 `.gong86-int-final/run-five.py`，同样须先更新实际归属，不把旧报告当作本轮结果。
 
 脚本先暂停配置托管监督 Agent，导入固定候选的 delivery-supervision 正文及支持文件、追加绑定，再启用 investigation 和监督；遇到同名自定义技能正文不一致停止，不能覆盖。输出仅为前置配置证据，不代表模型调用、技能实际加载或监督业务通过。若中途失败，私有备份保留在控制目录 `.run/supervision-acceptance/verify-1`，先检查准确 PID 和配置再恢复，不重复应用。
 
