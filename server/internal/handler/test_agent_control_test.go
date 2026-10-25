@@ -6,6 +6,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/testagents"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -94,6 +95,20 @@ func TestTestAgentCreationUsesAppliedDefault(t *testing.T) {
 	delete(body, "custom_args")
 	body["name"] = "codex-default-created"
 	testutil.Call(t, testHandler.CreateAgent, newRequest("POST", "/api/agents", body)).Want(201)
+	cleanupMika(t)
+	recorder := httptest.NewRecorder()
+	mika, created, ok := testHandler.resolveMikaAgent(recorder, newRequest("POST", "/api/agents/mika", nil), testWorkspaceID, testUserID, createMikaAgentRequest{RuntimeID: testRuntimeID, Model: "deepseek-v4.1-flash"})
+	if !ok || !created || mika.Model.String != "gpt-6.1-sol" || mika.ThinkingLevel.String != "low" || mika.ServiceTier.String != "default" {
+		t.Fatalf("内置 Mika 未采用测试默认：%s", recorder.Body.String())
+	}
+	// 新工作区由本环境配置提供默认值，目标 runtime 仍严格属于当前工作区。
+	otherWorkspace := "00000000-0000-0000-0000-000000000085"
+	dbfx.Cleanup(t, `DELETE FROM test_agent_control WHERE workspace_id=$1`, otherWorkspace)
+	dbfx.Exec(t, `UPDATE test_agent_control SET workspace_id=$2 WHERE workspace_id=$1 AND name='verify-2'`, testWorkspaceID, otherWorkspace)
+	selection, enabled, err := testagents.Resolve(context.Background(), testPool, testWorkspaceID, "")
+	if err != nil || !enabled || selection.RuntimeID != codexRuntime || selection.Model != "gpt-6.1-sol" {
+		t.Fatal("新工作区未继承同一环境默认", err)
+	}
 	t.Setenv("MULTICA_ENV_ID", "prod")
 	request := CreateAgentRequest{Model: "user-managed", RuntimeID: testRuntimeID}
 	if !testHandler.applyTestAgentDefault(nil, newRequest("POST", "/api/agents", nil), testWorkspaceID, &request) || request.Model != "user-managed" {
