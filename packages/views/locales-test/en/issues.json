@@ -572,7 +572,9 @@
     "trigger_blocked_short_runtime_access_denied": "No runtime access",
     "deleted_placeholder": "This comment was deleted",
     "delete_desc_replies_kept": "This comment will be permanently deleted. Its replies stay in the thread. This cannot be undone.",
-    "all_members_notice": "Member broadcast · @all does not start agents"
+    "all_members_notice": "Member broadcast · @all does not start agents",
+    "trigger_blocked_runtime_profile_missing": "This target's agent CLI is missing a runtime profile on its machine — install it there",
+    "trigger_blocked_short_runtime_profile_missing": "Runtime profile missing"
   },
   "reply": {
     "placeholder": "Leave a reply...",

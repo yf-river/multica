@@ -979,13 +979,33 @@ func (c *Client) GetTaskGCCheck(ctx context.Context, taskID string) (*TaskGCStat
 // 队等机器回来，但给这台机器的活必须带着解释被拒绝（MUL-6164）。
 const RuntimeOfflineCodeNotExecutable = "not_executable"
 
-// RuntimeOfflineReason 是 runtime 离线的原因，形式可被客户端直接行动：一个稳定的、
-// 可开关并本地化的 code，加上一条修复安装的命令。说明性文字放 Detail 供日志用——
-// 绝不做客户端解析的对象。
+// RuntimeOfflineCodeDshProfile marks a runtime taken offline because the DSH
+// runtime profile it depends on is not installed. Like not_executable it is not
+// something waiting fixes on its own — a human installs a bundle, or configures
+// the daemon to — so work for it is refused with an explanation rather than
+// queued forever. The exception is an install the daemon is running right now,
+// which Installing states explicitly.
+//
+// Only an ABSENT profile reaches this code. A profile that is present but
+// answers with a protocol this daemon does not drive never takes a live runtime
+// offline at all: the daemon can be the stale side of that skew, so it reports
+// the incompatibility and leaves the runtime alone.
+const RuntimeOfflineCodeDshProfile = "dsh_profile"
+
+// RuntimeOfflineReason is why a runtime went offline, in the form clients can
+// act on: a stable code they switch on and localize, and the command that
+// repairs the install. Prose stays in Detail for logs — never as the thing a
+// client parses.
 type RuntimeOfflineReason struct {
 	Code   string                  `json:"code"`
 	Detail string                  `json:"detail,omitempty"`
 	Repair *agent.ExecFormatRepair `json:"repair,omitempty"`
+	// Installing reports that the daemon has an automatic install in flight for
+	// this runtime. It is the difference between "a human has to act" and "this
+	// comes back by itself", which the server cannot infer from the code alone:
+	// without it, a successful install that is still running would look exactly
+	// like a machine waiting on an operator who was never going to be told.
+	Installing bool `json:"installing,omitempty"`
 }
 
 // Deregister 把 runtime 拉下线。reasons 可选、按 runtime id 键控：关停中的 daemon

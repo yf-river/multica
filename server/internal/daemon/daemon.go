@@ -67,9 +67,19 @@ var ErrRepoNotConfigured = errors.New("repo is not configured for this workspace
 // 心跳过期清扫。
 var ErrNoRuntimesToRegister = errors.New("no agent runtimes could be registered")
 
-// errTaskPrepareTimeout 用来区分守护进程"已派发 → 运行中"的启动截止时间与
-// provider 自身的执行超时。handleTask 会把它映射成平台侧的 timeout 失败原因，
-// 以便服务器既有的重试路径能在新一轮尝试中恢复该任务。
+// errNoWorkspaceRuntimesRegistered is returned by syncWorkspacesFromAPI when a
+// round left every workspace without a runtime. At startup that is normally
+// fatal — a daemon hosting nothing has nothing to do, and failing loudly beats
+// idling — which is why it is a sentinel rather than a bare string: exactly one
+// caller is allowed to make an exception to it, and only for the one situation
+// where the daemon knows the answer is on its way. See
+// startupMayProceedWithoutRuntimes.
+var errNoWorkspaceRuntimesRegistered = errors.New("failed to register runtimes")
+
+// errTaskPrepareTimeout distinguishes the daemon's dispatched -> running
+// startup deadline from provider execution timeouts. handleTask maps it to the
+// platform-side timeout failure reason so the server's existing retry path can
+// recover the task on a fresh attempt.
 var errTaskPrepareTimeout = errors.New("task preparation timed out")
 
 // errSkillBundleUnavailable 标记一个在准备阶段死掉的任务，原因是守护进程无法
@@ -424,6 +434,42 @@ type Daemon struct {
 	reloading          sync.Mutex         // 防止并发 workspace 同步
 	runtimeSet         *runtimeSetWatcher // runtime 集合变化的发布/订阅器（支持多订阅者）
 
+	// lifecycleCtx is the context Run was handed, kept so background work that
+	// must outlive a single probe round — the DSH profile install — is tied to
+	// the daemon's lifetime instead of to whichever round happened to notice the
+	// missing profile. Guarded by d.mu: it is written once in Run and read from
+	// the install goroutine, and "the write happens before every reader starts"
+	// is a property of statement order in Run that a later edit can quietly
+	// break. Read it through daemonLifecycleCtx.
+	lifecycleCtx context.Context
+
+	// dshInstallInFlight is true while an automatic DSH profile install is
+	// running. Read when a verdict becomes an offline reason, so the server can
+	// tell "wait, this resolves itself" from "a human has to act".
+	dshInstallInFlight atomic.Bool
+
+	// dshInstallWaits are the runtime rows taken offline while an automatic
+	// profile install was still running, so their stated cause claims the wait
+	// resolves itself. An install that ends without a profile has to withdraw
+	// that claim (withdrawDshInstallWait): the demotion already removed these
+	// runtimes from the index, so no later round condemns them again and no
+	// later deregistration would correct the row on its own. Guarded by d.mu.
+	dshInstallWaits []dshInstallWait
+
+	// dshProvisionOnce makes the automatic DSH runtime-profile install
+	// once-per-daemon: it is a network install that writes into the user's DSH
+	// home, so a failing registry must not be retried every discovery round.
+	// See startDshProfileProvision.
+	dshProvisionOnce sync.Once
+
+	// agentDiscoveryKick asks agentDiscoveryLoop for an immediate convergence
+	// round. Buffered and written non-blockingly (kickAgentDiscovery), so a
+	// producer never waits on the loop and a burst collapses into one round.
+	// Needed because the loop's scheduled retry can be
+	// agentConvergeMaxBackoff away, which is far too long to wait after a
+	// local state change that makes a provider registrable again.
+	agentDiscoveryKick chan struct{}
+
 	versionsMu    sync.RWMutex      // 保护 agentVersions
 	agentVersions map[string]string // provider -> 注册期间探测到的 CLI 版本
 
@@ -465,10 +511,10 @@ type Daemon struct {
 	// 让"记录判定"与"应用响应"全序化，而不是仅仅收窄两者间的窗口。
 	demotedProviders map[string]demotionRecord // provider -> 定罪证据与时间
 
-	// notExecutableSince 记录每个 provider 首次被观察到"不可执行"的时刻，供
+	// condemnedSince 记录每个 provider 首次被观察到"不可执行"的时刻，供
 	// confirmNotExecutable 的确认窗口使用。发现 provider 恢复健康的那一轮会清除
 	// 条目。受 d.mu 保护。
-	notExecutableSince map[string]time.Time
+	condemnedSince map[string]time.Time
 
 	// demotionSeq 是打在每条降级记录上的单调递增计数器，让探测轮能判断自己的
 	// 证据是否早于某条判定。
@@ -658,6 +704,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		workspaces:                  make(map[string]*workspaceState),
 		runtimeIndex:                make(map[string]Runtime),
 		profileLaunchSpecs:          make(map[string]profileLaunchSpec),
+		agentDiscoveryKick:          make(chan struct{}, 1),
 		runtimeSet:                  newRuntimeSetWatcher(),
 		agentVersions:               make(map[string]string),
 		skippedAgents:               make(map[string]string),
@@ -1582,8 +1629,27 @@ type demotionRecord struct {
 	seq      uint64
 }
 
-// markProvidersDemotedLocked 记录一条 CONFIRMED 裁决，好让仍在途的注册响应没法
-// 复活该 provider。调用方必须持有 d.mu。
+// setLifecycleCtx records the context Run was handed.
+func (d *Daemon) setLifecycleCtx(ctx context.Context) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lifecycleCtx = ctx
+}
+
+// daemonLifecycleCtx returns the context that bounds background work outliving
+// a single round. Falls back to Background so a zero-value Daemon (tests, and
+// any path reached before Run) still works.
+func (d *Daemon) daemonLifecycleCtx() context.Context {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.lifecycleCtx == nil {
+		return context.Background()
+	}
+	return d.lifecycleCtx
+}
+
+// markProvidersDemoted records a CONFIRMED verdict so a register response still
+// in flight cannot revive the provider. Callers must hold d.mu.
 func (d *Daemon) markProvidersDemotedLocked(providers map[string]runtimeVerdict) {
 	if len(providers) == 0 {
 		return
@@ -1606,37 +1672,52 @@ func (d *Daemon) markProvidersDemotedLocked(providers map[string]runtimeVerdict)
 // notExecutableConfirmWindow 是一条"OS 拒绝运行这个文件"的裁决必须持续复现多久、
 // daemon 才动手的时长。
 //
-// 裁决本身是确定的，但文件不是：我们让用户跑的修复（`node <pkg>/install.cjs`）
-// 会原地覆盖 bin 条目，落在拷贝中途的探测会看到一个截断的文件。要求相隔这么久
-// 出现第二次目击，覆盖窗口就不可能被误认成坏安装；而对真正坏的安装，代价只是
-// 多一轮探测。做成 var 以便测试压缩等待。
-var notExecutableConfirmWindow = time.Minute
+// This gates every condemnable verdict, not just the exec-format one: the
+// profile verdicts rest on a single observation too, and demotion is what routes
+// live work away from a machine.
+// A var so tests can collapse the wait.
+var condemnedConfirmWindow = time.Minute
 
-// confirmNotExecutable 记录本轮发现某 provider 不可运行，并报告这条裁决是否已
-// 老到可以动手。
-//
-// 第一次目击只负责启动计时。无论窗口怎么配，都要求两次目击——否则并发的探测
-// 轮（有四个调用方会走到 detectBuiltinRuntimes）可能凑成一次瞬间降级。
-func (d *Daemon) confirmNotExecutable(provider string, now time.Time) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	first, seen := d.notExecutableSince[provider]
-	if !seen {
-		if d.notExecutableSince == nil {
-			d.notExecutableSince = make(map[string]time.Time, 1)
-		}
-		d.notExecutableSince[provider] = now
-		return false
-	}
-	return now.Sub(first) >= notExecutableConfirmWindow
+// condemnedKey namespaces a confirmation clock per verdict, so a provider that
+// moves between condemnable states starts a fresh window instead of inheriting
+// the time earned by a different problem.
+func condemnedKey(verdict builtinProbeVerdict, provider string) string {
+	return strconv.Itoa(int(verdict)) + ":" + provider
 }
 
-// clearNotExecutable 忘掉某个"探测正常"的 provider 的待决裁决，这样之后一次不
-// 相关的失败会开启自己的确认窗口，而不是继承一条陈旧的。
-func (d *Daemon) clearNotExecutable(provider string) {
+// confirmCondemned records that this round found provider in the given
+// condemnable state and reports whether the verdict is now old enough to act on.
+//
+// The first sighting only starts the clock. Two sightings are required no matter
+// how the window is configured, so concurrent probe rounds — four callers reach
+// detectBuiltinRuntimes — cannot combine into an instant demotion.
+func (d *Daemon) confirmCondemned(verdict builtinProbeVerdict, provider string, now time.Time) bool {
+	key := condemnedKey(verdict, provider)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	delete(d.notExecutableSince, provider)
+	first, seen := d.condemnedSince[key]
+	if !seen {
+		if d.condemnedSince == nil {
+			d.condemnedSince = make(map[string]time.Time, 1)
+		}
+		d.condemnedSince[key] = now
+		return false
+	}
+	return now.Sub(first) >= condemnedConfirmWindow
+}
+
+// clearCondemned forgets every pending verdict for a provider that probed OK, so
+// a later unrelated failure starts its own confirmation window instead of
+// inheriting a stale one.
+func (d *Daemon) clearCondemned(provider string) {
+	suffix := ":" + provider
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for key := range d.condemnedSince {
+		if strings.HasSuffix(key, suffix) {
+			delete(d.condemnedSince, key)
+		}
+	}
 }
 
 // demotionSeqSnapshot 返回当前降级计数器。探测轮在采样任何版本之"前"先取它，
@@ -1849,6 +1930,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// 包一层 ctx，使 handleUpdate 能通过 cancel 触发 daemon 优雅重启。
 	ctx, cancel := context.WithCancel(ctx)
 	d.cancelFunc = cancel
+	d.setLifecycleCtx(ctx)
 	d.rootCtx = ctx
 
 	// 尽早绑定健康端口，用来探测是否已有另一个 daemon 在运行。
@@ -2112,11 +2194,95 @@ const (
 	// below-minimum 同样确定：在有人重装之前同样的字节每次都会被拒绝，所以重试
 	// 解决不了问题。
 	builtinProbeNotExecutable
+	// builtinProbeMissingProfile: the CLI resolved and runs, but the runtime
+	// profile its backend speaks through is not installed for it. DSH is the
+	// case in the field: the Multica profile is what gives `dsh` its --stdio
+	// protocol, so a bare binary answers `--version` and `--probe` refuses.
+	// Deterministic like the two above — the same binary keeps refusing until
+	// someone installs the profile — and the reason carries that repair.
+	builtinProbeMissingProfile
+	// builtinProbeIncompatibleProfile: something answered `--probe`, with a
+	// protocol version this daemon does not drive — a bundle older than the
+	// check, or a newer one this build has yet to catch up with. Reported, and
+	// deliberately neither installable NOR demotable: the profile is there on
+	// purpose, so installing over it would replace a considered configuration,
+	// and this daemon can equally be the stale side of the skew, so taking a
+	// live runtime offline over it is a destructive answer to a version
+	// question. It stops a fresh registration and nothing more.
+	builtinProbeIncompatibleProfile
 )
 
-// runtimeVerdict 是某个 provider 的已确认判定：送给 /health 与 daemon 日志的
-// 人类可读原因，以及——当原因需要用户动手修复时——服务器存放在 runtime 行上的
-// 结构化记录。
+// demotableBuiltinProbeVerdict reports whether a verdict may take a LIVE
+// runtime offline, as opposed to merely keeping an unregistered provider
+// unregistered.
+//
+// The distinction is the whole safety property: demotion routes work away from
+// a machine, so it belongs only to verdicts that say the CLI definitely cannot
+// serve work AND that this daemon is in a position to judge.
+//
+// builtinProbeIncompatibleProfile fails the second half and is deliberately
+// absent. A protocol version this daemon does not drive can equally mean the
+// daemon is the stale side of the skew, and tearing down a live runtime because
+// THIS build is behind is a destructive answer to a version question. It still
+// blocks a fresh registration and is reported on /health; what it must not do is
+// take work away from a runtime already serving it.
+//
+// builtinProbeUnavailable is absent for the plainer reason: it means nothing was
+// learned this round.
+func demotableBuiltinProbeVerdict(verdict builtinProbeVerdict) bool {
+	switch verdict {
+	case builtinProbeBelowMinimum, builtinProbeNotExecutable, builtinProbeMissingProfile:
+		return true
+	}
+	return false
+}
+
+// builtinProbeNeedsConfirmation reports whether a demotable verdict must
+// reproduce across two probe rounds (confirmCondemned) before it is acted on.
+//
+// Only builtinProbeBelowMinimum does not: it is a pure function of a version
+// string this round already parsed, so a second look reaches the same
+// conclusion. The other two are deterministic about the state they describe but
+// rest on an observation that is not — an installer overwriting the bin entry in
+// place (the very repair we tell users to run) or a DSH upgrade moving the
+// profile under a probe. Requiring a second sighting a window later makes those
+// windows impossible to mistake for a verdict, and costs a genuinely broken
+// provider one extra round.
+func builtinProbeNeedsConfirmation(verdict builtinProbeVerdict) bool {
+	return verdict != builtinProbeBelowMinimum
+}
+
+// dshMissingProfileReason is the user-facing explanation for a
+// builtinProbeMissingProfile drop. It names the repair because nothing else in
+// the daemon's output would: the CLI itself is installed, resolvable and
+// answers `--version`, so "not installed" is true only of the profile.
+const dshMissingProfileReason = "the Multica runtime profile is not installed; add the Multica DSH runtime bundle to the `multica` profile with `dsh plugin`, or set MULTICA_DSH_PROFILE_BUNDLE so the daemon installs it"
+
+// dshProfileInstallStartedReason replaces it when the operator configured a
+// bundle for the daemon to install (MULTICA_DSH_PROFILE_BUNDLE), so /health
+// separates "wait for the install" from "nothing is going to happen".
+const dshProfileInstallStartedReason = "the Multica runtime profile is not installed; installing the configured bundle now and re-probing when it finishes"
+
+// dshInstallGaveUpReason replaces the "installing now" detail once the
+// automatic install has stopped without producing a profile. It says the
+// attempt happened and ended, because a reader who saw the earlier "installing"
+// reason needs to know which of the two states they are looking at.
+const dshInstallGaveUpReason = "the Multica runtime profile is not installed; the automatic install failed, so it has to be installed by hand"
+
+// dshIncompatibleProfileReason is the /health reason for a profile that answers
+// with a protocol this daemon does not drive. It names both sides because
+// either can be the stale one.
+const dshIncompatibleProfileReason = "the Multica runtime profile answers with a protocol version this daemon does not drive; update the profile bundle or the daemon"
+
+// dshProbeFailedReason is the transient reason: the probe did not answer with a
+// probe frame at all — a timeout, a failed exec, or unparseable output. It is
+// deliberately not phrased as a version problem, which would send a reader
+// looking in the wrong place.
+const dshProbeFailedReason = "the DSH runtime profile probe returned no usable answer"
+
+// runtimeVerdict is one provider's confirmed verdict: the human reason that
+// goes to /health and the daemon log, plus — when the cause is one the user has
+// to act on — the structured record the server stores on the runtime row.
 //
 // 两半刻意分开。reason 是给读日志的运维看的散文；offline 是稳定的 code 加修复
 // 命令，供客户端围绕它本地化自己的句子。dispatch/reason.go 的规则是：reason code
@@ -2131,18 +2297,36 @@ type runtimeVerdict struct {
 // 工作排队），因为是否改变"那种情况何时阻断触发"是与本改动分离的另一个产品
 // 决策。
 //
-// execPath 是钉住的入口路径，对这种判定是正确的路径：操作系统拒绝执行的文件
-// 是存在的，因此本会为重解析消失路径而触发的自愈不会运行，探测正是败在这个
-// 文件上。
-func newRuntimeVerdict(verdict builtinProbeVerdict, reason, execPath string) runtimeVerdict {
-	if verdict != builtinProbeNotExecutable {
-		return runtimeVerdict{reason: reason}
-	}
-	offline := &RuntimeOfflineReason{Code: RuntimeOfflineCodeNotExecutable, Detail: reason}
-	if repair, ok := agent.ExecFormatRepairFor(execPath); ok {
+// execPath is the pinned entry point, which is the right path for this verdict:
+// a file the OS refuses to execute is present, so the self-heal that would have
+// re-resolved a vanished path never runs, and the probe failed on this exact
+// file.
+func newRuntimeVerdict(verdict builtinProbeVerdict, reason, execPath string, installing bool) runtimeVerdict {
+	switch verdict {
+	case builtinProbeNotExecutable:
+		offline := &RuntimeOfflineReason{Code: RuntimeOfflineCodeNotExecutable, Detail: reason}
+		if repair, ok := agent.ExecFormatRepairFor(execPath); ok {
+			offline.Repair = &repair
+		}
+		return runtimeVerdict{reason: reason, offline: offline}
+	case builtinProbeMissingProfile:
+		// The same class of finding as an unrunnable file: the machine is
+		// reachable and the CLI cannot serve work, so the server must refuse
+		// the trigger and say what is missing rather than queue behind a wait
+		// that never ends. The one exception is an install the daemon is
+		// running right now, which is stated explicitly instead of being
+		// implied by an absent reason — and withdrawn by
+		// withdrawDshInstallWait if that install gives up.
+		offline := &RuntimeOfflineReason{
+			Code:       RuntimeOfflineCodeDshProfile,
+			Detail:     reason,
+			Installing: installing,
+		}
+		repair := dshProfileRepair()
 		offline.Repair = &repair
+		return runtimeVerdict{reason: reason, offline: offline}
 	}
-	return runtimeVerdict{reason: reason, offline: offline}
+	return runtimeVerdict{reason: reason}
 }
 
 // probeBuiltinRuntime 解析并探测一个内置 provider 的版本，快速失败最多重试
@@ -2158,7 +2342,13 @@ func (d *Daemon) probeBuiltinRuntime(ctx context.Context, name string, entry Age
 	var (
 		lastErr  error
 		attempts int
+		// transientReason lets a provider whose probe is not a version probe
+		// name its own failure. The generic tail would otherwise report "version
+		// detection failed" for a dsh that answered --version perfectly well,
+		// which sends a reader looking for the wrong problem.
+		transientReason string
 	)
+probeLoop:
 	for attempts < runtimeVersionProbeAttempts {
 		if attempts > 0 {
 			select {
@@ -2172,10 +2362,19 @@ func (d *Daemon) probeBuiltinRuntime(ctx context.Context, name string, entry Age
 			}
 		}
 		attempts++
-		// 计时从这里开始，而不是下面的 detect 调用：resolveAgentEntry 会对重新
-		// 解析出的候选自跑一次版本探测，那一次就可能烧掉整个超时。只给外层调用
-		// 计时，会把"自愈很慢、陈旧路径上瞬间失败"读成"快速失败"然后去重试，
-		// 等于把慢的半程付两遍。
+		// Cleared per attempt: this names the DSH profile probe's own failure,
+		// and only for a round that ENDED there. An attempt that gets past the
+		// probe and then fails version detection has a more specific reason,
+		// and a stale value from an earlier attempt would overwrite it at the
+		// tail — reporting "the probe returned no usable answer" for a probe
+		// that answered fine.
+		transientReason = ""
+		// The attempt is timed from here, not from the detect call below:
+		// resolveAgentEntry runs a version probe of its own on the re-resolved
+		// candidate, and that probe can burn the whole timeout by itself. Timing
+		// only the outer call would read "slow self-heal, then an instant
+		// failure on the stale path" as a fast failure and retry it, paying the
+		// slow half twice.
 		startedAt := time.Now()
 		// 自愈"被就地升级删除的钉住可执行路径"（MUL-4486），让版本探测——从而
 		// 保持已注册/在线——无需重启 daemon 就能恢复。resolveAgentEntry 已经给
@@ -2234,6 +2433,67 @@ func (d *Daemon) probeBuiltinRuntime(ctx context.Context, name string, entry Age
 			}
 			continue
 		}
+		// DSH is the one built-in whose binary being present, and runnable, and
+		// new enough still does not make it usable: the Multica runtime profile
+		// supplies the --stdio protocol the backend drives, so a `dsh` without
+		// it resolves, answers `--version`, clears the minimum, and then cannot
+		// run a single task. Checked here rather than in probeAgentCLIs so the
+		// drop produces a verdict: without it the provider disappeared from the
+		// availability set silently, which is indistinguishable to a user from
+		// "Multica cannot see my dsh at all".
+		//
+		// LAST, after version detection has succeeded, and that order is the
+		// point. probeDshMulticaProfile cannot tell "the profile refused" from
+		// "the thing I ran is not a working CLI", and exec.LookPath is far too
+		// weak a proxy for the second: on Windows the CLI is a .cmd shim that
+		// LookPath happily resolves and that exits 9009 — cmd.exe's "command
+		// not found" — when what it forwards to is missing. Probing the profile
+		// first reported that machine as "the Multica runtime profile is not
+		// installed", which is a repair for a problem it did not have, and with
+		// a bundle configured would have started installing into a DSH that
+		// cannot execute. A CLI that cannot answer `--version` is not one this
+		// daemon has any business holding an opinion about the profile of, so
+		// its failure is reported as what it is by the version-probe path
+		// above.
+		if name == "dsh" {
+			// What the probe said decides what may happen next. Only a
+			// confirmed-absent profile may install a bundle or condemn the
+			// runtime. An incompatible one is reported and neither installed
+			// over nor demoted — the profile is deliberately there, and this
+			// daemon may be the stale side of the skew. A probe that merely
+			// failed is transient, on the same rule every other provider's
+			// version probe gets.
+			switch probeDshMulticaProfile(ctx, resolved.Path) {
+			case dshProbeOK:
+			case dshProbeMissingProfile:
+				d.logger.Warn("skip registering runtime: DSH Multica runtime profile is not installed",
+					"name", name, "path", resolved.Path)
+				reason := dshMissingProfileReason
+				if d.startDshProfileProvision(resolved.Path) {
+					reason = dshProfileInstallStartedReason
+				}
+				return "", reason, builtinProbeMissingProfile
+			case dshProbeIncompatible:
+				d.logger.Warn("skip registering runtime: DSH Multica runtime profile speaks another protocol",
+					"name", name, "path", resolved.Path)
+				return "", dshIncompatibleProfileReason, builtinProbeIncompatibleProfile
+			default:
+				// Transient. Retry inside this round's budget, then leave the
+				// loop for the tail, which reports it as the transient drop it
+				// is. The labelled break matters: a bare one would leave only
+				// the switch and fall through to registering a runtime whose
+				// profile answered nothing.
+				lastErr = errors.New(dshProbeFailedReason)
+				transientReason = dshProbeFailedReason
+				if time.Since(startedAt) >= runtimeVersionProbeRetryWindow {
+					break probeLoop
+				}
+				if attempts < runtimeVersionProbeAttempts {
+					d.logger.Debug("dsh profile probe failed; retrying", "name", name, "attempt", attempts)
+				}
+				continue
+			}
+		}
 		d.setAgentVersion(name, version)
 		d.refreshHealedVersion(name, resolved.Path, version)
 		if version == "" {
@@ -2261,6 +2521,9 @@ func (d *Daemon) probeBuiltinRuntime(ctx context.Context, name string, entry Age
 	reason := "version detection failed"
 	if lastErr != nil {
 		reason = fmt.Sprintf("version detection failed: %v", lastErr)
+	}
+	if transientReason != "" {
+		reason = transientReason
 	}
 	return "", reason, builtinProbeUnavailable
 }
@@ -2318,23 +2581,20 @@ func (d *Daemon) detectBuiltinRuntimes(ctx context.Context) ([]map[string]string
 		g.Go(func() error {
 			version, reason, verdict := d.probeBuiltinRuntime(ctx, name, entry)
 			if verdict != builtinProbeOK {
-				// not-executable 裁决是确定的，但文件可能在安装器原地覆盖它的那一小
-				// 会儿变得不可读——而那正是我们让用户去跑的修复。只有在相隔一个确认
-				// 窗口后的第二次探测仍复现这条裁决时才降级；在那之前按瞬态处理，代价
-				// 只是多一轮，别无其它。
-				demote := verdict == builtinProbeBelowMinimum ||
-					(verdict == builtinProbeNotExecutable && d.confirmNotExecutable(name, time.Now()))
+				demote := demotableBuiltinProbeVerdict(verdict) &&
+					(!builtinProbeNeedsConfirmation(verdict) ||
+						d.confirmCondemned(verdict, name, time.Now()))
 				mu.Lock()
 				skipped[name] = reason
 				if demote {
-					demotable[name] = newRuntimeVerdict(verdict, reason, entry.Path)
+					demotable[name] = newRuntimeVerdict(verdict, reason, entry.Path, d.dshInstallInFlight.Load())
 				} else {
 					unavailable[name] = reason
 				}
 				mu.Unlock()
 				return nil
 			}
-			d.clearNotExecutable(name)
+			d.clearCondemned(name)
 			mu.Lock()
 			results = append(results, detected{name: name, version: version})
 			mu.Unlock()
@@ -3457,7 +3717,59 @@ const DefaultTokenRenewalInterval = 3 * 24 * time.Hour
 // 再创建第一个工作区，workspaceSyncLoop 会在工作区出现后注册 runtimes。
 func (d *Daemon) preflightAuth(ctx context.Context) error {
 	d.tryRenewToken(ctx)
-	return d.syncWorkspacesFromAPI(ctx, false)
+	err := d.syncWorkspacesFromAPI(ctx, false)
+	if d.startupMayProceedWithoutRuntimes(err) {
+		d.logger.Warn("starting with no runtimes registered: an automatic DSH runtime profile install is still running; " +
+			"the runtime registers when it finishes")
+		return nil
+	}
+	return err
+}
+
+// startupMayProceedWithoutRuntimes reports whether a startup that registered
+// nothing may continue anyway.
+//
+// Exactly one situation qualifies: the daemon has just started installing the
+// DSH runtime profile itself. On a host whose only provider is a dsh without
+// that profile, failing here is a deadlock rather than a fail-fast — the probe
+// starts the install, this error kills the process milliseconds later, the
+// install's process tree dies with it, and the next start repeats all of it.
+// The feature exists precisely for that host, so on it the feature could never
+// once complete.
+//
+// Nothing else is forgiven. An unreachable server, a rejected token, and a
+// genuinely empty machine all still fail startup, because for those the daemon
+// has no reason to believe the answer is coming.
+func (d *Daemon) startupMayProceedWithoutRuntimes(err error) bool {
+	return errors.Is(err, errNoWorkspaceRuntimesRegistered) && d.dshInstallInFlight.Load()
+}
+
+// trackedWorkspaceCount reports how many workspaces the daemon currently hosts.
+func (d *Daemon) trackedWorkspaceCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.workspaces)
+}
+
+// registerAfterDshProfileInstall brings a newly usable dsh online without
+// waiting for a scheduled round.
+//
+// A converge round is enough in the ordinary case, but not after the bootstrap
+// startupMayProceedWithoutRuntimes allows: a daemon that registered nothing
+// tracks no workspace, and every converge path iterates the workspaces it
+// tracks, so there would be nothing for the round to look at. The workspace has
+// to be picked up first, and waiting for the periodic consistency sync to do it
+// would leave the runtime offline for its full interval after an install the
+// user watched succeed.
+func (d *Daemon) registerAfterDshProfileInstall(ctx context.Context) {
+	if d.trackedWorkspaceCount() > 0 {
+		d.kickAgentDiscovery()
+		return
+	}
+	if err := d.syncWorkspacesFromAPI(ctx, false); err != nil {
+		d.logger.Warn("workspace sync after the DSH runtime profile install failed; "+
+			"the periodic sync is the backstop", "error", err)
+	}
 }
 
 // tokenRenewalLoop 通过定期请求服务器就地延长 PAT 的 expires_at，让 daemon 的
@@ -3783,7 +4095,7 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 	d.publishTrackedCoAuthoredByState()
 
 	if len(d.allRuntimeIDs()) == 0 && registered == 0 && len(workspaces) > 0 {
-		return fmt.Errorf("failed to register runtimes for any of the %d workspace(s)", len(workspaces))
+		return fmt.Errorf("%w for any of the %d workspace(s)", errNoWorkspaceRuntimesRegistered, len(workspaces))
 	}
 	if registered > 0 || removed > 0 {
 		d.logger.Debug("workspace sync done", "registered", registered, "removed", removed, "tracked", len(apiIDs))

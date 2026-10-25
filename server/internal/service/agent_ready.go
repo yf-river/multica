@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/dispatch"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -60,13 +61,40 @@ type runtimeOfflineReason struct {
 	Code   string         `json:"code"`
 	Detail string         `json:"detail"`
 	Repair *RuntimeRepair `json:"repair"`
+	// Installing: the daemon has an automatic install in flight, so this offline
+	// runtime is expected to come back on its own and work may queue.
+	Installing bool `json:"installing"`
 }
 
 // runtimeOfflineCodeNotExecutable 是 daemon 对 “OS 拒绝执行该 agent CLI” 的原因码（daemon.RuntimeOfflineCode
 // NotExecutable）。按字符串比较，因为服务端不得 import daemon 包。
 const runtimeOfflineCodeNotExecutable = "not_executable"
 
-// AgentReadiness 报告 agent 现在能否接新活，以及不能时调用方该怎么办。
+// runtimeOfflineCodeDshProfile is the daemon's code for "this runtime's DSH
+// runtime profile is not installed" (daemon.RuntimeOfflineCodeDshProfile). Same
+// string-comparison rule as above, and the same MUL-6164 semantics: with no
+// install configured the wait never resolves, so the trigger is refused.
+// runtimeOfflineReason.Installing is the exception — a daemon that is installing
+// the profile right now resolves it by itself.
+const runtimeOfflineCodeDshProfile = "dsh_profile"
+
+// RuntimeBlockedNeedsNotice reports whether a blocked verdict's reason is one a
+// human has to repair on the runtime's machine, and therefore one that must
+// leave a durable explanation on the issue (MUL-6164).
+//
+// A predicate rather than an inline comparison because three admission paths
+// ask it — the refused @mention, the refused assignment, and the refused
+// assign-on-create — and a code added to one of them but not the others is a
+// trigger that vanishes with no trace on exactly the surfaces that have no
+// response for the user to read.
+func RuntimeBlockedNeedsNotice(code dispatch.ReasonCode) bool {
+	return code == dispatch.ReasonRuntimeUnusable ||
+		code == dispatch.ReasonRuntimeAccessDenied ||
+		code == dispatch.ReasonRuntimeProfileMissing
+}
+
+// AgentReadiness reports whether an agent can accept new work right now, and
+// what the caller should do when it cannot.
 //
 // lookup 携带“读取所用连接”与“该 runtime 读取归属的来源标签”（MUL-6884），使每条准入路径在
 // multica_agent_runtime_lookup_total 中都可区分。
@@ -112,13 +140,30 @@ func runtimeVerdict(rt db.AgentRuntime) AgentVerdict {
 	if rt.Status == "online" {
 		return AgentVerdict{Availability: AgentAvailable}
 	}
-	// 离线且原因属于 daemon 说的“人类须修复”：拒绝而非排队，并携带修复命令供调用方展示。
-	if reason, ok := parseRuntimeOfflineReason(rt.Metadata); ok && reason.Code == runtimeOfflineCodeNotExecutable {
-		return AgentVerdict{
-			Availability: AgentBlocked,
-			Reason:       dispatch.ReasonRuntimeUnusable,
-			Repair:       reason.Repair,
-			Detail:       reason.Detail,
+	// Offline with a reason the daemon says a human must repair: refuse rather
+	// than queue, and carry the repair so the caller can show it.
+	if reason, ok := parseRuntimeOfflineReason(rt.Metadata); ok {
+		switch {
+		case reason.Code == runtimeOfflineCodeNotExecutable:
+			return AgentVerdict{
+				Availability: AgentBlocked,
+				Reason:       dispatch.ReasonRuntimeUnusable,
+				Repair:       reason.Repair,
+				Detail:       reason.Detail,
+			}
+		// A missing runtime profile is the same shape of finding — the machine
+		// is reachable and its CLI cannot serve work — but its own reason code,
+		// because the CLI is not the broken part and "reinstall the CLI" copy
+		// would send the user to the wrong repair. The one exception is an
+		// install the daemon is running right now: that wait DOES end by
+		// itself, so the work queues instead of being refused.
+		case reason.Code == runtimeOfflineCodeDshProfile && !installClaimHolds(reason, rt):
+			return AgentVerdict{
+				Availability: AgentBlocked,
+				Reason:       dispatch.ReasonRuntimeProfileMissing,
+				Repair:       reason.Repair,
+				Detail:       reason.Detail,
+			}
 		}
 	}
 	return AgentVerdict{
@@ -128,8 +173,42 @@ func runtimeVerdict(rt db.AgentRuntime) AgentVerdict {
 	}
 }
 
-// parseRuntimeOfflineReason 从 runtime 行读取 daemon 的解释。无原因或服务端解析不了的 metadata，只是没有解释
-// ——绝不会得出不同的结论。
+// runtimeInstallClaimWindow is how long an `installing` claim on a runtime row
+// is honoured before the row is read as a plain missing profile.
+//
+// The claim is what makes this one offline runtime worth queueing behind, so a
+// claim that outlives its install recreates exactly the failure the structured
+// reason exists to prevent — work queued behind something that stopped. The
+// daemon withdraws the claim when an install gives up, but a withdraw cannot be
+// guaranteed: the verdict is built before the runtime ids the withdraw needs are
+// known, the corrective Deregister is best-effort and runs on an already-
+// cancelled context during shutdown, and a daemon restarted mid-install does not
+// track the row at all.
+//
+// So the claim is bounded rather than guaranteed. SetAgentRuntimeOfflineWithReason
+// stamps updated_at, and the install it describes is itself bounded by the
+// daemon's provisioning timeout; a window comfortably longer than that covers a
+// real install while capping every way the claim can be left behind. The
+// withdraw stays as the fast path — this is the floor under it.
+const runtimeInstallClaimWindow = 5 * time.Minute
+
+// installClaimHolds reports whether a runtime row's in-flight-install claim is
+// still worth queueing behind.
+//
+// A row with no usable timestamp cannot be bounded, so the claim is not honoured:
+// the cost of refusing during a real install is one retry the notice already
+// asks for, and the cost of honouring a stale claim is work that queues until it
+// expires.
+func installClaimHolds(reason runtimeOfflineReason, rt db.AgentRuntime) bool {
+	if !reason.Installing || !rt.UpdatedAt.Valid {
+		return false
+	}
+	return time.Since(rt.UpdatedAt.Time) < runtimeInstallClaimWindow
+}
+
+// parseRuntimeOfflineReason reads the daemon's explanation off a runtime row.
+// A row with no reason, or metadata this server cannot parse, simply has no
+// explanation — never a different verdict.
 func parseRuntimeOfflineReason(metadata []byte) (runtimeOfflineReason, bool) {
 	if len(metadata) == 0 {
 		return runtimeOfflineReason{}, false
@@ -156,6 +235,9 @@ func RuntimeUnusableNotice(agentName string, verdict AgentVerdict) string {
 	if verdict.Reason == dispatch.ReasonRuntimeAccessDenied {
 		return fmt.Sprintf("%s cannot use this private runtime. Rebind the agent to a runtime its owner can use.", name)
 	}
+	if verdict.Reason == dispatch.ReasonRuntimeProfileMissing {
+		return runtimeProfileMissingNotice(name)
+	}
 	if verdict.Repair != nil && verdict.Repair.Command != "" {
 		return fmt.Sprintf(
 			"%s could not start: its CLI is installed but cannot be executed on that machine, so this trigger was not queued.\n\n"+
@@ -172,16 +254,31 @@ func RuntimeUnusableNotice(agentName string, verdict AgentVerdict) string {
 	)
 }
 
-// repairFenceLanguage 用命令所面向的 shell 标记代码块。太老、没上报 shell 的 daemon 早于 Windows 渲染，
-// 其命令按构造即 POSIX。
+// runtimeProfileMissingNotice explains a runtime whose CLI runs but whose
+// Multica runtime profile is absent.
+//
+// No fenced command, deliberately. The install is `dsh plugin --profile multica
+// add <bundle>`, and <bundle> is the operator's own choice of package,
+// directory or tarball — Multica's bridge is not on a public registry yet
+// (multica#6936). Rendering that line in a code block presents a placeholder as
+// something to copy and run, which is the shape of instruction people paste
+// verbatim and then report as broken. Naming the two ways to supply a real
+// bundle, and pointing at the docs that list them, is the honest version.
+func runtimeProfileMissingNotice(name string) string {
+	return fmt.Sprintf(
+		"%s could not start: the DeepSeek Harness CLI is installed on that machine, but the `multica` runtime profile it needs is not, so this trigger was not queued.\n\n"+
+			"The profile supplies the protocol Multica drives — the CLI itself is fine, and reinstalling it changes nothing. On that machine, either add the Multica DSH runtime bundle to the profile with `dsh plugin --profile multica add`, or set `MULTICA_DSH_PROFILE_BUNDLE` for the daemon so it installs the bundle itself. See the agent runtime install docs for the bundle to use.\n\n"+
+			"The runtime registers on its own within a couple of minutes after that; trigger the agent again then.",
+		name,
+	)
+}
+
+// repairFenceLanguage labels the code block with the shell the command was
+// written for. A daemon too old to report one predates the Windows rendering
+// entirely, so its command is POSIX by construction.
 func repairFenceLanguage(shell string) string {
 	if shell == "powershell" {
 		return "powershell"
 	}
 	return "bash"
-}
-
-// RuntimeBlockedNeedsNotice 让无法自动恢复的准入拒绝留下可操作的说明。
-func RuntimeBlockedNeedsNotice(code dispatch.ReasonCode) bool {
-	return code == dispatch.ReasonRuntimeUnusable || code == dispatch.ReasonRuntimeAccessDenied
 }
