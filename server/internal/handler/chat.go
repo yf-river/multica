@@ -692,7 +692,7 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusInternalServerError, "failed to cancel queued tasks for the archived session")
 				return
 			}
-			if err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
+			if err = service.SettleTerminalTaskState(r.Context(), qtx, cancelled...); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
 				return
 			}
@@ -803,7 +803,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to cancel chat session tasks")
 		return
 	}
-	if err := service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
+	if err := service.SettleTerminalTaskState(r.Context(), qtx, cancelled...); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
 		return
 	}

@@ -86,7 +86,7 @@ func TeardownRuntime(ctx context.Context, qtx *db.Queries, runtimeID pgtype.UUID
 		if err != nil {
 			return out, fmt.Errorf("cancel tasks: %w", err)
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return out, err
 		}
 		// runtime 删除还会移除系统 agent 及其 chat 会话。在这些链接消失前记录每条取消，使 durable 事件保留原

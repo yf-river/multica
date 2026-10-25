@@ -40,6 +40,16 @@ const (
 	DaemonCapabilityRPCV1 = "rpc-v1"
 	// 新会话仅在 checkout 保留已有工作时复用父执行目录。
 	DaemonCapabilityCheckoutKeepsWorkV1 = "checkout-keeps-work-v1"
+	// DaemonCapabilityTaskSupplementV1 advertises that this provider run can accept
+	// an additional text instruction without cancelling or starting a task.
+	// It is persisted when this exact task enters running; absence always means
+	// unsupported so mixed server/daemon versions fail closed.
+	DaemonCapabilityTaskSupplementV1 = "task-supplement-v1"
+
+	TaskSupplementFailureTurnNotStarted   = "turn_not_started"
+	TaskSupplementFailureProviderRejected = "provider_rejected"
+	TaskSupplementFailureTimeout          = "timeout"
+	TaskSupplementFailureTurnEnded        = "turn_ended"
 
 	// AppCapabilityChatDraftRestoreV1 由理解「持久化草稿恢复」路径的 app
 	// 客户端用 X-Client-Capabilities 宣告：chat:cancel_finalized 作为失效提示，

@@ -57,7 +57,7 @@ func TestRunTaskPreservesProviderCostWithoutTokens(t *testing.T) {
 				t.Fatal(err)
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
 			d := &Daemon{

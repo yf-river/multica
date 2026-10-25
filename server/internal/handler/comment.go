@@ -87,7 +87,11 @@ type CommentResponse struct {
 	// 1. ReviewReply is the outcome of a reply addressed to the managed reviewer: who
 	// actually received it and whether a run started (GONG-63). Additive field, only on
 	// create/edit responses for reviewer threads.
-	ReviewReply *CommentReviewReplyResponse `json:"review_reply,omitempty"`
+	ReviewReply             *CommentReviewReplyResponse `json:"review_reply,omitempty"`
+	SupplementTaskID        string                      `json:"supplement_task_id,omitempty"`
+	SupplementStatus        string                      `json:"supplement_status,omitempty"`
+	SupplementFailureReason *string                     `json:"supplement_failure_reason,omitempty"`
+	SupplementDeliveredAt   *string                     `json:"supplement_delivered_at,omitempty"`
 }
 
 // CommentTriggerOutcome 是一次显式 @agent / @squad 提及的按目标结果（MUL-4525 §2）。
@@ -132,9 +136,13 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 	}
 }
 
-// summaryContentRunes 是 summary=true 模式下评论内容的长度上限。200 个 rune 足够看出一条
-// 评论在说什么（开头），又能把长正文大部分从 agent 的上下文预算里切掉。按 rune 而非字节计数，
-// 多字节内容（如中日韩）不会在字符中间被切断。
+// Shared bound for plugin comments and input sent to a running agent.
+const maxCommentContentBytes = 64 * 1024
+
+// summaryContentRunes bounds comment content under summary=true. 200 runes is
+// enough to tell what a comment is about (its opening) while cutting the bulk
+// of a long body out of an agent's context budget. Counted in runes, not bytes,
+// so multi-byte (e.g. CJK) content is clipped on a character boundary.
 const summaryContentRunes = 200
 
 // summarizeContent 把内容裁到 summaryContentRunes 以内用于摘要投影。返回（可能被裁的）内容
@@ -3128,6 +3136,15 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
+	if _, err := h.Queries.GetTaskSupplementByComment(r.Context(), db.GetTaskSupplementByCommentParams{
+		CommentID: existing.ID, WorkspaceID: wsUUID,
+	}); err == nil {
+		writeError(w, http.StatusConflict, "additional messages cannot be edited")
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to verify additional message")
+		return
+	}
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -3266,7 +3283,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		if err == nil && oldContent != req.Content && strictContentEdit {
 			cancelled, err = qtx.CancelAgentTasksByTriggerComment(r.Context(), existing.ID)
 			if err == nil {
-				err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...)
+				err = service.SettleTerminalTaskState(r.Context(), qtx, cancelled...)
 			}
 			if err == nil {
 				for _, task := range cancelled {
@@ -3512,7 +3529,9 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		if hasIssue {
 			h.retriggerCancelledTaskSurvivors(r.Context(), issue, cancelled, pgtype.UUID{})
 		}
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, errTaskSupplementInFlight) {
+			writeError(w, http.StatusConflict, "additional message is still being delivered")
+		} else if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "comment not found")
 		} else {
 			writeError(w, http.StatusInternalServerError, "failed to delete comment")
@@ -3541,6 +3560,8 @@ type commentDeletion struct {
 // 向上清理空占位的深度与祖先路径查询上限一致。
 const commentTombstonePruneDepth = 256
 
+var errTaskSupplementInFlight = errors.New("additional message is still being delivered")
+
 // 删除所选评论或保留空占位，并清理失去全部回复的祖先占位。
 // 调用方在同一事务内记录事件并提交，存储对象只在提交后清理。
 func (h *Handler) deleteComment(ctx context.Context, qtx *db.Queries, commentID, workspaceID pgtype.UUID) (commentDeletion, error) {
@@ -3551,6 +3572,23 @@ func (h *Handler) deleteComment(ctx context.Context, qtx *db.Queries, commentID,
 	})
 	if err != nil {
 		return out, err
+	}
+	// Keep receipt admission locked through deletion so a concurrent retry
+	// cannot resurrect or deliver the content being removed.
+	receipt, receiptErr := qtx.LockTaskSupplementByComment(ctx, db.LockTaskSupplementByCommentParams{
+		CommentID: commentID, WorkspaceID: workspaceID,
+	})
+	if receiptErr == nil {
+		if receipt.Status == "pending" || receipt.Status == "delivering" {
+			return out, errTaskSupplementInFlight
+		}
+		if err := qtx.DeleteTaskSupplementByComment(ctx, db.DeleteTaskSupplementByCommentParams{
+			CommentID: commentID, WorkspaceID: workspaceID,
+		}); err != nil {
+			return out, err
+		}
+	} else if !errors.Is(receiptErr, pgx.ErrNoRows) {
+		return out, receiptErr
 	}
 	// Separate statement on purpose: its snapshot postdates the locks above,
 	// so it sees every committed reply, and none can be added while they are

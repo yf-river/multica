@@ -32,7 +32,9 @@ func (e *requestError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
 }
 
-// isWorkspaceNotFoundError 判断错误是否为带 "workspace not found" 响应体的 404。
+var errInvalidResponseBody = errors.New("invalid response body")
+
+// isWorkspaceNotFoundError returns true if the error is a 404 with "workspace not found" body.
 func isWorkspaceNotFoundError(err error) bool {
 	var reqErr *requestError
 	if !errors.As(err, &reqErr) {
@@ -400,6 +402,30 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/prepare-lease", runtimeID, taskID), map[string]any{}, nil)
 }
 
+type TaskSupplement struct {
+	CommentID  string `json:"comment_id"`
+	AuthorName string `json:"author_name"`
+	Content    string `json:"content"`
+}
+
+func (c *Client) ClaimTaskSupplement(ctx context.Context, taskID string) (*TaskSupplement, error) {
+	var supplement TaskSupplement
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/supplements/claim", taskID), map[string]any{}, &supplement); err != nil {
+		return nil, err
+	}
+	if supplement.CommentID == "" {
+		return nil, nil
+	}
+	return &supplement, nil
+}
+
+func (c *Client) AckTaskSupplement(ctx context.Context, taskID, commentID string, delivered bool, errText string) error {
+	return c.postJSONWithRetry(ctx,
+		fmt.Sprintf("/api/daemon/tasks/%s/supplements/%s/ack", taskID, commentID),
+		map[string]any{"delivered": delivered, "error": errText}, nil,
+		[]time.Duration{0, 100 * time.Millisecond, 300 * time.Millisecond})
+}
+
 // startTaskRetrySchedule allows two short reconnects without the terminal
 // callbacks' 124s backoff. The whole start has a 30s budget (not 3 x the HTTP
 // client's 30s timeout). Preparation keeps renewing its 45s lease every 15s
@@ -408,30 +434,58 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 // fresh claims, and cannot reuse this acknowledgement.
 var startTaskRetrySchedule = []time.Duration{500 * time.Millisecond, 2 * time.Second}
 
-const startTaskTimeout = 30 * time.Second
+const (
+	startTaskTimeout = 30 * time.Second
+	// Start responses can include an issue snapshot alongside the capability.
+	maxStartTaskResponseBytes = 1 << 20
+)
 
 var errStartClaimRejected = errors.New("task start claim rejected")
 
-func (c *Client) StartTask(ctx context.Context, task Task) error {
+func (c *Client) StartTask(ctx context.Context, task Task, capabilities ...string) (bool, error) {
+	var negotiated bool
+	var decodeResponse responseDecoder = func(r io.Reader) error {
+		data, err := io.ReadAll(io.LimitReader(r, maxStartTaskResponseBytes+1))
+		if err != nil {
+			return err
+		}
+		if len(data) > maxStartTaskResponseBytes {
+			return fmt.Errorf("%w: task start exceeds %d bytes", errInvalidResponseBody, maxStartTaskResponseBytes)
+		}
+		var response struct {
+			SupplementCapability string `json:"supplement_capability"`
+		}
+		// Empty acknowledgements start the task without negotiating supplements.
+		// Invalid JSON fails without retrying; transport read failures can retry.
+		if len(data) != 0 {
+			if err := json.Unmarshal(data, &response); err != nil {
+				return fmt.Errorf("%w: task start: %w", errInvalidResponseBody, err)
+			}
+		}
+		negotiated = response.SupplementCapability == protocol.DaemonCapabilityTaskSupplementV1
+		return nil
+	}
 	path := fmt.Sprintf("/api/daemon/tasks/%s/start", task.ID)
 	if !task.StartClaimSupported {
 		// Old servers have no safe replay contract. Preserve one attempt.
-		return c.postJSON(ctx, path, map[string]any{}, nil)
+		err := c.postJSON(ctx, path, map[string]any{"capabilities": capabilities}, decodeResponse)
+		return err == nil && negotiated, err
 	}
 	if task.RuntimeID == "" || task.DispatchedAt == "" {
-		return fmt.Errorf("start task: claim is missing runtime_id or dispatched_at")
+		return false, fmt.Errorf("start task: claim is missing runtime_id or dispatched_at")
 	}
 	ctx, cancel := context.WithTimeout(ctx, startTaskTimeout)
 	defer cancel()
 	err := c.postJSONWithRetry(ctx, path, map[string]any{
 		"runtime_id":    task.RuntimeID,
+		"capabilities":  capabilities,
 		"dispatched_at": task.DispatchedAt,
-	}, nil, startTaskRetrySchedule)
+	}, decodeResponse, startTaskRetrySchedule)
 	var reqErr *requestError
 	if errors.As(err, &reqErr) && reqErr.StatusCode == http.StatusConflict {
-		return fmt.Errorf("%w: %w", errStartClaimRejected, err)
+		return false, fmt.Errorf("%w: %w", errStartClaimRejected, err)
 	}
-	return err
+	return err == nil && negotiated, err
 }
 
 // MarkTaskWaitingLocalDirectory 把刚派发的任务在服务器上停进 waiting_local_directory
@@ -1054,7 +1108,7 @@ var retrySleep = func(ctx context.Context, d time.Duration) error {
 // 调用方需自行处理父 context 取消；本谓词区分不了“daemon 正在关停”与“HTTP 客户端
 // 单次尝试超时”，因为两者到这里都是经 net/http 包装的 context 错误。
 func isTransientError(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, errInvalidResponseBody) {
 		return false
 	}
 	var reqErr *requestError
@@ -1117,9 +1171,14 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 	return c.postJSONVia(ctx, c.client, path, reqBody, respBody)
 }
 
-// postJSONVia 是跑在显式 http.Client 上的 postJSON。调用方挑客户端以控制超时制度：
-// c.client（固定 30s）用于控制面调用，c.bundleClient（截止时间来自 ctx）用于大体量
-// 技能包下载。
+// responseDecoder customizes successful-response decoding inside each attempt.
+type responseDecoder func(io.Reader) error
+
+// postJSONVia is postJSON over an explicit http.Client. Callers pick the client
+// to control the timeout regime: c.client (fixed 30s) for control-plane calls,
+// c.bundleClient (deadline from ctx) for large skill-bundle downloads.
+// respBody can be a JSON destination or a responseDecoder that decodes a
+// successful response inside each attempt, before retry decisions are made.
 func (c *Client) postJSONVia(ctx context.Context, httpClient *http.Client, path string, reqBody any, respBody any) error {
 	return c.postJSONViaObserved(ctx, httpClient, path, reqBody, respBody, nil)
 }
@@ -1160,6 +1219,9 @@ func (c *Client) postJSONViaObserved(ctx context.Context, httpClient *http.Clien
 	if respBody == nil {
 		io.Copy(io.Discard, respReader)
 		return nil
+	}
+	if decode, ok := respBody.(responseDecoder); ok {
+		return decode(respReader)
 	}
 	return json.NewDecoder(respReader).Decode(respBody)
 }

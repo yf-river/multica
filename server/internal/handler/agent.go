@@ -524,8 +524,11 @@ type AgentTaskResponse struct {
 	// 用户（见 daemon/types.go）。v1 从 runtime 所有者取值，因此 daemon runtime
 	// 下有值，其余为空。daemon 将两者写入 brief 的 `## Requesting User` 段；
 	// 描述为空时整个标题段都省略。
-	RequestingUserName               string `json:"requesting_user_name,omitempty"`
-	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
+	SupplementCapability             string   `json:"supplement_capability,omitempty"`
+	SupplementCommentIDs             []string `json:"supplement_comment_ids,omitempty"`
+	CanSupplement                    bool     `json:"can_supplement,omitempty"`
+	RequestingUserName               string   `json:"requesting_user_name,omitempty"`
+	RequestingUserProfileDescription string   `json:"requesting_user_profile_description,omitempty"`
 	// Initiator* 标识触发本任务的行动者——当前评论/提及/聊天消息背后真正的
 	// 请求者——区别于以其凭据运行的 runtime 所有者。claim 时刻解析：评论触发
 	// 的任务取触发评论作者；chat 任务取会话创建者。没有可归属的人类发起者的
@@ -2744,6 +2747,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 			taskIDs[i] = t.ID
 		}
 	}
+	h.hydrateTaskSupplementMetadata(r.Context(), r, agent.WorkspaceID, tasks, resp)
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	if includeUsage {
 		if err := h.hydrateAgentTaskUsage(r.Context(), agent.ID, taskIDs, resp); err != nil {

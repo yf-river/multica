@@ -374,6 +374,7 @@ LIMIT 1;
 SELECT c.* FROM comment c
 WHERE c.issue_id = @issue_id
   AND c.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM task_supplement s WHERE s.comment_id=c.id AND s.workspace_id=c.workspace_id)
   AND (
       (
           c.author_type IN ('member', 'agent')

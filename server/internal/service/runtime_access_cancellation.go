@@ -19,7 +19,7 @@ import (
 // after commit. That single idempotent finalizer owns transcript messages,
 // attachment detachment and persisted draft restores for disconnected clients.
 func PrepareRuntimeAccessCancellation(ctx context.Context, qtx *db.Queries, tasks []db.AgentTaskQueue) ([]pgtype.UUID, error) {
-	if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, tasks...); err != nil {
+	if err := SettleTerminalTaskState(ctx, qtx, tasks...); err != nil {
 		return nil, err
 	}
 	if _, err := enqueueTaskTerminalEvents(ctx, qtx, protocol.EventTaskCancelled, tasks); err != nil {

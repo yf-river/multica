@@ -47,6 +47,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
@@ -615,7 +616,10 @@ type Daemon struct {
 	// envRootBusyWait 是一个有权使用旧 env root 的任务，在放弃并准备全新环境前，
 	// 等待上一次运行放开该 root 的时长。New() 会设置它；零值表示"不等待"，这正是
 	// 聚焦的单元测试想要的。见 lockReusablePriorEnvRoot（MUL-6880）。
-	envRootBusyWait time.Duration
+	taskSupplementSignals       taskSupplementSignals
+	taskSupplementPollInterval  time.Duration
+	taskSupplementReadyInterval time.Duration
+	envRootBusyWait             time.Duration
 	// executionEnvironmentCommand 解析用于 Prepare/Reuse 的"可被杀死的助手进程"。
 	// New 总是设置它；nil 让聚焦的单元测试保持进程内执行。
 	executionEnvironmentCommand executionEnvironmentCommand
@@ -642,39 +646,41 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	// 版本拆分日志/指标（与 CLI 侧的做法平行）。
 	client.SetVersion(cfg.CLIVersion)
 	d := &Daemon{
-		cfg:                       cfg,
-		client:                    client,
-		repoCache:                 repocache.New(cacheRoot, logger),
-		skillCache:                NewSkillBundleCache(skillCacheRoot),
-		logger:                    logger,
-		terminalReports:           newTerminalReportStore(cfg),
-		terminalReportWakeup:      make(chan struct{}, 1),
-		terminalReportNow:         time.Now,
-		terminalReportFlight:      make(map[string]struct{}),
-		workspaces:                make(map[string]*workspaceState),
-		runtimeIndex:              make(map[string]Runtime),
-		profileLaunchSpecs:        make(map[string]profileLaunchSpec),
-		runtimeSet:                newRuntimeSetWatcher(),
-		agentVersions:             make(map[string]string),
-		skippedAgents:             make(map[string]string),
-		resolvedPaths:             make(map[string]healedAgent),
-		wsHBLastAck:               make(map[string]time.Time),
-		activeEnvRoots:            make(map[string]int),
-		deletingEnvRoots:          make(map[string]bool),
-		activeStores:              make(map[string]int),
-		deletingStores:            make(map[string]bool),
-		localPathLocks:            NewLocalPathLocker(),
-		runtimeGoneInflight:       make(map[string]struct{}),
-		pendingWorkInflight:       make(map[string]struct{}),
-		pendingWorkLastRun:        make(map[string]time.Time),
-		reregisterNextAttempt:     make(map[string]time.Time),
-		reregisterLastCompletedAt: make(map[string]time.Time),
-		cancelPollInterval:        5 * time.Second,
-		envRootBusyWait:           15 * time.Second,
-		taskPrepareTimeout:        defaultTaskPrepareTimeout,
-		reconcile:                 newReconcileBroadcaster(),
-		workspaceChanges:          newWorkspaceChangeSignal(),
-		wsRPC:                     newWSRPCClient(wsRPCResponseGrace),
+		cfg:                         cfg,
+		client:                      client,
+		repoCache:                   repocache.New(cacheRoot, logger),
+		skillCache:                  NewSkillBundleCache(skillCacheRoot),
+		logger:                      logger,
+		terminalReports:             newTerminalReportStore(cfg),
+		terminalReportWakeup:        make(chan struct{}, 1),
+		terminalReportNow:           time.Now,
+		terminalReportFlight:        make(map[string]struct{}),
+		workspaces:                  make(map[string]*workspaceState),
+		runtimeIndex:                make(map[string]Runtime),
+		profileLaunchSpecs:          make(map[string]profileLaunchSpec),
+		runtimeSet:                  newRuntimeSetWatcher(),
+		agentVersions:               make(map[string]string),
+		skippedAgents:               make(map[string]string),
+		resolvedPaths:               make(map[string]healedAgent),
+		wsHBLastAck:                 make(map[string]time.Time),
+		activeEnvRoots:              make(map[string]int),
+		deletingEnvRoots:            make(map[string]bool),
+		activeStores:                make(map[string]int),
+		deletingStores:              make(map[string]bool),
+		localPathLocks:              NewLocalPathLocker(),
+		runtimeGoneInflight:         make(map[string]struct{}),
+		pendingWorkInflight:         make(map[string]struct{}),
+		pendingWorkLastRun:          make(map[string]time.Time),
+		reregisterNextAttempt:       make(map[string]time.Time),
+		reregisterLastCompletedAt:   make(map[string]time.Time),
+		cancelPollInterval:          5 * time.Second,
+		envRootBusyWait:             15 * time.Second,
+		taskPrepareTimeout:          defaultTaskPrepareTimeout,
+		reconcile:                   newReconcileBroadcaster(),
+		workspaceChanges:            newWorkspaceChangeSignal(),
+		wsRPC:                       newWSRPCClient(wsRPCResponseGrace),
+		taskSupplementPollInterval:  defaultTaskSupplementPollInterval,
+		taskSupplementReadyInterval: defaultTaskSupplementReadyInterval,
 	}
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
@@ -7471,9 +7477,22 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// other errors use its existing FailTask + taskfailure.Classify path with the same
 	// "start task failed: <…>" string and the same failure_reason
 	// taxonomy as before — see MUL-2946 for the classifier contract.
-	if err := d.client.StartTask(prepareCtx, task); err != nil {
+	var taskCapabilities []string
+	if agent.SupportsTaskSupplement(provider, resolvedVersion) && task.IssueID != "" {
+		taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilityTaskSupplementV1)
+	}
+	taskSupplementNegotiated, err := d.client.StartTask(prepareCtx, task, taskCapabilities...)
+	if err != nil {
 		stopPrepareLease()
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
+	}
+	if taskSupplementNegotiated {
+		// Register before provider launch so a hint cannot arrive in the gap
+		// between the committed server transition and turn/started. The row is
+		// durable, so a coalesced hint is sufficient; the five-second fallback
+		// covers a notification sent before this start response arrived.
+		_, unsubscribeSupplements := d.taskSupplementSignals.subscribe(task.ID)
+		defer unsubscribeSupplements()
 	}
 	stopPrepareLease()
 	prepareComplete = true
@@ -7718,6 +7737,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
 	execOpts := agent.ExecOptions{
+		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
 		Model:                      model,
 		ThreadName:                 deriveTaskThreadName(task),
@@ -8311,12 +8331,31 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	phaseRecorder.Mark(taskPhaseRuntimeStarted)
 	taskLog.Debug("backend started, draining messages")
 
-	// 只在有墙上时钟上限时才约束排空循环。opts.Timeout 为正时，给排空一个比
-	// backend 略长的截止时间，让它在扫描器卡在挂死的 stdout 管道上时仍能收集
-	// backend 自己的超时 Result（多出的 30s 覆盖 backend 自身截止触发后的清理）。
-	// 无上限（opts.Timeout <= 0）时，空闲看门狗是唯一的活性兜底，因此排空绝不能
-	// 再强加自己的截止——否则一个积极流式的长任务无论有无进展都会在这里被掐断
-	// （MUL-3064）。
+	// Only negotiated sessions may claim additions. Stop and join delivery
+	// before the caller reports the task's terminal state to the server.
+	if opts.EnableTaskSupplement && session.Supplement != nil && session.SupplementReady != nil {
+		supplementCtx, cancelSupplements := context.WithCancel(agentCtx)
+		supplementsDone := make(chan struct{})
+		wakeup, unsubscribe := d.taskSupplementSignals.subscribe(taskID)
+		go func() {
+			defer unsubscribe()
+			defer close(supplementsDone)
+			d.runTaskSupplementLoop(supplementCtx, session, taskID, wakeup, taskLog)
+		}()
+		defer func() {
+			cancelSupplements()
+			<-supplementsDone
+		}()
+	}
+
+	// Bound the drain loop only when there is a wall-clock cap. With a positive
+	// opts.Timeout, give the drain a slightly longer deadline than the backend
+	// so it can still collect the backend's own timeout Result if the scanner
+	// is stuck on a hung stdout pipe (the extra 30 s covers cleanup after the
+	// backend's own deadline fires). With no cap (opts.Timeout <= 0) the
+	// inactivity watchdog is the only liveness net, so the drain must NOT
+	// impose its own deadline either — otherwise an actively streaming long run
+	// would be cut off here regardless of progress (MUL-3064).
 	var drainCtx context.Context
 	var drainCancel context.CancelFunc
 	if opts.Timeout > 0 {

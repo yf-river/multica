@@ -138,8 +138,24 @@ type semver struct {
 	Major, Minor, Patch int
 }
 
-// versionRe 匹配 "2.1.100"、"v2.0.0" 或 "2.1.100 (Claude Code)" 这类版本串——
-// 抽出前三个数字分量。
+// SupportsTaskSupplement gates the resolved executable, including custom
+// commands. Unknown versions must not advertise a capability they may lack.
+func SupportsTaskSupplement(provider, version string) bool {
+	var minimum string
+	switch provider {
+	case "codex":
+		// v0.100.0 exposes turn/steer with the expectedTurnId precondition.
+		minimum = "0.100.0"
+	default:
+		return false
+	}
+	detected, err := parseSemver(version)
+	floor, _ := parseSemver(minimum)
+	return err == nil && !detected.lessThan(floor)
+}
+
+// versionRe matches version strings like "2.1.100", "v2.0.0", or
+// "2.1.100 (Claude Code)" — it extracts the first three numeric components.
 var versionRe = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)
 
 // parseSemver 从版本字符串里抽出语义化版本。

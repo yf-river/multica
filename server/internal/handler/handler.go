@@ -179,6 +179,12 @@ type DaemonPendingWorkNotifier interface {
 	NotifyPendingWork(runtimeID, kind string)
 }
 
+// DaemonTaskSupplementNotifier sends a content-free wakeup for one exact run.
+// The daemon still pulls and authenticates the durable supplement over HTTP.
+type DaemonTaskSupplementNotifier interface {
+	NotifyTaskSupplementAvailable(runtimeID, taskID string)
+}
+
 // RuntimeGoneNotifier invalidates a runtime that was deleted while its daemon
 // still has an authenticated WebSocket connection.
 // RuntimeRecoveryNotifier 只在实际离线恢复时刷新工作区在线状态。
@@ -227,7 +233,8 @@ type Handler struct {
 	// ModelCatalogCache 提供某运行时"最近一次已知可用模型列表"，让模型选择器
 	// 不必等 daemon 往返即可渲染（stale-while-revalidate，MUL-5444）。
 	// Nil 安全：所有调用点都把 nil 缓存视为永久未命中，回退到完整发现流程。
-	ModelCatalogCache ModelCatalogCache
+	DaemonTaskSupplement DaemonTaskSupplementNotifier
+	ModelCatalogCache    ModelCatalogCache
 	// Metrics 是 main.go 构建的业务指标收集器。测试或未启用指标监听的
 	// 自托管环境中可能为 nil；所有 Record* 方法都是 nil 安全的，
 	// obsmetrics.RecordEvent 把 nil Metrics 当作"仅 PostHog"。

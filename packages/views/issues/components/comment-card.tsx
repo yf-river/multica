@@ -9,6 +9,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { TaskSupplementReceipt } from "./task-supplement-dialog";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -640,8 +641,8 @@ function CommentRow({
   const edit = useEditAttachmentState(issueId, entry, onEdit);
 
   const isOwn = entry.actor_type === "member" && entry.actor_id === currentUserId;
-  const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
-  const canDeleteEntry = isOwn || canModerate;
+  const canEditEntry = !entry.supplement_task_id && (isOwn || (canModerate && entry.actor_type === "member"));
+  const canDeleteEntry = entry.supplement_status !== "pending" && entry.supplement_status !== "delivering" && (isOwn || canModerate);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const reactions = entry.reactions ?? [];
@@ -852,6 +853,7 @@ function CommentRow({
         <>
           <div className="pl-12 pr-4 max-md:pl-3 max-md:pr-3 pt-1 text-body leading-relaxed text-foreground">
             <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+                  {entry.supplement_task_id && <TaskSupplementReceipt entry={entry} issueId={issueId} />}
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4 max-md:pl-3 max-md:pr-3" />
           {runDiffTaskId && (
@@ -924,8 +926,8 @@ function CommentCardImpl({
   const edit = useEditAttachmentState(issueId, entry, onEdit);
 
   const isOwn = entry.actor_type === "member" && entry.actor_id === currentUserId;
-  const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
-  const canDeleteEntry = isOwn || canModerate;
+  const canEditEntry = !entry.supplement_task_id && (isOwn || (canModerate && entry.actor_type === "member"));
+  const canDeleteEntry = entry.supplement_status !== "pending" && entry.supplement_status !== "delivering" && (isOwn || canModerate);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const allNestedReplies = replies;
@@ -1209,6 +1211,7 @@ function CommentCardImpl({
               <>
                 <div className="pl-10 max-md:pl-0 text-body leading-relaxed text-foreground">
                   <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+                  {entry.supplement_task_id && <TaskSupplementReceipt entry={entry} issueId={issueId} />}
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10 max-md:pl-0" />
                 {runDiffTaskId && (

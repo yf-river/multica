@@ -55,6 +55,10 @@ export interface Comment {
   // 系统派发的审查任务，因此回复会转给任务当前负责人。只在创建/编辑响应里出现；
   // 旧服务器省略它。
   review_reply?: CommentReviewReply | null;
+  supplement_task_id?: string;
+  supplement_status?: "pending" | "delivering" | "delivered" | "failed";
+  supplement_failure_reason?: string;
+  supplement_delivered_at?: string;
 }
 
 // 单个被显式提及的触发目标的领域结果。「成功形态」的状态

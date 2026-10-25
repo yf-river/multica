@@ -6,6 +6,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // RelayNotifier 把 daemon 唤醒提示发给本地 daemon hub；配置了 Redis 时再通过共享
@@ -23,17 +24,25 @@ func NewRelayNotifier(local *Hub, relay realtime.RelayPublisher) *RelayNotifier 
 // NotifyTaskAvailable 广播"某 runtime 有任务可认领"：先直接通知本地 hub，再经
 // relay 发布，事件 ID 用 ULID 保证幂等去重。
 func (n *RelayNotifier) NotifyTaskAvailable(runtimeID, taskID string) {
-	if runtimeID == "" {
+	n.notifyTask(protocol.EventDaemonTaskAvailable, runtimeID, taskID)
+}
+
+func (n *RelayNotifier) NotifyTaskSupplementAvailable(runtimeID, taskID string) {
+	n.notifyTask(protocol.EventDaemonTaskSupplementAvailable, runtimeID, taskID)
+}
+
+func (n *RelayNotifier) notifyTask(eventType, runtimeID, taskID string) {
+	if runtimeID == "" || (eventType == protocol.EventDaemonTaskSupplementAvailable && taskID == "") {
 		return
 	}
 	eventID := ulid.Make().String()
 	if n.local != nil {
-		n.local.notifyTaskAvailable(runtimeID, taskID, eventID)
+		n.local.notifyTask(eventType, runtimeID, taskID, eventID)
 	}
 	if n.relay == nil {
 		return
 	}
-	frame, err := taskAvailableFrame(runtimeID, taskID)
+	frame, err := taskWakeupFrame(eventType, runtimeID, taskID)
 	if err != nil {
 		M.WakeupPublishErrors.Add(1)
 		return
@@ -44,7 +53,7 @@ func (n *RelayNotifier) NotifyTaskAvailable(runtimeID, taskID string) {
 	}
 	if err := n.relay.PublishWithID(realtime.ScopeDaemonRuntime, shardKey, "", frame, eventID); err != nil {
 		M.WakeupPublishErrors.Add(1)
-		slog.Warn("daemon websocket wakeup publish failed", "error", err, "runtime_id", runtimeID, "task_id", taskID)
+		slog.Warn("daemon websocket wakeup publish failed", "type", eventType, "error", err, "runtime_id", runtimeID, "task_id", taskID)
 		return
 	}
 	M.WakeupPublishedTotal.Add(1)

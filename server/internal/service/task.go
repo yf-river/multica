@@ -2363,7 +2363,7 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return err
 		}
 		if s.TxStarter != nil {
@@ -2420,7 +2420,7 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return err
 		}
 		if s.TxStarter != nil {
@@ -2457,7 +2457,7 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 			return err
 		}
 		if s.TxStarter != nil {
@@ -2687,7 +2687,7 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			}
 			task = cancelled
 			// CancelAgentTaskByUser 在同一条语句里追加恢复回执，因此返回的行已携带它。
-			if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled); err != nil {
+			if err := SettleTerminalTaskState(ctx, qtx, cancelled); err != nil {
 				return err
 			}
 			if !cancelled.ChatSessionID.Valid {
@@ -2772,7 +2772,7 @@ func (s *TaskService) CancelQueuedChatTasks(ctx context.Context, sessionID, agen
 		if err != nil {
 			return fmt.Errorf("cancel queued chat tasks: %w", err)
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, tasks...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, tasks...); err != nil {
 			return err
 		}
 		for _, task := range tasks {
@@ -4051,12 +4051,13 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 
 // StartTask 把任务从 dispatched/waiting_local_directory 推进到 running：事务内执行状态翻转并记录 running
 // 事件，提交后清除回收提示、取消该任务的延时降级计时器、调和 agent 状态并广播。
-func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID, supplementSupport ...bool) (*db.AgentTaskQueue, error) {
+	enabled := len(supplementSupport) > 0 && supplementSupport[0]
 	var task db.AgentTaskQueue
 	var runningEvent events.Event
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		var err error
-		task, err = qtx.StartAgentTask(ctx, taskID)
+		task, err = qtx.StartAgentTaskWithSupplement(ctx, db.StartAgentTaskWithSupplementParams{TaskID: taskID, EnableTaskSupplement: enabled})
 		if err != nil {
 			return err
 		}
@@ -4078,7 +4079,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 // StartTaskForClaim serializes the ownership check and transition with reclaim,
 // cancellation and other start requests. A replay linearizes at the locked read;
 // a cancellation that commits later can still cancel the acknowledged task.
-func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentTaskStartClaimParams) (*db.AgentTaskQueue, error) {
+func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentTaskStartClaimParams, supplementSupport ...bool) (*db.AgentTaskQueue, error) {
 	if !claim.ID.Valid || !claim.RuntimeID.Valid || !claim.DispatchedAt.Valid {
 		return nil, fmt.Errorf("start task: incomplete claim")
 	}
@@ -4095,7 +4096,10 @@ func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentT
 	var runningEvent events.Event
 	replay := task.Status == "running"
 	if !replay {
-		task, err = qtx.StartAgentTask(ctx, task.ID)
+		task, err = qtx.StartAgentTaskWithSupplement(ctx, db.StartAgentTaskWithSupplementParams{
+			TaskID:               task.ID,
+			EnableTaskSupplement: len(supplementSupport) > 0 && supplementSupport[0],
+		})
 		if err != nil {
 			return nil, fmt.Errorf("start claimed task: %w", err)
 		}
@@ -4308,7 +4312,7 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 		task = t
 
 		// 与状态翻转原子：二者之间崩溃会让一条已完成的义务永远看起来 pending。
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, t); err != nil {
 			return err
 		}
 
@@ -4465,7 +4469,7 @@ func (s *TaskService) CompleteLifeTaskInTx(ctx context.Context, q *db.Queries, t
 	if task.ChatSessionID.Valid || task.IssueID.Valid {
 		return db.AgentTaskQueue{}, events.Event{}, errors.New("complete Life task: task has interactive work attached")
 	}
-	if err := SettleDeliveredDelegatedFailureRecoveries(ctx, q, task); err != nil {
+	if err := SettleTerminalTaskState(ctx, q, task); err != nil {
 		return db.AgentTaskQueue{}, events.Event{}, err
 	}
 	event, err := recordTaskTerminalEventTx(ctx, q, protocol.EventTaskCompleted, task)
@@ -4740,7 +4744,7 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 
 		// 与状态翻转原子，同完成路径。已收到恢复评论的失败协调者即已消耗义务：既有的 delivered_comment_ids
 		// 覆盖检查本就从不看覆盖任务的状态。
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, t); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, t); err != nil {
 			return err
 		}
 
@@ -5464,7 +5468,7 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 			if err != nil {
 				return err
 			}
-			if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, cancelled...); err != nil {
+			if err := SettleTerminalTaskState(ctx, qtx, cancelled...); err != nil {
 				return err
 			}
 			if s.TxStarter != nil {
@@ -5671,7 +5675,7 @@ func (s *TaskService) terminateTasksInTx(ctx context.Context, eventType string, 
 		if err != nil {
 			return err
 		}
-		if err := SettleDeliveredDelegatedFailureRecoveries(ctx, qtx, failed...); err != nil {
+		if err := SettleTerminalTaskState(ctx, qtx, failed...); err != nil {
 			return err
 		}
 		// 清扫器变更与 API 回调一样是真实的终态转换。在提交前记录，使崩溃不会让客户端与投影永远不知道这次转换。
@@ -5808,6 +5812,21 @@ const (
 	delegatedFailureRecoveryMaxTaskAttempts = 3
 	delegatedFailureRecoveryCommentType     = "progress_update"
 )
+
+// SettleTerminalTaskState 与任务终态在同一事务中结算追加输入和委托回执。
+func SettleTerminalTaskState(ctx context.Context, q *db.Queries, tasks ...db.AgentTaskQueue) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.ID)
+	}
+	if _, err := q.SettleTerminalTaskSupplements(ctx, ids); err != nil {
+		return fmt.Errorf("settle terminal task supplements: %w", err)
+	}
+	return SettleDeliveredDelegatedFailureRecoveries(ctx, q, tasks...)
+}
 
 // SettleDeliveredDelegatedFailureRecoveries 退役给定已终态任务实际收到的每一条委托失败恢复评论，使这些评论
 // 移出 idx_comment_delegated_failure_unsettled，而不是每个清扫 tick 都被 ListPendingDelegatedFailureRecoveries

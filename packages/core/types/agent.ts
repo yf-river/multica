@@ -447,6 +447,12 @@ export interface AgentTask {
    * 的计划并集兜底；显式给一个空数组同样权威（表示确实一条都没带）。
    */
   delivered_comment_ids?: string[];
+  /** Exact run-scoped live-input capability negotiated at this task's start. */
+  supplement_capability?: string;
+  /** Ordinary historical comments explicitly bound to this run, in send order. */
+  supplement_comment_ids?: string[];
+  /** Server-side invocation verdict for the current member and this agent. */
+  can_supplement?: boolean;
   /**
    * 触发本任务的来源做的简短描述快照，创建任务那一刻截下。评论触发的任务是
    * 评论正文（约截断 200 字符）；autopilot 触发的是其标题；直接分配和 chat

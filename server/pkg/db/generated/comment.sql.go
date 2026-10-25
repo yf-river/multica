@@ -1342,6 +1342,7 @@ const listReconcilableCommentsForIssueSince = `-- name: ListReconcilableComments
 SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type, c.created_at, c.updated_at, c.parent_id, c.workspace_id, c.resolved_at, c.resolved_by_type, c.resolved_by_id, c.source_task_id, c.quick_action_id, c.via_plugin_id, c.revision, c.recovery_settled_at, c.deleted_at FROM comment c
 WHERE c.issue_id = $1
   AND c.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM task_supplement s WHERE s.comment_id=c.id AND s.workspace_id=c.workspace_id)
   AND (
       (
           c.author_type IN ('member', 'agent')
