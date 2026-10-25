@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,10 +89,7 @@ func TestFailedDeliveryRepairWithoutProductionApproval(t *testing.T) {
 	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": "claim"})).Want(200)
 	var newToken string
 	dbfx.QueryRow(t, `SELECT worker_token::text FROM issue_delivery WHERE id=$1`, delivery).Scan(&newToken)
-	resumed, err := store.Repair(context.Background(), old, newToken, repair.Source, "exact artifact and unchanged baseline checked")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resumed := largeInventoryWorkerRepair(t, old, newToken, repair.Source)
 	again, err := store.Repair(context.Background(), old, newToken, repair.Source, "exact artifact and unchanged baseline checked")
 	if err != nil || again.Generation != resumed.Generation {
 		t.Fatalf("recovery replay changed lease: %+v %v", again, err)
@@ -106,4 +107,54 @@ func TestFailedDeliveryRepairWithoutProductionApproval(t *testing.T) {
 	if !strings.Contains(string(snapshot), "real integration") {
 		t.Fatal("required checks were lost")
 	}
+}
+
+// Modification 1. Send a real worker's 6147-file repair through the unchanged handler and retain the oversized-request regression.
+func largeInventoryWorkerRepair(t *testing.T, old verification.Lease, token, source string) verification.Lease {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		req.Header.Set("X-User-ID", testUserID)
+		req.Header.Set("X-Workspace-ID", testWorkspaceID)
+		testHandler.AdvanceVerificationSlot(w, req)
+	}))
+	defer server.Close()
+	script, err := filepath.Abs("../../../scripts/issue-delivery-worker.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, _ := json.Marshal(old)
+	code := `import importlib.util,json,sys,tempfile,urllib.error
+from pathlib import Path
+from unittest.mock import patch,Mock
+spec=importlib.util.spec_from_file_location('worker',sys.argv[1]);w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
+old=json.loads(sys.argv[3]);token=sys.argv[4];source=sys.argv[5]
+worker=object.__new__(w.Worker);worker.env='int';worker.meta=dict(backend_url=sys.argv[2]);worker.profile=dict(token='fixture',workspace_id='fixture')
+with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)):
+ artifact=Path(folder)/'artifact';artifact.mkdir()
+ for i in range(6147):(artifact/(str(i)+'x'*80)).write_text('verified content')
+ manifest=dict(id='candidate',source_commit=source,source_digest='fixture',files=r.checksums(artifact))
+ (artifact/'release.json').write_text(json.dumps(manifest))
+ body=dict(old,action='repair',replacement_worker_token=token,replacement_source_commit=source,detail=json.dumps(dict(files=manifest['files'])))
+ # Reproduce the original wire protocol directly, before the worker's new preflight bound.
+ request=w.urllib.request.Request(sys.argv[2]+'/api/delivery-queue/slots/advance',data=json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+ try:w.urllib.request.urlopen(request);raise AssertionError('oversize request accepted')
+ except urllib.error.HTTPError as error:assert error.code==400
+ metadata=dict(release_dir='/old',release_id='old-release')
+ original_read=r.read
+ with patch.object(r,'read',side_effect=lambda path:original_read(path) if str(path).endswith('release.json') else metadata),patch.object(r,'check_process_ownership'),patch.object(worker,'seed_matches',return_value=True),patch.object(worker,'source',return_value=Path(folder)),patch.object(r,'build_verification',return_value=artifact),patch.object(r,'validate_pending_migrations'),patch.object(r,'candidate_path',return_value=Path(folder)/'missing'):
+  d=dict(id=old['delivery_id'],source_commit=source,worker_token=token,plan_snapshot=dict(verification_repair=dict(request=dict(environment=old['name'],generation=old['generation'],compatibility_evidence='report'*20000))))
+  result=worker.prepare_repair(d,dict(lease=old),Mock())
+  print(json.dumps(result[2]))
+`
+	cmd := exec.Command("python3", "-c", code, script, server.URL, string(lease), token, source)
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("worker to handler: %v: %s", err, output)
+	}
+	var result verification.Lease
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("worker response: %v: %s", err, output)
+	}
+	return result
 }
