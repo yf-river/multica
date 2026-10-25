@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """外部交付接力：数据库保存审核真源，复用固定发布器执行联调和生产更新。"""
-import contextlib, argparse, datetime, importlib.util, json, os, pwd, re, subprocess, sys, threading, time, urllib.request, urllib.error
+import io, hashlib, contextlib, argparse, datetime, importlib.util, json, os, pwd, re, subprocess, sys, threading, time, urllib.request, urllib.error
 from pathlib import Path
 
 spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name('release-environments.py'))
@@ -37,6 +37,21 @@ def merge_source(path,arguments):
     if conflicts.stdout.strip():return False
     raise RuntimeError('Git合并失败：'+detail)
 
+# Modification 1. Hash the complete validated inventory canonically; keep audit bodies bounded independently of artifact size.
+def repair_detail(artifact, manifest, previous_release, compatibility):
+    canonical=lambda value:json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')
+    report=compatibility.encode('utf-8')
+    reference=Path(artifact).with_name(Path(artifact).name+'-repair-compatibility.txt')
+    reference.write_bytes(report)
+    detail=dict(artifact=str(artifact),manifest_ref=str(Path(artifact)/'release.json'),
+                candidate_id=manifest.get('id'),source_commit=manifest['source_commit'],
+                source_digest=manifest.get('source_digest'),previous_release=previous_release,
+                files_count=len(manifest['files']),files_sha256=hashlib.sha256(canonical(manifest['files'])).hexdigest(),
+                canonical='UTF-8 JSON; sort_keys=true; separators=(comma,colon); ensure_ascii=false',
+                full_inventory_verified=True,compatibility=dict(ref=str(reference),sha256=hashlib.sha256(report).hexdigest(),
+                bytes=len(report),summary=compatibility[:256]))
+    return json.dumps(detail,ensure_ascii=False,separators=(',',':'))
+
 class Worker:
     def __init__(self,env):
         r.require_environment(env)
@@ -47,7 +62,25 @@ class Worker:
         req=urllib.request.Request(self.meta['backend_url'].rstrip('/')+'/api/'+path,
             data=None if body is None else json.dumps(body).encode(),method=method,
             headers={'Authorization':'Bearer '+self.profile['token'],'X-Workspace-ID':self.profile['workspace_id'],'Content-Type':'application/json'})
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=30) as response:return json.load(response)
+        # Modification 2. Preserve HTTPError semantics and its readable body while recording bounded, credential-free diagnostics.
+        if path=='delivery-queue/slots/advance' and len(req.data or b'')>8192:
+            raise r.RecoveryRequired('slot request exceeds 8192-byte contract')
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=30) as response:return json.load(response)
+        except urllib.error.HTTPError as error:
+            raw=error.read(4096)
+            clean=raw.decode('utf-8',errors='replace').replace(self.profile['token'],'[redacted]')
+            clean=re.sub(r'(?i)("(?:authorization|[a-z_]*token|password|secret|credentials)"\s*:\s*)"(?:\\.|[^"\\])*"',r'\1"[redacted]"',clean)
+            clean=r.redact_failure(clean)
+            diagnostic=dict(status=error.code,endpoint=path.split('?')[0],body=clean,
+                            failure_stage=getattr(self,'failure_stage','api'),journal_unit='multica-delivery-'+self.env)
+            target=r.RUN/'publisher'/('http-failure-'+self.env+'-'+str(os.getpid())+'.json')
+            target.parent.mkdir(parents=True,exist_ok=True)
+            diagnostic['log_path']=str(target)
+            r.write(target,diagnostic,True)
+            error.fp=io.BytesIO(raw)
+            error.msg='HTTP %s: %s; stage=%s; log=%s'%(error.code,clean,diagnostic['failure_stage'],target)
+            raise
     def advance(self,d,action,**extra):
         receipt=self.api('delivery-queue/advance',dict(id=d['id'],revision=d['revision'],worker_token=d.get('worker_token') or '',action=action,source_commit=d['source_commit'],publication_generation=d.get('publication_generation',0),**extra))
         d.update(receipt)
@@ -468,6 +501,7 @@ class Worker:
         r.check_process_ownership(env,metadata)
         if not self.seed_matches(env):raise r.RecoveryRequired('修复不能重置种子或换任务')
         source=self.source(d,integrate=False)
+        self.failure_stage='repair_building'
         save('repair_building',lease=old,repair_lease=old,source_commit=d['source_commit'])
         artifact=r.build_verification(source,d['id'])
         manifest=r.read(artifact/'release.json')
@@ -480,10 +514,11 @@ class Worker:
                     or active.get('status')!='recovery_required'):
                 raise r.RecoveryRequired('槽位存在已部署或未知候选，禁止覆盖')
             r.release_candidate(active['id'],env=env)
-        detail=dict(artifact=str(artifact),source_commit=manifest['source_commit'],files=manifest['files'],
-                    previous_release=metadata['release_id'],compatibility_evidence=request['compatibility_evidence'])
+        # Modification 3. Only attest the inventory after the complete local checksum comparison and compatibility gate passed.
+        detail=repair_detail(artifact,manifest,metadata['release_id'],request['compatibility_evidence'])
+        self.failure_stage='repair_slot_advance'
         lease=self.api('delivery-queue/slots/advance',dict(old,action='repair',replacement_worker_token=d['worker_token'],
-                       replacement_source_commit=d['source_commit'],detail=json.dumps(detail)))
+                       replacement_source_commit=d['source_commit'],detail=detail))
         save('preparing',lease=lease,repair_lease=old,artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
         return source,artifact,lease
 

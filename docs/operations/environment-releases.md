@@ -312,3 +312,27 @@ quarantined、旧租约过期且原种子仍已验证时，负责人提交：
 失败维护请求显式恢复时，`maintenance-int --source ... --evidence ...` 的授权证据可携带原 `retry_request_id`；入口核对同一任务、原基线、failed 状态与无活动发布器，沿用原请求编号准备新的固定候选。新候选重新验收和 accept 后执行 `retry-request <原编号>`。普通 request 不自动恢复失败；同编号 queued/publishing/succeeded 重放不会再启动发布器。历史失败尝试保存在 previous_attempts，归档按提交隔离，不覆盖旧验收产物。恢复不得绕过新用户评论复核、维护文件边界或迁移身份检查。
 
 请求记录保存 failure_stage、脱敏 error、log_path 和 journal_unit。子进程输出进入同一脱敏请求日志；原始 journal 可用 `journalctl -u <journal_unit>` 定位，仅由受控运维读取，不上传认证文件。发布器未运行时不启动第二套常驻 worker，显式恢复仍使用原单请求 systemd 执行入口。
+
+### 修复审计请求与 operations 单独更新
+
+`slots/advance` 的请求上限保持 8192 字节。repair 在本地比较完整制品清单与实际
+全量 SHA-256 后，发送 source/candidate 身份、受控制品及 manifest 引用、文件数量、
+清单摘要、旧版本和兼容报告引用/摘要。清单摘要口径为 Python JSON 的
+`sort_keys=True, separators=(',', ':'), ensure_ascii=False`，UTF-8 编码后计算 SHA-256；
+摘要只用于审计，不代替全量校验。兼容说明全文保存在制品目录旁的受控 sidecar，
+接口只传其引用、SHA-256、字节数和最多 256 字符摘要；worker 发送前检查完整请求
+字节数，超限不调用接口。原失败记录和 owner/lease/source/seed 围栏保持。
+
+仅 operations 维护且已有明确授权时，可使用现有 `issue-delivery-worker.py --install`
+完整包安装器：从固定提交的 `scripts/delivery-operations.json` 提取全部文件（包括
+清单本身），置于控制目录 `.run/publisher/` 的独立输入目录，核对完整清单与源码
+字节后，以 `MULTICA_RELEASE_ROOT=/data/ida/multica` 调用该输入目录 worker 的
+`--env int --install`；受控接口验收通过后对 prod 消费者同样安装。
+安装前持有对应 `delivery-worker-<env>` 和 publisher 锁，核实没有活动接力或切换；
+安装器按整个清单计算指纹并安装独立版本目录。核对 systemd ExecStart、每个文件
+SHA-256 和后续实际 worker 入口；保留旧包及回退入口。不逐文件修改运行包，
+不更新业务程序、迁移或生产配置。包含控制端程序修改时仍走 maintenance-int。
+
+HTTP 失败在 `.run/publisher/http-failure-<env>-<PID>.json` 保存状态码、最多 4096
+字节响应的脱敏文本、接口路径、失败阶段、日志路径及 journal unit；不记录请求
+正文或 Authorization。保留 HTTPError 类型与可读错误体，409 围栏处理继续有效。
