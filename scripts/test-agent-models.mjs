@@ -114,7 +114,9 @@ async function targeted(scope) {
    return result.rows[0];
   };
   const delivery=await one('SELECT * FROM issue_delivery WHERE id=$1 FOR SHARE',[scope.delivery_id]);
-  if (delivery.phase!=='testing' || delivery.candidate_id!==scope.candidate_id || delivery.source_commit!==scope.source_commit) throw Error('Inactive delivery/candidate/source');
+  // Modification 1. Int-only acceptance holds preparing_release; retain every candidate, owner and publication fence.
+  const activePhase=delivery.phase==='testing' || (environment==='int' && delivery.phase==='preparing_release' && delivery.plan_snapshot?.integration_only===true);
+  if (!activePhase || delivery.candidate_id!==scope.candidate_id || delivery.source_commit!==scope.source_commit) throw Error('Inactive delivery/candidate/source');
   const owner=await one('SELECT * FROM delivery_owner WHERE workspace_id=$1 AND issue_id=$2 FOR SHARE',[delivery.workspace_id,delivery.issue_id]);
   if (owner.execution_id!==scope.execution_id || Number(owner.generation)!==scope.owner_generation) throw Error('Stale owner');
   const deadlines=[owner.expires_at];
