@@ -252,6 +252,7 @@ export function CodeDiffCard(props: Parameters<typeof FullCodeDiffCard>[0]) {
 function LazyRunDiff({issueId,taskId,...props}: Parameters<typeof FullCodeDiffCard>[0] & {issueId:string;taskId:string}) {
  const [requested,setRequested] = useState(false);
  const query = useQuery({queryKey:["run-diff",issueId,taskId],queryFn:()=>api.getIssueTaskRun(issueId,taskId),enabled:requested,staleTime:Infinity});
- if (query.data) return <FullCodeDiffCard {...props} result={query.data.result} initiallyOpen />;
+ // 同一运行可同时出现在评论和执行日志；共享数据只打开用户点击的卡片。
+ if (query.data) return <FullCodeDiffCard {...props} result={query.data.result} initiallyOpen={requested} />;
  return <button className={cn("flex min-h-11 w-full items-center gap-2 rounded-md border px-3 text-body hover:bg-accent",props.className)} onClick={()=>{setRequested(true);if(query.isError)void query.refetch();}} disabled={query.isFetching}><FileDiff className="size-4" />{query.isFetching ? "正在读取文件修改…" : query.isError ? "读取失败，点击重试" : "查看本次文件与提示词修改"}</button>;
 }
