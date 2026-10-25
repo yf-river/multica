@@ -66,6 +66,26 @@ is disabled.
 
 AgentLens 凭据由服务端 `MULTICA_AGENTLENS_CREDENTIAL_FILE` 指向私有普通文件（权限 0600，禁止符号链接），内容字段为 `workspace_id` 和 `token`。由运维从已授权密钥来源挂载，不将密钥写入仓库、Skill、Agent 配置或日志。每次准备重新读取文件，轮换时原子替换私有文件；鉴权失败不重试，保留失败状态及本地监督材料，更新凭据后显式重新审查。工作区必须与文件声明一致；固定空间的可见范围继续由 Token Owner 的 AgentLens 权限约束。URL、空间与账号不接受模型输入，不调整网络或 SSH 配置。
 
+### 新种子的受控监督验收前置
+
+新种子默认关闭监督、没有监督模型绑定是正常初始状态，不能作为监督业务失败的结论。正式队列部署候选并授予当前执行归属后，使用测试账号自己的在线 runtime 初始化；不修改生产监督或测试模型策略，不重置种子，不使用旧候选的已释放租约。
+
+`scripts/prepare-supervision-acceptance.py` 复用 `release-environments.py` 的环境、进程、配置、PID 启停与候选校验，以及 `test-agent-policy.py` 的测试模型选择。当前脚本只处理 verify-1；固定 int 必须另按最终组合候选和集成归属核对，不能沿用 verify 的候选或租约。设置与技能通过正式 API 写入，控制端生产 profile 只用于读取交付和槽位。先执行不带 `--apply` 的预检：
+
+```bash
+MULTICA_RELEASE_ROOT=/data/ida/multica python3 scripts/prepare-supervision-acceptance.py \
+  --environment verify-1 --issue <任务UUID> --delivery <当前交付UUID> \
+  --candidate <当前候选ID> --runtime <测试账号自有runtimeUUID>
+```
+
+核对本执行仍持有 owner、槽位为 verifying、准确候选到 release_id 的映射、实际数据库连接及已验证种子。使用 ida-development 的 AgentLens 已授权来源，在受控私有目录准备声明当前**测试 workspace_id** 的 0600 JSON 文件，再追加 `--apply --credential-file <私有文件>`。短期凭据只复制到测试服务账号 HOME 的 0600 文件，种子不保存凭据。无活动测试任务后，保存原配置，通过正式服务配置文件仅重启准确 backend PID；失败尝试恢复原服务配置。配置临时启用时间后才创建真实样本，不批量重审历史任务。
+
+脚本先暂停配置托管监督 Agent，导入固定候选的 delivery-supervision 正文及支持文件、追加绑定，再启用 investigation 和监督；遇到同名自定义技能正文不一致停止，不能覆盖。输出仅为前置配置证据，不代表模型调用、技能实际加载或监督业务通过。若中途失败，私有备份保留在控制目录 `.run/supervision-acceptance/verify-1`，先检查准确 PID 和配置再恢复，不重复应用。
+
+随后先跑一个真实模型小样，核对 runtime/provider/model、实际加载的技能正文与支持文件摘要，再复用 G51 首次、续接、取消及子调用配方；Codex 只读所属 run/session 的本地材料。继续验证真实监督模型分页、证据支持的 token 建议、权限拒绝和外部缺口、浏览器刷新持久化；完整 verify 验收后提交正式证据，再由平台准备最终 int。AgentLens 接口成功不代表这些业务检查通过。
+
+在提交验收、释放候选之前，以同一有效归属和参数运行 `--cleanup`：暂停监督、恢复原服务配置及原监督设置、删除本次临时凭据及私有备份。模型执行仍在运行时不得清理。若 lease 已释放，禁止重用脚本写入，交由正式受控恢复流程处理。清理不删除任务、证据、技能或种子数据。
+
 新运行的本地快照随任务消息持久化；历史补读通过所属 runtime 的心跳请求同一 run/session。Codex 只读任务根目录索引指向且当前归属仍匹配的环境及指定会话；CodeBuddy 复用精确 CID/session/SDK 记录。目录已回收或归属改变时留下具体缺口，不搜索其他会话补齐。历史 Codex 用量同时限制起止时间，避免把后续续接的累计量算入早期运行。可见事件包括工具、压缩和 token 记录，不代表完整内部思维。
 
 CodeBuddy 先按精确请求标识发现外部候选，再核对本地 SDK 溯源、session、response ID 和模型；CID、SDK ID 与外部 trace ID 分开保留。子调用出现外部 SDK 继承父 SDK 时，仍须由同一份父执行快照证明其子请求，并独立匹配 session/response。未验证的 span 正文不进入材料。未知格式或不全的列表保留缺口，不与本地 usage 相加或回填历史账本。
