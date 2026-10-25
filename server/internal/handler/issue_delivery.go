@@ -144,6 +144,12 @@ func (h *Handler) ConfirmIssuePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	external, ownerErr := externalDeliveryVerificationOwner(r.Context(), tx, ws, issue)
+	if ownerErr != nil {
+		writeError(w, 500, "读取外部执行归属失败")
+		return
+	}
+
 	var comment, operation string
 	var current int
 	var kind, assignee string
@@ -173,6 +179,10 @@ func (h *Handler) ConfirmIssuePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, 500, "确认失败")
+		return
+	}
+	if external {
+		h.deliveryJSON(w, r, ws, issue)
 		return
 	}
 	if body.CommentID != "" {

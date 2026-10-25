@@ -108,3 +108,24 @@ func TestGong78AuditFailureDoesNotRollbackPrimaryEdit(t *testing.T) {
 		t.Fatal("primary edit lost")
 	}
 }
+
+func TestGong78ExternalConfirmationDoesNotDispatchOrComment(t *testing.T) {
+	delivery, _ := batchFixture(t)
+	var issue, plan string
+	var revision int
+	dbfx.QueryRow(t, `SELECT d.issue_id::text,d.plan_id::text,p.comment_revision FROM issue_delivery d JOIN issue_delivery_plan p ON p.id=d.plan_id WHERE d.id=$1`, delivery).Scan(&issue, &plan, &revision)
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "external-gong78", coordinationOwner{}, "")).Want(200)
+	var before int
+	dbfx.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1`, issue).Scan(&before)
+	rec := httptest.NewRecorder()
+	testHandler.ConfirmIssuePlan(rec, withURLParam(newRequest("POST", "/confirm", map[string]any{"plan_id": plan, "revision": revision}), "id", issue))
+	if rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	var after, tasks int
+	dbfx.QueryRow(t, `SELECT count(*) FROM comment WHERE issue_id=$1`, issue).Scan(&after)
+	dbfx.QueryRow(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1`, issue).Scan(&tasks)
+	if before != after || tasks != 0 {
+		t.Fatalf("external confirmation triggered work: comments %d -> %d, tasks=%d", before, after, tasks)
+	}
+}

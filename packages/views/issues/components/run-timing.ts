@@ -7,5 +7,5 @@ export function runTiming(task: Pick<AgentTask,"created_at"|"started_at"|"comple
     const ms=Date.parse(b)-Date.parse(a);
     return Number.isFinite(ms)&&ms>=0?ms:null;
   };
-  return {queue:duration(task.created_at,task.dispatched_at??task.started_at),preparation:duration(task.dispatched_at,task.started_at),execution:duration(task.started_at,task.completed_at)};
+  return {queue:duration(task.created_at,task.dispatched_at),preparation:duration(task.dispatched_at,task.started_at),execution:duration(task.started_at,task.completed_at)};
 }

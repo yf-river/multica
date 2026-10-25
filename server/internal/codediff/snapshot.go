@@ -254,6 +254,7 @@ func excluded(path string, excludes []string) bool {
 func (s *Snapshot) readFile(path, rel string, entry fs.DirEntry, opts Options, contentBytes *int64) *fileMeta {
 	info, err := entry.Info()
 	if err != nil {
+		s.Skipped = append(s.Skipped, rel)
 		return nil
 	}
 	mode := uint32(0100000) | uint32(info.Mode().Perm())
