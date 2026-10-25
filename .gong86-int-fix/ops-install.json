@@ -1,0 +1,60 @@
+[
+  {
+    "environment": "int",
+    "source_commit": "5b57c4623",
+    "files": 19,
+    "fingerprint": "5bacd79e02c5fa64",
+    "old_consumer": "MainPID=0\nExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /data/ida/multica/.run/publisher/delivery-int-0cfd5a849358f93b/issue-delivery-worker.py --env int ; ignore_errors=no ; start_time=[Sun 2026-10-25 17:20:28 CST] ; stop_time=[Sun 2026-10-25 17:20:29 CST] ; pid=3532569 ; code=exited ; status=0 }\nActiveState=inactive\n",
+    "new_consumer": "MainPID=0\nExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /data/ida/multica/.run/publisher/delivery-int-5bacd79e02c5fa64/issue-delivery-worker.py --env int ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=inactive\n",
+    "files_sha256": {
+      "delivery-operations.json": "8f9e296a0a5befa24c5f444c21909bbf1e9c3644f7a86619af416e99e3185b09",
+      "release-environments.py": "cd74e5594469576813b66e1cc7466a092181c872c6fef3fbc5ff7e61857f108e",
+      "issue-delivery-worker.py": "f58fbe4999444701d3bff7a3a7d67ce9e4d036777a299d789e75fe227d611c11",
+      "release-maintenance.py": "35d48c03a707b16f6ec00d13dbd1c5ab63cf8cc64cb5a79c2ab58ad7befcfd82",
+      "verification-environments.py": "b4a32baaeb2fea8342358d9e041e812679ea5d6c44a421fa4fd4d53fcaa67c4b",
+      "verification-seed.py": "5926b4526071f8aad61cfd78f59da6be3d960dd56882f7ddb7e7f5ac293ec2bb",
+      "verification-seed-copy.mjs": "f6c7a15a1ed7d3670790def557f6b2e6a113a20278057ce420f304f6abc83a1a",
+      "test-agent-control.py": "66bb400509c9ea68583846c2fd372e453b78cc38ffd166f4ab45de9a72840819",
+      "test-agent-policy.py": "ce4d27a0b0db8698ff8989b5e09ab9aa3ac7280e8600d9db9dd4e3d3c7da749e",
+      "test-agent-models.py": "a5d26586b6e351a2734bbcb72ba9a62c022c8f43400d07a6185387611a5f6eb7",
+      "test-agent-models.mjs": "9f2284ff00b8a40114754495eb75f0e6435ae206e027c22ead3ed12f06e3ad26",
+      "verification-scrub.json": "869b0d1f265e5a7eee1162bad9ad2b6b51e21966aac0ce474283712c549a4875",
+      "lib/verification-scrub.mjs": "65cb1228dec1d2321492fb5092455958c0362c65d5cdf69ddc11b727b877c855",
+      "check-release-database.mjs": "3a4ad5e8fed73b822c56a770c2b36ba419657b1ba331731212023fe949f34546",
+      "verify-release-browser.mjs": "7f31b5ef1acb50e4434163752c65182a05a04aae79cd2e4d8cfbcef94584a590",
+      "lib/goal-test-audit-env.mjs": "abb2e70c7a91490ec8afd35a359b13d04184889085acb80720f676b1f98c7e71",
+      "lib/goal-test-browser-audit.mjs": "0bae9c48953dea4fa1a740b1ea43e9f555fdad4501791577bdfabe072a54c56e",
+      "lib/acceptance-artifacts.mjs": "6941fbbb0b5135dc6f6c66465876aa07f20a597c1182f57ce2d107f289763ddb",
+      "release-controller-maintenance.py": "3f509665e7e1898aa9487d0f4cc5b3972c435509134b121a185ee2839552ba56"
+    }
+  },
+  {
+    "environment": "prod",
+    "source_commit": "5b57c4623",
+    "files": 19,
+    "fingerprint": "5bacd79e02c5fa64",
+    "old_consumer": "MainPID=0\nExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /data/ida/multica/.run/publisher/delivery-prod-0cfd5a849358f93b/issue-delivery-worker.py --env prod ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=inactive\n",
+    "new_consumer": "MainPID=0\nExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /data/ida/multica/.run/publisher/delivery-prod-5bacd79e02c5fa64/issue-delivery-worker.py --env prod ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\nActiveState=inactive\n",
+    "files_sha256": {
+      "delivery-operations.json": "8f9e296a0a5befa24c5f444c21909bbf1e9c3644f7a86619af416e99e3185b09",
+      "release-environments.py": "cd74e5594469576813b66e1cc7466a092181c872c6fef3fbc5ff7e61857f108e",
+      "issue-delivery-worker.py": "f58fbe4999444701d3bff7a3a7d67ce9e4d036777a299d789e75fe227d611c11",
+      "release-maintenance.py": "35d48c03a707b16f6ec00d13dbd1c5ab63cf8cc64cb5a79c2ab58ad7befcfd82",
+      "verification-environments.py": "b4a32baaeb2fea8342358d9e041e812679ea5d6c44a421fa4fd4d53fcaa67c4b",
+      "verification-seed.py": "5926b4526071f8aad61cfd78f59da6be3d960dd56882f7ddb7e7f5ac293ec2bb",
+      "verification-seed-copy.mjs": "f6c7a15a1ed7d3670790def557f6b2e6a113a20278057ce420f304f6abc83a1a",
+      "test-agent-control.py": "66bb400509c9ea68583846c2fd372e453b78cc38ffd166f4ab45de9a72840819",
+      "test-agent-policy.py": "ce4d27a0b0db8698ff8989b5e09ab9aa3ac7280e8600d9db9dd4e3d3c7da749e",
+      "test-agent-models.py": "a5d26586b6e351a2734bbcb72ba9a62c022c8f43400d07a6185387611a5f6eb7",
+      "test-agent-models.mjs": "9f2284ff00b8a40114754495eb75f0e6435ae206e027c22ead3ed12f06e3ad26",
+      "verification-scrub.json": "869b0d1f265e5a7eee1162bad9ad2b6b51e21966aac0ce474283712c549a4875",
+      "lib/verification-scrub.mjs": "65cb1228dec1d2321492fb5092455958c0362c65d5cdf69ddc11b727b877c855",
+      "check-release-database.mjs": "3a4ad5e8fed73b822c56a770c2b36ba419657b1ba331731212023fe949f34546",
+      "verify-release-browser.mjs": "7f31b5ef1acb50e4434163752c65182a05a04aae79cd2e4d8cfbcef94584a590",
+      "lib/goal-test-audit-env.mjs": "abb2e70c7a91490ec8afd35a359b13d04184889085acb80720f676b1f98c7e71",
+      "lib/goal-test-browser-audit.mjs": "0bae9c48953dea4fa1a740b1ea43e9f555fdad4501791577bdfabe072a54c56e",
+      "lib/acceptance-artifacts.mjs": "6941fbbb0b5135dc6f6c66465876aa07f20a597c1182f57ce2d107f289763ddb",
+      "release-controller-maintenance.py": "3f509665e7e1898aa9487d0f4cc5b3972c435509134b121a185ee2839552ba56"
+    }
+  }
+]
