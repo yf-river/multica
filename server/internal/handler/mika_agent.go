@@ -5,6 +5,8 @@ package handler
 import (
 	"context"
 	"errors"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/testagents"
 	"strings"
 
 	"encoding/json"
@@ -168,6 +170,17 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		slog.Warn("create mika agent failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create the workspace agent")
 		return db.Agent{}, false, false
+	}
+	if testagents.Environment(auth.EnvironmentID()) {
+		if err := testagents.Apply(r.Context(), tx, workspaceID, uuidToString(created.ID)); err != nil {
+			writeError(w, 503, err.Error())
+			return db.Agent{}, false, false
+		}
+		created, err = qtx.GetAgent(r.Context(), created.ID)
+		if err != nil {
+			writeError(w, 500, "读取内置测试 Agent 失败")
+			return db.Agent{}, false, false
+		}
 	}
 	// 工作区可调用：每个成员都能和 Mika 聊天、给它派活。
 	if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, created.ID, parseUUID(userID), []targetSpec{
