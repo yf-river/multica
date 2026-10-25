@@ -105,7 +105,26 @@ try {
  await control.query("INSERT INTO delivery_publication(resource,workspace_id,delivery_id,worker_token,generation,expires_at,state) VALUES('int-prod',$1,$2,$3,1,now()+interval '1 hour','active')",[id.controlWorkspace,id.delivery,id.worker]);
  await control.query("INSERT INTO test_agent_control(workspace_id,name,desired,observed,revision) VALUES($1,'int',$2,'{}',2)",[id.controlWorkspace,{policy:codex,overrides:{[id.agent]:flash}}]);
  await db.query("INSERT INTO test_agent_control(workspace_id,name,desired,observed) VALUES($1,'int',$2,$3)",[id.workspace,{policy:codex,overrides:{[id.other]:codex}},{daemon_id:'daemon-test'}]);
- await succeeds('fixed int publication lease');
+ // 5. The production int-only phase must pass without weakening any scoped boundary.
+ await control.query("UPDATE issue_delivery SET phase='preparing_release',plan_snapshot='{\"integration_only\":true}'");
+ await succeeds('fixed int-only preparing_release publication lease');
+ const intBefore=await rows();
+ for(const [sql,restore,label] of [
+  ["UPDATE issue_delivery SET plan_snapshot='{}'", "UPDATE issue_delivery SET plan_snapshot='{\"integration_only\":true}'", 'release preparation without int-only scope'],
+  ["UPDATE issue_delivery SET phase='publishing'", "UPDATE issue_delivery SET phase='preparing_release'", 'publishing phase'],
+  ["UPDATE delivery_publication SET expires_at=now()-interval '1 second'", "UPDATE delivery_publication SET expires_at=now()+interval '1 hour'", 'expired int publication'],
+  ["UPDATE delivery_publication SET worker_token=gen_random_uuid()", null, 'foreign publication worker']
+ ]) {
+  await control.query(sql);await refuses(label);
+  if(restore)await control.query(restore);else await control.query('UPDATE delivery_publication SET worker_token=$1',[id.worker]);
+ }
+ for(const [key,value] of [['environment','prod'],['agent_id',id.other],['candidate_id','foreign'],['owner_generation',2],['seed_sha256','foreign']]) {
+  const old=scope[key];scope[key]=value;scopeWrite();await refuses('int-only invalid '+key);scope[key]=old;scopeWrite();
+ }
+ await db.query("INSERT INTO agent_task_queue(agent_id,status) VALUES($1,'queued')",[id.agent]);
+ await refuses('int-only selected Agent busy');await db.query('DELETE FROM agent_task_queue');
+ assert.deepEqual(await rows(),intBefore);
+
  await control.query("UPDATE delivery_publication SET state='idle'");await refuses('inactive int publication lease');
  const receipt=JSON.parse(fs.readFileSync(path.join(run,'test-agent-maintenance',scope.operation_id+'.json'),'utf8'));assert.equal(receipt.state,'applied');
  await blocker.end();await enqueue.end();await editor.end();console.log('PASS '+count+' checks; no drain, unrelated Agent/default preserved');
