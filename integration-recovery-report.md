@@ -1,0 +1,19 @@
+G86 固定 int 控制维护恢复（2026-10-25）
+
+原业务交付：01a171e2-116d-79e6-bf67-5cb4d087625b，revision5 awaiting_review，source 87e11863efd663bb220a0b073a9f914c697267a0，approved_by=null。业务 integration 尚未完成，任务保持 in_progress，不能提前 in_review/done。
+
+已查明前一轮维护请求 maintenance-e382f385f46827e0a3c60876d2c69c078be65e0d 失败：环境仍有活动任务，维护拒绝暂停其他任务。原失败请求保留。本轮实际 int active_tasks=0，prod active_tasks=1（本轮来源执行）。
+
+隔离维护分支 fix/gong86-integration-only，准确新源码3f2abcb3066ba136168a07f4cdf3c3468a3f14d4。合入已存在维护主线5565a4155，保留aad3协议修复、单Agent模型维护与完整operations和运维文档。修正维护发布要求远端必须等于生产基线的错误：实际Git祖先校验允许生产落后维护主线，只允许包含当前远端的快进候选。并发分叉拒绝，不强推。修正显式恢复同请求但源码变化时错误复用旧候选，重新构建固定候选，未直接修改交付phase或清库。
+
+新维护制品3f2abcb3066ba136168a07f4cdf3c3468a3f14d4-1792914669716217085，source_digest=3e286407b8233f84dad69cb6d3bc91a716691d6dfefe8b346b686e1864f8d152，固定int部署时间2026-10-25T07:51:20Z。完整构建Web/Server/CLI/migrate和1385项制品清单校验通过。新实际浏览器刷新、WebSocket、CSRF及移动尺寸检查通过，page_errors=0、failed_requests=0。
+
+本轮维护测试4项（含真实Git历史及分叉拒绝）、worker39项、发布42项通过。原handler48项等证据按未变化源码复用，不声称重新执行。实际固定int控制API10项再次通过：verification不进入review、正式integration_pending、重复领取拒绝、无批准领取int租约、verify证据不能冒充int、错误候选/缺证据拒绝、两份历史证据保留、int-only后进入review且无生产批准、未授权publishing拒绝。夹具已沿自身范围删除。新增尝试旧CLI读取int夹具被任务级token保护拒绝，未绕过身份保护，不计为兼容通过；实际accept请求和正式maintenance-int/accept脚本协议已通过，生产控制更新后仍需旧CLI按真实任务身份回读。
+
+证据目录 /data/ida/artifacts/quality-token-supervision-20261025/integration-control：live-int-api-retry.json、retry-authorization.json、retry-accept.json、release-controller-maintenance-retry-tests.log、issue-delivery-worker-retry-tests.log、release-environments-retry-tests.log。浏览器证据 /data/ida/multica/.run/evidence/int-release/3f2abcb3066ba136168a07f4cdf3c3468a3f14d4-1792914669716217085/browser.json。准确新维护候选accept成功。
+
+维护仍沿原请求恢复，不新建request；生产实际更新需来源执行结束，检查其回执成功后才可声称生效。当前不声称生产已更新。G86监督业务没有生产批准，本次维护也不改变其批准。
+
+后续按原正式队列准备G86准确业务int候选，核对无后继活跃和归属后必要时recover-owner。保留verify87-final四组证据，不泛化：最终int需补CodeBuddy同session跨run续接与已启动取消，记录runtime/session/new CID/SDK、材料和实际usage；尾调用缺失保持未知。Codex压缩和请求级拆分仍区分固定材料和真实调用。现有guard下在int自有隔离workspace跑原5项测试，并做真实监督页面刷新持久化与审查回归；不reset共享int，不重跑无变化模型矩阵。integration通过后才in_review，禁止done或发布业务生产。
+
+用户主工作区和任务AGENTS.md未提交修改保持原状。维护源码已推送远端分支，主线快进由外部发布器执行。
