@@ -20,6 +20,8 @@ var (
 	version = "dev"
 	commit  = "unknown"
 	date    = "unknown"
+	// Separate full revision metadata from the existing display commit.
+	buildCommit = "unknown"
 )
 
 // debugFlag 绑定到持久化 --debug flag；置位时 FormatError 输出完整原始错误链

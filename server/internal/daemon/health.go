@@ -37,6 +37,7 @@ type HealthResponse struct {
 	DeviceName string `json:"device_name"`
 	ServerURL  string `json:"server_url"`
 	CLIVersion string `json:"cli_version"`
+	CLICommit  string `json:"cli_commit"`
 	// ActiveTaskCount 保持对每个已认领 handleTask 生命周期的“兼容/安全总数”。后面那
 	// 几个可累加计数器则是为了把“真实 provider 执行”与“本地目录停放”分开，便于看
 	// 吞吐与诊断。
@@ -318,6 +319,7 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			DeviceName:            d.cfg.DeviceName,
 			ServerURL:             d.cfg.ServerBaseURL,
 			CLIVersion:            d.cfg.CLIVersion,
+			CLICommit:             d.cfg.CLICommit,
 			ActiveTaskCount:       d.activeTasks.Load(),
 			RunningTaskCount:      d.runningTasks.Load(),
 			ResourceWaitTaskCount: d.resourceWaitTasks.Load(),

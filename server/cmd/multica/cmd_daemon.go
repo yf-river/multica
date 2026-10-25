@@ -978,6 +978,7 @@ func runDaemonForeground(cmd *cobra.Command) error {
 		return err
 	}
 	cfg.CLIVersion = version
+	cfg.CLICommit = buildCommit
 
 	ctx, stop := notifyShutdownContext(context.Background())
 	defer stop()

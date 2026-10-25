@@ -89,6 +89,7 @@ type Config struct {
 	LegacyDaemonIDs                []string // 这台机器历史上可能注册过的 daemon_id；注册时上报，让服务器能合并旧的 runtime 行
 	DeviceName                     string
 	RuntimeName                    string
+	CLICommit                      string                // 当前 CLI 编译时嵌入的完整提交号
 	CLIVersion                     string                // multica CLI 版本（如 "0.1.13"）
 	LaunchedBy                     string                // 被 Electron app 拉起时为 "desktop"，独立启动为空
 	Profile                        string                // profile 名（空 = 默认）

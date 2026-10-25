@@ -363,7 +363,7 @@ def build(source, target, *, verification=False):
         (target/'server/bin').mkdir(parents=True, exist_ok=True)
         for binary in ('server', 'multica', 'migrate'):
             with build_stage('go-'+binary):
-                run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
+                run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}' + (f' -X main.buildCommit={sha}' if binary == 'multica' else ''), '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
     for name in operation_files(source/'scripts'):
