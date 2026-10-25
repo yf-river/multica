@@ -75,7 +75,9 @@ class Worker:
                 if subprocess.run(['git','-C',r.ROOT,'var',identity],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
                     raise RuntimeError('发布预检失败：实际执行器缺少 Git 合并身份')
         self.pin(d)
-        path=r.RUN/'delivery-sources'/d['id']; branch='feature/delivery/'+d['id']
+        # 2. A repaired source gets its own pinned checkout; never reuse the failed attempt's old HEAD.
+        identity=d['id']+('-'+d['source_commit'] if (d.get('plan_snapshot') or {}).get('verification_repair') else '')
+        path=r.RUN/'delivery-sources'/identity; branch='feature/delivery/'+identity
         if not path.exists():
             args=['git','-C',r.ROOT,'worktree','add','-B',branch,path,d['source_commit']]
             r.run(args)
@@ -435,7 +437,7 @@ class Worker:
             if d['id']==current_id:continue
             job_path=self.pool_job_path(d['id'])
             existing=job_path.exists()
-            if existing and r.read(job_path).get('stage')=='quarantined':continue
+            if existing and r.read(job_path).get('stage')=='quarantined' and not (d.get('plan_snapshot') or {}).get('verification_repair'):continue
             if d['id'] not in recovering and (d['phase'] not in ('waiting_int','testing') or not (allow_new or existing)):
                 continue
             managed.append(d)
@@ -454,6 +456,36 @@ class Worker:
             except Exception as error:
                 print('验收接力恢复受阻 '+d['id']+'：'+str(error),file=sys.stderr)
         return {d['id'] for d in managed}
+
+    def prepare_repair(self,d,job,save):
+        # 1. Retain the original quarantine until the pinned replacement and unchanged running baseline pass all gates.
+        request=d['plan_snapshot']['verification_repair']['request']
+        old=job.get('repair_lease') or job.get('lease')
+        if not old or old['name']!=request['environment'] or old['generation']!=request['generation']:
+            raise r.RecoveryRequired('修复请求与原槽位记录不符')
+        env=old['name']
+        metadata=r.read(r.meta_path(env))
+        r.check_process_ownership(env,metadata)
+        if not self.seed_matches(env):raise r.RecoveryRequired('修复不能重置种子或换任务')
+        source=self.source(d,integrate=False)
+        save('repair_building',lease=old,repair_lease=old,source_commit=d['source_commit'])
+        artifact=r.build_verification(source,d['id'])
+        manifest=r.read(artifact/'release.json')
+        if manifest['source_commit']!=d['source_commit'] or manifest['files']!=r.checksums(artifact):raise r.RecoveryRequired('修复制品指纹不符')
+        r.validate_pending_migrations(artifact,metadata['release_dir'])
+        active=r.candidate(env=env) if r.candidate_path(env).exists() else None
+        if active and active['status'] not in ('released','failed','succeeded'):
+            if (active.get('delivery_id')!=d['id'] or active.get('release_id')
+                    or active.get('previous_release')!=metadata['release_id']
+                    or active.get('status')!='recovery_required'):
+                raise r.RecoveryRequired('槽位存在已部署或未知候选，禁止覆盖')
+            r.release_candidate(active['id'],env=env)
+        detail=dict(artifact=str(artifact),source_commit=manifest['source_commit'],files=manifest['files'],
+                    previous_release=metadata['release_id'],compatibility_evidence=request['compatibility_evidence'])
+        lease=self.api('delivery-queue/slots/advance',dict(old,action='repair',replacement_worker_token=d['worker_token'],
+                       replacement_source_commit=d['source_commit'],detail=json.dumps(detail)))
+        save('preparing',lease=lease,repair_lease=old,artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
+        return source,artifact,lease
 
     def pool_delivery(self,delivery):
         path=self.pool_job_path(delivery)
@@ -479,7 +511,13 @@ class Worker:
                 if not d:return
                 job=r.read(path) if path.exists() else {}
                 c=None
-                if job.get('lease'):
+                repairing=bool((d.get('plan_snapshot') or {}).get('verification_repair')) and not d.get('candidate_id')
+                if repairing:
+                    if d['phase']=='waiting_int':
+                        self.advance(d,'claim');d=refresh()
+                    if d['phase']!='testing':return
+                    source,artifact,lease=self.prepare_repair(d,job,save)
+                elif job.get('lease'):
                     try:
                         lease=self.api('delivery-queue/slots?delivery_id='+delivery)
                     except urllib.error.HTTPError as e:

@@ -5,6 +5,31 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    # 1. A failed migration gate must leave the original quarantine and running candidate untouched.
+    def test_repair_validates_before_recovering_original_lease(self):
+        from unittest.mock import Mock
+        worker=object.__new__(w.Worker)
+        old=dict(name='verify-1',generation=29,worker_token='old',source_commit='old',delivery_id='delivery')
+        repair=dict(environment='verify-1',generation=29,compatibility_evidence='reviewed report')
+        d=dict(id='delivery',source_commit='new',worker_token='new-token',plan_snapshot=dict(verification_repair=dict(request=repair)))
+        metadata=dict(release_dir='/old',release_id='old-release')
+        manifest=dict(source_commit='new',files={'server':'exact-sha'})
+        with patch.object(r,'read',side_effect=lambda path:manifest if str(path).endswith('release.json') else metadata),patch.object(r,'check_process_ownership'),patch.object(worker,'seed_matches',return_value=True),patch.object(worker,'source',return_value=Path('/source')),patch.object(r,'build_verification',return_value=Path('/artifact')),patch.object(r,'checksums',return_value=manifest['files']),patch.object(r,'validate_pending_migrations') as gate,patch.object(r,'candidate_path') as candidate_path,patch.object(worker,'api',return_value=dict(old,generation=30)) as api:
+            candidate_path.return_value.exists.return_value=False
+            gate.side_effect=RuntimeError('changed migration')
+            with self.assertRaisesRegex(RuntimeError,'changed migration'):worker.prepare_repair(d,dict(lease=old),Mock())
+            api.assert_not_called()
+            gate.side_effect=None
+            saved=[]
+            result=worker.prepare_repair(d,dict(lease=old),lambda stage,**kw:saved.append((stage,kw)))
+            self.assertEqual(result[2]['generation'],30)
+            self.assertEqual(api.call_args.args[1]['generation'],29)
+            self.assertEqual(api.call_args.args[1]['action'],'repair')
+            self.assertEqual(saved[-1][1]['repair_lease'],old)
+            # Restart uses the persisted original lease rather than incrementing the requested generation again.
+            worker.prepare_repair(d,dict(lease=dict(old,generation=30),repair_lease=old),Mock())
+            self.assertEqual(api.call_args.args[1]['generation'],29)
+
     def test_external_verification_owner_defers_native_terminal_and_notification(self):
         worker=object.__new__(w.Worker)
         for attempt in ({},dict(id='native',settled=True,status='completed')):

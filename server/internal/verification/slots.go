@@ -234,3 +234,42 @@ func (s Store) Progress(ctx context.Context, l Lease, stage string) error {
 	}
 	return tx.Commit(ctx)
 }
+
+// Repair resumes a reviewed pre-deployment failure on its original verified seed without resetting data.
+// 1. Both the old lease generation and the newly claimed delivery token fence recovery and its replay.
+func (s Store) Repair(ctx context.Context, old Lease, token, source, evidence string) (Lease, error) {
+	if evidence == "" || token == "" || source == "" {
+		return Lease{}, ErrStale
+	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return Lease{}, err
+	}
+	defer tx.Rollback(ctx)
+	var valid bool
+	err = tx.QueryRow(ctx, `SELECT phase='testing' AND worker_token::text=$3 AND source_commit=$4 AND approved_by IS NULL AND candidate_id='' AND plan_snapshot->'verification_repair'->'request'->>'environment'=$5 AND (plan_snapshot->'verification_repair'->'request'->>'generation')::bigint=$6 FROM issue_delivery WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, old.Workspace, old.Delivery, token, source, old.Name, old.Generation).Scan(&valid)
+	if err != nil || !valid {
+		return Lease{}, ErrStale
+	}
+	l := Lease{Workspace: old.Workspace, Delivery: old.Delivery, Name: old.Name, Token: token, Source: source}
+	var state, oldToken, oldSource, candidate string
+	err = tx.QueryRow(ctx, `SELECT s.generation,s.state,COALESCE(s.worker_token::text,''),s.source_commit,s.candidate_id FROM verification_slot s JOIN verification_slot_seed seed ON seed.name=s.name JOIN issue_delivery d ON d.id=s.delivery_id WHERE s.name=$1 AND s.workspace_id=$2 AND s.delivery_id=$3 AND seed.verified AND seed.seed_id=d.plan_snapshot->'verification_repair'->'request'->>'seed_id' AND seed.seed_sha256=d.plan_snapshot->'verification_repair'->'request'->>'seed_sha256' FOR UPDATE OF s,seed`, old.Name, old.Workspace, old.Delivery).Scan(&l.Generation, &state, &oldToken, &oldSource, &candidate)
+	if err != nil {
+		return Lease{}, ErrStale
+	}
+	if l.Generation == old.Generation+1 && oldToken == token && oldSource == source && state == "preparing" && candidate == "" {
+		l.State = state
+		return l, tx.Commit(ctx)
+	}
+	if l.Generation != old.Generation || oldToken != old.Token || oldSource != old.Source || candidate != "" || state != "quarantined" {
+		return Lease{}, ErrStale
+	}
+	err = tx.QueryRow(ctx, `UPDATE verification_slot SET state='preparing',generation=generation+1,worker_token=$2,source_commit=$3,lease_expires_at=now()+interval '2 minutes',error='',updated_at=now() WHERE name=$1 RETURNING generation,state`, old.Name, token, source).Scan(&l.Generation, &l.State)
+	if err != nil {
+		return Lease{}, err
+	}
+	if err = recordEvent(ctx, tx, l, "repair", evidence); err != nil {
+		return Lease{}, err
+	}
+	return l, tx.Commit(ctx)
+}
