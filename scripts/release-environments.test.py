@@ -415,6 +415,29 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
+    # 1. Exact reviewed bytes pass; changed or unknown SQL fails before any migration call.
+    def test_trace_compatibility_fingerprints_before_database_write(self):
+        import shutil
+        fixtures=Path(__file__).parent/'fixtures/trace-compatibility'
+        with tempfile.TemporaryDirectory() as tmp:
+            release=Path(tmp)/'new';previous=Path(tmp)/'old'
+            (release/'server/migrations').mkdir(parents=True)
+            (previous/'server/migrations').mkdir(parents=True)
+            for original in fixtures.glob('*.sql'):
+                target=release/'server/migrations'/original.name
+                shutil.copyfile(original,target)
+                self.assertTrue(r.reviewed_trace_preparation_change(target))
+            with patch.object(r,'migrate') as migrate,patch.object(r,'check_database'):
+                r.prepare_database(release,{},previous)
+                self.assertEqual(migrate.call_count,1)
+                for target in sorted((release/'server/migrations').glob('*.sql')):
+                    original=target.read_bytes();target.write_bytes(original+b'\n-- changed fingerprint\n')
+                    migrate.reset_mock()
+                    with self.assertRaisesRegex(RuntimeError,'兼容方案'):r.prepare_database(release,{},previous)
+                    migrate.assert_not_called();target.write_bytes(original)
+                (release/'server/migrations/999_unreviewed.up.sql').write_text('ALTER TABLE supervision_round ADD COLUMN unsafe text;')
+                with self.assertRaisesRegex(RuntimeError,'兼容方案'):r.prepare_database(release,{},previous)
+
     def test_task_provider_trace_migrations_follow_index_and_fk_rules(self):
         # 硬规则：不新增外键/级联；新增索引一律并发建、独立单语句迁移。
         import re

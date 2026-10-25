@@ -95,6 +95,10 @@ func init() {
 		if action == "bind-checks" {
 			cmd.Long = "将原已确认方案的业务验收清单绑定到尚未发布的交付。JSON 包含 revision、plan_id、required_checks（name、stage）；verification 与 integration 各至少一项。相同清单可幂等重试，已绑定项不能删减或替换；不需要重新申请用户发布授权。"
 		}
+		// 1. Document the same repair payload consumed by the existing delivery action API.
+		if action == "retest" {
+			cmd.Long = "重新验收待审候选，或修复未批准生产的 needs_changes 原交付。失败修复 JSON 包含 revision、evidence 和 repair：operation_id、source_commit、source_branch、base_commit、environment、generation、seed_id、seed_sha256、compatibility_evidence。保留原槽位和失败记录，不重置数据、不批准生产；只支持尚未部署的隔离候选。相同操作号与完整请求可幂等重试。"
+		}
 		if action == "accept" {
 			cmd.Long = "提交实际验收证据。组合验收由代表交付提交；JSON 包含 revision、candidate_id 和 evidence，须覆盖当前方案 required_checks 的对应阶段；组合代表须覆盖全部成员的 integration 项，候选编号必须与当前组合一致。相同候选和证据可幂等重试。"
 		}

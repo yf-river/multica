@@ -329,6 +329,7 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Action         string                  `json:"action"`
+		Repair         *deliveryRepairRequest  `json:"repair,omitempty"`
 		Revision       int64                   `json:"revision"`
 		Checks         []deliveryCheck         `json:"evidence"`
 		CandidateID    string                  `json:"candidate_id"`
@@ -388,6 +389,19 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		tx.Rollback(r.Context())
 		h.deliveryJSON(w, r, ws, issue)
 		return
+	}
+	// 1. Replay a repair only after checking the current owner; an old revision cannot create a second attempt.
+	if body.Action == "retest" && body.Repair != nil {
+		replay, replayErr := deliveryRepairReplay(r, tx, id, *body.Repair, body.Checks)
+		if replayErr != nil {
+			writeError(w, 409, replayErr.Error())
+			return
+		}
+		if replay {
+			tx.Rollback(r.Context())
+			h.deliveryJSON(w, r, ws, issue)
+			return
+		}
 	}
 	if revision != body.Revision {
 		writeError(w, 409, "交付版本已变化，请刷新后重试")
@@ -486,6 +500,18 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "retest":
+		// 2. A failed verification is repaired in place without granting production approval.
+		if body.Repair != nil {
+			if phase != "needs_changes" {
+				writeError(w, 409, "只有失败交付可以提交修复候选")
+				return
+			}
+			if err = repairFailedDelivery(r, tx, ws, issue, id, *body.Repair, body.Checks); err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
+			break
+		}
 		if phase != "awaiting_review" {
 			writeError(w, 409, "当前阶段不能重新准备联调")
 			return

@@ -258,3 +258,49 @@ GONG-67 把自动监督从“持续追踪所有任务的材料变化”改为“
 - 发布器把默认值同步到控制目录 `.run/test-agent-policy.json`。辅助创建入口 `scripts/test-agent-policy.py` 读取此文件；种子恢复使用当前默认值并绑定本地 runtime，种子样本内的 Flash 仅为离线清理占位。配置变化不要求重建种子或重置已有测试库。
 - 原生 Codex 使用已有账号登录；各验收槽位复制授权账号凭据到隔离目录，不共享可写的账号主目录。可配置调用使用所选参数；供应商内部不可观察的调用如实注明。
 - 临时环境需要先核实安装归属并接入受控注册，当前界面只管理四个固定环境，未知环境不自动操作。
+
+### 未批准生产的失败候选修复
+
+`retest` 复用原交付，不借 `approve` 恢复测试。尚未部署候选、原槽位为
+quarantined、旧租约过期且原种子仍已验证时，负责人提交：
+
+```json
+{"revision":3,"evidence":[{"name":"准确候选本地检查","status":"passed","evidence":"实际日志入口"}],"repair":{"operation_id":"<UUID>","source_commit":"<完整修复提交>","source_branch":"feature/<任务分支>","base_commit":"<完整基线>","environment":"verify-1","generation":29,"seed_id":"<原已验证种子>","seed_sha256":"<原种子校验和>","compatibility_evidence":"<准确SQL、旧程序及恢复证据入口>"}}
+```
+
+通过 `multica issue delivery retest <任务> --delivery <原交付> --file <JSON>`
+提交。先核对真实 owner，归属过期或已换执行时沿用 `recover-owner`，禁止借外部身份
+写入。API 保留原失败、检查清单和前次修复链；同一 operation_id 与完整请求重放
+不创建新轮次，旧 revision、旧 owner、不同请求、活动候选或生产批准均拒绝。
+
+请求只登记修复意图，不清除 quarantine。外部发布器用准确 source_commit 的独立
+源码目录构建并校验完整制品；核对实际运行旧基线、进程归属、原种子，再通过同一
+精确 SQL 门禁。仅通过后，`slots/advance` 的 `repair` 动作校验原 lease、generation、
+新 worker_token、准确提交、原请求与种子，以新代次接续原槽，不 reset 或导入数据。
+修复失败保留 quarantine、原故障与新检查点；重复恢复回执复用同代次，不重复派发。
+已部署候选或未知现场不能自动走这条预部署修复路径，须另行核对恢复方式。
+
+生产批准与测试恢复独立，原 required_checks 全部继续生效；兼容证据和本地检查
+不能替代真实业务验收。643/645/649 只接受本轮已审查字节的 SHA-256，测试夹具位于
+`scripts/fixtures/trace-compatibility`，不属于程序迁移目录，也不会应用到生产数据库。
+
+### 控制端维护包
+
+控制端恢复代码确需先在线生效时，使用已明确授予的维护授权，整理从当前生产基线
+出发的 maintenance-only 提交。`release maintenance-int --source <固定工作树>
+--evidence <授权JSON>` 复用原构建、完整 operations 清单、发布窗口、锁和失败恢复，
+保存普通候选及请求记录。它只允许控制恢复文件清单，不接受监督业务实现，且逐份
+核对运行生产包与维护源码的迁移文件名及内容完全相同。
+
+授权 JSON 包含 `base_commit`、`issue_id`、`comment_id`、`comment_revision`、
+`comment_sha256`、`user_comments_version`、`scope` 和实际本地检查 `checks`。
+评论必须仍是原任务用户评论的准确版本；出现新用户决定就暂停重新核对，不从文字
+自动推导新授权。int 准备后进行真实控制端回归及浏览器验收，用既有 `accept`
+登记准确候选，再用既有 `request` 交给外部发布器。维护 worker 等来源执行完成后
+才更新 prod，不占 Agent 执行槽等待自身重启。
+
+维护不会修改交付的生产批准。队列和 publisher 锁、现场 PID/profile/连接、完整
+制品指纹和源码范围在切换前重新核对；其他交付或活动任务存在时拒绝切换。
+维护排空上限 90 秒，不进入 120 秒后的任务暂停步骤。安装完整带指纹 operations
+包，失败沿原恢复路径回旧程序，保留数据库、队列和原隔离记录。控制端维护成功
+不代表业务候选已上线，原任务仍须通过自己的 verify/int 验收。

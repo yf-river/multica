@@ -100,8 +100,10 @@ func (h *Handler) AdvanceVerificationSlot(w http.ResponseWriter, r *http.Request
 	}
 	var body struct {
 		verification.Lease
-		Action string `json:"action"`
-		Detail string `json:"detail"`
+		Action            string `json:"action"`
+		Detail            string `json:"detail"`
+		ReplacementToken  string `json:"replacement_worker_token"`
+		ReplacementSource string `json:"replacement_source_commit"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil {
 		writeError(w, 400, "槽位请求格式错误")
@@ -117,6 +119,16 @@ func (h *Handler) AdvanceVerificationSlot(w http.ResponseWriter, r *http.Request
 	var err error
 	if body.Action == "claim" {
 		body.Lease, err = store.Claim(r.Context(), ws, body.Delivery, body.Token, body.Source)
+	} else if body.Action == "repair" {
+		// 1. Only the external publisher can attest the exact artifact and recover the fenced original lease.
+		if _, ok := parseUUIDOrBadRequest(w, body.ReplacementToken, "replacement_worker_token"); !ok {
+			return
+		}
+		if !deliveryCommit.MatchString(body.ReplacementSource) {
+			writeError(w, 400, "需要完整修复提交")
+			return
+		}
+		body.Lease, err = store.Repair(r.Context(), body.Lease, body.ReplacementToken, body.ReplacementSource, body.Detail)
 	} else if body.Action == "progress" {
 		err = store.Progress(r.Context(), body.Lease, body.Detail)
 	} else if body.Action == "resume" {

@@ -643,12 +643,23 @@ def reviewed_supervision_settings_change(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def reviewed_trace_preparation_change(migration):
+    # Modification 1. Permit only the exact backward-compatible trace schema reviewed in quality-agents.md.
+    reviewed = {
+        '643_supervision_material_trace_usage.up.sql': '5d61987590982a5b32cc9122d2baae983db20f416c19b894a9b120a5c48bba6b',
+        '645_supervision_round_preparation_budget.up.sql': 'b4f5e9f057fa6f4f0e2cc51cbe9c5051bcf26aecb43c6fe3a8bcc8fe2e67c047',
+        '649_supervision_trace_scope.up.sql': '2b6d874a52e55da706199f7fca2d6dcca98ef42cf40cf8fc2f0ecc32fe8f905e',
+    }
+    return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
+
+
 def additive_statement(statement):
     # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
     return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
 
 
-def prepare_database(release, cfg, previous):
+def validate_pending_migrations(release, previous):
+    # Modification 2. Recovery checks the same SQL gate before changing a quarantined lease.
     old={p.name for p in (Path(previous)/'server/migrations').glob('*.up.sql')}
     for migration in sorted((Path(release)/'server/migrations').glob('*.up.sql')):
         if migration.name in old:continue
@@ -657,9 +668,11 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             if additive_statement(statement): continue
-            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration):
+            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration):
                 continue
             raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
+def prepare_database(release, cfg, previous):
+    validate_pending_migrations(release, previous)
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。
     migrate(release,cfg,previous=previous)
     check_database(previous,cfg)
@@ -1110,7 +1123,16 @@ def batch_approval_records(record, records, meta, profile):
         if subprocess.run(['git','--git-dir',record['git_common'],'merge-base','--is-ancestor',member['source_commit'],record['commit']]).returncode:
             raise RuntimeError('发布候选未包含成员 %s 的批准提交'%member['delivery_id'])
 
+def controller_maintenance():
+    # Modification 3. Explicit controller maintenance shares the existing durable release path.
+    import importlib.util
+    spec=importlib.util.spec_from_file_location('controller_maintenance',Path(__file__).with_name('release-controller-maintenance.py'))
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
 def check_delivery_approval(record):
+    if record.get('maintenance'):
+        return controller_maintenance().authorize(sys.modules[__name__],record)
     if record.get('environment', 'int') != 'int':
         raise RuntimeError('任务验收候选不能直接发布生产，必须完成 int 集成验收')
     if not record.get('delivery_id') or record.get('delivery_env')!='prod':
@@ -1135,6 +1157,7 @@ def check_delivery_approval(record):
 def request_release(version,timeout=900):
     with lock('publisher',wait=True):
         record=candidate(version)
+        if record.get('maintenance'):timeout=min(timeout,90)
         target=request_path(version)
         if target.exists():
             previous=read(target)
@@ -1154,6 +1177,10 @@ def request_release(version,timeout=900):
         copy_browser_operations(runner.parent)
         (runner.parent/'check-release-database.mjs').write_bytes(Path(__file__).with_name('check-release-database.mjs').read_bytes())
         (runner.parent/'release-maintenance.py').write_bytes(Path(__file__).with_name('release-maintenance.py').read_bytes())
+        if record.get('maintenance'):
+            for name in operation_files(Path(__file__).parent):
+                destination=runner.parent/name;destination.parent.mkdir(parents=True,exist_ok=True)
+                destination.write_bytes((Path(__file__).parent/name).read_bytes())
 
         write(target,record,True);save_candidate(record)
         try:
@@ -1287,8 +1314,13 @@ def worker(request_id):
                 record.update(status='publishing');write(target,record,True);save_candidate(record)
                 directory=idle_slot('prod')
                 copy_tree(Path(current['release_dir']),directory,excludes=('**/.next/cache/***',))
-                with publication_guard(record) as fence:
+                with (controller_maintenance().guard(sys.modules[__name__],record) if record.get('maintenance') else publication_guard(record)) as fence:
                     fence()
+                    if record.get('maintenance'):
+                        run(['git','fetch','origin','personal-studio-upstream'],cwd=record['source'])
+                        if output(['git','rev-parse','origin/personal-studio-upstream'],cwd=record['source']) not in (record['maintenance']['base_commit'],record['commit']):raise RuntimeError('维护主分支已变化')
+                        fence()
+                        run(['git','push','origin',record['commit']+':refs/heads/personal-studio-upstream'],cwd=record['source'])
                     publish('prod',directory,record['timeout'])
                 write(RUN/'published.json',{'commit':record['commit'],'source_digest':record['source_digest'],'candidate':request_id},True)
                 record.update(status='succeeded');write(target,record,True);save_candidate(record)
@@ -1358,7 +1390,7 @@ def require_control_directory():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['preflight','int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset','delivery-worker'])
+    parser.add_argument('command',choices=['preflight','int','accept','release','request','request-status','worker','cleanup','restore','verify','status','verify-logs','backup','reset','delivery-worker','maintenance-int'])
     parser.add_argument('target',nargs='?')
     parser.add_argument('--source')
     parser.add_argument('--evidence')
@@ -1375,6 +1407,9 @@ def main():
         if result['readiness']['http_status']!=200: result['status']='blocked'
         print(json.dumps(result,ensure_ascii=False))
         if result['status']=='blocked': raise SystemExit(1)
+    elif a.command=='maintenance-int':
+        if not a.source or not a.evidence:parser.error('maintenance-int 需要 --source 和 --evidence 用户维护授权记录')
+        print(json.dumps(controller_maintenance().prepare(sys.modules[__name__],a.source,read(a.evidence)),ensure_ascii=False))
     elif a.command=='int':
         if not a.source: parser.error('int 需要 --source 任务 worktree')
         prepare_int(a.source,a.timeout)
