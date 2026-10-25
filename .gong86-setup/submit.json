@@ -1,0 +1,44 @@
+{
+  "operation_id": "6de1376e-fd88-4adc-89dd-488768a9a701",
+  "source_commit": "96b302c78548dcf5bdba997fa1bc04972c3a1549",
+  "source_branch": "feature/ida-developer/gong-86",
+  "base_commit": "aad3ee2b85de2a3802bafca1b39d9986334d7b13",
+  "evidence": [
+    {
+      "name": "监督验收安全前置五项检查及14个身份拒绝子场景",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-250b0506aa80/worktree/.gong86-setup/tests.log"
+    },
+    {
+      "name": "实际已释放槽位拒绝写入",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-250b0506aa80/worktree/.gong86-setup/released-lease-refusal.json"
+    }
+  ],
+  "required_checks": [
+    {
+      "name": "先通过受控前置脚本配置监督runtime、候选技能和服务凭据，再建立真实模型样本；默认off不判业务失败",
+      "stage": "verification"
+    },
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "stage": "verification"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "stage": "verification"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "stage": "verification"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "stage": "verification"
+    },
+    {
+      "name": "固定int监督页面刷新持久化与审查回归",
+      "stage": "integration"
+    }
+  ]
+}
