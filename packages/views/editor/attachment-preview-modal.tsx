@@ -90,7 +90,22 @@ import { CodeBlockStatic } from "./code-block-static";
 /** 预览来源：完整附件记录，或仅 URL 引用（后者只支持媒体类型）。 */
 export type PreviewSource =
   | { kind: "full"; attachment: Attachment }
-  | { kind: "url"; url: string; filename: string };
+  | {
+      kind: "url";
+      url: string;
+      filename: string;
+      /**
+       * What the call site already knows this source to be. A URL-only source
+       * has no content-type, so without it the modal can only re-derive the
+       * kind from `filename` — and for a body image that "filename" is the
+       * markdown caption, which is prose, not a file name. `![报告图表](…png)`
+       * then reads as an extension-less unknown and the reader is told the
+       * image can't be previewed (MUL-7518). Callers that know the slot is
+       * definitionally an image (markdown `![]()`, the Tiptap image node, any
+       * member of an image sequence) pass it through instead of guessing.
+       */
+      forceKind?: PreviewKind;
+    };
 
 // 只凭 URL 就能渲染的 PreviewKind。文本类（markdown / html / text）需要按 id
 // 寻址的 /content 代理。
@@ -103,6 +118,13 @@ interface PreviewState {
   contentType: string;
   mediaUrl: string;
   attachmentId: string | null;
+  /**
+   * The kind every consumer dispatches on — resolved once, here, so the
+   * tryOpen gate and the rendered panel can never disagree about what the
+   * source is. A URL-only source's `forceKind` wins over autodetect; a full
+   * attachment always has server metadata to detect from.
+   */
+  kind: PreviewKind | null;
 }
 
 function resolvePreviewMediaUrl(attachment: Attachment): string {
@@ -124,6 +146,10 @@ function normalize(source: PreviewSource): PreviewState {
       contentType: source.attachment.content_type,
       mediaUrl: resolvePreviewMediaUrl(source.attachment),
       attachmentId: source.attachment.id,
+      kind: getPreviewKind(
+        source.attachment.content_type,
+        source.attachment.filename,
+      ),
     };
   }
   return {
@@ -131,6 +157,7 @@ function normalize(source: PreviewSource): PreviewState {
     contentType: "",
     mediaUrl: resolvePublicFileUrl(source.url) ?? source.url,
     attachmentId: null,
+    kind: source.forceKind ?? getPreviewKind("", source.filename),
   };
 }
 
@@ -199,8 +226,7 @@ export function useAttachmentPreview(): AttachmentPreviewHandle {
     setPreviewOpen(true);
   }, []);
   const tryOpen = useCallback((source: PreviewSource) => {
-    const state = normalize(source);
-    const kind = getPreviewKind(state.contentType, state.filename);
+    const { kind } = normalize(source);
     if (!kind) return false;
     // 仅 URL 的 source 驱动不了文本类——/content 代理是按 id 寻址的。
     if (source.kind === "url" && !URL_ONLY_KINDS.has(kind)) return false;
@@ -358,7 +384,7 @@ export function AttachmentPreviewModal({
     return () => document.removeEventListener("keydown", handler);
   }, [open, onClose, onPrev, onNext]);
 
-  const kind = getPreviewKind(state.contentType, state.filename);
+  const kind = state.kind;
 
   // 下载分发：有 id 时通过 `getAttachment` 重新签名；否则回退到外部打开那个
   // （可能已过期的）URL——和 file-card NodeView 下载路径的取舍一致。

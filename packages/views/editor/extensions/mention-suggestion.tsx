@@ -24,6 +24,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
 import { issueStatusCategory } from "@multica/core/issues";
+import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
@@ -272,11 +273,14 @@ function demoteCancelledItems(items: MentionItem[], query: string): MentionItem[
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
   function MentionList({ items, query, command, includeProjectSearch = false }, ref) {
     const { t } = useT("editor");
-    // 选中态按条目身份跟踪，而不是位置下标。列表会被 groupItems() 反复
-    // 重分桶、还会异步增长（服务端搜索结果），所以下标不是稳定目标——
-    // 下标 N 下的那一行会随列表重排而变化。selectedKey 把高亮钉在具体条目
-    // 上；数值下标只是相对弹层实际渲染的同一份顺序（orderedItems）推导
-    // 出来的。null 表示「还没显式选中」→ 默认高亮第一行。
+    const { colorOf: statusColorOf } = useIssueStatuses(getCurrentWsId() ?? "");
+    // Selection is tracked by item identity, NOT by a positional index. The
+    // list is re-bucketed by groupItems() and grows asynchronously (server
+    // search results), so a slot index is not a stable target — the row under
+    // index N changes as the list reorders. selectedKey pins the highlight to
+    // a specific item; the numeric index is derived from it against the SAME
+    // order the popup renders (orderedItems). null means "no explicit pick yet"
+    // → the first rendered row is highlighted by default.
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [serverItems, setServerItems] = useState<MentionItem[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -485,6 +489,11 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           <MentionRow
             key={`${item.type}-${item.id}`}
             item={item}
+            statusColor={
+              item.type === "issue" && item.status
+                ? statusColorOf(item.status)
+                : null
+            }
             selected={idx === selectedIndex}
             onSelect={() => selectItem(item)}
             buttonRef={(el) => { itemRefs.current[idx] = el; }}
@@ -530,11 +539,13 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
 function MentionRow({
   item,
+  statusColor,
   selected,
   onSelect,
   buttonRef,
 }: {
   item: MentionItem;
+  statusColor?: string | null;
   selected: boolean;
   onSelect: () => void;
   buttonRef: (el: HTMLButtonElement | null) => void;
@@ -560,6 +571,7 @@ function MentionRow({
             <StatusIcon
               status={item.status}
               category={item.statusCategory}
+              color={statusColor}
               className="h-3.5 w-3.5"
             />
           ) : (

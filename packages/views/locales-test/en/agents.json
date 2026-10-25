@@ -909,7 +909,8 @@
     "outcome_commands_one": "{{count}} command",
     "group_calls_one": "{{count}} call",
     "steps_count_one": "{{count}} step",
-    "step_duration_unknown": "Exact duration is unavailable."
+    "step_duration_unknown": "Exact duration is unavailable.",
+    "kind_text": "Agent"
   },
   "task_failure": {
     "cancelled_by_system": "Cancelled by the system",

@@ -7,6 +7,7 @@
 // "问题提及卡片"的观感以此处为唯一事实来源。
 
 import { issueStatusCategory } from "@multica/core/issues";
+import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { issueListOptions, issueDetailOptions } from "@multica/core/issues/queries";
@@ -61,6 +62,7 @@ export function IssueChip({
   className,
 }: IssueChipProps) {
   const wsId = useWorkspaceId();
+  const { colorOf: statusColorOf } = useIssueStatuses(wsId);
   const { data: issues = [] } = useQuery(issueListOptions(wsId));
   const listIssue = issues.find((i) => i.id === issueId);
 
@@ -92,6 +94,7 @@ export function IssueChip({
       <StatusIcon
         status={issue.status}
         category={issueStatusCategory(issue) ?? undefined}
+        color={statusColorOf(issue.status)}
         className="h-3.5 w-3.5 shrink-0"
       />
       <span className="font-medium text-muted-foreground shrink-0">

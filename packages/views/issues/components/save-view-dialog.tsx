@@ -532,7 +532,8 @@ export function SaveViewDialog({
           : scope.variant,
       );
     }
-  }, [open, liveStore, editView, seedFromDefinition, scope]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed once per open, see above
+  }, [open]);
 
   const { data: projects = [] } = useQuery({
     ...projectListOptions(wsId),

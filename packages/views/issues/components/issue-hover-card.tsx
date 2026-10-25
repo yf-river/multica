@@ -6,6 +6,7 @@
 // 悬停预览的提及类型。放在这里而非 packages/ui，是因为它要读工作区查询。
 
 import { issueStatusCategory } from "@multica/core/issues";
+import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useStatusLabel } from "./../utils/status-label";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -115,6 +116,7 @@ function IssueHoverCardBody({
   fallbackLabel?: string;
 }) {
   const wsId = useWorkspaceId();
+  const { colorOf: statusColorOf } = useIssueStatuses(wsId);
   const resolveStatusLabel = useStatusLabel(wsId);
   const detail = useQuery(issueDetailOptions(wsId, issueId));
   // 一份与 issues 列表和 issue detail 共享的工作区级进度快照，不是按问题
@@ -184,6 +186,7 @@ function IssueHoverCardBody({
           <StatusIcon
             status={issue.status}
             category={issueStatusCategory(issue) ?? undefined}
+            color={statusColorOf(issue.status)}
             className="h-3.5 w-3.5 shrink-0"
           />
         </span>

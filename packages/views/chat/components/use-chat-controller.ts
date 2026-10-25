@@ -280,7 +280,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
     content: string;
   } | null>(null);
   const nextConversationStarterRequestIdRef = useRef(0);
-  const prefillConversationStarter = useCallback(
+  const sendConversationStarter = useCallback(
     (prompt: string) => {
       setConversationStarterRequest({
         id: ++nextConversationStarterRequestIdRef.current,
@@ -835,8 +835,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     focusInputRequest,
     conversationStarterRequest,
     handleConversationStarterApplied,
-    prefillConversationStarter,
-    // 动作
+    sendConversationStarter,
+    // actions
     handleSend,
     handleStop,
     handleSendQueuedTaskNow,

@@ -161,15 +161,16 @@ export function ChatWindow() {
     handleClearQueuedTasks,
     handleSendQueuedTaskNow,
   } = useChatTaskActions(activeSessionId, enqueueLocalRestore);
-  // 交给 ChatInput 的聚焦 nonce：新建聊天时（⊕ 或切换 agent）、以及窗口每次
-  // 打开时把键盘焦点拉进输入框。
-  const { focusRequest, requestInputFocus } = useChatInputFocus(isOpen);
+  // Nonce handed to ChatInput to pull focus into the compose box: when a new
+  // chat starts (⊕ or switching agent), and whenever the window itself opens.
+  const windowRef = useRef<HTMLDivElement>(null);
+  const { focusRequest, requestInputFocus } = useChatInputFocus(isOpen, windowRef);
   const [conversationStarterRequest, setConversationStarterRequest] = useState<{
     id: number;
     content: string;
   } | null>(null);
   const nextConversationStarterRequestIdRef = useRef(0);
-  const prefillConversationStarter = useCallback(
+  const sendConversationStarter = useCallback(
     (prompt: string) => {
       setConversationStarterRequest({
         id: ++nextConversationStarterRequestIdRef.current,
@@ -707,7 +708,6 @@ export function ChatWindow() {
 
   const isExpanded = useChatStore((s) => s.isExpanded);
 
-  const windowRef = useRef<HTMLDivElement>(null);
   const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
 
   // 有东西可显示就立刻显示列表（而不是空状态）——一条真实消息，或一条会有
@@ -772,6 +772,8 @@ export function ChatWindow() {
   return (
     <motion.div
       ref={windowRef}
+      inert={!isOpen}
+      aria-hidden={!isOpen}
       className={containerClass}
       style={containerStyle}
       initial={{ opacity: 0, scale: 0.95, ...motionSize }}
@@ -861,7 +863,7 @@ export function ChatWindow() {
           quickActionsDisabled={!!pendingTaskId || isSessionArchived || isAgentArchived || isAgentAccessRevoked || !activeAgentRuntimeBound || noAgent}
           quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}>
           <EmptyState agent={activeAgent} hasSessions={sessions.length > 0}
-            onPickPrompt={prefillConversationStarter}
+            onPickPrompt={sendConversationStarter}
             customizeHref={customizeConversationStartersHref} />
         </ChatWindowMessages>}
       </AnimatePresence>

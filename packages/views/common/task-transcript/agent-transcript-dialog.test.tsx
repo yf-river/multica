@@ -245,6 +245,29 @@ afterEach(() => {
 });
 
 describe("AgentTranscriptDialog", () => {
+  it.each([
+    { type: "text", label: "Agent", icon: ".lucide-bot" },
+    { type: "thinking", label: "Thinking", icon: ".lucide-brain" },
+    { type: "error", label: "Error", icon: ".lucide-circle-alert" },
+  ] as const)("labels a $type step correctly when opened from the timeline", ({ type, label, icon }) => {
+    renderDialog([
+      { seq: 1, type, content: "Final delivered reply", created_at: baseTask.started_at! },
+    ]);
+
+    if (type === "text") {
+      expect(screen.getByRole("menuitemcheckbox", { name: "Agent" })).toBeInTheDocument();
+      expect(screen.getByText("Final delivered reply")).toBeInTheDocument();
+      expect(screen.queryByRole("menuitemcheckbox", { name: "Error" })).not.toBeInTheDocument();
+      return;
+    }
+    fireEvent.click(screen.getByRole("button", { name: /Final delivered reply/ }));
+
+    const inspector = screen.getByRole("complementary");
+    expect(within(inspector).getAllByText(label).length).toBeGreaterThan(0);
+    expect(inspector.querySelector(icon)).not.toBeNull();
+    expect(inspector).toHaveTextContent("Final delivered reply");
+  });
+
   it("explains unavailable live events for an empty Antigravity transcript", async () => {
     vi.mocked(api.listRuntimes).mockResolvedValue([runtimeFor("antigravity")]);
 
