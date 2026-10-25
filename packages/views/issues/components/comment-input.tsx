@@ -272,6 +272,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
           blocked={triggerPreview.blocked}
           draftContent={content}
           reviewReply={triggerPreview.reviewReply}
+          hasAllMembersMention={triggerPreview.hasAllMembersMention}
           suppressedAgentIds={suppressedAgentIds}
           onToggle={toggleSuppressedAgent}
         />

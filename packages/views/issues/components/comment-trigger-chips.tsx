@@ -8,7 +8,7 @@
 // 带原因的名字 warning chip，而不是静默的 no-op。
 
 import { useMemo, useState } from "react";
-import { TriangleAlert } from "lucide-react";
+import { TriangleAlert, Users } from "lucide-react";
 import type { CommentReviewReply, CommentTriggerPreviewAgent, CommentTriggerOutcome } from "@multica/core/types";
 import { useAgentPresenceDetail } from "@multica/core/agents";
 import { mentionLabelsByTarget } from "@multica/core/issues/comment-trigger-outcomes";
@@ -43,9 +43,11 @@ interface CommentTriggerChipsProps {
   // 每个渲染成具名的 warning chip，让用户看清"哪个目标不会跑、为什么"，
   // 而不是发送后得到一次静默的 no-op。
   blocked?: CommentTriggerOutcome[];
-  // 草稿 markdown——只用来给每个被拦目标标注用户在其提及语法里打的名字。
-  // 服务端省略被拦目标的名字（枚举安全）；这是用户自己的文本，
-  // 因此不会泄露任何新东西。
+  /** Whether the draft contains the structured @all member broadcast. */
+  hasAllMembersMention?: boolean;
+  // The draft markdown, used only to label each blocked target with the name the
+  // user typed in its mention markup. The server omits blocked target names
+  // (enumeration-safety); this is the user's own text, so it discloses nothing new.
   draftContent?: string;
   // 回复审查员时这条草稿的实际接收人（GONG-63）。说明「回复不会交给审查员」，
   // 人类负责人与未设置负责人也要有明确提示，不能读作静默无操作。
@@ -145,6 +147,7 @@ function TriggerAgentTooltipBody({
 export function CommentTriggerChips({
   agents,
   blocked = [],
+  hasAllMembersMention = false,
   draftContent = "",
   reviewReply = null,
   suppressedAgentIds,
@@ -157,7 +160,7 @@ export function CommentTriggerChips({
 
   // 加载与错误都不渲染任何东西：预览只是增强，这里的任何临时 UI 都会
   // 读成输入框噪音。
-  if (agents.length === 0 && blocked.length === 0 && !reviewReply) return null;
+  if (agents.length === 0 && blocked.length === 0 && !reviewReply && !hasAllMembersMention) return null;
 
   const reviewNotice = reviewReply && reviewReply.status !== "will_notify" ? (
     <ReviewReplyNotice reviewReply={reviewReply} t={t} />
@@ -180,11 +183,12 @@ export function CommentTriggerChips({
       />
     ) : null;
 
-  if (blocked.length === 0 && !reviewNotice) return allowed;
+  if (blocked.length === 0 && !reviewNotice && !hasAllMembersMention) return allowed;
 
   return (
     <div className="flex flex-col gap-1">
       {reviewNotice}
+      {hasAllMembersMention && <span className="inline-flex items-center gap-1.5 text-micro text-muted-foreground"><Users className="size-3 shrink-0" />{t(($) => $.comment.all_members_notice)}</span>}
       <div className="flex flex-wrap items-center gap-1.5">
         {allowed}
         {blocked.map((outcome) => (

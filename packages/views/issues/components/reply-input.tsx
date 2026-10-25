@@ -297,6 +297,7 @@ function ReplyInput({
             blocked={triggerPreview.blocked}
             draftContent={content}
             reviewReply={triggerPreview.reviewReply}
+          hasAllMembersMention={triggerPreview.hasAllMembersMention}
             suppressedAgentIds={suppressedAgentIds}
             onToggle={toggleSuppressedAgent}
           />

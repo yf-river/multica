@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -779,10 +780,24 @@ type TaskAgentData struct {
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
-// taskToResponse 把队列行映射为线格式。workspaceID 由外部传入，因为行本身
-// 不携带（workspace 在 agent/issue/chat 会话上）——要求调用方解析一次后传下来。
-// 它填充 WorkspaceID 并为隐私安全的 RelativeWorkDir 推导提供输入；仅在确实
-// 没有它的 daemon 面路径传 ""，此时 RelativeWorkDir 退回既有 WorkDir。
+// visibleTaskHistory omits unused assignee fallbacks created by older versions.
+// Dispatch only begins preparation, so a fallback cancelled before StartTask
+// is still unused. Keep started fallbacks and ordinary cancellations visible,
+// and retain the underlying scheduling records for audit.
+func visibleTaskHistory(tasks []db.AgentTaskQueue) []db.AgentTaskQueue {
+	return slices.DeleteFunc(tasks, func(task db.AgentTaskQueue) bool {
+		return task.EscalationForTaskID.Valid &&
+			!task.StartedAt.Valid &&
+			(task.Status == "deferred" || task.Status == "cancelled")
+	})
+}
+
+// taskToResponse maps a queue row to its wire shape. workspaceID is threaded
+// in because the row itself doesn't carry one (workspace lives on the agent
+// / issue / chat session) — we ask the caller to resolve it once and pass it
+// down. It populates WorkspaceID and powers the privacy-safe RelativeWorkDir
+// derivation; pass "" only on daemon-facing paths that genuinely don't have
+// it, in which case RelativeWorkDir falls back to the existing WorkDir.
 func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	var result any
 	if t.Result != nil {

@@ -65,7 +65,7 @@ func batchClaimFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (r
 		var issueID string
 		if err := pool.QueryRow(ctx, `
 			INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-			VALUES ($1, $2, 'in_progress', 'none', $3, 'member', $4, $5)
+			VALUES ($1, $2, 'in_progress', 'not_important_not_urgent', $3, 'member', $4, $5)
 			RETURNING id`, workspaceID, fmt.Sprintf("batch issue %d", n), userID, 800000+n, n).Scan(&issueID); err != nil {
 			t.Fatalf("create issue %d: %v", n, err)
 		}

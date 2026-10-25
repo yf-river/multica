@@ -882,3 +882,68 @@ func TestHandleFailedTasksRetryPendingDoesNotCommentOnTaskIssue(t *testing.T) {
 		t.Fatalf("retry-pending failure comments = %d, want 0", comments)
 	}
 }
+
+// 暂停、未知状态的信号不能占满扫描窗口；恢复状态后仍可派发原有信号。
+func TestDelegatedRecoverySkipsPausedBeforeLimitAndResumes(t *testing.T) {
+	ctx := context.Background()
+	paused, svc := seedDelegatedFailureFixture(t)
+	failed := paused.insertWorkerTask(t, "failed", "comment", 1, 2)
+	if _, err := paused.pool.Exec(ctx, `UPDATE issue SET status='backlog' WHERE id=$1`, paused.issueID); err != nil {
+		t.Fatal(err)
+	}
+	target, created, err := svc.ensureDelegatedFailureRecoveryComment(ctx, failed)
+	if err != nil || !created || target == nil {
+		t.Fatalf("durable paused signal: target=%v created=%v err=%v", target != nil, created, err)
+	}
+	if _, err = svc.dispatchDelegatedFailureRecovery(ctx, target, pgtype.UUID{}); err != nil {
+		t.Fatal(err)
+	}
+	live, liveSvc := seedDelegatedFailureFixture(t)
+	liveFailed := live.insertWorkerTask(t, "failed", "comment", 1, 2)
+	if _, _, err = liveSvc.ensureDelegatedFailureRecoveryComment(ctx, liveFailed); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"backlog", "unknown_recovery_status"} {
+		if _, err = paused.pool.Exec(ctx, `UPDATE issue SET status=$2 WHERE id=$1`, paused.issueID, state); err != nil {
+			t.Fatal(err)
+		}
+		selected, err := svc.Queries.ListPendingDelegatedFailureRecoveries(ctx, 1)
+		if err != nil || len(selected) != 1 || selected[0].SourceTaskID != liveFailed {
+			t.Fatalf("selection with %s: %+v, %v", state, selected, err)
+		}
+	}
+	if _, err = paused.pool.Exec(ctx, `UPDATE issue SET status='todo' WHERE id=$1`, paused.issueID); err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := svc.dispatchDelegatedFailureRecovery(ctx, target, pgtype.UUID{})
+	if err != nil || outcome != delegatedFailureRecoveryReplayed {
+		t.Fatalf("resumed signal: %v, %v", outcome, err)
+	}
+}
+
+func TestPromotionRetiresUnusedLegacyAssigneeFallback(t *testing.T) {
+	f, svc := seedDelegatedFailureFixture(t)
+	ctx := context.Background()
+	var id pgtype.UUID
+	if err := f.pool.QueryRow(ctx, `INSERT INTO agent_task_queue(agent_id,runtime_id,issue_id,status,priority,escalation_for_task_id,fire_at) VALUES($1,$2,$3,'deferred',0,$4,now()+interval '1 hour') RETURNING id`, f.worker, f.runtimeID, f.workerIssue, f.sourceTask).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	var cancellations int
+	svc.Bus.Subscribe("task:cancelled", func(e events.Event) { cancellations++ })
+	if err := svc.PromoteDueDeferredTasksForRuntime(ctx, util.MustParseUUID(f.runtimeID)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := svc.Queries.GetAgentTask(ctx, id)
+	if err != nil || stored.Status != "cancelled" || stored.FailureReason.String != "assignee_fallback_retired" || stored.StartedAt.Valid {
+		t.Fatalf("retirement: %+v, %v", stored, err)
+	}
+	if cancellations != 1 {
+		t.Fatalf("cancellation events=%d, want 1", cancellations)
+	}
+	if err := svc.PromoteDueDeferredTasksForRuntime(ctx, util.MustParseUUID(f.runtimeID)); err != nil {
+		t.Fatal(err)
+	}
+	if cancellations != 1 {
+		t.Fatalf("repeat promotion duplicated cancellation: %d", cancellations)
+	}
+}

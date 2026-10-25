@@ -54,14 +54,29 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if !issue.ParentIssueID.Valid {
 		return
 	}
-	// 在「转入」终态（done 或 cancelled）时触发，而不只是 done。cancelled 的子任务也能关一个
-	// 关卡：isTerminalChildStatus 把 cancelled 视作终态（被取消的兄弟永远不完成，不能让它撑住
-	// 关卡），所以某关最后一个未完成子任务被取消时也必须评估屏障。以转换为触发条件，还让之后
-	// cancelled -> done 的编辑变成空操作（终态 -> 终态），避免迟到的重复唤醒。
-	// 转换两侧都先解析成它们继承的 canonical 状态，移进自定义 done/cancelled 状态与移进
-	// Done/Cancelled 一样触发屏障。 (MUL-6243)
-	prevTerminal := isTerminalChildStatus(issuestatus.Effective(ctx, h.Queries, prev.WorkspaceID, prev.Status))
-	nowTerminal := isTerminalChildStatus(issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status))
+	// Fire on a transition INTO a terminal status (done OR cancelled), not only
+	// `done`. A cancelled child can close a stage too: isTerminalChildStatus
+	// treats cancelled as terminal (a cancelled sibling never finishes, so it
+	// must not hold the stage open), so the barrier has to be evaluated when the
+	// last open child of a stage is cancelled. Keying on the transition also
+	// makes a later cancelled -> done edit a no-op (terminal -> terminal), which
+	// avoids a lagging duplicate wake.
+	// Both sides of the transition are resolved to the canonical status they
+	// inherit, so a move into a custom done/cancelled status fires the barrier
+	// exactly like a move into Done or Cancelled. (MUL-6243)
+	effective := h.childStatusResolver(ctx)
+	prevStatus, err := effective(prev)
+	if err != nil {
+		slog.Warn("child done: failed to resolve previous child status", "error", err, "child_id", uuidToString(issue.ID))
+		return
+	}
+	nowStatus, err := effective(issue)
+	if err != nil {
+		slog.Warn("child done: failed to resolve child status", "error", err, "child_id", uuidToString(issue.ID))
+		return
+	}
+	prevTerminal := isTerminalChildStatus(prevStatus)
+	nowTerminal := isTerminalChildStatus(nowStatus)
 	if prevTerminal || !nowTerminal {
 		return
 	}
@@ -73,29 +88,39 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 			"parent_id", uuidToString(issue.ParentIssueID))
 		return
 	}
-	// 自定义状态会继承它命名的那个 canonical 状态：自定义终态状态一样能关屏障、自定义 backlog
-	// 状态一样能让父级停驻——与内置的 Done/Cancelled、Backlog 完全一致。（MUL-6243）
-	parentStatus := issuestatus.Effective(ctx, h.Queries, parent.WorkspaceID, parent.Status)
+	// Custom terminal statuses close this out. Only the fixed backlog key parks it,
+	// exactly like Done/Cancelled and Backlog do. (MUL-6243)
+	parentStatus, err := effective(parent)
+	if err != nil {
+		slog.Warn("child done: failed to resolve parent status", "error", err, "parent_id", uuidToString(parent.ID))
+		return
+	}
 	if parentStatus == "done" || parentStatus == "cancelled" {
 		return
 	}
-	// 停在 backlog 的父级是被刻意压着等以后处理的。发这条系统评论会唤醒它的受理人，被唤醒的
-	// agent 随后可能把兄弟的 backlog 子任务推进成 todo——正是 #4320 / MUL-3497 报告的那种意外
-	// 自动激活。整个通知（含唤醒）直接跳过，让 backlog 父级保持惰性，直到用户显式把它移出来。
+	// A parent parked in backlog is deliberately held for later. Posting the
+	// system comment would wake its assignee, and the woken agent can then
+	// promote sibling backlog sub-issues into todo — the surprise auto-
+	// activation reported in #4320 / MUL-3497. Skip the whole notification so
+	// a backlog parent stays inert until the user explicitly promotes it.
 	if parentStatus == "backlog" {
 		return
 	}
-	// 人类受理的父级会自己读时间线，自动化系统评论对他们是纯噪音，也没有可「触发」的 agent
-	// 任务。整个通知（评论 + 提及 + 收件箱行）直接跳过——MUL-2538。
+	// Human-assigned parents read their own timeline; an automated system
+	// comment is just noise and there is no agent task to trigger. Skip the
+	// whole notification (comment + mention + inbox row) — MUL-2538.
 	if parent.AssigneeType.Valid && parent.AssigneeType.String == "member" {
 		return
 	}
 
-	// 关卡屏障（MUL-3508 / discussion #4320）。只有当这次完成「关闭了一个关卡」时——即最低
-	// 未完成关卡里每个兄弟现在都已是终态——才发通知 + 唤醒受理人。未分组的兄弟集合等价于一个
-	// 隐式关卡，于是退化成「最后一个子任务完成时只唤醒一次」，取代了导致那场意外级联的
-	// fire-on-every-child 旧行为。没关闭任何关卡的完成保持静默：无评论、无唤醒。到这里时本子任务
-	// 的 done 状态已提交（状态更新先于本函数执行），所以 ListChildIssues 已能看到它。
+	// Stage barrier (MUL-3508 / discussion #4320). The notification + assignee
+	// wake fire only when this completion *closes a stage* — i.e. every sibling
+	// in the lowest unfinished stage is now terminal. An unstaged sibling set is
+	// one implicit stage, so this collapses to "wake once when the last
+	// sub-issue finishes" instead of the old fire-on-every-child behavior that
+	// caused the surprise cascade. A completion that does not close a stage is
+	// silent: no comment, no wake. ListChildIssues already reflects this child's
+	// committed terminal status (the status update commits before this runs).
 	children, err := h.Queries.ListChildIssues(ctx, parent.ID)
 	if err != nil {
 		slog.Warn("child done: failed to list siblings for stage barrier",
@@ -104,36 +129,47 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 			"parent_id", uuidToString(parent.ID))
 		return
 	}
-	if !stageBarrierClosed(children, issue, h.terminalChildPredicate(ctx)) {
+	statuses, err := resolveChildStatuses(children, effective)
+	if err != nil {
+		slog.Warn("child done: failed to resolve sibling statuses", "error", err, "parent_id", uuidToString(parent.ID))
+		return
+	}
+	if !stageBarrierClosed(children, issue, statuses.isTerminal) {
 		return
 	}
 	staged := siblingsAreStaged(children)
-	// 有 stage 且屏障已关闭时，完成的那个子任务必定带 stage（stageBarrierClosed 对「有 stage 集合
-	// 里未带 stage 的完成子任务」返回 false），所以此处取 issue.Stage.Int32 是安全的。
+	// When the set is staged and the barrier closed, the completed child is
+	// guaranteed to carry a stage (stageBarrierClosed returns false for an
+	// unstaged completed child in a staged set), so issue.Stage.Int32 is safe.
 	var closedStage int32
 	if staged {
 		closedStage = issue.Stage.Int32
 	}
-	h.postChildDoneComment(ctx, parent, issue, children, staged, closedStage, false)
+	h.postChildDoneComment(ctx, parent, issue, children, staged, closedStage, false, statuses, nil)
 }
 
-// notifyParentsOfBatchChildDone 在整个批次的状态写入全部提交之后，为一批子任务补发 child-done
-// 父级通知。`completed` 是本次批次中从「非终态」转为「终态」的子任务集合。
+// notifyParentsOfBatchChildDone emits child-done parent notifications for a
+// whole batch AFTER every status write has committed. `completed` is the set of
+// children that transitioned non-terminal -> terminal during the batch.
 //
-// 为什么不能放在批次循环里逐条评估屏障：逐条评估用的是批次中途的兄弟快照，一批同时关闭多个
-// 关卡时会为每个中间态关卡各发一条评论——第一条（已过期）评论把父受理人的唤醒钉在一条已被
-// 取代的「推进到第 N+1 阶段」指令上，而真正准确的最终唤醒又被 pending-task 去重吞掉，最终
-// 结果还依赖 issue_ids 的先后顺序（MUL-4155）。在这里聚合使结果与顺序无关——每个受影响的父级
-// 至多收到一条基于最终状态构造的评论，外加一次钉在那条评论上的唤醒。
+// Evaluating the stage barrier per-child inside the batch loop used the
+// mid-batch sibling snapshot, so a batch that closed several stages at once
+// fired one comment per intermediate stage: the first (stale) comment pinned the
+// parent assignee's wake to an already-superseded "advance Stage N+1"
+// instruction while the accurate final wake was swallowed by the pending-task
+// dedup, and the outcome depended on issue_ids order (MUL-4155). Aggregating
+// here makes the result order-independent — each affected parent gets at most
+// one comment built from the final state, plus one wake pinned to that comment.
 //
-// 与 notifyParentOfChildDone 一致的尽力而为语义：某个父级失败只记录日志并跳过，绝不回滚已
-// 提交的批次。
+// Best-effort, mirroring notifyParentOfChildDone: a failure on one parent is
+// logged and skipped; it never rolls back the committed batch.
 func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed []db.Issue) {
 	if len(completed) == 0 {
 		return
 	}
 
-	// 按父级把完成的子任务分组，保持「首次出现」的顺序，让发出的评论（以及测试断言）结果确定。
+	// Group the completed children by parent, preserving first-seen order so the
+	// emitted comments (and any test assertions) are deterministic.
 	type parentGroup struct {
 		parentID pgtype.UUID
 		children []db.Issue
@@ -154,6 +190,7 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		g.children = append(g.children, c)
 	}
 
+	effective := h.childStatusResolver(ctx)
 	for _, g := range groups {
 		parent, err := h.Queries.GetIssue(ctx, g.parentID)
 		if err != nil {
@@ -161,8 +198,12 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 				"error", err, "parent_id", uuidToString(g.parentID))
 			continue
 		}
-		// 与单条路径相同的父级守卫（见 notifyParentOfChildDone）。
-		parentStatus := issuestatus.Effective(ctx, h.Queries, parent.WorkspaceID, parent.Status)
+		// Same parent guards as the single path (see notifyParentOfChildDone).
+		parentStatus, err := effective(parent)
+		if err != nil {
+			slog.Warn("batch child done: failed to resolve parent status", "error", err, "parent_id", uuidToString(parent.ID))
+			continue
+		}
 		if parentStatus == "done" || parentStatus == "cancelled" {
 			continue
 		}
@@ -180,61 +221,100 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 			continue
 		}
 
-		isTerminal := h.terminalChildPredicate(ctx)
+		statuses, err := resolveChildStatuses(children, effective)
+		if err != nil {
+			slog.Warn("batch child done: failed to resolve sibling statuses", "error", err, "parent_id", uuidToString(parent.ID))
+			continue
+		}
 		batch := len(g.children) > 1
 		if !siblingsAreStaged(children) {
-			// 未分组：等价于一个隐式关卡，仅当最终状态里每个子任务都是终态时才发一次。
-			// stageBarrierClosed 在未分组路径上会忽略 `completed` 参数，所以任取一个已完成的
-			// 子任务来占位做屏障检查即可。
-			if !stageBarrierClosed(children, g.children[0], isTerminal) {
+			// Unstaged: one implicit stage. Fire once iff every child is terminal
+			// in the final state. stageBarrierClosed ignores `completed` on the
+			// unstaged path, so any completed child stands in for the barrier check.
+			if !stageBarrierClosed(children, g.children[0], statuses.isTerminal) {
 				continue
 			}
-			h.postChildDoneComment(ctx, parent, g.children[0], children, false, 0, batch)
+			h.postChildDoneComment(ctx, parent, g.children[0], children, false, 0, batch, statuses, g.children)
 			continue
 		}
 
-		// 有分组：在「本批已完成的子任务」里，宣布最终状态下屏障已关闭的最高 stage。这正是结果
-		// 与顺序无关的原因——无论调用方先送 [stage1, stage2] 还是 [stage2, stage1]，最终提交的
-		// 状态都一样，胜出的总是同一个最高 stage，stageProgressSummary 里的「下一阶段是 N」也
-		// 反映真实状态而不是批次中途快照。若选较低的已关闭 stage，就会重新引入本 bug 要修的
-		// 过期「推进下一阶段」指令。
-		var rep db.Issue
-		var bestStage int32
-		found := false
-		for _, c := range g.children {
-			if !c.Stage.Valid {
-				continue // 有分组的集合里，未分组子任务关不掉任何关卡
-			}
-			if !stageBarrierClosed(children, c, isTerminal) {
-				continue
-			}
-			if !found || c.Stage.Int32 > bestStage {
-				found = true
-				bestStage = c.Stage.Int32
-				rep = c
-			}
-		}
+		// Staged: announce the HIGHEST stage among this batch's completed children
+		// whose barrier is closed in the final state. This is what makes the
+		// result order-independent — whether the caller sent [stage1, stage2] or
+		// [stage2, stage1], the final committed state is identical, so the same
+		// top stage wins and stageProgressSummary's "Stage N is next" reflects
+		// reality rather than a mid-batch snapshot. A lower closed stage would
+		// re-introduce the stale "advance the next stage" instruction the bug was
+		// about.
+		rep, found := highestClosedBatchStage(children, g.children, statuses.isTerminal)
 		if !found {
 			continue
 		}
-		h.postChildDoneComment(ctx, parent, rep, children, true, bestStage, batch)
+		h.postChildDoneComment(ctx, parent, rep, children, true, rep.Stage.Int32, batch, statuses, g.children)
 	}
 }
 
-// postChildDoneComment 为一个已关闭的关卡屏障构造并发布父 issue 上的 child-done 系统评论，
-// 然后派发父级受理人的触发器。调用方必须已通过 notifyParentOfChildDone /
-// notifyParentsOfBatchChildDone 里的全部守卫，且 `completed` 是一个「其屏障在 `children`（最终
-// 兄弟集合）内已关闭」的终态子任务。
+// highestClosedBatchStage selects the first completed child in the highest
+// closed stage of a staged sibling set. The terminal predicate must come from
+// a pre-resolved child-status snapshot: all required statuses must be known
+// before selection. A stage S is closed iff no non-terminal staged sibling has
+// stage <= S, so finding the earliest open stage once reduces selection from
+// O(N*K) to O(N+K).
+func highestClosedBatchStage(children, completed []db.Issue, isTerminal func(db.Issue) bool) (db.Issue, bool) {
+	var lowestCompleted pgtype.Int4
+	for _, c := range completed {
+		if c.Stage.Valid && (!lowestCompleted.Valid || c.Stage.Int32 < lowestCompleted.Int32) {
+			lowestCompleted = c.Stage
+		}
+	}
+	if !lowestCompleted.Valid {
+		return db.Issue{}, false
+	}
+	var firstOpen pgtype.Int4
+	for _, c := range children {
+		if !c.Stage.Valid {
+			continue // Unstaged siblings were not resolved and cannot block a stage.
+		}
+		if !isTerminal(c) {
+			if c.Stage.Int32 <= lowestCompleted.Int32 {
+				return db.Issue{}, false // This sibling blocks every candidate; do not scan the rest.
+			}
+			if !firstOpen.Valid || c.Stage.Int32 < firstOpen.Int32 {
+				firstOpen = c.Stage
+			}
+		}
+	}
+	var rep db.Issue
+	found := false
+	for _, c := range completed {
+		if !c.Stage.Valid || (firstOpen.Valid && c.Stage.Int32 >= firstOpen.Int32) {
+			continue
+		}
+		if !found || c.Stage.Int32 > rep.Stage.Int32 {
+			found = true
+			rep = c
+		}
+	}
+	return rep, found
+}
+
+// postChildDoneComment builds and posts the parent's child-done system comment
+// for a closed stage barrier, then dispatches the parent-assignee trigger. It
+// assumes every guard in notifyParentOfChildDone / notifyParentsOfBatchChildDone
+// has already passed and that `completed` is a terminal child whose barrier is
+// closed within `children` (the final sibling set).
 //
-// `completed` 是评论中点名的代表性子任务。`staged`/`closedStage` 描述被关闭的屏障（未分组集合
-// 时 closedStage 用不到）。`batch` 决定措辞是否按批量处理：单条更新保持历史上逐字节一致的文案，
-// 而一次完成多个子任务的批量更新不能声称「最后一个子任务刚刚结束」。
-func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db.Issue, children []db.Issue, staged bool, closedStage int32, batch bool) {
+// `completed` is the representative terminal child named in the comment.
+// `staged`/`closedStage` describe the closed barrier (closedStage is unused for
+// an unstaged set). `batch` selects batch-aware wording. `batchCompleted` is the
+// set that transitioned to terminal in this batch; it is nil for single updates.
+func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db.Issue, children []db.Issue, staged bool, closedStage int32, batch bool, statuses resolvedChildStatuses, batchCompleted []db.Issue) {
 	prefix := h.getIssuePrefix(ctx, completed.WorkspaceID)
 	identifier := prefix + "-" + strconv.Itoa(int(completed.Number))
 	childID := uuidToString(completed.ID)
 	title := sanitizeChildTitleForSystemComment(completed.Title)
 	parentID := uuidToString(parent.ID)
+	completedStatus := statuses.status(completed)
 
 	// 拼父级受理人的提及前缀。父级没有受理人、或受理人行已丢失（成员被删、工作区已失联的归档
 	// agent 等）时前缀为空串。
@@ -242,30 +322,88 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 
 	var content string
 	if staged {
-		summary, nextStage := stageProgressSummary(children, closedStage, h.terminalChildPredicate(ctx))
-		advance := stageAdvanceInstruction(nextStage, parentID)
+		stageCancelledCount := countStageCancelled(children, closedStage, statuses.status)
+		stageCancelled := stageCancelledCount > 0
+		advanceHasCancelled := stageCancelled
 		if batch {
+			// A single batch can close several stages. Always preserve cancellation
+			// already present in the named stage, and also account for lower stages
+			// newly cancelled by this same batch without repeating older lower-stage
+			// warnings.
+			advanceHasCancelled = stageCancelled || batchClosedScopeHasCancelled(children, batchCompleted, closedStage, statuses.status)
+		}
+		summary, nextStage := stageProgressSummary(children, closedStage, statuses.status)
+		advance := stageAdvanceInstruction(nextStage, parentID, stageCancelledCount, advanceHasCancelled)
+		if !stageCancelled {
+			// Keep the historical no-cancellation wording byte-identical for the
+			// named stage. A lower stage cancelled in the same batch can still add
+			// the dependency warning through advanceHasCancelled above.
+			if batch {
+				content = fmt.Sprintf(
+					"%s当前任务的第 %d 阶段已完成——该阶段的子任务已在批量更新中全部结束，最近完成的是 [%s](mention://issue/%s)——“%s”。阶段进度：%s。%s",
+					mentionPrefix, closedStage, identifier, childID, title, summary, advance,
+				)
+			} else {
+				content = fmt.Sprintf(
+					"%s当前任务的第 %d 阶段已完成——最后一个子任务 [%s](mention://issue/%s)——“%s”刚刚结束。阶段进度：%s。%s",
+					mentionPrefix, closedStage, identifier, childID, title, summary, advance,
+				)
+			}
+		} else if batch {
+			lastAction := "已完成"
+			if completedStatus == "cancelled" {
+				lastAction = "已取消"
+			}
 			content = fmt.Sprintf(
-				"%s当前任务的第 %d 阶段已完成——该阶段的子任务已在批量更新中全部结束，最近完成的是 [%s](mention://issue/%s)——“%s”。阶段进度：%s。%s",
-				mentionPrefix, closedStage, identifier, childID, title, summary, advance,
+				"%s当前任务的第 %d 阶段已结束——该阶段的子任务已在批量更新中全部结束； 最近处理的是 [%s](mention://issue/%s) — \"%s\" — %s. 阶段进度：%s.%s",
+				mentionPrefix, closedStage, identifier, childID, title, lastAction, summary, advance,
 			)
 		} else {
+			lastAction := "刚刚完成"
+			if completedStatus == "cancelled" {
+				lastAction = "刚刚取消"
+			}
 			content = fmt.Sprintf(
-				"%s当前任务的第 %d 阶段已完成——最后一个子任务 [%s](mention://issue/%s)——“%s”刚刚结束。阶段进度：%s。%s",
-				mentionPrefix, closedStage, identifier, childID, title, summary, advance,
+				"%s当前任务的第 %d 阶段已结束——最后一个子任务 [%s](mention://issue/%s) — \"%s\" — %s. 阶段进度：%s.%s",
+				mentionPrefix, closedStage, identifier, childID, title, lastAction, summary, advance,
 			)
 		}
 	} else {
-		if batch {
-			content = fmt.Sprintf(
-				"%s所有子任务都已完成——它们刚刚在批量更新中一起结束，最近完成的是 [%s](mention://issue/%s)——“%s”。请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
-				mentionPrefix, identifier, childID, title, parentID,
-			)
+		hasCancelled := anyCancelledChildren(children, statuses.status)
+		if !hasCancelled {
+			// Keep the historical no-cancellation wording byte-identical.
+			if batch {
+				content = fmt.Sprintf(
+					"%s所有子任务都已完成——它们刚刚在批量更新中一起结束，最近完成的是 [%s](mention://issue/%s)——“%s”。请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
+					mentionPrefix, identifier, childID, title, parentID,
+				)
+			} else {
+				content = fmt.Sprintf(
+					"%s所有子任务都已完成——最后一个子任务 [%s](mention://issue/%s)——“%s”刚刚结束。请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
+					mentionPrefix, identifier, childID, title, parentID,
+				)
+			}
 		} else {
-			content = fmt.Sprintf(
-				"%s所有子任务都已完成——最后一个子任务 [%s](mention://issue/%s)——“%s”刚刚结束。请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
-				mentionPrefix, identifier, childID, title, parentID,
-			)
+			lastAction := "已完成"
+			if completedStatus == "cancelled" {
+				lastAction = "已取消"
+			}
+			warning := unstagedCancellationInstruction()
+			if !batch {
+				lastAction = "刚刚完成"
+				if completedStatus == "cancelled" {
+					lastAction = "刚刚取消"
+				}
+				content = fmt.Sprintf(
+					"%s所有子任务都已结束——最后一个子任务 [%s](mention://issue/%s) — \"%s\", %s.%s 请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
+					mentionPrefix, identifier, childID, title, lastAction, warning, parentID,
+				)
+			} else {
+				content = fmt.Sprintf(
+					"%s所有子任务都已结束——本次批量更新后全部进入终态，最近处理的是 [%s](mention://issue/%s) — \"%s\" — %s.%s 请汇总子任务结果并继续推进父任务；如果已经没有后续工作，请运行 `multica issue status %s in_review` 将父任务标记为待评审。",
+					mentionPrefix, identifier, childID, title, lastAction, warning, parentID,
+				)
+			}
 		}
 	}
 
@@ -335,12 +473,62 @@ func isTerminalChildStatus(status string) bool {
 // canonical 状态。内置 key 无需查询就解析到自己，所以没有定义自定义状态的工作区里此函数零开销。
 // (MUL-6243)
 //
-// 刻意返回谓词而不是改写后的 []db.Issue：同一份 slice 还要渲染进阶段进度评论，若在遍历时改写
-// Status，会展示成类别而不是用户实际选的状态。
-func (h *Handler) terminalChildPredicate(ctx context.Context) func(db.Issue) bool {
-	return func(c db.Issue) bool {
-		return isTerminalChildStatus(issuestatus.Effective(ctx, h.Queries, c.WorkspaceID, c.Status))
+// Resolve without rewriting the issue rows, which also supply the original
+// user-selected status to downstream rendering. Built-in keys need no I/O.
+// Unlike display-oriented Resolver callers, this side-effecting path must
+// reject unresolved custom keys: parent or sibling rows can be newer than the
+// catalog snapshot. A miss must not bypass a parked/terminal parent's guard.
+func (h *Handler) childStatusResolver(ctx context.Context) func(db.Issue) (string, error) {
+	resolvers := make(map[pgtype.UUID]*issuestatus.Resolver)
+	return func(c db.Issue) (string, error) {
+		if issuestatus.IsBuiltIn(c.Status) {
+			return c.Status, nil
+		}
+		resolver := resolvers[c.WorkspaceID]
+		if resolver == nil {
+			resolver = issuestatus.NewResolver(c.WorkspaceID)
+			resolvers[c.WorkspaceID] = resolver
+		}
+		status := resolver.Effective(ctx, h.issueStatusCatalog(), c.Status)
+		if !issuestatus.IsCategory(status) {
+			return "", fmt.Errorf("unresolved status %q in workspace %s", c.Status, uuidToString(c.WorkspaceID))
+		}
+		return status, nil
 	}
+}
+
+// resolvedChildStatuses keeps the canonical status of every child needed by
+// the barrier and comment builders. Keeping the three-state information here
+// (open / done / cancelled) prevents the reporting path from mistaking
+// "terminal" for "done" while still letting the barrier ask its narrower
+// terminality question.
+type resolvedChildStatuses map[pgtype.UUID]string
+
+func (s resolvedChildStatuses) status(child db.Issue) string {
+	return s[child.ID]
+}
+
+func (s resolvedChildStatuses) isTerminal(child db.Issue) bool {
+	return isTerminalChildStatus(s.status(child))
+}
+
+// resolveChildStatuses checks every status needed by the stage barrier and
+// progress summary before either can produce a notification. Stored status
+// keys stay untouched; the returned snapshot contains their canonical values.
+func resolveChildStatuses(children []db.Issue, effective func(db.Issue) (string, error)) (resolvedChildStatuses, error) {
+	statuses := make(resolvedChildStatuses, len(children))
+	staged := siblingsAreStaged(children)
+	for _, child := range children {
+		if staged && !child.Stage.Valid {
+			continue // Neither stage helper considers unstaged siblings.
+		}
+		status, err := effective(child)
+		if err != nil {
+			return nil, fmt.Errorf("resolve child %s status %q: %w", uuidToString(child.ID), child.Status, err)
+		}
+		statuses[child.ID] = status
+	}
+	return statuses, nil
 }
 
 // siblingsAreStaged 报告集合里是否有任何子任务带显式 stage。完全没有 stage 的集合被当作单个
@@ -389,12 +577,13 @@ func stageBarrierClosed(children []db.Issue, completed db.Issue, isTerminal func
 	return true
 }
 
-// stageProgressSummary 为 child-done 系统评论渲染逐阶段的紧凑摘要（形如「阶段 1：已完成 3/3；
-// 阶段 2：已完成 0/4」），并返回 closedStage 之上第一个仍含有非终态子任务的 stage——即下一步要
-// 推进的那组——没有则返回 0。未分组子任务被跳过（它们不属于任何 stage），所以摘要里永远不会
-// 出现「阶段 0」。
-func stageProgressSummary(children []db.Issue, closedStage int32, isTerminal func(db.Issue) bool) (summary string, nextStage int32) {
-	type agg struct{ total, done int }
+// stageProgressSummary renders a compact per-stage breakdown for the
+// child-done system comment. `done` counts only genuinely completed children;
+// canonical `cancelled` children are surfaced separately. nextStage is the
+// lowest stage above closedStage that still has non-terminal children, or 0
+// when none remain. Unstaged children are skipped.
+func stageProgressSummary(children []db.Issue, closedStage int32, statusOf func(db.Issue) string) (summary string, nextStage int32) {
+	type agg struct{ total, done, cancelled, terminal int }
 	byStage := map[int32]*agg{}
 	order := []int32{}
 	for _, c := range children {
@@ -409,8 +598,13 @@ func stageProgressSummary(children []db.Issue, closedStage int32, isTerminal fun
 			order = append(order, s)
 		}
 		a.total++
-		if isTerminal(c) {
+		switch statusOf(c) {
+		case "done":
 			a.done++
+			a.terminal++
+		case "cancelled":
+			a.cancelled++
+			a.terminal++
 		}
 	}
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
@@ -418,7 +612,10 @@ func stageProgressSummary(children []db.Issue, closedStage int32, isTerminal fun
 	for _, s := range order {
 		a := byStage[s]
 		label := fmt.Sprintf("阶段 %d：已完成 %d/%d", s, a.done, a.total)
-		if nextStage == 0 && s > closedStage && a.done < a.total {
+		if a.cancelled > 0 {
+			label += fmt.Sprintf("，已取消 %d", a.cancelled)
+		}
+		if nextStage == 0 && s > closedStage && a.terminal < a.total {
 			nextStage = s
 			label += "（下一阶段）"
 		}
@@ -427,24 +624,115 @@ func stageProgressSummary(children []db.Issue, closedStage int32, isTerminal fun
 	return strings.Join(parts, "; "), nextStage
 }
 
-// stageAdvanceInstruction 根据「当前已存在的子任务里、尚有待办工作的下一阶段」（nextStage，0 =
-// 无）返回追加在 staged child-done 系统评论末尾的指引文案。
+// countStageCancelled counts the cancelled children of one stage. The advance
+// instruction reports the number rather than the fact, because the agent it is
+// written for has to decide whether the next stage can start without that work:
+// "2 sub-issues cancelled" is checkable against the layout, "includes cancelled
+// items" is not.
+func countStageCancelled(children []db.Issue, stage int32, statusOf func(db.Issue) string) int {
+	n := 0
+	for _, child := range children {
+		if child.Stage.Valid && child.Stage.Int32 == stage && statusOf(child) == "cancelled" {
+			n++
+		}
+	}
+	return n
+}
+
+// subIssueCount renders a sub-issue count with the right plural.
+func subIssueCount(n int) string {
+	if n == 1 {
+		return "1 个子任务"
+	}
+	return fmt.Sprintf("%d 个子任务", n)
+}
+
+// batchClosedScopeHasCancelled reports whether this batch newly cancelled work
+// in any stage up to the highest closed stage represented by the aggregated
+// notification. It reads stage/status from the final sibling snapshot, using
+// the batch rows only as an ID set, so a concurrently moved child cannot make a
+// stale stage number leak into the decision.
+func batchClosedScopeHasCancelled(children, batchCompleted []db.Issue, closedStage int32, statusOf func(db.Issue) string) bool {
+	completedIDs := make(map[pgtype.UUID]struct{}, len(batchCompleted))
+	for _, child := range batchCompleted {
+		completedIDs[child.ID] = struct{}{}
+	}
+	for _, child := range children {
+		if _, ok := completedIDs[child.ID]; !ok {
+			continue
+		}
+		if child.Stage.Valid && child.Stage.Int32 <= closedStage && statusOf(child) == "cancelled" {
+			return true
+		}
+	}
+	return false
+}
+
+func anyCancelledChildren(children []db.Issue, statusOf func(db.Issue) string) bool {
+	for _, child := range children {
+		if statusOf(child) == "cancelled" {
+			return true
+		}
+	}
+	return false
+}
+
+// stageAdvanceInstruction returns the trailing instruction appended to a
+// staged child-done system comment, given the next stage with pending work
+// among the sub-issues that currently exist (nextStage, 0 = none).
 //
-//   - nextStage > 0：已存在含有未完成工作的更靠后阶段，直接把 leader 指向它。
-//   - nextStage == 0：在「目前已创建的子任务」范围内没有更靠后的阶段。这里刻意不断言流程
-//     已经结束：服务端没有声明式工作流模型——阶段由 agent 驱动、常常是惰性创建的（第 N+1 阶段
-//     的子任务要在第 N 阶段产出它们依赖的输入之后才写出来），所以这种流水线里的中间阶段和真正
-//     的最终阶段一样会走到 nextStage == 0。旧文案（「这是最后阶段，收尾父任务吧」）断言了服务端
-//     无法得知的最终性，会把 leader 往流程中途收尾上推（MUL-4062 / #4927）。现文案把两种可能
-//     都点明，把「创建下一阶段 vs 收尾」的决策交还给 leader。
-func stageAdvanceInstruction(nextStage int32, parentID string) string {
+//   - nextStage > 0: a later stage with unfinished work already exists, so
+//     point the leader at it.
+//   - nextStage == 0: no later stage exists *among the sub-issues created so
+//     far*. This deliberately does NOT assert that the workflow is finished.
+//     The server has no declarative workflow model — stages are agent-driven
+//     and often created lazily (stage N+1's sub-issues are only written after
+//     stage N produces the inputs they depend on), so an intermediate stage in
+//     such a pipeline reaches nextStage == 0 exactly like a true final stage
+//     does. The old wording ("This was the final stage. Wrap up the parent")
+//     asserted a finality the server cannot know and pushed leaders to wrap up
+//     mid-workflow (MUL-4062 / #4927). The message now names both possibilities
+//     and hands the create-next-vs-wrap-up decision back to the leader.
+//   - stageCancelled: how many sub-issues of the stage this comment names were
+//     cancelled. Non-zero also means the headline above calls the stage
+//     `closed` rather than complete, so the instruction says "结束" to
+//     match rather than contradicting its own comment with "完成".
+//   - scopeCancelled: whether anything the update closed was cancelled, which
+//     for a batch includes lower stages that carry no count of their own. It
+//     decides whether the warning renders at all; stageCancelled decides
+//     whether the warning can be specific. The server still does not decide
+//     the dependency question itself either way.
+func stageAdvanceInstruction(nextStage int32, parentID string, stageCancelled int, scopeCancelled bool) string {
+	var instruction string
 	if nextStage > 0 {
-		return fmt.Sprintf(
+		instruction = fmt.Sprintf(
 			" 下一步是阶段 %d。请先通过 `multica issue children %s` 查看完整结构；确认阶段 %d 的依赖已经满足后，再把其中处于 `backlog` 的子任务推进到 `todo`。请逐条阅读子任务描述，只推进明确满足依赖的任务；如果描述与父任务概览冲突，先保留在 `backlog` 并留言确认。",
 			nextStage, parentID, nextStage,
 		)
+	} else {
+		verb := "完成"
+		if stageCancelled > 0 {
+			verb = "结束"
+		}
+		instruction = fmt.Sprintf(" %s当前阶段不代表整个任务已经完成。请判断父任务是否真正完成：如果完成，请汇总结果并运行 `multica issue status %s in_review` 标记为待评审；如果仍需要下一阶段，请创建该阶段及其子任务。", verb, parentID)
 	}
-	return fmt.Sprintf(" 当前阶段结束不代表整个任务已经完成。请判断父任务是否真正完成：如果完成，请汇总结果并运行 `multica issue status %s in_review` 标记为待评审；如果仍需要下一阶段，请立即创建该阶段及其子任务。", parentID)
+	if !scopeCancelled {
+		return instruction
+	}
+	// Only the named stage has a count attached to it. A batch that also closed
+	// lower stages has no single stage to name, so it keeps the general warning
+	// rather than reporting a number that would not match any one stage.
+	if stageCancelled == 0 {
+		return instruction + " 刚结束的工作包含已取消项：推进前请确认被取消的工作不是后续任务的依赖。不确定时先不要推进或创建下一阶段，请留言确认。"
+	}
+	if nextStage > 0 {
+		return instruction + fmt.Sprintf(" 刚结束的阶段有 %s已取消：推进前请确认阶段 %d 不依赖被取消的工作。不确定时先不要推进，请留言确认。", subIssueCount(stageCancelled), nextStage)
+	}
+	return instruction + fmt.Sprintf(" 刚结束的阶段有 %s已取消：推进前请确认被取消的工作不是后续任务的依赖。不确定时先不要创建下一阶段，请留言确认。", subIssueCount(stageCancelled))
+}
+
+func unstagedCancellationInstruction() string {
+	return " 推进父任务前，请确认后续任务不需要被取消的工作。不确定时保留父任务当前状态，请留言确认。"
 }
 
 // sanitizeChildTitleForSystemComment 在子任务标题被嵌入父级系统评论前，去掉其中的提及式

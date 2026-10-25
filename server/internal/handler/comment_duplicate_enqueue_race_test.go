@@ -28,7 +28,7 @@ func dupRaceFixture(t *testing.T, agentName string, issueNumber int) (agentID, i
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position, assignee_type, assignee_id)
-		VALUES ($1, 'dup-enqueue-race fixture', 'in_progress', 'none', $2, 'member', $3, 0, 'agent', $4)
+		VALUES ($1, 'dup-enqueue-race fixture', 'in_progress', 'not_important_not_urgent', $2, 'member', $3, 0, 'agent', $4)
 		RETURNING id
 	`, testWorkspaceID, testUserID, issueNumber, agentID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)

@@ -15,24 +15,37 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// failNthBeginTxStarter fails the Nth Begin so a specific ClaimTask inside the
-// batch loop errors AFTER earlier ones have committed.
-type failNthBeginTxStarter struct {
+// 只让第二次真正的任务认领失败，避免事务准备步骤变化让故障打到错误阶段。
+type failSecondClaimStarter struct {
 	inner  TxStarter
-	failOn int
 	mu     sync.Mutex
-	count  int
+	claims int
 }
 
-func (s *failNthBeginTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
-	s.mu.Lock()
-	s.count++
-	n := s.count
-	s.mu.Unlock()
-	if n == s.failOn {
-		return nil, fmt.Errorf("injected begin failure #%d", n)
+func (s *failSecondClaimStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.inner.Begin(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return s.inner.Begin(ctx)
+	return &failSecondClaimTx{Tx: tx, starter: s}, nil
+}
+
+type failSecondClaimTx struct {
+	pgx.Tx
+	starter *failSecondClaimStarter
+}
+
+func (tx *failSecondClaimTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if strings.Contains(sql, "-- name: ClaimAgentTask :one") {
+		tx.starter.mu.Lock()
+		tx.starter.claims++
+		n := tx.starter.claims
+		tx.starter.mu.Unlock()
+		if n == 2 {
+			return errRow{fmt.Errorf("injected second claim failure")}
+		}
+	}
+	return tx.Tx.QueryRow(ctx, sql, args...)
 }
 
 // candidateFailDBTX passes every statement through EXCEPT the batch candidate
@@ -63,10 +76,7 @@ func (f candidateFailDBTX) QueryRow(ctx context.Context, sql string, args ...int
 func TestClaimTasksForRuntimes_PartialSuccessOnSecondAgentClaimFailure(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
-	// Begin order is: deferred promotion, first claim, first agent-status
-	// reconciliation, then the second claim. Fail the latter after the first
-	// dispatched task and its status projection have committed.
-	tx := &failNthBeginTxStarter{inner: pool, failOn: 4}
+	tx := &failSecondClaimStarter{inner: pool}
 	svc := NewTaskService(db.New(pool), tx, nil, events.New())
 
 	rt1, rt2 := batchClaimFixture(t, ctx, pool)
@@ -114,7 +124,7 @@ func TestClaimTasksForRuntimes_PartialSuccessOnCandidateQueryFailureAfterReclaim
 	var issueID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'stale dispatched', 'in_progress', 'none', $2, 'member', 900123, 99)
+		VALUES ($1, 'stale dispatched', 'in_progress', 'not_important_not_urgent', $2, 'member', 900123, 99)
 		RETURNING id`, workspaceID, ownerID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}

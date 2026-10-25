@@ -571,7 +571,8 @@
     "trigger_blocked_runtime_access_denied": "This target's agent can't run on its private runtime — make the runtime public, or rebind/copy the agent to one its owner can use",
     "trigger_blocked_short_runtime_access_denied": "No runtime access",
     "deleted_placeholder": "This comment was deleted",
-    "delete_desc_replies_kept": "This comment will be permanently deleted. Its replies stay in the thread. This cannot be undone."
+    "delete_desc_replies_kept": "This comment will be permanently deleted. Its replies stay in the thread. This cannot be undone.",
+    "all_members_notice": "Member broadcast · @all does not start agents"
   },
   "reply": {
     "placeholder": "Leave a reply...",

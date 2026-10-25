@@ -819,6 +819,7 @@ function CommentRow({
               <CommentTriggerChips
                 agents={edit.triggerPreview.agents}
                 blocked={edit.triggerPreview.blocked}
+                hasAllMembersMention={edit.triggerPreview.hasAllMembersMention}
                 draftContent={edit.content}
                 reviewReply={edit.triggerPreview.reviewReply}
                 suppressedAgentIds={edit.suppressedAgentIds}
@@ -1175,6 +1176,7 @@ function CommentCardImpl({
                     <CommentTriggerChips
                       agents={edit.triggerPreview.agents}
                       blocked={edit.triggerPreview.blocked}
+                      hasAllMembersMention={edit.triggerPreview.hasAllMembersMention}
                       draftContent={edit.content}
                       reviewReply={edit.triggerPreview.reviewReply}
                       suppressedAgentIds={edit.suppressedAgentIds}

@@ -1336,72 +1336,10 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 	return task, nil
 }
 
-// EnqueueDeferredAssigneeFallback 创建一个惰性任务：只有 PromotedDueDeferredTasksForRuntime 把它从 deferred
-// 翻成 queued 后才可认领。用于“主路由任务在规定时间内无人接管”的降级指派场景。
-func (s *TaskService) EnqueueDeferredAssigneeFallback(ctx context.Context, issue db.Issue, agentID, squadID pgtype.UUID, escalationForTaskID pgtype.UUID, triggerCommentID pgtype.UUID, fireAt time.Time) (db.AgentTaskQueue, error) {
-	agent, err := s.Queries.GetAgent(ctx, agentID)
-	if err != nil {
-		slog.Error("deferred fallback enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
-		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
-	}
-	if agent.ArchivedAt.Valid {
-		slog.Debug("deferred fallback enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
-		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
-	}
-	if !agent.RuntimeID.Valid {
-		slog.Error("deferred fallback enqueue failed: agent has no runtime", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
-		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
-	}
-
-	// 降级指派者与主路由任务响应的是同一条触发评论，因此从该评论解析 attribution（成员作者 → direct_human；
-	// agent 作者 → comment_source 链）并在创建时盖章。之后 Promotion 只翻状态，在这里盖章可让最终运行避开
-	// NULL-source 旁路（MUL-4302 §2）。overlay 刻意留给既有提升路径——本次改动仅涉及 attribution。此处没有
-	// 直接 actor：降级由评论路由，attribution 随评论走。
-	attr := s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceCommentSource, pgtype.UUID{})
-	// 没有精确人类 → owner_fallback（accountable = agent owner），
-	// 工作区为 fail-closed 时拒绝入队（MUL-4302 §3.5）。
-	attr, err = s.applyAttributionFallback(ctx, attr, agent)
-	if err != nil {
-		slog.Warn("deferred fallback enqueue refused: attribution fail-closed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
-		return db.AgentTaskQueue{}, err
-	}
-	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
-	isLeader := squadID.Valid
-	task, err := s.Queries.CreateDeferredAgentTask(ctx, db.CreateDeferredAgentTaskParams{
-		ID:                   dbid.NewV7(),
-		AgentID:              agentID,
-		RuntimeID:            agent.RuntimeID,
-		IssueID:              issue.ID,
-		Priority:             priorityToInt(issue.Priority),
-		TriggerCommentID:     triggerCommentID,
-		TriggerSummary:       s.buildCommentTriggerSummary(ctx, issue.WorkspaceID, triggerCommentID),
-		IsLeaderTask:         pgtype.Bool{Bool: isLeader, Valid: isLeader},
-		SquadID:              squadID,
-		EscalationForTaskID:  escalationForTaskID,
-		FireAt:               pgtype.Timestamptz{Time: fireAt, Valid: true},
-		OriginatorUserID:     attr.UserID,
-		AccountableUserID:    attr.AccountableUserID,
-		OriginatorSource:     attrSource,
-		DelegatedFromTaskID:  attrDelegatedFrom,
-		TriggerEvidenceKind:  attrEvidenceKind,
-		TriggerEvidenceRefID: attrEvidenceRef,
-	})
-	if err != nil {
-		slog.Error("deferred fallback enqueue failed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
-		return db.AgentTaskQueue{}, fmt.Errorf("create deferred task: %w", err)
-	}
-
-	slog.Info("deferred fallback task enqueued",
-		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"agent_id", util.UUIDToString(agentID),
-		"fire_at", fireAt.UTC().Format(time.RFC3339),
-	)
-	return task, nil
-}
-
-// QuickCreateContext 是 quick-create 任务 context 列上存的 JSON 载荷。daemon 通过 Type == "quick_create"
-// 识别该变体并切换 quick-create 提示词模板；完成路径用 RequesterID + WorkspaceID 写收件箱通知。
+// QuickCreateContext is the JSON payload stored on a quick-create task's
+// context column. The daemon detects this variant via Type == "quick_create"
+// and switches to the quick-create prompt template; the completion path
+// uses RequesterID + WorkspaceID to write the inbox notification.
 //
 // ProjectID 是用户在弹窗里选的项目（可选）。非空时 daemon 认领会解析项目标题与资源，提示词模板指示 agent
 // 传 `--project <uuid>`，使新 issue 落到该项目下。
@@ -3772,7 +3710,7 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		return nil, fmt.Errorf("promote deferred tasks: %w", err)
 	}
 	for _, task := range promoted {
-		slog.Info("deferred fallback task promoted (batch)",
+		slog.Info("deferred task promoted (batch)",
 			"task_id", util.UUIDToString(task.ID),
 			"runtime_id", util.UUIDToString(task.RuntimeID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -3955,7 +3893,7 @@ func (s *TaskService) cancelSupersededDeferredRetries(ctx context.Context, runti
 		return
 	}
 	for _, task := range cancelled {
-		slog.Info("deferred auto-retry cancelled: superseded by an active task",
+		slog.Info("deferred task cancelled during promotion",
 			"task_id", util.UUIDToString(task.ID),
 			"issue_id", util.UUIDToString(task.IssueID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -3982,7 +3920,7 @@ func (s *TaskService) PromoteDueDeferredTasksForRuntime(ctx context.Context, run
 		return fmt.Errorf("promote due deferred tasks: %w", err)
 	}
 	for _, task := range tasks {
-		slog.Info("deferred fallback task promoted",
+		slog.Info("deferred task promoted",
 			"task_id", util.UUIDToString(task.ID),
 			"runtime_id", util.UUIDToString(runtimeID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -4022,6 +3960,11 @@ func (s *TaskService) promoteDeferredTasks(ctx context.Context, runtimeIDs []pgt
 		if err != nil {
 			return fmt.Errorf("cancel superseded deferred retries: %w", err)
 		}
+		retired, err := qtx.CancelRetiredAssigneeFallbacksForRuntimes(ctx, runtimeIDs)
+		if err != nil {
+			return fmt.Errorf("retire assignee fallbacks: %w", err)
+		}
+		cancelled = append(cancelled, retired...)
 		if batch {
 			promoted, err = qtx.PromoteDueDeferredTasksForRuntimes(ctx, db.PromoteDueDeferredTasksForRuntimesParams{
 				RuntimeIds: runtimeIDs, RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
@@ -4036,8 +3979,12 @@ func (s *TaskService) promoteDeferredTasks(ctx context.Context, runtimeIDs []pgt
 		}
 		persisted = make([]events.Event, 0, len(cancelled)+len(promoted))
 		for _, task := range cancelled {
+			reason := "superseded_by_newer_task"
+			if task.FailureReason.String == "assignee_fallback_retired" {
+				reason = task.FailureReason.String
+			}
 			event, eventErr := recordTaskTerminalEventTx(ctx, qtx, protocol.EventTaskCancelled, task,
-				taskFailedFields("", "superseded_by_newer_task", false))
+				taskFailedFields("", reason, false))
 			if eventErr != nil {
 				return fmt.Errorf("record superseded retry cancellation: %w", eventErr)
 			}
@@ -4060,7 +4007,7 @@ func (s *TaskService) promoteDeferredTasks(ctx context.Context, runtimeIDs []pgt
 		return nil, err
 	}
 	for i, task := range cancelled {
-		slog.Info("deferred auto-retry cancelled: superseded by an active task",
+		slog.Info("deferred task cancelled during promotion",
 			"task_id", util.UUIDToString(task.ID),
 			"issue_id", util.UUIDToString(task.IssueID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -4168,7 +4115,6 @@ func (s *TaskService) StartTaskForClaim(ctx context.Context, claim db.LockAgentT
 
 func (s *TaskService) taskStarted(ctx context.Context, task db.AgentTaskQueue, runningEvent events.Event) {
 	s.forgetTaskReclaim(task)
-	s.cancelDeferredEscalationsForTask(ctx, task.ID)
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskStarted(ctx, task)
@@ -4185,48 +4131,8 @@ func (s *TaskService) taskStarted(ctx context.Context, task db.AgentTaskQueue, r
 	}
 }
 
-// cancelDeferredEscalationsForTask 在任务被“主运行”真正接管（started）时，取消针对它的全部延时降级
-// （assignee fallback）任务并记日志。
-func (s *TaskService) cancelDeferredEscalationsForTask(ctx context.Context, taskID pgtype.UUID) {
-	cancelled, err := s.Queries.CancelDeferredEscalationsForTask(ctx, taskID)
-	if err != nil {
-		slog.Warn("cancel deferred escalations for task failed", "task_id", util.UUIDToString(taskID), "error", err)
-		return
-	}
-	for _, task := range cancelled {
-		slog.Info("deferred fallback task cancelled",
-			"task_id", util.UUIDToString(task.ID),
-			"primary_task_id", util.UUIDToString(taskID),
-			"reason", "primary_acknowledged",
-		)
-	}
-}
-
-// CancelDeferredEscalationsForIssueAgent 取消“为该 issue+agent 排程的延时降级任务”——当 agent 在该 issue
-// 上发表了评论、证明自己已接管时调用。
-func (s *TaskService) CancelDeferredEscalationsForIssueAgent(ctx context.Context, issueID, agentID pgtype.UUID) {
-	cancelled, err := s.Queries.CancelDeferredEscalationsForIssueAgent(ctx, db.CancelDeferredEscalationsForIssueAgentParams{
-		IssueID: issueID,
-		AgentID: agentID,
-	})
-	if err != nil {
-		slog.Warn("cancel deferred escalations for issue agent failed",
-			"issue_id", util.UUIDToString(issueID),
-			"agent_id", util.UUIDToString(agentID),
-			"error", err)
-		return
-	}
-	for _, task := range cancelled {
-		slog.Info("deferred fallback task cancelled",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issueID),
-			"agent_id", util.UUIDToString(agentID),
-			"reason", "agent_comment_acknowledged",
-		)
-	}
-}
-
-// ExtendTaskPrepareLease 在 daemon 解析缓存输入、准备执行环境期间，让“已认领但未开始”的任务保持受保护。
+// ExtendTaskPrepareLease keeps a claimed-but-not-started task protected while
+// the daemon resolves cached inputs and prepares the execution environment.
 func (s *TaskService) ExtendTaskPrepareLease(ctx context.Context, taskID, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	task, err := s.Queries.ExtendAgentTaskPrepareLease(ctx, db.ExtendAgentTaskPrepareLeaseParams{
 		ID:        taskID,
@@ -4496,9 +4402,6 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 	// 修改 4. 同步任务结束时批次没走完成流程，就不能继续挂成活动批次。
 	s.closeUpstreamRuns(ctx, task, "interrupted", "任务结束时批次未推进")
 
-	if len(issueReplyEvents) > 0 {
-		s.CancelDeferredEscalationsForIssueAgent(ctx, task.IssueID, task.AgentID)
-	}
 	for _, event := range issueReplyEvents {
 		publishCommittedEvent(s.Bus, event)
 	}
@@ -6023,10 +5926,6 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 		}
 		return nil, fmt.Errorf("load source issue: %w", err)
 	}
-	effectiveStatus := issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status)
-	if effectiveStatus == issuestatus.Done || effectiveStatus == issuestatus.Cancelled || effectiveStatus == issuestatus.Backlog {
-		return nil, nil
-	}
 	agent, err := q.GetAgent(ctx, source.AgentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -6289,11 +6188,44 @@ func (s *TaskService) exhaustDelegatedFailureRecovery(ctx context.Context, targe
 	return created, nil
 }
 
+// canDispatchDelegatedFailureRecovery 与 SQL 的领取前状态筛选使用本站七类生命周期。
+func canDispatchDelegatedFailureRecovery(ctx context.Context, q *db.Queries, issue db.Issue) (bool, error) {
+	status := issue.Status
+	if !issuestatus.IsBuiltIn(status) {
+		entry, err := q.GetIssueStatusEntryByKey(ctx, db.GetIssueStatusEntryByKeyParams{WorkspaceID: issue.WorkspaceID, Key: status})
+		if err != nil {
+			return false, fmt.Errorf("resolve recovery lifecycle: %w", err)
+		}
+		if !issuestatus.IsCategory(entry.Category) {
+			return false, fmt.Errorf("unknown recovery lifecycle %q", entry.Category)
+		}
+		status = entry.Category
+	}
+	switch status {
+	case "todo", "in_progress", "in_review", "blocked":
+		return true, nil
+	}
+	return false, nil
+}
+
 // dispatchDelegatedFailureRecovery 把恢复评论路由给源协调者，而不依赖通用 mention 解析：有预认领任务就并入它；
 // 否则创建一条专用 queued 后继。唯一同时阻断两种写入的状态是 dispatched 任务（认领载荷已构建、pending-task
 // 唯一槽位仍被持有），该窄竞态下把评论登记为“已计划但未投递”，让完成调和来安排后续。三轮循环围住这些写入
 // 闭合状态变化。
 func (s *TaskService) dispatchDelegatedFailureRecovery(ctx context.Context, target *delegatedFailureRecoveryTarget, excludeTaskID pgtype.UUID) (delegatedFailureRecoveryDispatchOutcome, error) {
+	// 信号已持久化；暂停或无法解析的状态留待后续调度，不消耗执行名额。
+	issue, err := s.Queries.GetIssue(ctx, target.issue.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return delegatedFailureRecoveryCovered, nil
+	}
+	if err != nil {
+		return delegatedFailureRecoveryCovered, err
+	}
+	allowed, err := canDispatchDelegatedFailureRecovery(ctx, s.Queries, issue)
+	if err != nil || !allowed {
+		return delegatedFailureRecoveryCovered, err
+	}
+	target.issue = issue
 	const maxAttempts = 3
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		covered, err := s.Queries.HasTaskCoveringDelegatedFailureComment(ctx, db.HasTaskCoveringDelegatedFailureCommentParams{
@@ -7340,7 +7272,6 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 	if err := tx.Commit(ctx); err != nil {
 		return
 	}
-	s.CancelDeferredEscalationsForIssueAgent(ctx, issueID, agentID)
 	for _, event := range replyEvents {
 		publishCommittedEvent(s.Bus, event)
 	}

@@ -1378,55 +1378,26 @@ const (
 	commentTriggerSourceReviewAssignee commentAgentTriggerSource = "review_followup_assignee"
 )
 
-// defaultCommentRoutingEscalationDelay 是评论路由的默认升级延迟（没配 settings 时），
-// 到期后若主触发 agent 没回应，会把评论升级兜底给受理人。
-const defaultCommentRoutingEscalationDelay = 5 * time.Minute
-
-// commentRoutingEscalationDelay 读工作区 settings 里 comment_routing.escalation_seconds
-// 自定义升级延迟；未配置/非法时回落默认值，显式 <=0 表示关闭升级。
-func (h *Handler) commentRoutingEscalationDelay(ctx context.Context, workspaceID pgtype.UUID) time.Duration {
-	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
-	if err != nil || len(ws.Settings) == 0 {
-		return defaultCommentRoutingEscalationDelay
-	}
-
-	var settings struct {
-		CommentRouting struct {
-			EscalationSeconds *int `json:"escalation_seconds"`
-		} `json:"comment_routing"`
-	}
-	if err := json.Unmarshal(ws.Settings, &settings); err != nil || settings.CommentRouting.EscalationSeconds == nil {
-		return defaultCommentRoutingEscalationDelay
-	}
-	if *settings.CommentRouting.EscalationSeconds <= 0 {
-		return 0
-	}
-	return time.Duration(*settings.CommentRouting.EscalationSeconds) * time.Second
-}
-
-// commentEscalationFallback 是一次路由的升级兜底目标：主 agent 超时未回应时把评论升级给
-// issue 的受理 agent（或受理 squad 的 leader）。
-type commentEscalationFallback struct {
-	Agent db.Agent
-	Squad *db.Squad
-}
-
-// commentAgentTrigger 描述一次已解析的 agent 触发：触发的 agent、来源、可选 squad 上下文、
-// 升级兜底，以及是否已存在待处理任务（可折叠入队）。
 type commentAgentTrigger struct {
-	Agent              db.Agent
-	Source             commentAgentTriggerSource
-	Squad              *db.Squad
-	EscalationFallback *commentEscalationFallback
-	AlreadyPending     bool
+	Agent          db.Agent
+	Source         commentAgentTriggerSource
+	Squad          *db.Squad
+	AlreadyPending bool
+	// 仅重放已登记输入的小队工作成员交接。
+	NonLeaderAgentReply bool
 }
 
 // commentTriggerComputeOptions 携带触发计算所需的调用上下文。
 type commentTriggerComputeOptions struct {
 	ExcludeTriggerCommentID pgtype.UUID
-	// OriginatorUserID 是这次触发顶层的人类用户 id（MUL-3963）。只在 AGENT 角色时起作用——
-	// canInvokeAgent 按发起人而非直接 agent 主体验证 A2A。member 自己就是发起人，member 触发
-	// 时可为空。
+	// AuthoringTaskID is the server-trusted task that wrote an agent comment.
+	// It lets a worker result continue the exact guest squad-leader delegation
+	// without guessing from squad membership or the issue assignee.
+	AuthoringTaskID pgtype.UUID
+	// OriginatorUserID is the top-of-chain human user id for this trigger
+	// (MUL-3963). Only consulted for AGENT actors — canInvokeAgent judges A2A
+	// by the originator, not the immediate agent principal. Members are their
+	// own originator so this may be empty for member-authored triggers.
 	OriginatorUserID string
 
 	// AutopilotDelegationAuthorityUserID 是血缘验证过的 autopilot 创建者：无归属的 autopilot
@@ -1572,6 +1543,9 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	opts.OriginatorUserID = h.invokeOriginatorFromRequest(r, actorType, actorID)
+	if actorType == "agent" {
+		opts.AuthoringTaskID = h.commentSourceTaskID(r)
+	}
 	opts.AutopilotDelegationAuthorityUserID = h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
 	// 修改 3. 预览必须与真实派发用同一个任务级委托判定（GONG-83），否则「预览说会触发、保存后却被拒」
 	// （或反之）会让人照着错的结果决定要不要发。
@@ -1855,9 +1829,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if threadReopened {
 		h.publishEvent(unresolvedEvent)
 	}
-	if authorType == "agent" {
-		h.TaskService.CancelDeferredEscalationsForIssueAgent(r.Context(), issue.ID, comment.AuthorID)
-	}
 
 	originatorUserID := h.invokeOriginatorFromRequest(r, authorType, authorID)
 	// MUL-4857：从与发起人解析「同一」的服务端信任 X-Task-ID 头解析 autopilot 委派授权——
@@ -1924,6 +1895,7 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 	if isNoteComment(comment.Content) {
 		return commentTriggerDispatch{}
 	}
+	opts.AuthoringTaskID = comment.SourceTaskID
 	opts.ExcludeTriggerCommentID = comment.ID
 	triggers, targets, reviewReply := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
@@ -2000,15 +1972,6 @@ type commentEnqueueResult struct {
 // 合并运行永不丢命名目标的结果。queued / coalesced / deferred 都是成功形态（运行已被处理、
 // 无重复任务）；只有真正的入队失败是 blocked。
 func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, triggers []commentAgentTrigger) map[string]commentEnqueueResult {
-	var escalationDelay time.Duration
-	escalationDelayLoaded := false
-	getEscalationDelay := func() time.Duration {
-		if !escalationDelayLoaded {
-			escalationDelay = h.commentRoutingEscalationDelay(ctx, issue.WorkspaceID)
-			escalationDelayLoaded = true
-		}
-		return escalationDelay
-	}
 	results := make(map[string]commentEnqueueResult, len(triggers))
 	record := func(trigger commentAgentTrigger, status DispatchStatus, reason DispatchReasonCode) {
 		execSquadID := ""
@@ -2018,7 +1981,7 @@ func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issu
 		results[uuidToString(trigger.Agent.ID)] = commentEnqueueResult{status: status, reason: reason, execSquadID: execSquadID}
 	}
 	for _, trigger := range triggers {
-		status, reason := h.resolveCommentTriggerEnqueue(ctx, issue, trigger, triggerCommentID, getEscalationDelay)
+		status, reason := h.resolveCommentTriggerEnqueue(ctx, issue, trigger, triggerCommentID)
 		record(trigger, status, reason)
 	}
 	return results
@@ -2041,15 +2004,20 @@ func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issu
 //     claim-receipt 任务上（lost-race 路径，评论可能早于任务），要么评论比该任务新、落在
 //     reconcile 的 `created_at > since` 窗口内（AlreadyPending 路径，任务先于评论存在）。
 //
-// 推迟不是一次性的预测：若重放后来被一条盖不住该评论的任务挡住，reconcileCommentsOnCompletion
-// 会把义务转交（propagateUncoveredCommentObligation），并在挡路者的状态变化间重试（#5914，
-// Elon 第 8-9 轮）。唯一一个尽力形态是「不同 HEAD 的 QUEUED 挡路者」——它既盖不住评论、
-// 收下又会违反 TEN-356——这种情况以 error 记录而不隐藏；收掉它需要持久化义务记录，刻意
-// 不在本次范围内。
-// 绝不对当前活动任务做「分类」式推迟——快照读后证明不了任何状态（第 7 轮）。尚不能解决的
-// 重复会重试（以 maxAttempts 为界）；真正不收敛时返回诚实的 internal_error，绝不编造会悄悄
-// 丢弃评论的 deferred。
-func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Issue, trigger commentAgentTrigger, triggerCommentID pgtype.UUID, getEscalationDelay func() time.Duration) (DispatchStatus, DispatchReasonCode) {
+// The deferral is not a one-shot prediction: if a replay is later blocked by a
+// task that cannot cover the comment, reconcileCommentsOnCompletion hands the
+// obligation on (propagateUncoveredCommentObligation) instead of discarding it,
+// and that hand-off retries across the blocker's state changes (#5914, Elon
+// rounds 8–9). It is best-effort in exactly one shape — a DIFFERENT-head QUEUED
+// blocker, which can neither cover the comment nor accept it without violating
+// TEN-356 — and that case is logged at error rather than hidden; closing it needs
+// a durable obligation record, which is deliberately out of scope here.
+// It never defers off a mere classification of the current active tasks — a
+// snapshot cannot prove anything about state after it is read (round 7).
+// A duplicate that cannot yet be resolved re-loops (bounded by maxAttempts); on
+// genuine non-convergence it returns a truthful internal_error, never a fabricated
+// deferred that would silently drop the comment.
+func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Issue, trigger commentAgentTrigger, triggerCommentID pgtype.UUID) (DispatchStatus, DispatchReasonCode) {
 	pending := trigger.AlreadyPending
 	lostRace := false
 	// 懒解析被 review 过的 HEAD、最多一次——常见的非待处理路径根本不需要它，因此保持在热
@@ -2083,7 +2051,7 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 				return status, reason
 			}
 			// 没有可折入的同 HEAD QUEUED 行（合并未命中）。两条路径解析不同。
-			if !lostRace {
+			if !lostRace && !trigger.NonLeaderAgentReply {
 				// (b) AlreadyPending 路径：这条评论晚于它的任务到达，因此比任务新、完成 reconcile
 				// 按时间戳盖得住它；MUL-4195 保持已 claim 的任务不动。推迟给活动任务；任务若已
 				// 结束则全新入队。
@@ -2099,7 +2067,7 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 				// 原子合并），把「丢」变成有界跟进（#5914，Elon 第 2 轮）。
 				registered, err := h.registerPlannedCommentForActiveTask(ctx, issue, trigger.Agent.ID, triggerCommentID, getHeadSha())
 				if err != nil {
-					slog.Warn("register planned lost-race comment failed",
+					slog.Warn("register planned comment failed",
 						"issue_id", uuidToString(issue.ID), "agent_id", uuidToString(trigger.Agent.ID), "error", err)
 					return DispatchBlocked, ReasonInternalError
 				}
@@ -2117,9 +2085,11 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 				// 不承诺它。）
 			}
 		}
-		if err := h.enqueueSingleCommentTrigger(ctx, issue, triggerCommentID, trigger, getEscalationDelay); err != nil {
-			// 入队竞态输了：这条 (issue, agent) 现在有了兄弟任务。重解析为 pending，让下一次
-			// 尝试把评论折进兄弟（queued）或持久登记它（dispatched），而不是丢弃（#5914）。
+		if err := h.enqueueSingleCommentTrigger(ctx, issue, triggerCommentID, trigger); err != nil {
+			// Lost the enqueue race: a sibling task for this (issue, agent) now
+			// exists. Re-resolve as pending so the next attempt folds this
+			// comment into that sibling (queued) or durably registers it
+			// (dispatched) instead of dropping it (#5914).
 			if errors.Is(err, service.ErrDuplicatePendingTask) {
 				pending = true
 				lostRace = true
@@ -2360,7 +2330,7 @@ func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue
 		}
 		return false, err
 	}
-	slog.Info("registered lost-race comment as planned follow-up input",
+	slog.Info("registered comment as planned follow-up input",
 		"task_id", uuidToString(row.ID),
 		"issue_id", uuidToString(issue.ID),
 		"agent_id", uuidToString(agentID),
@@ -2392,7 +2362,6 @@ func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue
 // 收不下该评论」的任务占着（不同 HEAD 的 QUEUED 挡路者）才返回 false；调用方大声记录该情况——
 // 这是当前 schema 没有安全车位的一种形态，收掉它需要持久化义务记录而不是请求内交接。
 func (h *Handler) propagateUncoveredCommentObligation(ctx context.Context, issue db.Issue, trigger commentAgentTrigger, commentID pgtype.UUID, headSha pgtype.Text) bool {
-	noEscalation := func() time.Duration { return 0 }
 	const maxAttempts = 3
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		registered, err := h.registerPlannedCommentForActiveTask(ctx, issue, trigger.Agent.ID, commentID, pgtype.Text{})
@@ -2406,7 +2375,7 @@ func (h *Handler) propagateUncoveredCommentObligation(ctx context.Context, issue
 		if h.mergeCommentIntoPendingTask(ctx, issue, trigger, commentID, headSha) == commentMergeSucceeded {
 			return true
 		}
-		err = h.enqueueSingleCommentTrigger(ctx, issue, commentID, trigger, noEscalation)
+		err = h.enqueueSingleCommentTrigger(ctx, issue, commentID, trigger)
 		if err == nil {
 			return true
 		}
@@ -2430,11 +2399,13 @@ func logCommentEnqueueFailure(msg string, err error, attrs ...any) {
 	slog.Warn(msg, append(attrs, "error", err)...)
 }
 
-// enqueueSingleCommentTrigger 为一条已计算的触发新建任务。从 enqueueCommentAgentTriggers
-// 拆出来，让 merge-not-drop 路径（MUL-4195）在待处理任务中途消失时可以回退到它。返回主要的
-// 入队错误（成功为 nil），调用方据此上报 trigger_outcome（MUL-4525 §2）。次要工作（推迟的
-// 升级兜底）保持尽力记录，不影响返回的错误。
-func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, trigger commentAgentTrigger, getEscalationDelay func() time.Duration) error {
+// enqueueSingleCommentTrigger creates a fresh task for one computed trigger.
+// Split out of enqueueCommentAgentTriggers so the merge-not-drop path
+// (MUL-4195) can fall back to it when a pending task vanished mid-flight.
+// enqueueSingleCommentTrigger enqueues one resolved trigger and returns the
+// enqueue error (nil on success) so the caller can surface a
+// trigger_outcome (MUL-4525 §2).
+func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, trigger commentAgentTrigger) error {
 	switch trigger.Source {
 	case commentTriggerSourceIssueAssignee:
 		if trigger.Squad != nil {
@@ -2466,16 +2437,12 @@ func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issu
 			return err
 		}
 	case commentTriggerSourceThreadParent, commentTriggerSourceConversation, commentTriggerSourceReviewAssignee:
-		var task db.AgentTaskQueue
 		var err error
-		// 7. A reviewer-handover is thread-linked like a parent-author reply: the run
-		// answers in the same thread, so the reply keeps its parent_id. A squad owner
-		// still runs as its leader with the squad context.
-		if trigger.Squad != nil &&
-			(trigger.Source == commentTriggerSourceConversation || trigger.Source == commentTriggerSourceReviewAssignee) {
-			task, err = h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, trigger.Agent.ID, trigger.Squad.ID, triggerCommentID)
+		// 父评论、会话续接和审查转交都延续已核实的小队长角色。
+		if trigger.Squad != nil {
+			_, err = h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, trigger.Agent.ID, trigger.Squad.ID, triggerCommentID)
 		} else {
-			task, err = h.TaskService.EnqueueTaskForThreadParent(ctx, issue, trigger.Agent.ID, triggerCommentID)
+			_, err = h.TaskService.EnqueueTaskForThreadParent(ctx, issue, trigger.Agent.ID, triggerCommentID)
 		}
 		if err != nil {
 			logCommentEnqueueFailure("enqueue routed comment agent task failed", err,
@@ -2483,20 +2450,6 @@ func (h *Handler) enqueueSingleCommentTrigger(ctx context.Context, issue db.Issu
 				"agent_id", uuidToString(trigger.Agent.ID),
 				"source", trigger.Source)
 			return err
-		}
-		if trigger.EscalationFallback == nil || getEscalationDelay() <= 0 {
-			return nil
-		}
-		var squadID pgtype.UUID
-		if trigger.EscalationFallback.Squad != nil {
-			squadID = trigger.EscalationFallback.Squad.ID
-		}
-		if _, err := h.TaskService.EnqueueDeferredAssigneeFallback(ctx, issue, trigger.EscalationFallback.Agent.ID, squadID, task.ID, triggerCommentID, time.Now().Add(getEscalationDelay())); err != nil {
-			slog.Warn("enqueue deferred assignee fallback failed",
-				"issue_id", uuidToString(issue.ID),
-				"primary_agent_id", uuidToString(trigger.Agent.ID),
-				"fallback_agent_id", uuidToString(trigger.EscalationFallback.Agent.ID),
-				"error", err)
 		}
 	}
 	return nil
@@ -2533,13 +2486,22 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 	}
 
 	if actorType != "member" {
-		// agent 写的评论不参与成员驱动的会话路由（父作者 / 线程根延续）与成员受理人回退。
-		// 它们保留一条 MUL-3794 之后恢复的窄路径（MUL-3879）：worker-agent 在 squad 受理的
-		// issue 上写结果评论仍可唤醒被分配的 squad leader，leader→worker→leader 的协作环因此
-		// 保持闭合。leader 自我触发守卫在 routeAssignedSquadLeaderFallback。显式 @agent / @squad
-		// 提及已在上面处理，这里不会把提及目标与受理 leader 重复入队。
+		// Agent-authored comments do not participate in the member-driven
+		// conversation routing (parent-author / thread-root continuation) or
+		// the member assignee fallback. Worker-result comments retain the
+		// leader→worker→leader loop: the assigned squad is resolved from the
+		// issue (MUL-3879), while a guest squad is resolved from the exact
+		// covered leader delegation (GH-8301). Explicit @agent / @squad mentions
+		// are already handled above, so neither fallback double-enqueues a
+		// mentioned target.
+		if actorType == "agent" {
+			if triggers, handled := h.routeGuestSquadLeaderFallback(ctx, issue, parentComment, actorID, opts); handled {
+				return triggers, nil, nil
+			}
+		}
 		if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" {
 			if trigger, ok := h.routeAssignedSquadLeaderFallback(ctx, issue, actorType, actorID, opts); ok {
+				trigger.NonLeaderAgentReply = actorType == "agent" && actorID != uuidToString(trigger.Agent.ID)
 				return []commentAgentTrigger{trigger}, nil, nil
 			}
 		}
@@ -2562,13 +2524,6 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		if !ok {
 			return nil, nil, nil
 		}
-		if fallback, ok := h.routeAssigneeFallback(ctx, issue, actorType, actorID, opts); ok &&
-			uuidToString(fallback.Agent.ID) != uuidToString(trigger.Agent.ID) {
-			trigger.EscalationFallback = &commentEscalationFallback{
-				Agent: fallback.Agent,
-				Squad: fallback.Squad,
-			}
-		}
 		return []commentAgentTrigger{trigger}, nil, nil
 	}
 
@@ -2577,15 +2532,6 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		if handled {
 			if len(triggers) == 0 {
 				return nil, nil, nil
-			}
-			if len(triggers) == 1 {
-				if fallback, ok := h.routeAssigneeFallback(ctx, issue, actorType, actorID, opts); ok &&
-					uuidToString(fallback.Agent.ID) != uuidToString(triggers[0].Agent.ID) {
-					triggers[0].EscalationFallback = &commentEscalationFallback{
-						Agent: fallback.Agent,
-						Squad: fallback.Squad,
-					}
-				}
 			}
 			return triggers, nil, nil
 		}
@@ -2641,10 +2587,79 @@ func (h *Handler) routeReplyToParentAuthor(ctx context.Context, issue db.Issue, 
 	if err != nil {
 		return commentAgentTrigger{}, false
 	}
-	return commentAgentTrigger{Agent: agent, Source: commentTriggerSourceThreadParent, AlreadyPending: hasPending}, true
+	trigger := commentAgentTrigger{Agent: agent, Source: commentTriggerSourceThreadParent, AlreadyPending: hasPending}
+	if squad, ok := h.squadLeaderRoleOfAuthoringTask(ctx, issue, *parent, agent); ok {
+		trigger.Squad = squad
+	}
+	return trigger, true
 }
 
-// conversationRoutedAgentInfo 记录会话延续路由里某个 agent 关联的 squad（若经 squad 加入）。
+// 只延续被回复评论自身执行记录证明的小队长角色，归档或已换队长时按普通回复处理。
+func (h *Handler) squadLeaderRoleOfAuthoringTask(ctx context.Context, issue db.Issue, parent db.Comment, agent db.Agent) (*db.Squad, bool) {
+	if !parent.SourceTaskID.Valid {
+		return nil, false
+	}
+	task, err := h.Queries.GetAgentTask(ctx, parent.SourceTaskID)
+	if err != nil || !task.IsLeaderTask || !task.SquadID.Valid || task.IssueID != issue.ID || task.AgentID != parent.AuthorID {
+		return nil, false
+	}
+	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          task.SquadID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil || squad.ArchivedAt.Valid || uuidToString(squad.LeaderID) != uuidToString(agent.ID) {
+		return nil, false
+	}
+	return &squad, true
+}
+
+// routeGuestSquadLeaderFallback closes the leader→worker→leader loop when the
+// squad was @mentioned as a guest instead of assigned to the issue. The
+// authoring worker task must cover the replied-to delegation comment; that
+// comment's own task then proves the exact squad and current leader role. Once
+// that historical leader role is identified, a now-invalid squad or leader
+// fails closed instead of falling through to an unrelated assigned squad.
+func (h *Handler) routeGuestSquadLeaderFallback(ctx context.Context, issue db.Issue, parent *db.Comment, authorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, bool) {
+	if parent == nil || !parent.ID.Valid {
+		return nil, false
+	}
+	// A tombstone preserves only the reply tree, not the guest delegation's
+	// routing authority (#8323). The issue's assignment remains an independent
+	// source of authority for the assigned-squad fallback.
+	if parent.DeletedAt.Valid {
+		return nil, false
+	}
+	if !opts.AuthoringTaskID.Valid {
+		return nil, false
+	}
+	workerTask, err := h.Queries.GetAgentTask(ctx, opts.AuthoringTaskID)
+	if err != nil || workerTask.IsLeaderTask || !workerTask.AgentID.Valid ||
+		uuidToString(workerTask.AgentID) != authorID || !workerTask.IssueID.Valid ||
+		uuidToString(workerTask.IssueID) != uuidToString(issue.ID) || !taskCoversReplyParent(workerTask, parent.ID) {
+		return nil, false
+	}
+	if !parent.SourceTaskID.Valid {
+		return nil, false
+	}
+	leaderTask, err := h.Queries.GetAgentTask(ctx, parent.SourceTaskID)
+	if err != nil || !leaderTask.IsLeaderTask || !leaderTask.SquadID.Valid ||
+		!leaderTask.AgentID.Valid || leaderTask.AgentID != parent.AuthorID {
+		return nil, false
+	}
+	// Preserve the established assigned-squad path when this delegation came
+	// from that same squad. This fallback is only for a distinct guest squad.
+	if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" &&
+		issue.AssigneeID.Valid && issue.AssigneeID == leaderTask.SquadID {
+		return nil, false
+	}
+	trigger, ok := h.routeReplyToParentAuthor(ctx, issue, parent, "agent", authorID, opts)
+	if !ok || trigger.Squad == nil {
+		return nil, true
+	}
+	trigger.NonLeaderAgentReply = true
+	return []commentAgentTrigger{trigger}, true
+}
+
 type conversationRoutedAgentInfo struct {
 	SquadID pgtype.UUID
 }
@@ -3700,6 +3715,7 @@ func (h *Handler) retriggerCancelledTaskSurvivors(ctx context.Context, issue db.
 		}
 		triggers, _, _ := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
 			ExcludeTriggerCommentID:            comment.ID,
+			AuthoringTaskID:                    comment.SourceTaskID,
 			OriginatorUserID:                   originatorUserID,
 			AutopilotDelegationAuthorityUserID: delegationAuthority,
 			// 修改 8. 推迟到完成时才重放的评论，同样靠这条评论自己的存储血缘续接
