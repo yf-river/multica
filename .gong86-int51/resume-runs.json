@@ -1,0 +1,145 @@
+[
+  {
+    "id": "01a17254-c2a8-7d8b-9a20-3a975871c862",
+    "agent_id": "da8aef9b-604c-43f0-86b5-13f8d628be35",
+    "runtime_id": "b6ea8b7e-0dce-4aa3-bcb9-2a9ce9932a5e",
+    "issue_id": "01a17254-65b8-765e-86c6-255857d33669",
+    "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T17:11:59+08:00",
+    "started_at": "2026-10-25T17:11:59+08:00",
+    "completed_at": "2026-10-25T17:12:11+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "a21f0b7d6ea4",
+        "files": [],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-100-99f958a87803/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "42",
+      "pr_url": "",
+      "session_id": "01a17254-67c9-7352-ba71-676b7537acd5",
+      "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-100-99f958a87803/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T17:11:59+08:00",
+    "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-100-99f958a87803/workdir",
+    "relative_work_dir": "workdir",
+    "delivered_comment_ids": [],
+    "kind": "direct",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "7d2ff25b-1045-46bf-9235-ac5083be4758",
+        "name": "dev",
+        "email": "dev"
+      },
+      "originator": {
+        "id": "7d2ff25b-1045-46bf-9235-ac5083be4758",
+        "name": "dev",
+        "email": "dev"
+      },
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a17254-65b8-765e-86c6-255857d33669"
+      },
+      "rerun_of_task_id": "01a17254-65c0-7110-9b6e-99f958a87803"
+    },
+    "usage": [
+      {
+        "provider": "codex",
+        "model": "gpt-6.1-sol",
+        "input_tokens": 1638,
+        "output_tokens": 152,
+        "cache_read_tokens": 66176,
+        "cache_write_tokens": 0
+      }
+    ]
+  },
+  {
+    "id": "01a17254-65c0-7110-9b6e-99f958a87803",
+    "agent_id": "da8aef9b-604c-43f0-86b5-13f8d628be35",
+    "runtime_id": "b6ea8b7e-0dce-4aa3-bcb9-2a9ce9932a5e",
+    "issue_id": "01a17254-65b8-765e-86c6-255857d33669",
+    "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T17:11:36+08:00",
+    "started_at": "2026-10-25T17:11:36+08:00",
+    "completed_at": "2026-10-25T17:11:45+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "a21f0b7d6ea4",
+        "files": [],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-100-99f958a87803/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "42",
+      "pr_url": "",
+      "session_id": "01a17254-67c9-7352-ba71-676b7537acd5",
+      "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-100-99f958a87803/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T17:11:36+08:00",
+    "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-100-99f958a87803/workdir",
+    "relative_work_dir": "ai-studio-98231f059bda/aist-100-99f958a87803/workdir",
+    "delivered_comment_ids": [],
+    "kind": "direct",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "7d2ff25b-1045-46bf-9235-ac5083be4758",
+        "name": "dev",
+        "email": "dev"
+      },
+      "originator": {
+        "id": "7d2ff25b-1045-46bf-9235-ac5083be4758",
+        "name": "dev",
+        "email": "dev"
+      },
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a17254-65b8-765e-86c6-255857d33669"
+      }
+    },
+    "usage": [
+      {
+        "provider": "codex",
+        "model": "gpt-6.1-sol",
+        "input_tokens": 9851,
+        "output_tokens": 95,
+        "cache_read_tokens": 33280,
+        "cache_write_tokens": 0
+      }
+    ]
+  }
+]

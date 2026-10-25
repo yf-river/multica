@@ -1,0 +1,54 @@
+{
+  "id": "01a17256-064c-743c-bf6d-9e6cb151823e",
+  "agent_id": "d15b9082-b3cc-4470-948f-fd1821d995b3",
+  "runtime_id": "b6ea8b7e-0dce-4aa3-bcb9-2a9ce9932a5e",
+  "issue_id": "",
+  "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+  "status": "completed",
+  "priority": 0,
+  "dispatched_at": "2026-10-25T17:13:22+08:00",
+  "started_at": "2026-10-25T17:13:22+08:00",
+  "completed_at": "2026-10-25T17:14:08+08:00",
+  "result": {
+    "code_diff": {
+      "after": "",
+      "before": "0ac25706e4af",
+      "files": [],
+      "roots": [
+        {
+          "attribution": "task",
+          "files": [],
+          "kind": "workdir",
+          "label": "任务目录",
+          "path": "/data/cbs/worktree/int/ai-studio-98231f059bda/task-9e6cb151823e/workdir"
+        }
+      ],
+      "truncated": false,
+      "unavailable": false,
+      "version": 2
+    },
+    "output": "{\"summary\":\"本轮已核对范围内未确认正确性问题，效率结论仍有限制。原始调用显示已发起一次 sleep 90，约一秒后运行被取消；没有完成宣称，不能将未回答42或等待未满90秒认定为交付缺陷。可见调用未显示改文件、创建任务或调用其他Agent。此次为手动检查，任务尚未完成；用量原文未读完，暂不能评价完整调用成本。\",\"efficiency\":\"uncertain\",\"correctness\":\"clear\",\"gaps\":[\"trace_usage/22e4badc-d10e-4b36-9d1b-abc88113f834 仅补读0—8000字符，8000—54632尚未核对；入口为not_applicable、runtime=codex且gap_count=6，不能据此确认完整请求关联、用量或全部效率表现。\",\"sleep 90只有发起记录，没有工具完成回执；取消事件证明运行被取消，但不能确认子进程后续清理情况。\"],\"covered\":[{\"kind\":\"issue\",\"id\":\"01a17254-65d0-7da6-aa18-edee3fc613d0\"},{\"kind\":\"task\",\"id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"message\",\"id\":\"01a17254-8210-7f1e-9e86-6d45f5b9b918\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"message\",\"id\":\"01a17254-85f9-7816-99b5-82deb1766f6a\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"message\",\"id\":\"01a17254-85f9-7989-8e6b-38564936f4a3\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"message\",\"id\":\"01a17254-93a5-7855-8fff-ab0b627e37b8\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"message\",\"id\":\"01a17254-93a5-7a35-8b66-07645729a1d7\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"message\",\"id\":\"01a17254-93a5-7ac6-8943-f22738d151bd\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"message\",\"id\":\"01a17254-a164-7931-98da-36dc703388b7\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"trace\",\"id\":\"033abb4d-0b1a-40bd-a970-97f36a4a0bcf\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"trace\",\"id\":\"b9abde9d-24fd-4d00-be7d-28d40ebf8237\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"trace\",\"id\":\"024da45e-78fa-43ca-b58b-e882c6ba77a4\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"},{\"kind\":\"trace_usage\",\"id\":\"22e4badc-d10e-4b36-9d1b-abc88113f834\",\"run_id\":\"01a17254-65d7-7d75-b8f4-bb631b9a9e57\"}],\"findings\":[],\"resolutions\":[]}",
+    "pr_url": "",
+    "session_id": "01a17256-079b-76e1-aab6-44c6944726ad",
+    "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/task-9e6cb151823e/workdir"
+  },
+  "error": null,
+  "attempt": 1,
+  "max_attempts": 2,
+  "created_at": "2026-10-25T17:13:22+08:00",
+  "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/task-9e6cb151823e/workdir",
+  "relative_work_dir": "ai-studio-98231f059bda/task-9e6cb151823e/workdir",
+  "delivered_comment_ids": [],
+  "kind": "quick_create",
+  "attribution": {
+    "source": "trigger_owner",
+    "precise": true,
+    "initiator": {
+      "id": "7d2ff25b-1045-46bf-9235-ac5083be4758"
+    },
+    "evidence": {
+      "kind": "supervision_batch",
+      "ref_id": "01a17256-0648-710d-b899-027dfb2c7e58"
+    }
+  }
+}

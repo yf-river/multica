@@ -1,0 +1,31 @@
+{
+  "id": "01a17254-67b6-7d8c-bd89-12452ca4107f",
+  "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+  "number": 102,
+  "identifier": "AIST-102",
+  "title": "G86 int review regression: arithmetic",
+  "description": "本任务用于真实审查回归。要求仅回答17+25=42，不修改代码、不创建任务。开发结果将在评论提供，按原delivery-review职责检查实际结果。",
+  "status": "in_review",
+  "status_category": "in_review",
+  "status_name": "",
+  "priority": "not_important_not_urgent",
+  "assignee_type": null,
+  "assignee_id": null,
+  "creator_type": "member",
+  "creator_id": "7d2ff25b-1045-46bf-9235-ac5083be4758",
+  "parent_issue_id": null,
+  "project_id": null,
+  "position": -3,
+  "stage": null,
+  "start_date": null,
+  "due_date": null,
+  "created_at": "2026-10-25T17:11:36+08:00",
+  "updated_at": "2026-10-25T17:11:56+08:00",
+  "revision": 6,
+  "last_activity_at": "2026-10-25T17:11:56.500321+08:00",
+  "metadata": {
+    "review_passed": true
+  },
+  "properties": {},
+  "labels": []
+}
