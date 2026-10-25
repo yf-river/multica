@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 // HealthResponse 是 daemon 本地健康端点返回的响应。
@@ -100,6 +101,11 @@ type repoCheckoutRequest struct {
 	// RetryBusy 由“认识 503 + Retry-After”的客户端发送。老客户端省略它，沿用历史上
 	// 无限期等锁的行为。
 	RetryBusy bool `json:"retry_busy,omitempty"`
+	// Fresh asks to discard an existing checkout's uncommitted changes and
+	// untracked files and start over on a new branch (`multica repo checkout
+	// --fresh`). Without it an existing checkout that holds work is kept; older
+	// daemons ignore the field and always start over.
+	Fresh bool `json:"fresh,omitempty"`
 }
 
 // activeRepoCheckoutTask 是登记在册、正被某个活动任务持有的仓库检出身份。
@@ -252,24 +258,22 @@ func (d *Daemon) writeRepoCheckoutAuthError(w http.ResponseWriter, result repoCh
 // 链接解析后），防止越权指到别的目录；通过则返回规范化后的 workdir。
 func authorizeRepoCheckoutWorkDir(activeRoot, requested string) (string, error) {
 	root, err := filepath.Abs(activeRoot)
-	if err != nil {
-		return "", err
+	if err == nil {
+		root, err = util.ResolveSymlinks(root)
 	}
-	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve active task workdir: %w", err)
 	}
 	workdir, err := filepath.Abs(requested)
-	if err != nil {
-		return "", err
+	if err == nil {
+		workdir, err = util.ResolveSymlinks(workdir)
 	}
-	workdir, err = filepath.EvalSymlinks(workdir)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve requested workdir: %w", err)
 	}
 	rel, err := filepath.Rel(root, workdir)
 	if err != nil || !filepath.IsLocal(rel) {
-		return "", errors.New("workdir is outside the active task workdir")
+		return "", fmt.Errorf("%s is outside the active task workdir %s", workdir, root)
 	}
 	return workdir, nil
 }
@@ -456,7 +460,17 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 		}
 		authorizedWorkDir, authErr := authorizeRepoCheckoutWorkDir(activeTask.WorkDir, req.WorkDir)
 		if authErr != nil {
-			http.Error(w, "repo checkout workdir is not owned by the active task", http.StatusForbidden)
+			// The reason goes to both the agent and daemon.log: a refusal that
+			// says only "not owned" sent #8946 looking at ownership when the
+			// real failure was resolving a junctioned path. Both paths come from
+			// the requesting task — its own workdir and the path it sent — so
+			// the message tells it nothing it could not read for itself.
+			d.logger.Warn("repo checkout rejected",
+				"reason", "workdir_not_owned",
+				"task_id", activeTask.TaskID,
+				"error", authErr,
+			)
+			http.Error(w, "repo checkout workdir is not owned by the active task: "+authErr.Error(), http.StatusForbidden)
 			return
 		}
 		// 身份一律取自绑定 token 的活动任务。AgentName 与其它由调用方填的字段只是
@@ -499,6 +513,7 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			TaskID:              req.TaskID,
 			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
 			IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
+			Fresh:               req.Fresh,
 		}
 		if req.RetryBusy {
 			params.LockWaitTimeout = repoCheckoutLockWaitTimeout

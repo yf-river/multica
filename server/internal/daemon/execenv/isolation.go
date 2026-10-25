@@ -165,13 +165,10 @@ func marshalPreparationRequest(request preparationRequest) ([]byte, error) {
 	return json.Marshal(request)
 }
 
-// decodePreparationRequest 从 in 解码 helper 请求，并拒绝未知字段
-// （DisallowUnknownFields），避免协议字段拼写错误被静默忽略。
+// decodePreparationRequest 读取 helper 请求；升级中的旧父进程可能携带新 helper 不再使用的字段。
 func decodePreparationRequest(in io.Reader) (preparationRequest, error) {
 	var request preparationRequest
-	decoder := json.NewDecoder(in)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := json.NewDecoder(in).Decode(&request); err != nil {
 		return preparationRequest{}, err
 	}
 	return request, nil

@@ -258,12 +258,15 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("- `multica issue metadata list <issue-id> [--output json]` — list KV metadata.\n")
 	b.WriteString("- `multica issue metadata set <issue-id> --key <k> --value <v> [--type string|number|bool]` — pin or overwrite a key.\n")
 	b.WriteString("- `multica issue metadata delete <issue-id> --key <k>` — remove a key.\n")
-	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — repository checkout on a dedicated branch.\n\n")
-	// "Squad maintenance" 是 squad 队长专属的操作面：不带队的 agent 没有可调整的角色，
-	// 全量发给每个 run 只是死重（MUL-5442）。IsSquadLeader 是"每任务"角色（daemon 从
-	// claim 的 is_leader_task / squad_id 推导，绝不从指令文本里嗅探），所以按它裁剪会让
-	// 同一会话里队长/普通成员交替运行时 brief 字节不一致。这是 owner 已接受的权衡而非
-	// 遗留问题；决策记录在 MUL-5811。
+	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>] [--fresh]` — repository checkout on a dedicated branch. Re-running it keeps an existing checkout that has uncommitted or unpushed work, or is already on this task's branch, and only fetches. `--fresh` discards uncommitted and untracked files and starts a new branch; commits stay on the old branch, but push any you still need first.\n\n")
+	b.WriteString("Git commits use the user's configured identity. Preserve it unless the user requests another identity. In a managed checkout, use `git config --worktree user.name` / `user.email` for an intentional task-local override; plain `git config` or `--local` can write into a shared cache and affect other tasks. Never change global Git identity for a task.\n\n")
+	// Squad maintenance is squad-leader surface: an agent that leads no squad
+	// has no squad to change roles in, so this shipped to every run as dead
+	// weight (MUL-5442). IsSquadLeader is a PER-TASK role (the daemon derives
+	// it from the claim's is_leader_task / squad_id), so gating brief content
+	// on it does cost byte-stability across runs of one session whenever the
+	// role flips. That is an owner-accepted tradeoff, not an open action item;
+	// the decision is recorded in MUL-5811.
 	if ctx.IsSquadLeader {
 		b.WriteString("### Squad maintenance\n")
 		b.WriteString("- `multica squad member set-role <squad-id> --member-id <id> --member-type <agent|member> --role <role> [--output json]` — change role in place (use this instead of remove+add).\n\n")

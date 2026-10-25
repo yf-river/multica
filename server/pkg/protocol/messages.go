@@ -38,6 +38,8 @@ const (
 	// request/response RPC（MUL-4257）。开关式能力：只有双方都支持时，
 	// 认领任务才走 WS；其余情况继续走 HTTP claim 端点。
 	DaemonCapabilityRPCV1 = "rpc-v1"
+	// 新会话仅在 checkout 保留已有工作时复用父执行目录。
+	DaemonCapabilityCheckoutKeepsWorkV1 = "checkout-keeps-work-v1"
 
 	// AppCapabilityChatDraftRestoreV1 由理解「持久化草稿恢复」路径的 app
 	// 客户端用 X-Client-Capabilities 宣告：chat:cancel_finalized 作为失效提示，

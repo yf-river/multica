@@ -97,10 +97,12 @@ func WithWorktreeReplayConflicts(files []string) PromptOption {
 	return func(o *promptOpts) { o.worktreeReplayConflicts = files }
 }
 
-// buildSharedLocalDirectoryBlock 警告“未加锁的回合”：它的工作目录正被实时共享。
-// 刻意是引导而非禁止：互斥锁本来也没盖住用户自己的编辑器，在这里禁写只会买回一个“外
-// 围系统并不真执行”的限制。回合自己推断不出的是“同树的兄弟任务可能正编辑到一半”——
-// 所以点明这一点，让它据此掂量写入的规模。
+// buildSharedLocalDirectoryBlock warns an unlocked turn that its working
+// directory is shared live. Deliberately guidance and not a prohibition: the
+// mutex never covered the user's own editor either, so refusing writes here
+// would buy a restriction the surrounding system does not actually enforce.
+// What the turn cannot infer on its own is that a sibling task may be mid-edit
+// in the same tree — so state that, and let it size its writes accordingly.
 func buildSharedLocalDirectoryBlock(shared bool) string {
 	if !shared {
 		return ""
@@ -112,11 +114,14 @@ func buildSharedLocalDirectoryBlock(shared bool) string {
 	return b.String()
 }
 
-// maxConflictListBytes 限制*渲染后的*文件列表长度——按转义输出的字节数而非条目数：
-// git 路径可以长到文件系统允许的程度，按条计数等于没限制。4 KiB 大约一千个 token——
-// 相对任何 provider 的上下文都很小，对真实合并冲突覆盖的几十条路径又足够大，余下的在
-// worktree 里一条 `git status` 就能看到。它是整块文本在这轮里的配额：只要合并还开着，
-// 这段文字每轮都重发，病态仓库绝不能把那一轮全花在文件名上。
+// maxConflictListBytes bounds the RENDERED file list, in bytes of the escaped
+// output rather than in entries: a git path can be as long as the filesystem
+// allows, so a per-entry count bounds nothing. 4 KiB is roughly a thousand
+// tokens — small next to any provider's context, large enough for the tens of
+// paths a real merge conflict spans, and the remainder is one `git status` away
+// inside the worktree. It is the whole block's share of the turn: this text is
+// re-sent every turn the merge stays open, and a pathological repository must
+// not be able to spend that turn on filenames.
 const maxConflictListBytes = 4 << 10
 
 // buildWorktreeReplayConflictBlock 告诉本轮：它自己的工作树是从“合并进行到一半”开始

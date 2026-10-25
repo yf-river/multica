@@ -143,7 +143,7 @@ func TestWorktreeDeliveryMetadataRoundTripsThroughBothTerminalPaths(t *testing.T
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'branch name round-trip fixture', 'in_progress', 'none', $2, 'member', 993310, 0)
+		VALUES ($1, 'branch name round-trip fixture', 'in_progress', 'not_important_not_urgent', $2, 'member', 993310, 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("setup: create issue: %v", err)
@@ -256,7 +256,7 @@ func TestWorktreeDeliveryMetadataSurvivesEveryTerminalPath(t *testing.T) {
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'terminal path branch fixture', 'in_progress', 'none', $2, 'member', 993311, 0)
+		VALUES ($1, 'terminal path branch fixture', 'in_progress', 'not_important_not_urgent', $2, 'member', 993311, 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("setup: create issue: %v", err)
@@ -604,7 +604,7 @@ func seedWorktreeGateClaimFixture(t *testing.T, ctx context.Context, label, daem
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position)
 		VALUES (
-			$1, $2, $3, 'in_progress', 'none', $4, 'member',
+			$1, $2, $3, 'in_progress', 'not_important_not_urgent', $4, 'member',
 			(SELECT COALESCE(MAX(number), 82649) + 1 FROM issue WHERE workspace_id = $1),
 			0
 		)
