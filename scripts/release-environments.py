@@ -643,6 +643,18 @@ def reviewed_supervision_settings_change(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def reviewed_trace_preparation_change(migration):
+    # Modification 1. Permit only the exact backward-compatible trace schema reviewed in quality-agents.md.
+    reviewed = {
+        '643_supervision_material_trace_usage.up.sql': '5d61987590982a5b32cc9122d2baae983db20f416c19b894a9b120a5c48bba6b',
+        '645_supervision_round_preparation_budget.up.sql': '59f9f5d6f56dbc30de2c688f6095d2546e56eef5a1364f061d9c6f49eb57697d',
+        '646_supervision_manual_preparation.up.sql': 'c3e27280bc20f9b391dd68499923b399f5e0fa488ea72f77e4155648dfc9dfb8',
+        '649_supervision_trace_scope.up.sql': '2b6d874a52e55da706199f7fca2d6dcca98ef42cf40cf8fc2f0ecc32fe8f905e',
+        '650_supervision_preparation_recheck.up.sql': '30d318eb3aeeeb6b686d0dbeb5d0d8612e0f694079ec6912fbe5a8f32c5bc119',
+    }
+    return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
+
+
 def additive_statement(statement):
     # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
     return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
@@ -657,7 +669,7 @@ def prepare_database(release, cfg, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             if additive_statement(statement): continue
-            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration):
+            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration):
                 continue
             raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
     # 通用路径只允许新增；上述精确索引替换另有恢复证明，旧程序查询仍须准备成功。

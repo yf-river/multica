@@ -415,6 +415,22 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
+    # Modification 1. A changed or unknown migration cannot inherit trace compatibility approval.
+    def test_reviewed_trace_migrations_reject_changed_sql(self):
+        source=Path(__file__).parent.parent/'server/migrations'
+        names=('643_supervision_material_trace_usage.up.sql', '645_supervision_round_preparation_budget.up.sql', '646_supervision_manual_preparation.up.sql', '649_supervision_trace_scope.up.sql', '650_supervision_preparation_recheck.up.sql')
+        for name in names:
+            with tempfile.TemporaryDirectory() as folder:
+                target=Path(folder)/name
+                target.write_bytes((source/name).read_bytes())
+                self.assertTrue(r.reviewed_trace_preparation_change(target))
+                target.write_text(target.read_text()+"\nDELETE FROM supervision_material;\n")
+                self.assertFalse(r.reviewed_trace_preparation_change(target))
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder)/'999_unknown.up.sql'
+            target.write_bytes((source/names[0]).read_bytes())
+            self.assertFalse(r.reviewed_trace_preparation_change(target))
+
     def test_task_provider_trace_migrations_follow_index_and_fk_rules(self):
         # 硬规则：不新增外键/级联；新增索引一律并发建、独立单语句迁移。
         import re

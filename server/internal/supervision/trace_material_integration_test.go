@@ -12,12 +12,13 @@ import (
 )
 
 // 1. Verify real SQL, frozen runtime identity, pagination, replay and workspace isolation.
+// Modification 1. Terminal fixtures now carry real completion timestamps required by frozen scopes.
 func TestTraceMaterialLifecycle(t *testing.T) {
 	x := newRoundFixture(t)
 	ctx := context.Background()
 	x.f.Cleanup(t, "DELETE FROM supervision_trace_material WHERE workspace_id=$1", x.workspace)
 	issue := x.issue(t, "done")
-	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "session_id": "session-owned"})
+	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "completed_at": dbfx.Raw("now()"), "session_id": "session-owned"})
 	x.f.Insert(t, "task_trace_event", dbfx.Cols{"workspace_id": x.workspace, "task_id": run, "agent_id": x.agent, "issue_id": issue, "event_type": "task.started", "event_name": "started", "provider": "codex"})
 	x.f.Exec(t, "UPDATE agent_runtime SET provider='codebuddy' WHERE id=$1", x.runtime)
 	round, err := x.svc.OpenRound(ctx, x.workspace, issue, true)
@@ -68,7 +69,7 @@ func TestTraceMaterialLeaseRecovery(t *testing.T) {
 	ctx := context.Background()
 	x.f.Cleanup(t, "DELETE FROM supervision_trace_material WHERE workspace_id=$1", x.workspace)
 	issue := x.issue(t, "done")
-	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "failed"})
+	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "failed", "completed_at": dbfx.Raw("now()")})
 	round, err := x.svc.OpenRound(ctx, x.workspace, issue, true)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +126,7 @@ func TestTraceMaterialStaleClaim(t *testing.T) {
 	ctx := context.Background()
 	x.f.Cleanup(t, "DELETE FROM supervision_trace_material WHERE workspace_id=$1", x.workspace)
 	issue := x.issue(t, "done")
-	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed"})
+	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "completed_at": dbfx.Raw("now()")})
 	round, err := x.svc.OpenRound(ctx, x.workspace, issue, true)
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +154,8 @@ func TestTraceManualPreparationScope(t *testing.T) {
 	x.f.Cleanup(t, "DELETE FROM supervision_trace_material WHERE workspace_id=$1", x.workspace)
 	x.f.Cleanup(t, "DELETE FROM supervision_manual_preparation WHERE workspace_id=$1", x.workspace)
 	issue := x.issue(t, "in_progress")
-	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed"})
-	x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "context": map[string]any{"type": "quality_supervision"}})
+	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "completed_at": dbfx.Raw("now()")})
+	x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "completed_at": dbfx.Raw("now()"), "context": map[string]any{"type": "quality_supervision"}})
 	for i := 0; i < 2; i++ {
 		tx, err := x.pool.Begin(ctx)
 		if err != nil {
@@ -214,5 +215,67 @@ func TestTraceManualPreparationScope(t *testing.T) {
 	}
 	if x.svc.reserveTraceRequest(ctx, x.workspace, scope) == nil {
 		t.Fatal("manual scope exceeded round budget")
+	}
+}
+
+// Modification 2. A run completing after task completion cannot enter the old automatic or manual snapshot.
+func TestTraceCompletionBoundary(t *testing.T) {
+	t.Setenv("MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE", "2026-01-01T00:00:00Z")
+	x := newRoundFixture(t)
+	ctx := context.Background()
+	x.f.Cleanup(t, "DELETE FROM supervision_trace_material WHERE workspace_id=$1", x.workspace)
+	x.f.Cleanup(t, "DELETE FROM supervision_manual_preparation WHERE workspace_id=$1", x.workspace)
+	issue := x.issue(t, "done")
+	before := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "completed_at": dbfx.Raw("now() - interval '1 second'")})
+	after := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "running"})
+	unknown := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "failed"})
+	round, err := x.svc.OpenRound(ctx, x.workspace, issue, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := x.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = PrepareManualMaterials(ctx, tx, x.workspace, issue); err != nil {
+		tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	x.f.Exec(t, "UPDATE agent_task_queue SET status='completed',completed_at=clock_timestamp() WHERE id=$1", after)
+	if err = x.svc.prepareTraceMaterials(ctx, x.workspace); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = x.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = PrepareManualMaterials(ctx, tx, x.workspace, issue); err != nil {
+		tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := x.count(t, "SELECT count(*) FROM supervision_trace_material WHERE workspace_id=$1 AND run_id IN($2,$3)", x.workspace, after, unknown); n != 0 {
+		t.Fatal("late or undated terminal execution entered frozen snapshot")
+	}
+	if n := x.count(t, "SELECT count(*) FROM supervision_trace_material WHERE workspace_id=$1 AND round_id=$2 AND run_id=$3", x.workspace, round.ID, before); n != 1 {
+		t.Fatal("pre-cutoff completion missing")
+	}
+	if err = x.svc.CloseOpenRound(ctx, x.workspace, issue, RoundCloseReopened); err != nil {
+		t.Fatal(err)
+	}
+	next, err := x.svc.OpenRound(ctx, x.workspace, issue, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = x.svc.prepareTraceMaterials(ctx, x.workspace); err != nil {
+		t.Fatal(err)
+	}
+	if n := x.count(t, "SELECT count(*) FROM supervision_trace_material WHERE workspace_id=$1 AND round_id=$2 AND run_id=$3", x.workspace, next.ID, after); n != 1 {
+		t.Fatal("new completion round did not include newly finished run")
 	}
 }

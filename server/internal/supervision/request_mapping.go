@@ -161,3 +161,33 @@ func compareCounter(local, external *int64) string {
 	}
 	return "different"
 }
+
+// Modification 1. Require the provider to acknowledge pagination; never skip an unverified page.
+func lensCandidatePage(data []byte, page int) ([]string, bool, bool) {
+	var response struct {
+		List struct {
+			Total  *int `json:"total"`
+			Page   int  `json:"page_num"`
+			Size   int  `json:"page_size"`
+			Traces []struct {
+				ID string `json:"traceID"`
+			} `json:"traces"`
+		} `json:"list"`
+	}
+	if json.Unmarshal(data, &response) != nil || response.List.Total == nil || response.List.Page != page || response.List.Size != 50 || *response.List.Total < 0 {
+		return nil, false, false
+	}
+	ids, _ := lensCandidates(data)
+	complete := page*response.List.Size >= *response.List.Total
+	expected := *response.List.Total - (page-1)*response.List.Size
+	if expected < 0 {
+		expected = 0
+	}
+	if expected > response.List.Size {
+		expected = response.List.Size
+	}
+	if len(response.List.Traces) != expected || len(ids) != len(response.List.Traces) {
+		return ids, false, false
+	}
+	return ids, complete, true
+}

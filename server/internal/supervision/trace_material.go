@@ -5,39 +5,52 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
+// Modification 1. Keep the page, candidates and detail offset in the existing durable JSON cursor.
 type tracePreparation struct {
 	ID, Workspace, Issue, Round, Run, Runtime string
 	Attempts                                  int
 	Version                                   int64
 	Cursor                                    int
+	DetailCursor                              int
+	Page                                      int
+	Candidates                                []string
+	PageComplete                              bool
+	PageVerified                              bool
+	PageTotal                                 int
+	Started, Completed                        time.Time
 	Manual                                    bool
 	Report                                    traceReport
 }
 
 type traceReport struct {
-	Status        string                    `json:"preparation_status"`
-	Version       int64                     `json:"material_version"`
-	Local         []agent.ExecutionEvidence `json:"local_session_evidence"`
-	Comparisons   []requestComparison       `json:"request_comparisons"`
-	Run           string                    `json:"run_id"`
-	Runtime       string                    `json:"runtime"`
-	RuntimeSource string                    `json:"runtime_source"`
-	Session       string                    `json:"session_id"`
-	Usage         json.RawMessage           `json:"platform_usage"`
-	References    []traceReference          `json:"references"`
-	External      []json.RawMessage         `json:"agentlens_traces"`
-	Gaps          []string                  `json:"gaps"`
-	Requests      int                       `json:"preparation_http_requests"`
-	DurationMS    int64                     `json:"preparation_duration_ms"`
-	QueriedAt     time.Time                 `json:"queried_at"`
+	Status           string                    `json:"preparation_status"`
+	Version          int64                     `json:"material_version"`
+	Local            []agent.ExecutionEvidence `json:"local_session_evidence"`
+	Comparisons      []requestComparison       `json:"request_comparisons"`
+	Run              string                    `json:"run_id"`
+	Runtime          string                    `json:"runtime"`
+	RuntimeSource    string                    `json:"runtime_source"`
+	Session          string                    `json:"session_id"`
+	QueryStart       time.Time                 `json:"query_start"`
+	QueryEnd         time.Time                 `json:"query_end"`
+	Usage            json.RawMessage           `json:"platform_usage"`
+	References       []traceReference          `json:"references"`
+	External         []json.RawMessage         `json:"agentlens_traces"`
+	Gaps             []string                  `json:"gaps"`
+	Requests         int                       `json:"preparation_http_requests"`
+	DiscoveryPending bool                      `json:"discovery_pending"`
+	DurationMS       int64                     `json:"preparation_duration_ms"`
+	QueriedAt        time.Time                 `json:"queried_at"`
 }
 
 type traceReference struct {
@@ -75,6 +88,7 @@ func (s *Service) prepareTraceMaterialsSince(ctx context.Context, ws string, sin
  FROM supervision_round r JOIN supervision_config c ON c.workspace_id=r.workspace_id
  JOIN agent_task_queue t ON t.issue_id=r.issue_id
  WHERE r.workspace_id=$1 AND r.status='open' AND r.material_cutoff >= $2 AND c.enabled AND t.created_at<=r.material_cutoff
+ AND t.completed_at IS NOT NULL AND t.completed_at<=r.material_cutoff
  AND t.status IN('completed','failed','cancelled') AND COALESCE(t.context->>'type','')<>'quality_supervision'
  AND NOT EXISTS(SELECT 1 FROM supervision_trace_material p WHERE p.workspace_id=r.workspace_id AND p.round_id=r.id AND p.run_id=t.id AND p.source='execution')
  LIMIT 100 ON CONFLICT DO NOTHING`, ws, since)
@@ -82,7 +96,7 @@ func (s *Service) prepareTraceMaterialsSince(ctx context.Context, ws string, sin
 		return err
 	}
 	var p tracePreparation
-	var saved []byte
+	var saved, checkpoint []byte
 	// 2. The lease survives process loss; one worker owns a row until its bounded call ends.
 	err = s.Pool.QueryRow(ctx, `UPDATE supervision_trace_material p SET status='processing',attempts=attempts+1,lease_until=now()+interval '150 seconds',updated_at=now()
  FROM (SELECT p.id FROM supervision_trace_material p JOIN supervision_trace_scope r ON r.id=p.round_id AND r.workspace_id=p.workspace_id
@@ -91,8 +105,8 @@ func (s *Service) prepareTraceMaterialsSince(ctx context.Context, ws string, sin
  AND (p.runtime NOT IN('codex','codebuddy') OR p.created_at<now()-interval '90 seconds' OR NOT EXISTS(SELECT 1 FROM supervision_config c WHERE c.workspace_id=p.workspace_id AND c.investigation_enabled) OR EXISTS(SELECT 1 FROM task_message m WHERE m.task_id=p.run_id AND m.type='execution_evidence'))
  AND (p.status='pending' OR (p.status='processing' AND p.lease_until<now()))
  ORDER BY p.created_at,p.id LIMIT 1 FOR UPDATE OF p SKIP LOCKED) candidate
- WHERE p.id=candidate.id RETURNING p.id::text,p.workspace_id::text,p.issue_id::text,p.round_id::text,p.run_id::text,p.runtime,p.attempts,COALESCE((p.cursor->>'reference')::integer,0),p.report,p.material_version,p.manual`, ws).
-		Scan(&p.ID, &p.Workspace, &p.Issue, &p.Round, &p.Run, &p.Runtime, &p.Attempts, &p.Cursor, &saved, &p.Version, &p.Manual)
+ WHERE p.id=candidate.id RETURNING p.id::text,p.workspace_id::text,p.issue_id::text,p.round_id::text,p.run_id::text,p.runtime,p.attempts,COALESCE((p.cursor->>'reference')::integer,0),p.report,p.material_version,p.manual,p.cursor`, ws).
+		Scan(&p.ID, &p.Workspace, &p.Issue, &p.Round, &p.Run, &p.Runtime, &p.Attempts, &p.Cursor, &saved, &p.Version, &p.Manual, &checkpoint)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -104,6 +118,20 @@ func (s *Service) prepareTraceMaterialsSince(ctx context.Context, ws string, sin
 			return err
 		}
 	}
+	var cursor struct {
+		Reference  int      `json:"reference"`
+		Detail     int      `json:"detail"`
+		Page       int      `json:"page"`
+		Candidates []string `json:"candidates"`
+		Complete   bool     `json:"complete"`
+		Verified   bool     `json:"verified"`
+		Total      int      `json:"total"`
+	}
+	if err = json.Unmarshal(checkpoint, &cursor); err != nil {
+		return err
+	}
+	p.DetailCursor, p.Page, p.Candidates, p.PageComplete = cursor.Detail, cursor.Page, cursor.Candidates, cursor.Complete
+	p.PageVerified, p.PageTotal = cursor.Verified, cursor.Total
 	return s.prepareTrace(ctx, p)
 }
 
@@ -118,12 +146,16 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	p.Report.Run, p.Report.Runtime, p.Report.RuntimeSource = p.Run, p.Runtime, "task_trace_event.task.started.provider"
 	p.Report.QueriedAt = started.UTC()
 	var refs []byte
-	err := s.Pool.QueryRow(ctx, `SELECT COALESCE(t.session_id,''),
+	var completed pgtype.Timestamptz
+	err := s.Pool.QueryRow(ctx, `SELECT COALESCE(t.session_id,''),COALESCE(t.started_at,t.created_at),t.completed_at,
  COALESCE((SELECT jsonb_agg(jsonb_build_object('provider',u.provider,'model',u.model,'input_tokens',u.input_tokens,'output_tokens',u.output_tokens,'cache_read_tokens',u.cache_read_tokens,'cache_write_tokens',u.cache_write_tokens)) FROM task_usage u WHERE u.task_id=t.id),'[]'),
  COALESCE((SELECT jsonb_agg(jsonb_build_object('provider_trace_id',x.provider_trace_id,'session_id',x.session_id,'correlation',x.correlation,'source',x.source,'metadata',x.metadata) ORDER BY x.created_at,x.id) FROM task_provider_trace x WHERE x.task_id=t.id AND x.workspace_id=i.workspace_id AND x.provider='codebuddy'),'[]')
- FROM agent_task_queue t JOIN issue i ON i.id=t.issue_id WHERE t.id=$1 AND i.id=$2 AND i.workspace_id=$3`, p.Run, p.Issue, p.Workspace).Scan(&p.Report.Session, &p.Report.Usage, &refs)
+ FROM agent_task_queue t JOIN issue i ON i.id=t.issue_id WHERE t.id=$1 AND i.id=$2 AND i.workspace_id=$3`, p.Run, p.Issue, p.Workspace).Scan(&p.Report.Session, &p.Started, &completed, &p.Report.Usage, &refs)
 	if err != nil {
 		return err
+	}
+	if completed.Valid {
+		p.Completed = completed.Time
 	}
 	if err = json.Unmarshal(refs, &p.Report.References); err != nil {
 		return err
@@ -154,6 +186,10 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	if investigate && (p.Runtime == "codebuddy" || p.Runtime == "codex") && len(p.Report.Local) == 0 {
 		p.Report.Gaps = append(p.Report.Gaps, "owning_daemon_session_snapshot_unavailable")
 	}
+	// Modification 2. Freeze discovery to the owned execution, with explicit clock-skew margins.
+	if !p.Completed.IsZero() {
+		p.Report.QueryStart, p.Report.QueryEnd = traceQueryRange(p.Started, p.Completed)
+	}
 	status := "partial"
 	recheck := false
 	// The round owns the allowance, including all runs and delayed versions.
@@ -173,6 +209,8 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	case p.Runtime != "codebuddy":
 		status = "not_applicable"
 		p.Report.Gaps = append(p.Report.Gaps, "AgentLens does not apply to this runtime; local session evidence and run-level usage are provided separately.")
+	case p.Completed.IsZero() || p.Completed.Before(p.Started):
+		p.Report.Gaps = append(p.Report.Gaps, "execution_time_boundary_unavailable")
 	case len(p.Report.References) == 0:
 		p.Report.Gaps = append(p.Report.Gaps, "No exact provider request identity; time-window matching cannot prove ownership.")
 	default:
@@ -193,26 +231,53 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 				continue
 			}
 
-			tags, _ := json.Marshal([]map[string]string{{"key": "message_id", "value": ref.ID, "operator": "eq"}})
-			listed, queryErr := client.query(ctx, &budget, "traceList", map[string]any{"tags": string(tags), "session_id": ref.Session, "page_size": 50})
-			if queryErr != nil {
-				p.Report.Gaps = append(p.Report.Gaps, queryErr.Error())
-				status = "partial"
-				break
+			if p.Page == 0 {
+				p.Page = 1
 			}
-			candidates, complete := lensCandidates(listed)
-			if !complete {
-				p.Report.Gaps = append(p.Report.Gaps, "trace_discovery_incomplete")
-				status = "partial"
+			// Modification 3. Persist the exact page and next detail before consuming more budget.
+			if p.Candidates == nil {
+				tags, _ := json.Marshal([]map[string]string{{"key": "message_id", "value": ref.ID, "operator": "eq"}})
+				listed, queryErr := client.query(ctx, &budget, "traceList", map[string]any{"tags": string(tags), "session_id": ref.Session, "page_size": 50, "page_num": p.Page, "query_order": "BY_START_TIME", "start_time": strconv.FormatInt(p.Report.QueryStart.UnixNano(), 10), "end_time": strconv.FormatInt(p.Report.QueryEnd.UnixNano(), 10)})
+				if queryErr != nil {
+					p.Report.Gaps = append(p.Report.Gaps, queryErr.Error())
+					status = "partial"
+					break
+				}
+				p.Candidates, p.PageComplete, p.PageVerified = lensCandidatePage(listed, p.Page)
+				var pageMeta struct {
+					List struct {
+						Total int `json:"total"`
+					} `json:"list"`
+				}
+				_ = json.Unmarshal(listed, &pageMeta)
+				if p.PageTotal != 0 && p.PageTotal != pageMeta.List.Total {
+					p.PageVerified, p.PageComplete = false, false
+				}
+				if p.PageTotal == 0 {
+					p.PageTotal = pageMeta.List.Total
+				}
+				if !p.PageVerified {
+					p.Report.Gaps = append(p.Report.Gaps, "trace_pagination_unverified_pending_recheck")
+					status = "partial"
+					if len(p.Candidates) == 0 {
+						break
+					}
+				}
 			}
-			if len(candidates) == 0 {
+			if len(p.Candidates) == 0 {
 				p.Report.Gaps = append(p.Report.Gaps, "external_trace_not_yet_visible")
 				recheck = true
 				status = "partial"
 				break
 			}
+			if !p.PageVerified {
+				p.Report.Gaps = append(p.Report.Gaps, "trace_discovery_incomplete_pending_recheck")
+				status = "partial"
+			}
 			referenceComplete := true
-			for _, candidate := range candidates {
+			// Resume within the saved page after a bounded request failure.
+			for p.DetailCursor < len(p.Candidates) {
+				candidate := p.Candidates[p.DetailCursor]
 				data, queryErr := client.query(ctx, &budget, "traceDetail", map[string]any{"trace_id": candidate, "attr_type": "attr"})
 				if queryErr != nil {
 					p.Report.Gaps = append(p.Report.Gaps, queryErr.Error())
@@ -239,13 +304,23 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 						p.Report.Comparisons = append(p.Report.Comparisons, comparison)
 					}
 				}
+				p.DetailCursor++
 			}
-			if !referenceComplete {
+			if !referenceComplete || !p.PageVerified {
 				break
 			}
+			p.Candidates = nil
+			p.DetailCursor = 0
+			if !p.PageComplete {
+				p.Page++
+				continue
+			}
+			p.Page = 1
+			p.PageTotal = 0
 			p.Cursor++
 		}
 	}
+	p.Report.DiscoveryPending = investigate && p.Runtime == "codebuddy" && p.Cursor < len(p.Report.References)
 	p.Report.Requests += budget.Requests
 	p.Report.DurationMS += time.Since(started).Milliseconds()
 	if len(p.Report.Gaps) > 0 && status == "complete" {
@@ -256,7 +331,7 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	if err != nil {
 		return err
 	}
-	// 4. Publish atomically only for the still-open round. Terminal bodies are never overwritten.
+	// Modification 4. Publish atomically only for the still-open round. Terminal bodies are never overwritten.
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -286,8 +361,12 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	}
 	coverage, _ := json.Marshal(map[string]any{"matched_requests": len(p.Report.Comparisons), "local_snapshots": len(p.Report.Local), "preparation_http_requests": p.Report.Requests, "preparation_duration_ms": p.Report.DurationMS, "differences": differences})
 	gaps, _ := json.Marshal(p.Report.Gaps)
-	tag, err := tx.Exec(ctx, `UPDATE supervision_trace_material SET status=$3,report=$4,coverage=$8::jsonb,gaps=$9::jsonb,cursor=jsonb_build_object('reference',$5::integer),queried_at=$6,lease_until=NULL,updated_at=now()
- WHERE workspace_id=$1 AND id=$2 AND status='processing' AND attempts=$7`, p.Workspace, p.ID, status, string(encoded), p.Cursor, started, p.Attempts, coverage, gaps)
+	checkpoint, err := json.Marshal(map[string]any{"reference": p.Cursor, "detail": p.DetailCursor, "page": p.Page, "candidates": p.Candidates, "complete": p.PageComplete, "verified": p.PageVerified, "total": p.PageTotal})
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE supervision_trace_material SET status=$3,report=$4,coverage=$8::jsonb,gaps=$9::jsonb,cursor=$5::jsonb,queried_at=$6,lease_until=NULL,updated_at=now()
+ WHERE workspace_id=$1 AND id=$2 AND status='processing' AND attempts=$7`, p.Workspace, p.ID, status, string(encoded), string(checkpoint), started, p.Attempts, coverage, gaps)
 	if err != nil {
 		return err
 	}
@@ -381,4 +460,9 @@ func (s *Service) reserveTraceRequest(ctx context.Context, workspace, round stri
 		return &agentLensFailure{Kind: "budget_exhausted"}
 	}
 	return nil
+}
+
+// Modification 5. Delayed supervision keeps the same range rather than the provider default last hour.
+func traceQueryRange(started, completed time.Time) (time.Time, time.Time) {
+	return started.Add(-5 * time.Minute).UTC(), completed.Add(5 * time.Minute).UTC()
 }
