@@ -5,7 +5,7 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
-    # Modification 1. Historical result retries must not prevent an accepted verification from claiming int.
+    # 修改 1. 验证历史结果通知不会阻塞已验收交付领取固定 int。
     def test_pending_integration_precedes_historical_result_notice(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         delivery=dict(id='integration',phase='awaiting_review',integration_pending=True,plan_snapshot={})

@@ -163,6 +163,16 @@ func assertConcurrentIndexCleanupsMatchTheirMigrations(
 // while every all-status runtime_id lookup — teardown's runtime path and the
 // FK's own cascade probe — stays on a full table scan.
 func TestRunMigrationsRepairsInvalidRuntimeIDIndex(t *testing.T) {
+	testInterruptedIndexRetry(t, "273_agent_task_queue_runtime_id_index", "idx_agent_task_queue_runtime_id", "agent_task_queue", "id BIGSERIAL PRIMARY KEY, runtime_id UUID", "(runtime_id) VALUES (gen_random_uuid())")
+}
+
+// 1. 验证控制策略唯一索引真实中断后可重试，避免只登记名称却未恢复有效索引。
+func TestRunMigrationsRepairsInvalidTestAgentControlIndex(t *testing.T) {
+	testInterruptedIndexRetry(t, "639_test_agent_control_key", "test_agent_control_key", "test_agent_control", "workspace_id UUID, name TEXT", "(workspace_id,name) VALUES (gen_random_uuid(),'verify-1')")
+}
+
+func testInterruptedIndexRetry(t *testing.T, version, indexName, table, columns, insert string) {
+	t.Helper()
 	pool := openTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -181,19 +191,17 @@ func TestRunMigrationsRepairsInvalidRuntimeIDIndex(t *testing.T) {
 		}
 	})
 
-	const indexName = "idx_agent_task_queue_runtime_id"
-	const version = "273_agent_task_queue_runtime_id_index"
-	tableName := pgx.Identifier{schema, "agent_task_queue"}.Sanitize()
-	if _, err := pool.Exec(ctx, "CREATE TABLE "+tableName+` (
-		id BIGSERIAL PRIMARY KEY,
-		runtime_id UUID
-	)`); err != nil {
+	tableName := pgx.Identifier{schema, table}.Sanitize()
+	if _, err := pool.Exec(ctx, "CREATE TABLE "+tableName+" ("+columns+")"); err != nil {
 		t.Fatalf("create task table: %v", err)
 	}
 
 	qualifiedIndex := pgx.Identifier{schema, indexName}.Sanitize()
-	createIndex := "CREATE INDEX CONCURRENTLY IF NOT EXISTS " + pgx.Identifier{indexName}.Sanitize() +
-		" ON " + tableName + " (runtime_id)"
+	migrationSQL, err := os.ReadFile(filepath.Join("..", "..", "migrations", version+".up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	createIndex := strings.Replace(string(migrationSQL), "ON "+table, "ON "+tableName, 1)
 
 	// Interrupt the build the way a real one gets interrupted: an open
 	// transaction that has written to the table owns an xid the concurrent
@@ -207,7 +215,7 @@ func TestRunMigrationsRepairsInvalidRuntimeIDIndex(t *testing.T) {
 		blocker.Release()
 		t.Fatalf("begin blocker tx: %v", err)
 	}
-	if _, err := blockerTx.Exec(ctx, "INSERT INTO "+tableName+" (runtime_id) VALUES (gen_random_uuid())"); err != nil {
+	if _, err := blockerTx.Exec(ctx, "INSERT INTO "+tableName+" "+insert); err != nil {
 		blocker.Release()
 		t.Fatalf("blocker insert: %v", err)
 	}
@@ -251,8 +259,14 @@ func TestRunMigrationsRepairsInvalidRuntimeIDIndex(t *testing.T) {
 
 	// Without the hook the retry is a silent no-op: IF NOT EXISTS sees the
 	// invalid relation, reports success, and the migration is recorded.
-	if err := runMigrations(ctx, pool, opts); err != nil {
-		t.Fatalf("retry without hook: %v", err)
+	// 2. 原生 SQL 未使用 IF NOT EXISTS 时应真实报错，不能把重试失败当作已应用。
+	retryErr := runMigrations(ctx, pool, opts)
+	if strings.Contains(createIndex, "IF NOT EXISTS") {
+		if retryErr != nil {
+			t.Fatalf("retry without hook: %v", retryErr)
+		}
+	} else if retryErr == nil {
+		t.Fatal("retry without cleanup unexpectedly succeeded")
 	}
 	assertIndexValidity(t, pool, schema, indexName, false)
 

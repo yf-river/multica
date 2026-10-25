@@ -123,7 +123,7 @@ var concurrentIndexCleanups = map[string]string{
 	"641_supervision_trace_material_key":      "supervision_trace_material_run_key",
 	"642_supervision_trace_material_pending":  "supervision_trace_material_pending",
 	"644_supervision_trace_material_id":       "supervision_trace_material_id",
-	// Modification 1. Register control-policy index retry cleanup so interrupted builds cannot be recorded as successful.
+	// 1. 清理控制策略索引中断后留下的无效索引，确保重试会真正重建索引。
 	"639_test_agent_control_key":                  "test_agent_control_key",
 	"637_run_text_change_task_idx":                "run_text_change_task_idx",
 	"568_upstream_sync_absorption_item":           "upstream_sync_absorption_task_item",
