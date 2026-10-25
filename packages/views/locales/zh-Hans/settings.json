@@ -347,7 +347,8 @@
       "properties": "属性",
       "quick_actions": "快捷操作",
       "plugins": "插件",
-      "mcp": "MCP"
+      "mcp": "MCP",
+      "test_agents": "测试环境 Agent"
     }
   },
   "plugins": {
@@ -1462,5 +1463,33 @@
     "default_for_tasks": "提供给未指定项目仓库的任务",
     "add_url": "按仓库地址添加",
     "add_url_help": "支持 HTTPS 或 SSH 地址。登记仓库无需先连接平台；拉取时使用运行机器上的 Git 凭据。"
+  },
+  "test_agents": {
+    "description": "统一管理测试环境的模型。正在运行的任务结束后自动应用。",
+    "default_title": "测试默认配置",
+    "default_description": "应用到所有测试环境，覆盖单独配置；新建 Agent 和种子恢复也使用此配置。",
+    "apply_all": "应用到所有环境",
+    "apply": "应用",
+    "refresh": "刷新",
+    "loading": "正在读取测试环境…",
+    "empty": "发布器尚未登记测试环境。",
+    "load_error": "无法读取测试环境，请确认管理员权限及控制入口配置。",
+    "saved": "已保存，等待环境空闲后应用",
+    "save_error": "保存失败，请刷新后重试",
+    "applied": "已生效",
+    "pending": "待应用",
+    "error": "应用失败",
+    "stale": "状态待更新",
+    "agents": "个 Agent",
+    "archived": "已归档",
+    "individual": "单独配置",
+    "follow_default": "使用环境配置",
+    "updated": "最近回报",
+    "no_agents": "尚未取得 Agent 列表",
+    "provider_label": "模型配置",
+    "override_label": "单独设置",
+    "restore": "使用环境配置",
+    "codex_details": "Codex：code · GPT-6.1 Sol · low · 正常速度",
+    "manage_agents": "管理 Agent"
   }
 }

@@ -1,3 +1,4 @@
+import type { TestEnvironmentControl, TestAgentPolicy } from "../test-agents";
 import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, supervisionInstructionsSchema, type SupervisionEvidencePage, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback, type SupervisionInstructions } from "../supervision/schema";
 import { reviewSettingsSchema, type ReviewSettings } from "../review/schema";
 import { TaskOutputPageSchema, TaskMessagePayloadSchema, type TaskOutputPage } from "./schemas";
@@ -774,6 +775,13 @@ export class ApiClient {
     // /login 从而离开 workspace 路由，下一次进入 workspace 时会重新覆盖
     // 该 id，所以这里无需主动清理。
     this.options.onUnauthorized?.();
+  }
+
+  async getTestAgentControl(): Promise<TestEnvironmentControl[]> {
+    return this.fetch("/api/test-agent-control");
+  }
+  async configureTestAgents(body: {action: "configure"; name: string; revision: number; policy: TestAgentPolicy; agent_id?: string}) {
+    return this.fetch<{ok: boolean}>("/api/test-agent-control", {method:"POST",body:JSON.stringify(body)});
   }
 
   async getUpstreamSnapshot() {

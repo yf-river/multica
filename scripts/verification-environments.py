@@ -81,6 +81,9 @@ def install(env,artifact,postgres_config,root,host,codex_auth=None,codex_model=N
     for owner,folders in [(app,['tmp','uploads']),(agent,['tmp','workspaces','codebuddy','codex'])]:
         for folder in folders:
             path=Path(owner.pw_dir)/folder;path.mkdir(mode=0o700);os.chown(path,owner.pw_uid,owner.pw_gid)
+    settings=slotroot/'agent'/'codebuddy'/'settings.json'
+    settings.write_text(json.dumps({'model':'deepseek-v4.1-flash'})+'\n')
+    settings.chmod(0o600);os.chown(settings,agent.pw_uid,agent.pw_gid)
     password=secrets.token_urlsafe(24)
     cfg=dict(server={**appbase,'MULTICA_MIGRATION_BASELINE':'true','DATABASE_URL':f'postgres://{dbuser}:{dbpass}@127.0.0.1:{pgport}/{dbname}','PORT':backend,'PPROF_PORT':pprof,'JWT_SECRET':secrets.token_hex(32),'MULTICA_EXTERNAL_CREDENTIAL_KEY':base64.b64encode(secrets.token_bytes(32)).decode(),'FRONTEND_ORIGIN':front,'CORS_ALLOWED_ORIGINS':front,'MULTICA_APP_URL':front,'ALLOW_SIGNUP':'true','ALLOWED_ACCOUNTS':'verification','LOCAL_UPLOAD_DIR':str(slotroot/'app'/'uploads'),'LOCAL_UPLOAD_BASE_URL':front+'/uploads'},web={**appbase,'PORT':frontend,'HOSTNAME':'0.0.0.0','REMOTE_API_URL':back},daemon={**agentbase,'MULTICA_SERVER_URL':back,'MULTICA_APP_URL':front,'MULTICA_ENV_WRITABLE_ROOT':str(slotroot/'agent'/'workspaces'),'MULTICA_WORKSPACES_ROOT':str(slotroot/'agent'/'workspaces'),'CODEBUDDY_CONFIG_DIR':str(slotroot/'agent'/'codebuddy'),'CODEX_HOME':str(slotroot/'agent'/'codex'),'MULTICA_DAEMON_AUTO_UPDATE':'false','MULTICA_DAEMON_AUTO_RELOAD':'false'})
     if codex_auth:

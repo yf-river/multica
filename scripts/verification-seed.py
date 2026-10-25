@@ -248,6 +248,8 @@ def scrub_checks(container, database):
     """清理结果检查：任何残留都说明规则没有覆盖新功能。"""
     checks = []
     rules = [
+        ('测试 Agent 显式使用受支持模型', 'agent', "SELECT count(*) FROM public.agent WHERE NOT (COALESCE(model,'')='deepseek-v4.1-flash' AND COALESCE(thinking_level,'')='' AND COALESCE(service_tier,'')='' OR COALESCE(model,'')='gpt-6.1-sol' AND thinking_level='low' AND service_tier='default')", 0),
+        ('测试模型无命令行覆盖', 'agent', "SELECT count(*) FROM public.agent WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(custom_args,'[]'::jsonb)) a(value) WHERE value IN ('-m','--model','-c','--config') OR value LIKE '--model=%' OR value LIKE '--config=%')", 0),
         ('MCP 检查已清空', 'workspace_mcp_check', 'SELECT count(*) FROM public.workspace_mcp_check', 0),
         ('MCP OAuth 状态已清空', 'plugin_remote_mcp_oauth_state', 'SELECT count(*) FROM public.plugin_remote_mcp_oauth_state', 0),
         ('MCP 绑定已清空', 'agent_mcp_server', 'SELECT count(*) FROM public.agent_mcp_server', 0),
@@ -378,6 +380,9 @@ def restore(env, seed, pgconfig):
                     raise RuntimeError('种子基线复制后完整校验失败')
             r.check_process_ownership(env, meta)
             r.check_live_environment(env, meta, cfg)
+        policy_spec=importlib.util.spec_from_file_location('test_agent_control',Path(__file__).with_name('test-agent-control.py'))
+        policy_control=importlib.util.module_from_spec(policy_spec);policy_spec.loader.exec_module(policy_control)
+        policy_control.refresh_default(r.ROOT,env)
         # 记录选定的完整制品；停机或启动中断后仍按同一目标和原PID核对接续。
         record.update(stage='stopping',seed=str(path),seed_id=manifest.get('seed_id') or path.name,
                       seed_sha256=artifact['sha256'],restore_release=str(release))
@@ -450,6 +455,8 @@ def restore(env, seed, pgconfig):
             r.write(r.meta_path(env), meta, True)
             for service,pid in meta['pids'].items():(r.RUN/(env+'-'+service+'.pid')).write_text(str(pid)+'\n')
         i.verify_installed(env)
+        # 导入时清除来源 runtime 标识；按当前生产测试默认值绑定本地 runtime。
+        r.run(['node', str(Path(__file__).with_name('test-agent-models.mjs')), env, 'apply'], cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT':str(r.ROOT)})
     return dict(environment=env, seed_id=manifest.get('seed_id') or path.name, container=container, database=dbname)
 
 

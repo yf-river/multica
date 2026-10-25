@@ -109,7 +109,7 @@ class ReleaseTests(unittest.TestCase):
                     commands.append((args,kwargs['env'].copy()))
                     if args[0]=='go': raise ReachedGoBuild()
                 # 1. build() 先跑执行器预检，本用例只验证构建环境变量，预检在这里 mock 掉。
-                with patch.dict(r.os.environ,inherited,clear=True),patch.object(r,'executor_preflight',return_value={'fixture':'preflight mocked'}),patch.object(r,'checked_source',return_value=(source,'a'*40)),patch.object(r,'build_version',return_value='v-fixture'),patch.object(r,'source_digest',return_value=('digest',[])),patch.object(r,'read',return_value={'release_dir':str(base/'previous')}),patch.object(r,'copy_tree'),patch.object(r,'run',side_effect=command):
+                with patch.dict(r.os.environ,inherited,clear=True),patch.object(r,'operation_files',return_value=[]),patch.object(r,'executor_preflight',return_value={'fixture':'preflight mocked'}),patch.object(r,'checked_source',return_value=(source,'a'*40)),patch.object(r,'build_version',return_value='v-fixture'),patch.object(r,'source_digest',return_value=('digest',[])),patch.object(r,'read',return_value={'release_dir':str(base/'previous')}),patch.object(r,'copy_tree'),patch.object(r,'run',side_effect=command):
                     with self.assertRaises(ReachedGoBuild): r.build(source,base/'target')
                 self.assertEqual([args[0] for args,env in commands],['pnpm','pnpm','go'])
                 for args,env in commands:
@@ -220,6 +220,8 @@ class ReleaseTests(unittest.TestCase):
             for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
                 fixture=source/'scripts'/name;fixture.parent.mkdir(parents=True,exist_ok=True)
                 fixture.write_text('audit fixture')
+            for name in ('issue-delivery-worker.py','release-environments.py'):(source/'scripts'/name).write_text('operation fixture')
+            r.write(source/'scripts/delivery-operations.json',{'version':1,'files':['issue-delivery-worker.py','release-environments.py',*r.BROWSER_OPERATIONS]})
             (current/'server/bin/server').write_text('compiled server')
             (current/'apps/web/server.js').write_text('compiled web')
             inputs={key:r.hashlib.sha256().hexdigest() for key in ('go','web')}

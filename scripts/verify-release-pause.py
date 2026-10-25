@@ -5,6 +5,8 @@ from pathlib import Path
 
 spec=importlib.util.spec_from_file_location('release',Path(__file__).with_name('release-environments.py'))
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+spec=importlib.util.spec_from_file_location('test_agent_policy',Path(__file__).with_name('test-agent-policy.py'))
+policy=importlib.util.module_from_spec(spec);spec.loader.exec_module(policy)
 
 def verify():
     if os.environ.get('MULTICA_RUN_REAL_AGENT_SMOKE')!='1':raise RuntimeError('真实 Agent 验收需要显式设置 MULTICA_RUN_REAL_AGENT_SMOKE=1')
@@ -23,10 +25,9 @@ def verify():
     nonce=str(uuid.uuid4());state=dict(environment=env,release_id=meta['release_id'],nonce=nonce,phase='creating')
     r.write(state_path,state,True)
     runtimes=api('GET','runtimes')
-    provider=os.environ.get('MULTICA_ACCEPTANCE_PROVIDER','codex')
-    choices=[x for x in runtimes if x.get('provider')==provider and x.get('status')=='online' and x.get('daemon_id')==r.http(r.health_url(env)+'/health')['daemon_id']]
-    if len(choices)!=1:raise RuntimeError('无法唯一确定本测试环境选定的在线运行时')
-    agent=api('POST','agents',dict(name='发布暂停续接验收',description='受控发布生命周期测试',instructions='只执行任务正文的受控文件和进程验收，不读取或修改其他仓库，不提交交付记录，不自行取消任务。任务已获用户明确授权，无需另行计划确认。',runtime_id=choices[0]['id'],visibility='private',max_concurrent_tasks=1))
+    fields=policy.agent_fields(runtimes,r.http(r.health_url(env)+'/health')['daemon_id'])
+    provider=policy.selection()['provider']
+    agent=api('POST','agents',dict(name='发布暂停续接验收',description='受控发布生命周期测试',instructions='只执行任务正文的受控文件和进程验收，不读取或修改其他仓库，不提交交付记录，不自行取消任务。任务已获用户明确授权，无需另行计划确认。',visibility='private',max_concurrent_tasks=1,**fields))
     state['provider']=provider;state['agent_id']=agent['id'];r.write(state_path,state,True)
     program='''import json, os, pathlib, subprocess, time
 p=pathlib.Path('.release-pause-test');p.mkdir(exist_ok=True)

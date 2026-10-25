@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/testagents"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -269,6 +270,12 @@ func (h *Handler) UpdateReviewSettings(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "保存审查设置失败")
 		return
+	}
+	if agentID != "" {
+		if err := testagents.Apply(ctx, tx, ws, agentID); err != nil {
+			writeError(w, 503, err.Error())
+			return
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存审查设置失败")

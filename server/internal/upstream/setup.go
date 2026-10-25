@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/testagents"
 	"strings"
 	"time"
 
@@ -308,6 +309,11 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		boundRuntime, agentID, pilot, state)
 	if err != nil {
 		return "", "", err
+	}
+	if agentID != "" {
+		if err = testagents.Apply(ctx, tx, workspaceID, agentID); err != nil {
+			return "", "", err
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return "", "", err

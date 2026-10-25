@@ -1,7 +1,11 @@
 {
- "version": 5,
+ "version": 7,
  "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
  "rules": [
+  {
+   "table": "test_agent_control",
+   "sql": "DELETE FROM public.\"test_agent_control\""
+  },
   {
    "table": "workspace_mcp_check",
    "sql": "DELETE FROM public.\"workspace_mcp_check\""
@@ -188,7 +192,7 @@
   },
   {
    "table": "agent",
-   "sql": "UPDATE public.\"agent\" SET status='offline', custom_env='{}', runtime_config='{}', mcp_config=NULL"
+   "sql": "UPDATE public.\"agent\" SET status='offline', custom_env='{}', runtime_config='{}', mcp_config=NULL, model='deepseek-v4.1-flash', runtime_id=NULL, thinking_level='', service_tier=''"
   },
   {
    "table": "task_message",
@@ -307,6 +311,7 @@
    "%mcp%"
   ],
   "exempt": {
+   "upstream_sync_settings": "全局提示词与时段配置；上游同步及自动化执行入口已暂停",
    "autopilot_collaborator": "自动化协作者配置；执行入口 autopilot/trigger 已暂停",
    "autopilot_rule_version": "自动化规则版本属于业务配置；执行入口已暂停",
    "autopilot_subscriber": "自动化订阅关系属于业务样本；执行入口已暂停",

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/testagents"
 	"net/http"
 	"strconv"
 	"strings"
@@ -386,6 +387,12 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "保存监督配置失败")
 		return
 	}
+	if agentID != "" {
+		if err := testagents.Apply(ctx, tx, ws, agentID); err != nil {
+			writeError(w, 503, err.Error())
+			return
+		}
+	}
 	if err = tx.Commit(ctx); err != nil {
 		writeError(w, 500, "保存监督配置失败")
 		return
@@ -562,7 +569,7 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, map[string]any{"subject": subject, "round": round, "title": issue.Title,
 		"description": issue.Description.String, "business_status": issue.Status,
 		"status_category": issuestatus.Effective(r.Context(), h.Queries, issue.WorkspaceID, issue.Status),
-		"assignee_type": textToPtr(issue.AssigneeType), "assignee_id": uuidToPtr(issue.AssigneeID),
+		"assignee_type":   textToPtr(issue.AssigneeType), "assignee_id": uuidToPtr(issue.AssigneeID),
 		"findings": findings, "batches": batches, "notes": notes, "actions": actions, "investigations": investigations, "coverage": coverage})
 }
 

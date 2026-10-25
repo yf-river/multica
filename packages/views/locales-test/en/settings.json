@@ -355,7 +355,8 @@
       "properties": "Properties",
       "quick_actions": "Quick Actions",
       "plugins": "Plugins",
-      "mcp": "MCP"
+      "mcp": "MCP",
+      "test_agents": "Test environment agents"
     }
   },
   "plugins": {
@@ -1450,5 +1451,33 @@
     "project_count": "{{count}} projects",
     "removal_hint": "This repository is bound to {{count}} projects. Remove the bindings in project resources first.",
     "gongfeng_url_invalid": "Enter a Gongfeng repository URL on git.code.tencent.com."
+  },
+  "test_agents": {
+    "description": "Manage test models centrally. Changes apply after running tasks finish.",
+    "default_title": "Test defaults",
+    "default_description": "Apply to all environments and clear individual settings. New agents and seed restores use this default.",
+    "apply_all": "Apply to all environments",
+    "apply": "Apply",
+    "refresh": "Refresh",
+    "loading": "Loading test environments…",
+    "empty": "No test environments have been reported yet.",
+    "load_error": "Cannot load test environments. Check administrator access and the control configuration.",
+    "saved": "Saved. Waiting for an idle environment.",
+    "save_error": "Save failed. Refresh and try again.",
+    "applied": "Applied",
+    "pending": "Pending",
+    "error": "Failed",
+    "stale": "Awaiting status",
+    "agents": "agents",
+    "archived": "Archived",
+    "individual": "Individual setting",
+    "follow_default": "Use environment default",
+    "updated": "Last reported",
+    "no_agents": "Agent list is not available yet.",
+    "provider_label": "Model configuration",
+    "override_label": "Individual setting",
+    "restore": "Use environment default",
+    "codex_details": "Codex: code · GPT-6.1 Sol · low · Normal speed",
+    "manage_agents": "Manage agents"
   }
 }

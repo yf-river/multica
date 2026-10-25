@@ -258,6 +258,7 @@ def executor_preflight(source, *, env=None, integration=False):
     required=('pnpm-lock.yaml','pnpm-workspace.yaml','server/go.mod','server/go.sum',
               'scripts/release-environments.py','scripts/issue-delivery-worker.py','scripts/release-maintenance.py',
               'scripts/verification-environments.py','scripts/verification-seed.py','scripts/verification-seed-copy.mjs',
+              'scripts/test-agent-policy.py','scripts/test-agent-models.py','scripts/test-agent-models.mjs',
               'scripts/verification-scrub.json','scripts/lib/verification-scrub.mjs','scripts/check-release-database.mjs',
               'scripts/verify-release-browser.mjs','scripts/lib/goal-test-audit-env.mjs',
               'scripts/lib/goal-test-browser-audit.mjs','scripts/lib/acceptance-artifacts.mjs')
@@ -283,9 +284,26 @@ def build_stage(name):
     else:
         print(json.dumps(dict(build_stage=name,status='passed',elapsed_ms=round((time.monotonic()-started)*1000))),file=sys.stderr,flush=True)
 
+def operation_files(directory):
+    """候选自己声明完整操作包，构建器与安装器使用同一清单。"""
+    directory=Path(directory).resolve()
+    manifest=directory/'delivery-operations.json'
+    record=read(manifest)
+    names=record.get('files')
+    if record.get('version')!=1 or not isinstance(names,list) or not names or any(not isinstance(name,str) for name in names):
+        raise RuntimeError('发布操作包清单无效')
+    if len(set(names))!=len(names) or not {'issue-delivery-worker.py','release-environments.py'}.issubset(names):
+        raise RuntimeError('发布操作包清单重复或缺少发布入口')
+    for name in names:
+        file=directory/name
+        if Path(name).is_absolute() or '..' in Path(name).parts or not file.resolve().is_relative_to(directory) or not file.is_file():
+            raise RuntimeError('发布操作包缺少文件或路径越界：'+name)
+    return (manifest.name,*names)
+
 def build(source, target, *, verification=False):
     source, sha = checked_source(source, verification=verification)
     with build_stage('preflight'):
+        operation_files(source/'scripts')
         print(json.dumps(executor_preflight(source),ensure_ascii=False),file=sys.stderr)
     version = build_version(source, sha)
     digest, files = source_digest(source)
@@ -328,10 +346,7 @@ def build(source, target, *, verification=False):
                 run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
-        script=source/'scripts'/name
-        if script.exists():(operations/name).parent.mkdir(parents=True,exist_ok=True);(operations/name).write_bytes(script.read_bytes())
-    for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
+    for name in operation_files(source/'scripts'):
         destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
         destination.write_bytes((source/'scripts'/name).read_bytes())
     if checked_source(source, verification=verification)[1] != sha or source_digest(source)[0] != digest:
@@ -680,7 +695,10 @@ def check_readiness(metadata,timeout=30,prior_readiness=None):
 def launch(env, release, cfg, m,prior_readiness=None):
     result={}
     m['pids']=result
-    result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
+    server_env=dict(cfg['server'])
+    if env=='prod':
+        server_env['MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID']=read(m['daemon_profile_path'])['workspace_id']
+    result['server']=start([release/'server/bin/server'],release,server_env,m['log_paths']['server'])
     ready(m['backend_url']+'/health',pid=result['server'])
     check_readiness(m,prior_readiness=prior_readiness)
     stop_maintenance(env)
