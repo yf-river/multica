@@ -177,8 +177,50 @@ func requireDeliveryChecks(ctx context.Context, tx pgx.Tx, id, candidate, stage 
 func requireStoredDeliveryChecks(ctx context.Context, tx pgx.Tx, id, stage string) error {
 	var candidate string
 	var evidence []deliveryCheck
-	if err := tx.QueryRow(ctx, `SELECT candidate_id,evidence FROM issue_delivery WHERE id=$1`, id).Scan(&candidate, &evidence); err != nil {
+	var snapshot json.RawMessage
+	if err := tx.QueryRow(ctx, `SELECT candidate_id,evidence,plan_snapshot FROM issue_delivery WHERE id=$1`, id).Scan(&candidate, &evidence, &snapshot); err != nil {
 		return err
 	}
-	return requireDeliveryChecks(ctx, tx, id, candidate, stage, evidence)
+	err := requireDeliveryChecks(ctx, tx, id, candidate, stage, evidence)
+	if err == nil || stage != "verification" {
+		return err
+	}
+	var gap *deliveryChecksGap
+	if !errors.As(err, &gap) {
+		return err
+	}
+	var state struct {
+		Integrated bool `json:"integration_complete"`
+	}
+	if json.Unmarshal(snapshot, &state) != nil || !state.Integrated {
+		return err
+	}
+	// int 保存自己的证据；生产批准复用同一交付、同一源码的完整独立验收记录。
+	if requireDeliveryChecks(ctx, tx, id, candidate, "integration", evidence) != nil {
+		return err
+	}
+	required, readErr := deliveryRequiredChecks(snapshot)
+	if readErr != nil {
+		return readErr
+	}
+	rows, readErr := tx.Query(ctx, `SELECT e.evidence FROM delivery_evidence e JOIN issue_delivery d ON d.id=e.delivery_id
+ WHERE d.id=$1 AND e.workspace_id=d.workspace_id AND e.issue_id=d.issue_id
+ AND e.source_commit=d.source_commit AND e.candidate_id<>'' ORDER BY e.created_at DESC,e.id DESC`, id)
+	if readErr != nil {
+		return readErr
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var previous []deliveryCheck
+		if readErr = rows.Scan(&previous); readErr != nil {
+			return readErr
+		}
+		if missingDeliveryChecks(required, previous, "verification") == nil {
+			return nil
+		}
+	}
+	if readErr = rows.Err(); readErr != nil {
+		return readErr
+	}
+	return err
 }
