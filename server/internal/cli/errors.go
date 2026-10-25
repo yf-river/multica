@@ -37,6 +37,15 @@ const (
 	// KindNetworkTimeout 的治疗方案不同，所以要区分：timeout 的意思是「太慢了」，
 	// stall 的意思是「没动静了」——只有后者不受「调高时限」影响。
 	KindNetworkStalled
+	// KindNetworkTLSHandshakeTimeout is a TLS handshake that never completed
+	// after the TCP connection opened. Distinct from KindNetworkTimeout
+	// because the remedy is different: the request budget
+	// (MULTICA_HTTP_TIMEOUT) does not govern the handshake, and the usual
+	// cause is a network path that drops a ClientHello spanning two TCP
+	// packets — which every Go client sends by default since Go 1.24 (the
+	// post-quantum key share makes it ~1.5 KB) while curl on the same machine
+	// gets through (GH #8654).
+	KindNetworkTLSHandshakeTimeout
 
 	// HTTP 状态码层。
 	KindAuthRequired // 401
@@ -68,7 +77,7 @@ const (
 // IsNetwork 报告该类别是否属于传输层失败。
 func (k ErrorKind) IsNetwork() bool {
 	switch k {
-	case KindNetworkTimeout, KindNetworkDNS, KindNetworkRefused, KindNetworkTLS, KindNetworkOffline, KindNetworkStalled:
+	case KindNetworkTimeout, KindNetworkDNS, KindNetworkRefused, KindNetworkTLS, KindNetworkOffline, KindNetworkStalled, KindNetworkTLSHandshakeTimeout:
 		return true
 	default:
 		return false
@@ -91,6 +100,8 @@ func (k ErrorKind) String() string {
 		return "network_offline"
 	case KindNetworkStalled:
 		return "network_stalled"
+	case KindNetworkTLSHandshakeTimeout:
+		return "network_tls_handshake_timeout"
 	case KindAuthRequired:
 		return "auth_required"
 	case KindTaskTokenRejected:
@@ -164,7 +175,29 @@ func WithUserMessage(msg string, err error) error {
 	return &UserMessageError{Msg: msg, Err: err}
 }
 
-// Kind 把 HTTPError 的状态码映射成 ErrorKind。
+// WithUserMessageUnlessNetwork is WithUserMessage for a command whose custom
+// copy explains an HTTP-level refusal — a rejected token, a server that would
+// not issue one — and would be wrong for a transport failure. When err is a
+// *NetworkError it is returned unchanged, so FormatError renders the
+// kind-based copy, which is the only place that names the actual remedy
+// (DNS, proxy, TLS handshake).
+//
+// `multica login` needs this: with WithUserMessage, a TLS handshake that
+// never completed was reported as "the server could not issue an access
+// token" and "make sure the token is valid and not expired", and nothing in
+// the default output pointed at the network (GH #8654).
+func WithUserMessageUnlessNetwork(msg string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var netErr *NetworkError
+	if errors.As(err, &netErr) {
+		return err
+	}
+	return &UserMessageError{Msg: msg, Err: err}
+}
+
+// Kind maps an HTTPError's status code onto an ErrorKind.
 func (e *HTTPError) Kind() ErrorKind {
 	switch e.StatusCode {
 	case 401:
@@ -207,6 +240,16 @@ func classifyNetworkError(err error) ErrorKind {
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
+		// net/http reports a TLS handshake that never completed with an
+		// unexported type that also satisfies Timeout(), so only its message
+		// tells it apart from a socket timeout. The remedy differs (see
+		// KindNetworkTLSHandshakeTimeout), so it must not be folded into the
+		// generic timeout. Error() is only consulted here, on a timeout: the
+		// typed x509 checks below must keep running before any message is
+		// rendered, because a hostname error renders its certificate.
+		if isTLSHandshakeTimeout(err) {
+			return KindNetworkTLSHandshakeTimeout
+		}
 		return KindNetworkTimeout
 	}
 
@@ -242,6 +285,8 @@ func classifyNetworkError(err error) ErrorKind {
 	// 字符串兜底：处理标准库没给独立类型的那些情况。
 	msg := strings.ToLower(err.Error())
 	switch {
+	case strings.Contains(msg, "tls handshake timeout"):
+		return KindNetworkTLSHandshakeTimeout
 	case strings.Contains(msg, "context deadline exceeded"), strings.Contains(msg, "timeout"), strings.Contains(msg, "timed out"):
 		return KindNetworkTimeout
 	case strings.Contains(msg, "no such host"), strings.Contains(msg, "server misbehaving"), strings.Contains(msg, "name resolution"):
@@ -254,8 +299,15 @@ func classifyNetworkError(err error) ErrorKind {
 	return KindNetworkOffline
 }
 
-// wrapTransport 把 http.Client.Do 返回的裸传输错误包成 *NetworkError。err 为 nil
-// 时返回 nil，因此调用点可以无脑赋值：
+// isTLSHandshakeTimeout reports whether err is net/http's TLS handshake
+// timeout, which is only identifiable by its message.
+func isTLSHandshakeTimeout(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "tls handshake timeout")
+}
+
+// wrapTransport converts a raw transport error returned by http.Client.Do
+// into a *NetworkError. It returns nil when err is nil so call sites can
+// reassign unconditionally:
 //
 //	resp, err := c.HTTPClient.Do(req)
 //	err = wrapTransport(req, err)
@@ -331,6 +383,10 @@ var kindMessages = map[ErrorKind][2]string{
 	KindNetworkTimeout: {
 		"Request timed out: the server did not respond in time. Check your network connection or try again later. You can raise the limit with MULTICA_HTTP_TIMEOUT.",
 		"请求超时：服务器未在规定时间内响应。请检查网络连接或稍后重试。可通过 MULTICA_HTTP_TIMEOUT 调高超时时间。",
+	},
+	KindNetworkTLSHandshakeTimeout: {
+		"TLS handshake timed out: the connection to the Multica server opened, but the secure handshake never completed. Something on this network path (security software, a VPN, a router, or a firewall) is probably dropping large TLS handshakes; curl or a browser on the same machine may still work. Retry with the environment variable GODEBUG=tlsmlkem=0 set, and keep it set for the CLI and the daemon if that fixes it. MULTICA_HTTP_TIMEOUT does not affect the handshake.",
+		"TLS 握手超时：已连上 Multica 服务器，但安全握手一直没有完成。通常是网络路径上的安全软件、VPN、路由器或防火墙丢弃了较大的 TLS 握手包，同一台机器上的 curl 或浏览器可能仍然正常。请设置环境变量 GODEBUG=tlsmlkem=0 后重试；若因此恢复，请为 CLI 和守护进程长期保留该设置。MULTICA_HTTP_TIMEOUT 对握手无效。",
 	},
 	KindNetworkStalled: {
 		"Transfer stalled: the connection stopped sending data before the response was complete. Check your network connection or try again. You can raise the no-progress budget with MULTICA_HTTP_STALL_TIMEOUT.",

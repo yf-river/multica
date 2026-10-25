@@ -82,7 +82,25 @@ export function resetAllRegisteredDrafts(): void {
   }
 }
 
-/** 仅供测试：清空全部注册。 */
+/**
+ * Persist keys of every registered draft store, split by how they are
+ * namespaced. Used to sweep drafts for workspaces whose slugs this process
+ * never learned — a cold start that is rejected at the identity probe has no
+ * workspace list to enumerate.
+ */
+export function registeredDraftKeys(): {
+  workspaceScoped: string[];
+  global: string[];
+} {
+  const workspaceScoped: string[] = [];
+  const global: string[] = [];
+  for (const entry of entries.values()) {
+    (entry.workspaceScoped ? workspaceScoped : global).push(entry.storageKey);
+  }
+  return { workspaceScoped, global };
+}
+
+/** Test-only: drop all registrations. */
 export function __clearDraftCleanupRegistryForTest(): void {
   entries.clear();
 }

@@ -55,21 +55,27 @@ export class WSClient {
   private logger: Logger;
 
   /**
-   * @param url WebSocket 服务地址（如 wss://...）
-   * @param options 可选：logger、是否用 cookie 鉴权、客户端身份标识
+   * Reads the current token at connect time. A reconnect can happen long
+   * after this client was built — long enough for a sliding session to have
+   * been renewed in between — so the token the auth frame carries has to be
+   * looked up now, not captured once (MUL-7436).
    */
+  private getToken: (() => string | null) | undefined;
+
   constructor(
     url: string,
     options?: {
       logger?: Logger;
       cookieAuth?: boolean;
       identity?: WSClientIdentity;
+      getToken?: () => string | null;
     },
   ) {
     this.baseUrl = url;
     this.logger = options?.logger ?? noopLogger;
     this.cookieAuth = options?.cookieAuth ?? false;
     this.identity = options?.identity;
+    this.getToken = options?.getToken;
   }
 
   /** 设置鉴权凭据：token 与当前 workspace slug。 */
@@ -97,9 +103,10 @@ export class WSClient {
     this.ws = new WebSocket(url.toString());
 
     this.ws.onopen = () => {
-      if (!this.cookieAuth && this.token) {
+      const token = this.getToken?.() ?? this.token;
+      if (!this.cookieAuth && token) {
         this.ws!.send(
-          JSON.stringify({ type: "auth", payload: { token: this.token } }),
+          JSON.stringify({ type: "auth", payload: { token } }),
         );
         return;
       }

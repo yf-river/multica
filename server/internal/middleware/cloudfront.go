@@ -20,11 +20,8 @@ func RefreshCloudFrontCookies(signer *auth.CloudFrontSigner) func(http.Handler) 
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// CloudFront-Policy 是三件套（Policy/Signature/Key-Pair-Id）里的主 cookie，
-			// 拿它当「是否已带签名」的探针。缺 cookie 说明需要补签。
-			if _, err := r.Cookie("CloudFront-Policy"); err != nil {
-				// 新 cookie 的有效期对齐用户会话剩余时长（按整套授权 token 的 TTL），
-				// 而不是签个很短的临时值——否则刷新后又会在会话中途再次过期。
+			_, err := r.Cookie("CloudFront-Policy")
+			if err != nil && !SessionRenewed(r) {
 				ttl := auth.AuthTokenTTL()
 				for _, cookie := range signer.SignedCookies(time.Now().Add(ttl)) {
 					http.SetCookie(w, cookie)

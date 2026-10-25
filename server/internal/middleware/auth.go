@@ -55,10 +55,20 @@ func rejectTemporarilyDisabledUser(w http.ResponseWriter, r *http.Request, userI
 // 中间件会跳过 DB SELECT 和 last_used_at 的 UPDATE——因此 last_used_at 每个 TTL
 // 窗口最多刷一次，而不是每请求一次。
 //
-// cloudPAT 可选：非 nil 时，mcn_ 前缀的 token 通过调用 Multica Cloud Fleet 服务校验，
-// 而不是查本地库。为 nil（未配置 Fleet URL）时 mcn_ 在前缀分支就直接被拒——不会落到
-// mul_/JWT 路径，因为 mcn_ 串按构造就不可能是合法的 mul_ PAT 或 JWT。
-func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+// cfSigner is optional; when non-nil, a session renewed here also gets fresh
+// CloudFront cookies. It is wired into THIS middleware rather than left to
+// RefreshCloudFrontCookies because renewal is what makes the two clocks
+// diverge: every route group that can renew must re-sign, and only the
+// renewer knows it renewed. A group that mounts Auth without the CDN
+// middleware (the plugin bridge) would otherwise slide the session forward
+// while leaving the CDN policy pinned to the original login.
+//
+// cloudPAT is optional; when non-nil, tokens with the mcn_ prefix are
+// validated by calling the Multica Cloud Fleet service rather than the
+// local DB. When nil (Fleet URL unset) mcn_ tokens are rejected at the
+// prefix branch — we don't fall through to the mul_ / JWT paths, since
+// an mcn_ string is by construction not a valid mul_ PAT or JWT.
+func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, cfSigner *auth.CloudFrontSigner) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source 只允许服务端设置——客户端带来的任何值都不可信，在下面
@@ -256,6 +266,12 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			if email != "" {
 				r.Header.Set("X-User-Email", email)
 			}
+
+			// Sliding session: a browser that keeps using the app keeps its
+			// cookie, instead of being logged out on the anniversary of its
+			// login. No-op until the session drops below half its TTL
+			// (MUL-7436).
+			r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
 
 			next.ServeHTTP(w, r)
 		})

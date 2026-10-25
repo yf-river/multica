@@ -32,7 +32,7 @@ func TestCancelUpstreamSystemTaskHTTP(t *testing.T) {
 		dbfx.Cleanup(t, `DELETE FROM upstream_sync_config WHERE singleton=1`)
 	}
 	router := chi.NewRouter()
-	router.Use(middleware.Auth(testHandler.Queries, nil, nil))
+	router.Use(middleware.Auth(testHandler.Queries, nil, nil, nil))
 	router.Use(middleware.RequireWorkspaceMember(testHandler.Queries))
 	router.Post("/api/tasks/{taskId}/cancel", testHandler.CancelTaskByUser)
 	server := httptest.NewServer(router)

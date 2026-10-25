@@ -328,7 +328,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 		"expires_in_days": expiresInDays,
 	}, &patResp)
 	if err != nil {
-		return cli.WithUserMessage("Sign-in did not complete: the server could not issue an access token for the CLI. Run `multica login` again.", err)
+		return cli.WithUserMessageUnlessNetwork("Sign-in did not complete: the server could not issue an access token for the CLI. Run `multica login` again.", err)
 	}
 
 	// 验证 PAT 可用。
@@ -338,7 +338,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 		Email string `json:"email"`
 	}
 	if err := patClient.GetJSON(ctx, "/api/me", &me); err != nil {
-		return cli.WithUserMessage("Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.", err)
+		return cli.WithUserMessageUnlessNetwork("Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.", err)
 	}
 
 	// 保存进配置。每次登录都清掉工作区数据——用户或 server 可能已变，过期的工作区
@@ -448,7 +448,7 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 		Email string `json:"email"`
 	}
 	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
-		return cli.WithUserMessage("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
+		return cli.WithUserMessageUnlessNetwork("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
 	}
 
 	profile := resolveProfile(cmd)

@@ -18,6 +18,7 @@ import {
   CardFooter,
 } from "@multica/ui/components/ui/card";
 import { EnvironmentBadge } from "../common/environment-badge";
+import { Alert, AlertDescription } from "@multica/ui/components/ui/alert";
 import { Input } from "@multica/ui/components/ui/input";
 import { Button } from "@multica/ui/components/ui/button";
 import { Label } from "@multica/ui/components/ui/label";
@@ -105,14 +106,13 @@ export function LoginPage({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [existingUser, setExistingUser] = useState<User | null>(null);
+  const sessionExpired = useAuthStore((state) => state.expired);
 
   // 存在 CLI 回调时，先探测是否已有登录会话。
   // Web 认证只有一个真相源：HttpOnly 会话 cookie。
   useEffect(() => {
     if (!cliCallback) return;
 
-    // 探测浏览器 cookie 前先清掉内存中的 bearer，保证 CLI 授权永远不会
-    // 继承另一个账号的 token。
     api.setToken(null);
 
     api
@@ -237,7 +237,10 @@ export function LoginPage({
             {t(($) => $.signin.description)}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {sessionExpired && (
+            <Alert><AlertDescription>{t(($) => $.errors.session_expired)}</AlertDescription></Alert>
+          )}
           <form id="login-form" onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="login-account">{t(($) => $.common.account)}</Label>

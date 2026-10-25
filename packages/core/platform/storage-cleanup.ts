@@ -2,9 +2,12 @@
 // 工作区范围的持久化条目。
 
 import type { StorageAdapter } from "../types/storage";
-import { clearRegisteredWorkspaceDrafts } from "../drafts/cleanup-registry";
-// 确保每个模块级草稿 store 都在清理运行前注册过自己的 key，这样登出/删除时
-// 注册表绝不会只被部分填充。
+import {
+  clearRegisteredWorkspaceDrafts,
+  registeredDraftKeys,
+} from "../drafts/cleanup-registry";
+// Ensure every module-level draft store has registered its key before cleanup
+// runs, so the registry is never partially populated at logout/delete time.
 import "../drafts/register-all-drafts";
 
 /**
@@ -45,4 +48,36 @@ export function clearWorkspaceStorage(
   // 草稿 store 自注册它们的 key；经注册表清除，这样新增草稿 store 绝不会被
   // 一份过时的清单悄悄漏掉。
   clearRegisteredWorkspaceDrafts(adapter, slug);
+}
+
+/**
+ * Remove workspace-scoped storage for EVERY workspace on this device, without
+ * being told which ones exist.
+ *
+ * `clearWorkspaceStorage` needs a slug, and the slugs come from the workspace
+ * list — which a session rejected at the identity probe never loaded. A cold
+ * start with a stale token therefore had no way to clean up after the previous
+ * session, leaving `multica_comment_drafts:<slug>` and friends for whoever
+ * signed in next. Enumerating the keys removes that dependency entirely, and
+ * also catches workspaces the last session had left before it ended.
+ *
+ * Returns false when the adapter cannot list its keys, so the caller can say
+ * what it is falling back to rather than silently doing less.
+ */
+export function clearAllWorkspaceStorage(adapter: StorageAdapter): boolean {
+  const storedKeys = adapter.keys?.();
+  if (!storedKeys) return false;
+
+  const drafts = registeredDraftKeys();
+  const prefixes = [...WORKSPACE_SCOPED_KEYS, ...drafts.workspaceScoped].map(
+    (base) => `${base}:`,
+  );
+  for (const key of storedKeys) {
+    if (prefixes.some((prefix) => key.startsWith(prefix))) {
+      adapter.removeItem(key);
+    }
+  }
+  // Globally-namespaced draft keys carry no slug to match on.
+  for (const key of drafts.global) adapter.removeItem(key);
+  return true;
 }

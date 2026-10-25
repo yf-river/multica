@@ -1413,7 +1413,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// 已登录用户的会话和安装头调用这条内部路由。放在 /v1 之外，防止 Public API 接受
 	// 会话 cookie。
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Route(pluginBridgePrefix, func(r chi.Router) {
 			registerPluginActionRoutes(r, h)
 			// 仅 UI/手动触发。`event` 由宿主从事件总线分发；`agent` 走 MCP 而非这条
@@ -1423,7 +1423,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 		r.Route("/api/external-credential-profiles", func(r chi.Router) {
 			r.Get("/", h.ListExternalCredentialProfiles)
@@ -1451,6 +1451,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// /complete。待 X-Client-Version 遥测确认没有 pre-v3 桌面端仍在调用后移除。
 		// handler 在 server/internal/handler/onboarding_shim.go。
 		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Post("/api/auth/refresh", h.RefreshSession)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
