@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { CodeDiffCard } from "./code-diff-card";
 
 const result = { code_diff: { before: "123456789012345", after: "987654321098765", truncated: false, unavailable: false, files: [
@@ -101,4 +102,25 @@ describe("platform text and outside worktrees", () => {
     fireEvent.click(reveal);
     expect(screen.getByRole("button", { name: /任务目录外的工作树 · 未归属/ })).toBeTruthy();
   });
+});
+
+const loadRun = vi.hoisted(() => vi.fn());
+vi.mock("@multica/core/api", () => ({ api: { getIssueTaskRun: loadRun } }));
+
+it("opens only the clicked card when one run appears in comments and execution history", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  loadRun.mockResolvedValue({ id: "run-shared", result });
+  const summary = { summary_only: true, has_changes: true, issue_id: "issue", task_id: "run-shared" };
+  render(
+    <QueryClientProvider client={queryClient}>
+      <CodeDiffCard result={summary} variant="attachment" />
+      <CodeDiffCard result={summary} />
+    </QueryClientProvider>,
+  );
+  expect(loadRun).not.toHaveBeenCalled();
+  fireEvent.click(screen.getAllByRole("button", { name: "查看本次文件与提示词修改" })[0]!);
+  await waitFor(() => expect(screen.queryAllByText("查看本次文件与提示词修改")).toHaveLength(0));
+  await waitFor(() => expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1));
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(loadRun).toHaveBeenCalledTimes(1);
 });
