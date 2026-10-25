@@ -1395,7 +1395,7 @@ func TestCancelTask_TaskBelongsToDifferentIssue_Returns404(t *testing.T) {
 	var issueXID, taskID string
 	dbfx.QueryRow(t, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'cancel-crossissue-x', 'todo', 'medium', $2, 'member', 91001, 0)
+		VALUES ($1, 'cancel-crossissue-x', 'todo', 'important_not_urgent', $2, 'member', 91001, 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&issueXID)
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueXID) })
@@ -1409,7 +1409,7 @@ func TestCancelTask_TaskBelongsToDifferentIssue_Returns404(t *testing.T) {
 
 	// Issue Y — a sibling in the same workspace, used only as the URL cover.
 	issueYID := dbfx.Issue(t, "cancel-crossissue-y", testutil.Cols{
-		"priority": "medium",
+		"priority": "important_not_urgent",
 		"number":   91002,
 	})
 
@@ -1442,7 +1442,7 @@ func TestCancelTask_SameIssue_Succeeds(t *testing.T) {
 	var issueID, taskID string
 	dbfx.QueryRow(t, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'cancel-happy-path', 'todo', 'medium', $2, 'member', 91003, 0)
+		VALUES ($1, 'cancel-happy-path', 'todo', 'important_not_urgent', $2, 'member', 91003, 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&issueID)
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
@@ -1675,7 +1675,7 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime(t *testing.T) {
 	var legacyIssueID, legacyTaskID string
 	dbfx.QueryRow(t, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'legacy-task-owner', 'todo', 'medium', $2, 'member', 97501, 0)
+		VALUES ($1, 'legacy-task-owner', 'todo', 'important_not_urgent', $2, 'member', 97501, 0)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&legacyIssueID)
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, legacyIssueID) })
@@ -4493,10 +4493,10 @@ func TestIssueGCChecksReportCategoryNotRawCustomStatus(t *testing.T) {
 	humanReview := createTestCustomStatus(t, "gc_human_review", issuestatus.InReview)
 
 	doneID := dbfx.Issue(t, "gc-check-custom-done", testutil.Cols{
-		"status": gateApproved.Key, "priority": "medium", "number": 92501,
+		"status": gateApproved.Key, "priority": "important_not_urgent", "number": 92501,
 	})
 	openID := dbfx.Issue(t, "gc-check-custom-open", testutil.Cols{
-		"status": humanReview.Key, "priority": "medium", "number": 92502,
+		"status": humanReview.Key, "priority": "important_not_urgent", "number": 92502,
 	})
 
 	t.Run("batch endpoint", func(t *testing.T) {
@@ -4569,11 +4569,11 @@ func TestBatchIssueGCCheckReadsCatalogOnceForManyCustomStatuses(t *testing.T) {
 	// Several issues across two custom statuses, plus a built-in one: enough
 	// that a per-key resolver would be visibly worse than a single read.
 	ids := []string{
-		dbfx.Issue(t, "gc-batch-custom-1", testutil.Cols{"status": gateApproved.Key, "priority": "medium", "number": 92601}),
-		dbfx.Issue(t, "gc-batch-custom-2", testutil.Cols{"status": gateApproved.Key, "priority": "medium", "number": 92602}),
-		dbfx.Issue(t, "gc-batch-custom-3", testutil.Cols{"status": humanReview.Key, "priority": "medium", "number": 92603}),
-		dbfx.Issue(t, "gc-batch-custom-4", testutil.Cols{"status": humanReview.Key, "priority": "medium", "number": 92604}),
-		dbfx.Issue(t, "gc-batch-builtin", testutil.Cols{"status": "done", "priority": "medium", "number": 92605}),
+		dbfx.Issue(t, "gc-batch-custom-1", testutil.Cols{"status": gateApproved.Key, "priority": "important_not_urgent", "number": 92601}),
+		dbfx.Issue(t, "gc-batch-custom-2", testutil.Cols{"status": gateApproved.Key, "priority": "important_not_urgent", "number": 92602}),
+		dbfx.Issue(t, "gc-batch-custom-3", testutil.Cols{"status": humanReview.Key, "priority": "important_not_urgent", "number": 92603}),
+		dbfx.Issue(t, "gc-batch-custom-4", testutil.Cols{"status": humanReview.Key, "priority": "important_not_urgent", "number": 92604}),
+		dbfx.Issue(t, "gc-batch-builtin", testutil.Cols{"status": "done", "priority": "important_not_urgent", "number": 92605}),
 	}
 
 	counter := withCountingCatalog(t)
@@ -4623,8 +4623,8 @@ func TestBatchIssueGCCheckReadsNoCatalogForBuiltInStatuses(t *testing.T) {
 	}
 
 	ids := []string{
-		dbfx.Issue(t, "gc-batch-builtin-1", testutil.Cols{"status": "done", "priority": "medium", "number": 92611}),
-		dbfx.Issue(t, "gc-batch-builtin-2", testutil.Cols{"status": "in_progress", "priority": "medium", "number": 92612}),
+		dbfx.Issue(t, "gc-batch-builtin-1", testutil.Cols{"status": "done", "priority": "important_not_urgent", "number": 92611}),
+		dbfx.Issue(t, "gc-batch-builtin-2", testutil.Cols{"status": "in_progress", "priority": "important_not_urgent", "number": 92612}),
 	}
 
 	counter := withCountingCatalog(t)
