@@ -1614,6 +1614,7 @@ func taskCoversReplyParent(task db.AgentTaskQueue, parentID pgtype.UUID) bool {
 // 个请求失败）。
 // commentIDContextKey 允许服务器内部重试复用同一评论编号，HTTP 请求不能注入此值。
 type commentIDContextKey struct{}
+type systemCommentContextKey struct{}
 
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
@@ -1778,7 +1779,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		ID:           commentID,
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
-		AuthorType:   authorType,
+		AuthorType:   persistedCommentAuthor(r, authorType),
 		AuthorID:     parseUUID(authorID),
 		Content:      req.Content,
 		Type:         req.Type,
@@ -1817,7 +1818,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create comment")
 		return
 	}
-	createdEvent := buildCommentCreatedEvent(issue, resp, authorType, authorID)
+	createdEvent := buildCommentCreatedEvent(issue, resp, persistedCommentAuthor(r, authorType), authorID)
 	createdEvent, err = eventoutbox.Enqueue(r.Context(), qtx, createdEvent)
 	if err != nil {
 		slog.Warn("enqueue comment-created event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
@@ -3755,4 +3756,12 @@ func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 		h.publishEvent(persistedEvent)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// 平台身份只接受服务端内部上下文。
+func persistedCommentAuthor(r *http.Request, author string) string {
+	if system, _ := r.Context().Value(systemCommentContextKey{}).(bool); system {
+		return "system"
+	}
+	return author
 }

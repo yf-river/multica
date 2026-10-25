@@ -16,6 +16,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
+import { runTiming } from "./run-timing";
 import { CodeDiffCard } from "../../common/task-transcript/code-diff-card";
 import { TranscriptButton } from "../../common/task-transcript";
 import { cancelReasonLabel, failureReasonLabel } from "../../agents/components/tabs/task-failure";
@@ -542,6 +543,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
         )}
       </RowActions>
     </RowShell>
+    <RunTiming task={task} />
     <CodeDiffCard result={task.result} />
     </div>
   );
@@ -661,4 +663,11 @@ function RowActions({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
+}
+
+function RunTiming({task}:{task:AgentTask}) {
+ const timing=runTiming(task);
+ const parts=([['排队',timing.queue],['准备',timing.preparation],['执行（含工具）',timing.execution]] as const).flatMap(([name,ms])=>ms===null?[]:[{name,ms}]);
+ if(parts.length===0)return null;
+ return <p className="px-1 text-caption tabular-nums text-muted-foreground">{parts.map(({name,ms})=>`${name} ${ms>=60000?(ms/60000).toFixed(1)+' 分钟':(ms/1000).toFixed(1)+' 秒'}`).join(' · ')}</p>;
 }

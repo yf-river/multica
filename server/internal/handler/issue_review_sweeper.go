@@ -21,7 +21,7 @@ const (
 	// 的审查，补扫就会重复派发，所以活动态要覆盖到 running 和等待工作目录。
 	reviewSweepGrace     = 60 * time.Second
 	reviewSweepBatch     = 50
-	reviewActiveStatuses = "('queued','dispatched','running','waiting_local_directory')"
+	reviewActiveStatuses = "('queued','dispatched','running','waiting_local_directory','deferred')"
 )
 
 // reviewSweepStats 是一轮补扫的观测数据：核对、补派、跳过各多少。
@@ -37,6 +37,7 @@ type reviewSweepCandidate struct {
 	State        string
 	ReviewedHead string
 	CurrentHead  string
+	InputChanged bool
 	Passed       bool
 	ActiveRun    bool
 	RanThisRound bool
@@ -53,11 +54,13 @@ func (c reviewSweepCandidate) skipReason() string {
 		return "任务刚变化"
 	case c.ActiveRun:
 		return "已有活动审查运行"
+	case c.HasRow && c.State == review.StateNoAction && !c.InputChanged && (c.CurrentHead == "" || c.ReviewedHead == c.CurrentHead):
+		return "本轮无需处理"
 	case c.HasRow && c.State == review.StateStopped:
 		return "自动返工已停止，等待人工处理"
-	case c.HasRow && c.State == review.StatePassed && c.Passed && (c.CurrentHead == "" || c.ReviewedHead == c.CurrentHead):
+	case c.HasRow && c.State == review.StatePassed && c.Passed && !c.InputChanged && (c.CurrentHead == "" || c.ReviewedHead == c.CurrentHead):
 		return "已通过当前候选"
-	case c.HasRow && c.State == review.StateRejected && c.ReviewedHead != "" && c.ReviewedHead == c.CurrentHead:
+	case c.HasRow && c.State == review.StateRejected && !c.InputChanged && c.ReviewedHead == c.CurrentHead:
 		return "打回后没有新提交"
 	case c.HasRow && c.State == review.StateDispatched && c.RanThisRound:
 		// 修改 1. 这一轮审查确实执行过（有审查运行）但没交结论就结束了。没有 PR 时拿不到新
@@ -142,8 +145,7 @@ func (h *Handler) sweepReviewCandidates(ctx context.Context, ws pgtype.UUID, key
 	rows, err := h.DB.Query(ctx, `SELECT id FROM issue
 		WHERE workspace_id=$1 AND status = ANY($2)
 		  AND updated_at <= now() - make_interval(secs => $3)
-		ORDER BY updated_at ASC
-		LIMIT $4`, ws, keys, reviewSweepGrace.Seconds(), reviewSweepBatch)
+		ORDER BY updated_at ASC, id ASC`, ws, keys, reviewSweepGrace.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +172,10 @@ func (h *Handler) reviewSweepSkipReason(ctx context.Context, issue db.Issue, cfg
 		return "", err
 	}
 	candidate.ActiveRun = active
+	var recorded string
+	if e := h.DB.QueryRow(ctx, `SELECT input_version FROM issue_review WHERE issue_id=$1`, issue.ID).Scan(&recorded); e == nil && recorded != "" {
+		candidate.InputChanged = recorded != h.reviewInputVersion(ctx, issue, candidate.CurrentHead)
+	}
 	if passed, ok := parseIssueMetadata(issue.Metadata)[reviewPassedKey].(bool); ok {
 		candidate.Passed = passed
 	}

@@ -35,6 +35,61 @@ class MaintenanceTests(unittest.TestCase):
   with patch.object(m,'api',return_value=[dict(phase='publishing')]):
    with self.assertRaisesRegex(RuntimeError,'其他交付'):m.idle(Mock(),production=True)
 
+ def test_pending_queue_yields_to_maintenance_but_live_publication_does_not(self):
+  with tempfile.TemporaryDirectory() as directory:
+   r=Mock();r.candidate_path.return_value=Path(directory)/'missing'
+   r.health_url.return_value='http://fixture'
+   r.http.return_value=dict(active_tasks=0,claims_in_flight=0)
+   def query(_,path):
+    return [{'phase':'waiting_int'},{'phase':'approved'}] if path=='delivery-queue' else {'state':'idle'}
+   with patch.object(m,'api',side_effect=query):m.idle(r,production=True)
+   with patch.object(m,'api',side_effect=lambda _,p:[] if p=='delivery-queue' else {'state':'active'}):
+    with self.assertRaisesRegex(RuntimeError,'占用尚未释放'):m.idle(r,production=True)
+
+ def test_authorized_maintenance_reserves_before_waiting_for_active_tasks(self):
+  import contextlib
+  with tempfile.TemporaryDirectory() as directory:
+   r=Mock();r.RUN=Path(directory);r.lock.side_effect=lambda *args,**kwargs:contextlib.nullcontext()
+   r.candidate_path.return_value=Path(directory)/'missing'
+   with patch.object(m,'validate_source',return_value=(Path(directory),'commit')),patch.object(m,'authorize'),patch.object(m,'idle',side_effect=RuntimeError('active tasks')):
+    with self.assertRaisesRegex(RuntimeError,'active tasks'):m.prepare(r,Path(directory),{'base_commit':'base'})
+   self.assertEqual(r.save_candidate.call_args[0][0]['status'],'building')
+
+ def test_successful_controller_update_preserves_pinned_operations(self):
+  import contextlib
+  r=Mock();r.ROOT=Path('/control');r.lock.side_effect=lambda *args,**kwargs:contextlib.nullcontext()
+  r.read.return_value={'commit':'candidate'}
+  record={'commit':'candidate','maintenance':{'tool_commit':'tool'}}
+  with patch.object(m,'authorize'),patch.object(m,'idle'):
+   with m.guard(r,record):pass
+   self.assertEqual(r.run.call_count,2)
+   r.run.reset_mock()
+   with self.assertRaisesRegex(RuntimeError,'publication failed'):
+    with m.guard(r,record):raise RuntimeError('publication failed')
+   r.run.assert_not_called()
+
+ def test_fenced_record_requires_no_owner_slot_or_process(self):
+  import json
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);(root/'verification-jobs').mkdir()
+   path=root/'verification-jobs/delivery.json'
+   r=Mock();r.RUN=root;r.read.side_effect=lambda p:json.loads(p.read_text())
+   r.subprocess.run.return_value.stdout=''
+   delivery=dict(id='delivery',phase='testing',candidate_id='')
+   path.write_text(json.dumps(dict(stage='fenced',lease=None,candidate_id='')))
+   with patch.object(m,'api',return_value=[]):
+    self.assertTrue(m.fenced_without_work(r,delivery))
+    for field,value in [('candidate_id','candidate'),('verification_owner',{'generation':1}),('verification_run',{'status':'running'})]:
+     self.assertFalse(m.fenced_without_work(r,dict(delivery,**{field:value})))
+    for changed in [dict(stage='building'),dict(stage='fenced',lease={'generation':1}),dict(stage='fenced',candidate_id='candidate')]:
+     path.write_text(json.dumps(changed));self.assertFalse(m.fenced_without_work(r,delivery))
+    path.write_text(json.dumps(dict(stage='fenced',lease=None,candidate_id='')))
+    r.subprocess.run.return_value.stdout='active verification worker'
+    self.assertFalse(m.fenced_without_work(r,delivery))
+    r.subprocess.run.return_value.stdout=''
+   with patch.object(m,'api',return_value=[{'delivery_id':'delivery'}]):
+    self.assertFalse(m.fenced_without_work(r,delivery))
+
 # Modification 1. Real Git ancestry permits an included maintenance mainline and rejects concurrent unrelated updates.
 class MainlineTests(unittest.TestCase):
  def test_actual_git_mainline_ancestry(self):

@@ -22,6 +22,7 @@ type baselineFile struct {
 	Content string
 	HasBody bool
 	Binary  bool
+	Mode    uint32
 }
 
 // BaseRef answers "what did this repository look like before the run?". The
@@ -72,7 +73,8 @@ func TreeBaseline(ctx context.Context, repo, ref string, opts Options) (map[stri
 		}
 		size, _ := strconv.ParseInt(fields[3], 10, 64)
 		path := entry[tab+1:]
-		files[path] = &baselineFile{Size: size}
+		mode, _ := strconv.ParseUint(fields[0], 8, 32)
+		files[path] = &baselineFile{Size: size, Mode: uint32(mode)}
 		if size <= opts.MaxFileBytes {
 			wanted = append(wanted, blobRef{path: path, sha: fields[2], size: size})
 		}
@@ -91,14 +93,14 @@ func TreeBaseline(ctx context.Context, repo, ref string, opts Options) (map[stri
 		if file == nil {
 			continue
 		}
+		file.Binary = isBinary(body)
+		file.Sum = sha256Hex(body)
 		if total+int64(len(body)) > opts.MaxContentBytes {
 			continue
 		}
 		total += int64(len(body))
 		file.Content = string(body)
 		file.HasBody = true
-		file.Binary = isBinary(body)
-		file.Sum = sha256Hex(body)
 	}
 	return files, nil
 }
@@ -116,11 +118,11 @@ func readBlobs(ctx context.Context, repo string, wanted []blobRef) (map[string][
 	cmd.Dir = repo
 	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 	var input bytes.Buffer
-	bySHA := map[string]string{}
+	bySHA := map[string][]string{}
 	for _, item := range wanted {
 		input.WriteString(item.sha)
 		input.WriteByte('\n')
-		bySHA[item.sha] = item.path
+		bySHA[item.sha] = append(bySHA[item.sha], item.path)
 	}
 	cmd.Stdin = &input
 	stdout, err := cmd.StdoutPipe()
@@ -156,7 +158,7 @@ func readBlobs(ctx context.Context, repo string, wanted []blobRef) (map[string][
 		if _, err := reader.ReadByte(); err != nil {
 			break
 		}
-		if path, ok := bySHA[fields[0]]; ok {
+		for _, path := range bySHA[fields[0]] {
 			bodies[path] = body
 		}
 	}

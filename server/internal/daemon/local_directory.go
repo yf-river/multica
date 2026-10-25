@@ -108,7 +108,18 @@ func localDirectoryAssignmentForTask(task Task, daemonID string) (*localDirector
 	if task.IsLeaderTask {
 		return nil, nil
 	}
-	return findLocalDirectoryAssignment(task.ProjectResources, daemonID)
+	assignment, err := findLocalDirectoryAssignment(task.ProjectResources, daemonID)
+	if err != nil {
+		return nil, err
+	}
+	if assignment != nil && task.ReviewCommit != "" {
+		if err := assignment.ValidateExecutionMode(); err != nil {
+			return nil, err
+		}
+		assignment.Ref.BaseRef = task.ReviewCommit
+		assignment.Ref.ExecutionMode = localDirectoryModeWorktree
+	}
+	return assignment, nil
 }
 
 // localDirectoryLockExempt 报告一个任务是否可以“不串行在 per-path 互斥锁上”跑在

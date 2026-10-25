@@ -13,6 +13,8 @@ export const CodeDiffFileSchema = z.object({
   change: z.enum(["added", "modified", "deleted"]).optional(),
   size: z.number().nonnegative().optional(),
   before_size: z.number().nonnegative().optional(),
+  mode:z.number().int().nonnegative().optional(),
+  before_mode:z.number().int().nonnegative().optional(),
   lines: z.number().int().nonnegative().optional(),
   before_lines: z.number().int().nonnegative().optional(),
   redacted: z.boolean().optional(),

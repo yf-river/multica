@@ -15,7 +15,7 @@ test('清理清单覆盖当前执行型表', () => {
     'workspace_mcp_server', 'agent_mcp_server', 'workspace_mcp_check', 'plugin_remote_mcp_oauth_state',
     'review_config', 'issue_review',
     'supervision_config', 'supervision_batch', 'supervision_action',
-    'supervision_round', 'supervision_batch_round',
+    'supervision_round', 'supervision_batch_round', 'supervision_frozen_material',
     'supervision_investigation', 'supervision_finding', 'supervision_material', 'supervision_subject',
     'autopilot', 'autopilot_trigger', 'autopilot_run', 'autopilot_quota_reservation',
     'autopilot_quota_period', 'autopilot_collaborator', 'autopilot_rule_version', 'autopilot_subscriber',

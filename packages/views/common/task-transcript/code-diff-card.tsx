@@ -1,5 +1,7 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
 import { useMemo, useState } from "react";
 import { ChevronRight, FileDiff, FolderTree } from "lucide-react";
 import {
@@ -103,8 +105,8 @@ function TextChangeBody({ change }: { change: RunTextChange }) {
   );
 }
 
-export function CodeDiffCard({ result, runLabel, className, variant = "default" }: { result: unknown; runLabel?: string; className?: string; variant?: "default" | "attachment" }) {
-  const [open, setOpen] = useState(false);
+function FullCodeDiffCard({ result, runLabel, className, variant = "default", initiallyOpen = false }: { result: unknown; runLabel?: string; className?: string; variant?: "default" | "attachment"; initiallyOpen?: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
   const [selected, setSelected] = useState(0);
   const [activeRoot, setActiveRoot] = useState(0);
   const [showUnassigned, setShowUnassigned] = useState(false);
@@ -135,7 +137,7 @@ export function CodeDiffCard({ result, runLabel, className, variant = "default" 
   const singleFile = files.length === 1 ? files[0] : undefined;
   const fileName = singleFile?.path.split("/").pop();
   const directory = singleFile?.path.slice(0, singleFile.path.lastIndexOf("/") + 1);
-  const title = singleFile ? fileName : files.length > 0 ? `${files.length} 个文件已修改` : `${textChanges.length} 处提示词已修改`;
+  const title = singleFile ? fileName : files.length > 0 ? `${files.length} 个文件已修改` : textChanges.length > 0 ? `${textChanges.length} 处提示词已修改` : unassignedRoots.length > 0 ? "待确认归属的文件修改" : "目录变化";
   const subtitle = singleFile ? directory : files.slice(0, 2).map((file) => file.path.split("/").pop()).join("、") + (files.length > 2 ? " 等" : "");
   const currentRoot = roots[activeRoot] ?? roots[0];
   const currentFiles = currentRoot?.files ?? [];
@@ -228,6 +230,7 @@ export function CodeDiffCard({ result, runLabel, className, variant = "default" 
             <section aria-label="文件差异" className="min-h-0 min-w-0 flex-1 overflow-auto rounded border bg-background">
               {file ? <>
                 <h3 className="sticky left-0 top-0 break-all border-b bg-muted px-3 py-2 text-caption font-medium">{file.path}</h3>
+                {file.mode !== undefined && file.before_mode !== undefined && file.mode !== file.before_mode && <p className="p-3 text-caption text-muted-foreground">权限 / 类型：{file.before_mode.toString(8)} → {file.mode.toString(8)}</p>}
                 <PatchBody file={file} />
               </> : <p className="p-3 text-body text-muted-foreground">{textChanges.length > 0 ? "本次运行只修改了平台文本，见上方改动。" : "这个分组里没有可展示的文件改动。"}</p>}
             </section>
@@ -236,4 +239,19 @@ export function CodeDiffCard({ result, runLabel, className, variant = "default" 
       </DialogContent>
     </Dialog>
   );
+}
+
+export function CodeDiffCard(props: Parameters<typeof FullCodeDiffCard>[0]) {
+ const summary = props.result && typeof props.result === "object" ? props.result as Record<string,unknown> : null;
+ if (summary?.summary_only === true) {
+  if (summary.has_changes !== true || typeof summary.task_id !== "string" || typeof summary.issue_id !== "string") return null;
+  return <LazyRunDiff {...props} issueId={summary.issue_id} taskId={summary.task_id} />;
+ }
+ return <FullCodeDiffCard {...props} />;
+}
+function LazyRunDiff({issueId,taskId,...props}: Parameters<typeof FullCodeDiffCard>[0] & {issueId:string;taskId:string}) {
+ const [requested,setRequested] = useState(false);
+ const query = useQuery({queryKey:["run-diff",issueId,taskId],queryFn:()=>api.getIssueTaskRun(issueId,taskId),enabled:requested,staleTime:Infinity});
+ if (query.data) return <FullCodeDiffCard {...props} result={query.data.result} initiallyOpen />;
+ return <button className={cn("flex min-h-11 w-full items-center gap-2 rounded-md border px-3 text-body hover:bg-accent",props.className)} onClick={()=>{setRequested(true);if(query.isError)void query.refetch();}} disabled={query.isFetching}><FileDiff className="size-4" />{query.isFetching ? "正在读取文件修改…" : query.isError ? "读取失败，点击重试" : "查看本次文件与提示词修改"}</button>;
 }

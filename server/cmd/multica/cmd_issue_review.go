@@ -20,11 +20,11 @@ func init() {
 
 	submit := &cobra.Command{
 		Use:   "submit <issue-id>",
-		Short: "Submit the verdict of one review round (pass, reject or stalled)",
+		Short: "Submit the verdict of one review round (pass, reject, stalled or no_action)",
 		Args:  exactArgs(1),
 		RunE:  runIssueReviewSubmit,
 	}
-	submit.Flags().String("verdict", "", "pass, reject or stalled")
+	submit.Flags().String("verdict", "", "pass, reject, stalled or no_action")
 	submit.Flags().String("findings-file", "", "JSON file with {summary, items[]}")
 	submit.Flags().String("comment-id", "", "id of the review comment already posted on the issue")
 	group.AddCommand(submit)
@@ -35,9 +35,9 @@ func init() {
 func runIssueReviewSubmit(cmd *cobra.Command, args []string) error {
 	verdict, _ := cmd.Flags().GetString("verdict")
 	switch strings.ToLower(strings.TrimSpace(verdict)) {
-	case "pass", "reject", "stalled":
+	case "pass", "reject", "stalled", "no_action":
 	default:
-		return fmt.Errorf("--verdict must be pass, reject or stalled")
+		return fmt.Errorf("--verdict must be pass, reject, stalled or no_action")
 	}
 
 	findings := map[string]any{}

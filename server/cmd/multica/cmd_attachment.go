@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/codediff"
 )
 
 // attachmentCmd 是 `multica attachment` 父命令，子命令：download / upload。
@@ -179,6 +180,11 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("write file: %w", err)
 	}
 
+	if attachmentIsRunInput(att, os.Getenv("MULTICA_INPUT_ISSUE_ID"), os.Getenv("MULTICA_TASK_ID"), os.Getenv("MULTICA_INPUT_STARTED_AT")) {
+		if err := codediff.RecordInput(os.Getenv("MULTICA_INPUT_BASELINES"), destPath, data); err != nil {
+			return fmt.Errorf("record attachment input: %w", err)
+		}
+	}
 	// 打印绝对路径，agent 好引用该文件。
 	abs, err := filepath.Abs(destPath)
 	if err != nil {
@@ -193,4 +199,17 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 		"path":     abs,
 		"size":     strVal(att, "size_bytes"),
 	})
+}
+
+// 输入归属与时刻来自附件元数据，其他任务附件及本轮产物仍作为普通文件变化。
+func attachmentIsRunInput(att map[string]any, issue, task, started string) bool {
+	if issue == "" || strVal(att, "issue_id") != issue || strVal(att, "task_id") == task {
+		return false
+	}
+	created, err := time.Parse(time.RFC3339Nano, strVal(att, "created_at"))
+	if err != nil {
+		return false
+	}
+	start, err := time.Parse(time.RFC3339Nano, started)
+	return err == nil && !created.After(start)
 }

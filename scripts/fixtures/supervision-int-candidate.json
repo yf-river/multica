@@ -1,0 +1,19 @@
+{
+  "id": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1-1792919060746019202",
+  "commit": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1",
+  "status": "released",
+  "delivery_id": "01a1723e-ac21-78a7-a120-5842f6732045",
+  "delivery_env": "prod",
+  "approved_source": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1",
+  "release_id": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1-1792919256640996463",
+  "validation_identity": {
+    "runtime_inputs": "456fa3ed02d3ab108fca0212d3afd675895f5d120f210704054c111d1484ab43",
+    "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+    "suite": "e1648fd699a2a45fbae436363a667d7ce4dfcdf4a6392c0b5b22a039a3fca2e0",
+    "configuration": "4c52602c51e64e1451883f0fc584ae5b026ae907ecc8a36c2d0a827215e9af16"
+  },
+  "publication_lease": {
+    "delivery_id": "01a1723e-ac21-78a7-a120-5842f6732045",
+    "generation": 83
+  }
+}

@@ -103,7 +103,8 @@ type IssueStatusData struct {
 // Task 表示一条从服务器认领（claim）到的任务。
 // Agent 数据（name、skills）由 claim 端点填充。
 type Task struct {
-	// 1. The server gates extra session extraction by workspace investigation settings.
+	ReviewCommit string `json:"review_commit,omitempty"`
+	// 工作区调查开关控制额外会话证据提取。
 	CaptureExecutionEvidence bool                   `json:"capture_execution_evidence,omitempty"`
 	ReleaseResumeTaskID      string                 `json:"release_resume_task_id,omitempty"`
 	ReleaseResumeRoot        string                 `json:"release_resume_root,omitempty"`

@@ -15,7 +15,7 @@ import (
 )
 
 // 用户评论摘要用于核对 Agent 审查之后是否又有新决定，不解释评论语义。
-const deliveryCommentsVersionSQL = `SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text))`
+const deliveryCommentsVersionSQL = `SELECT md5(COALESCE(string_agg(id::text||':'||revision::text,',' ORDER BY id),'')) FROM comment c WHERE workspace_id=$1 AND issue_id=$2 AND author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id)`
 
 type deliveryAuthorizationInput struct {
 	CommentID              string `json:"comment_id"`
@@ -35,7 +35,7 @@ func (h *Handler) recordDeliveryAuthorization(r *http.Request, tx pgx.Tx, ws, is
 	var snapshot json.RawMessage
 	err := tx.QueryRow(r.Context(), `SELECT c.author_id::text,jsonb_build_object('id',c.id,'revision',c.revision,'content',c.content,'author_id',c.author_id,'created_at',c.created_at)
  FROM comment c JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id
- WHERE c.workspace_id=$1 AND c.issue_id=$2 AND c.id=$3 AND c.revision=$4 AND c.author_type='member' AND m.role IN ('owner','admin','member') FOR SHARE OF c,m`, ws, issue, input.CommentID, input.CommentRevision).Scan(&author, &snapshot)
+ WHERE c.workspace_id=$1 AND c.issue_id=$2 AND c.id=$3 AND c.revision=$4 AND c.author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id) AND m.role IN ('owner','admin','member') FOR SHARE OF c,m`, ws, issue, input.CommentID, input.CommentRevision).Scan(&author, &snapshot)
 	if err != nil {
 		return "", "", fmt.Errorf("授权评论不存在、已修改或用户已无任务访问权限")
 	}
@@ -59,7 +59,7 @@ func (h *Handler) recordDeliveryAuthorization(r *http.Request, tx pgx.Tx, ws, is
 }
 
 // 有效性依赖真实评论版本及成员身份；语义由登记授权的 Agent 负责。
-const deliveryAuthorizationValidSQL = `SELECT EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=$1 AND a.issue_id=$2 AND a.plan_id=$3 AND a.id=$4 AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member'))`
+const deliveryAuthorizationValidSQL = `SELECT EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=$1 AND a.issue_id=$2 AND a.plan_id=$3 AND a.id=$4 AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id) AND m.role IN ('owner','admin','member'))`
 
 func deliveryCommentsVersion(ctx context.Context, tx pgx.Tx, ws, issue string) (string, error) {
 	var version string
@@ -135,7 +135,7 @@ func deliveryAuthorizationReady(ctx context.Context, tx pgx.Tx, ws, issue, id st
 	}
 	if len(saved) == 0 {
 		var changed bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM comment c JOIN issue_delivery d ON d.issue_id=c.issue_id AND d.workspace_id=c.workspace_id WHERE d.id=$1 AND c.author_type='member' AND GREATEST(c.created_at,c.updated_at)>d.approved_at AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id AND (n.stage='batch_ready' OR n.stage='batch_ready_history:'||c.id::text)))`, id).Scan(&changed)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM comment c JOIN issue_delivery d ON d.issue_id=c.issue_id AND d.workspace_id=c.workspace_id WHERE d.id=$1 AND c.author_type='member' AND GREATEST(c.created_at,c.updated_at)>d.approved_at AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id))`, id).Scan(&changed)
 		return approved && !changed, err
 	}
 	version, err := deliveryCommentsVersion(ctx, tx, ws, issue)

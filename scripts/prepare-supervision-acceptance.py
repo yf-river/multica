@@ -158,7 +158,9 @@ def validate_identity(environment, delivery, candidate, metadata, owner, executi
     if integration:
         expiry = datetime.datetime.fromisoformat(lease.get('expires_at', '1970-01-01T00:00:00Z').replace('Z', '+00:00'))
         if (lease.get('state') != 'active' or lease.get('delivery_id') != delivery['id']
+                or not isinstance(lease.get('generation'), int)
                 or lease.get('generation') != candidate.get('publication_lease', {}).get('generation')
+                or candidate.get('publication_lease', {}).get('delivery_id') != delivery['id']
                 or expiry <= now):
             raise RuntimeError('Integration publication lease does not cover the candidate')
     elif (lease.get('state') != 'verifying' or lease.get('name') != environment
@@ -166,6 +168,11 @@ def validate_identity(environment, delivery, candidate, metadata, owner, executi
             or lease.get('candidate_id') != candidate['id']
             or lease.get('source_commit') != delivery['source_commit']):
         raise RuntimeError('Verification lease does not cover the candidate')
+    # Modification 2. Fixed int has no seed installation; only verification slots use seed fences.
+    if integration:
+        return
+    if not seed or not installation:
+        raise RuntimeError('Verification seed installation is missing')
     if not seed.get('seed_verified') or seed.get('seed_id') != installation.get('seed_id'):
         raise RuntimeError('Verified seed identity differs')
     if not seed.get('seed_sha256') or seed.get('seed_sha256') != installation.get('seed_sha256'):
@@ -193,10 +200,8 @@ def prepare(args):
         delivery = next(x for x in status['deliveries'] if x['id'] == args.delivery)
         if args.environment == 'int':
             lease = status['publication']
-            current_seed = r.read(r.RUN / 'verification-seed.json')
-            identity = candidate.get('validation_identity', {})
-            seed = dict(seed_verified=True, seed_id=current_seed['seed_id'], seed_sha256=current_seed['dump_sha256'])
-            installation = dict(seed_id=identity.get('seed'), seed_sha256=identity.get('seed_sha256'))
+            # Modification 3. Publication owns fixed int; delivery_env describes its control origin.
+            seed = installation = None
         else:
             lease = api(control, control_profile, 'GET', 'delivery-queue/slots?delivery_id=' + args.delivery)
             seed = next(x for x in api(control, control_profile, 'GET', 'delivery-queue/slots') if x['name'] == args.environment)

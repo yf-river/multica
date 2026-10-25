@@ -793,9 +793,10 @@ func (h *Handler) UpdateSupervisionFinding(w http.ResponseWriter, r *http.Reques
 // deleteSupervisionData 与既有删除事务共同清理任务或工作区的监督记录。
 func deleteSupervisionData(ctx context.Context, tx pgx.Tx, ws string, issue string) error {
 	for _, query := range []string{
-		// 1. Preparation evidence shares the owning issue's explicit cleanup transaction.
+		// 任务的准备证据和冻结材料在同一删除事务中清理。
 		`DELETE FROM supervision_manual_preparation WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
 		`DELETE FROM supervision_trace_material WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
+		`DELETE FROM supervision_frozen_material WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
 		`DELETE FROM supervision_investigation WHERE workspace_id=$1 AND ($2='' OR issue_id::text=$2)`,
 		`DELETE FROM supervision_action WHERE workspace_id=$1 AND ($2='' OR finding_id IN(SELECT id FROM supervision_finding WHERE workspace_id=$1 AND issue_id=NULLIF($2,'')::uuid))`,
 		`DELETE FROM supervision_finding WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,

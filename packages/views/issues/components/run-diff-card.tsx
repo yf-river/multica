@@ -2,7 +2,6 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import { issueKeys } from "@multica/core/issues/queries";
 import { CodeDiffCard } from "../../common/task-transcript/code-diff-card";
 
 /**
@@ -24,16 +23,6 @@ export function RunDiffCard({
   //    invalidates it when a run ends, which is how the card appears a few
   //    seconds after the comment it sits under. Any other comment edit or reply
   //    does not refetch anything.
-  const { data: tasks } = useQuery({
-    queryKey: issueKeys.tasks(issueId),
-    queryFn: () => api.listTasksByIssue(issueId),
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
-  });
-  const task = tasks?.find((t) => t.id === taskId);
-  // 3. Still running, or the run changed no files: CodeDiffCard renders nothing,
-  //    so no empty placeholder is left under the comment.
-  // 修改 1. Under a comment the card speaks in file terms; the execution log,
-  //          execution transcript and run review keep the default run-level card.
-  return <CodeDiffCard result={task?.result} variant="attachment" className={className} />;
+  const query=useQuery({queryKey:["run-diff",issueId,taskId,"summary"],queryFn:()=>api.getIssueTaskRun(issueId,taskId,true),staleTime:30_000});
+  return <CodeDiffCard result={query.data?.result} variant="attachment" className={className} />;
 }

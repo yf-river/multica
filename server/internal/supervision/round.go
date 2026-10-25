@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -37,7 +38,7 @@ func categoryOf(alias string) string {
 // OpenRound 登记一次完成快照。statusFilter 由调用方给出：状态钩子只对真正转入完成的
 // 请求开轮，扫描补齐时要求任务当前仍处于完成状态。重复调用返回已有开放轮次。
 func (s *Service) OpenRound(ctx context.Context, ws, issue string, requireDone bool) (Round, error) {
-	tx, err := s.Pool.Begin(ctx)
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return Round{}, err
 	}
@@ -60,6 +61,9 @@ func (s *Service) OpenRound(ctx context.Context, ws, issue string, requireDone b
 	err = tx.QueryRow(ctx, `SELECT id::text,sequence,material_cutoff FROM supervision_round
       WHERE workspace_id=$1 AND issue_id=$2 AND status='open' FOR UPDATE`, ws, issue).Scan(&existing.ID, &existing.Sequence, &existing.Cutoff)
 	if err == nil {
+		if err := freezeRoundMaterials(ctx, tx, ws, issue, existing); err != nil {
+			return Round{}, err
+		}
 		return existing, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -73,6 +77,9 @@ func (s *Service) OpenRound(ctx context.Context, ws, issue string, requireDone b
 		err = tx.QueryRow(ctx, `SELECT id::text,sequence,material_cutoff FROM supervision_round WHERE workspace_id=$1 AND issue_id=$2 AND status='open'`, ws, issue).Scan(&existing.ID, &existing.Sequence, &existing.Cutoff)
 	}
 	if err != nil {
+		return Round{}, err
+	}
+	if err := freezeRoundMaterials(ctx, tx, ws, issue, existing); err != nil {
 		return Round{}, err
 	}
 	return existing, tx.Commit(ctx)
@@ -141,7 +148,12 @@ func (s *Service) reconcileRounds(ctx context.Context, ws string) error {
 	}
 	// 3. 补齐历史完成轮次：旧记录没有可靠的完成时刻，截止时间取首次登记时刻，把升级前
 	// 已存在的材料全部纳入本轮；已经完整覆盖的材料不会重读，后续评论也不会追加重审。
-	_, err := s.Pool.Exec(ctx, `INSERT INTO supervision_round(id,workspace_id,issue_id,sequence,status,material_cutoff)
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO supervision_round(id,workspace_id,issue_id,sequence,status,material_cutoff)
       SELECT gen_random_uuid(),$1,i.id,
         COALESCE((SELECT max(sequence) FROM supervision_round r WHERE r.workspace_id=$1 AND r.issue_id=i.id),0)+1,
         'open',clock_timestamp()
@@ -149,7 +161,37 @@ func (s *Service) reconcileRounds(ctx context.Context, ws string) error {
       WHERE i.workspace_id=$1 AND COALESCE(i.origin_type,'')<>'health_report' AND `+categoryOf("i")+`='done'
       AND NOT EXISTS(SELECT 1 FROM supervision_round r WHERE r.workspace_id=$1 AND r.issue_id=i.id AND r.status='open')
       ORDER BY i.id LIMIT 500 ON CONFLICT DO NOTHING`, ws)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT r.id::text,r.issue_id::text,r.sequence,r.material_cutoff FROM supervision_round r WHERE r.workspace_id=$1 AND r.status='open' AND NOT EXISTS(SELECT 1 FROM supervision_frozen_material m WHERE m.round_id=r.id)`, ws)
+	if err != nil {
+		return err
+	}
+	type pendingRound struct {
+		issue string
+		round Round
+	}
+	var pending []pendingRound
+	for rows.Next() {
+		var p pendingRound
+		if err = rows.Scan(&p.round.ID, &p.issue, &p.round.Sequence, &p.round.Cutoff); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, p)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, p := range pending {
+		if err = freezeRoundMaterials(ctx, tx, ws, p.issue, p.round); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // openRound 在派发事务内锁定候选轮次；关闭后不再派发。
@@ -191,3 +233,24 @@ func closeRoundTx(ctx context.Context, tx pgx.Tx, ws, round, reason string) erro
 
 // CategorySQL 供页面查询复用同一套状态类别解析，避免界面与派发对「完成」判断不一致。
 func CategorySQL(alias string) string { return categoryOf(alias) }
+
+// 完成事务内保存原文与代次，后续编辑不能改变尚未派发的材料。
+func freezeRoundMaterials(ctx context.Context, tx pgx.Tx, ws, issue string, r Round) error {
+	for _, kind := range []string{"issue", "comment", "task", "message", "trace", "trace_usage"} {
+		source, err := sourceSQL(kind)
+		if err != nil {
+			return err
+		}
+		// sourceSQL 使用 $1 为材料身份，$2 为工作区；这里把身份绑定到材料行。
+		source = strings.ReplaceAll(source, "$1", "snapshot_material.source_id")
+		_, err = tx.Exec(ctx, `INSERT INTO supervision_frozen_material(workspace_id,issue_id,round_id,material_cutoff,kind,source_id,run_id,generation,reviewed_generation,reviewed_offset,changed_at,body)
+   SELECT snapshot_material.workspace_id,snapshot_material.issue_id,$4,$5,snapshot_material.kind,snapshot_material.source_id,snapshot_material.run_id,snapshot_material.generation,snapshot_material.reviewed_generation,snapshot_material.reviewed_offset,snapshot_material.changed_at,source.body
+   FROM supervision_material snapshot_material CROSS JOIN LATERAL (`+source+`) source(body)
+   WHERE snapshot_material.issue_id=$1 AND snapshot_material.workspace_id=$2 AND snapshot_material.kind=$3 AND snapshot_material.changed_at<=$5
+   ON CONFLICT DO NOTHING`, issue, ws, kind, r.ID, r.Cutoff)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

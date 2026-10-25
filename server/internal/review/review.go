@@ -40,7 +40,8 @@ type Verdict string
 
 const (
 	// VerdictPass 表示通过：保留在审核中等用户确认，写 review_passed 标记。
-	VerdictPass Verdict = "pass"
+	VerdictPass     Verdict = "pass"
+	VerdictNoAction Verdict = "no_action"
 	// VerdictReject 表示必须改：状态回到进行中并唤醒原受理人。
 	VerdictReject Verdict = "reject"
 	// VerdictStalled 表示上一轮问题原样未动：不再自动来回，停下交给人判断。
@@ -49,6 +50,7 @@ const (
 
 // RoundState 是 issue_review.state 的取值。
 const (
+	StateNoAction   = "no_action"
 	StateIdle       = "idle"
 	StateDispatched = "dispatched"
 	StateRejected   = "rejected"
@@ -103,6 +105,8 @@ func (f Findings) Normalize(verdict Verdict) Findings {
 	f.UnchangedPrevious = compact(f.UnchangedPrevious)
 	if f.Summary == "" {
 		switch verdict {
+		case VerdictNoAction:
+			f.Summary = "本轮无需处理"
 		case VerdictPass:
 			f.Summary = "审查通过"
 		case VerdictStalled:
@@ -117,6 +121,8 @@ func (f Findings) Normalize(verdict Verdict) Findings {
 // ParseVerdict 把 CLI 输入归一化；未知值返回空串由调用方拒绝。
 func ParseVerdict(raw string) Verdict {
 	switch Verdict(strings.ToLower(strings.TrimSpace(raw))) {
+	case VerdictNoAction:
+		return VerdictNoAction
 	case VerdictPass:
 		return VerdictPass
 	case VerdictReject:

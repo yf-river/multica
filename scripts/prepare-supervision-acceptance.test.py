@@ -68,6 +68,7 @@ class OwnershipTests(unittest.TestCase):
                  ('metadata', 'commit', 'other-commit'), ('lease', 'delivery_id', 'other-delivery'),
                  ('lease', 'state', 'idle'), ('lease', 'candidate_id', 'old-candidate'),
                  ('lease', 'source_commit', 'old-commit'), ('seed', 'seed_verified', False),
+                 ('installation', None, None), ('seed', None, None),
                  ('installation', 'seed_id', 'old-seed'), ('installation', 'seed_sha256', 'old-sha')]
         for root, field, value in cases:
             with self.subTest(root=root, field=field):
@@ -81,13 +82,21 @@ class OwnershipTests(unittest.TestCase):
 
     # 1. Real int-only phase and publication generation must agree before configuration writes.
     def test_int_only_publication_contract(self):
+        # Modification 1. Replay the real 51cb int candidate shape; only renew lifecycle fields for the positive case.
         values = copy.deepcopy(self.values)
-        values.update(environment='int')
-        values['delivery'].update(phase='preparing_release', plan_snapshot=dict(integration_only=True))
-        values['candidate'].pop('environment')
-        values['candidate'].update(delivery_env='prod', publication_lease=dict(generation=9))
-        values['lease'] = dict(state='active', delivery_id='delivery', generation=9,
-                              expires_at=values['owner']['expires_at'])
+        candidate = setup.json.loads(Path(__file__).with_name('fixtures').joinpath('supervision-int-candidate.json').read_text())
+        self.assertNotIn('environment', candidate)
+        self.assertEqual(set(candidate['validation_identity']), {'runtime_inputs', 'schema', 'suite', 'configuration'})
+        values.update(environment='int', candidate=candidate, seed=None, installation=None)
+        values['delivery'].update(id=candidate['delivery_id'], phase='preparing_release',
+            candidate_id=candidate['id'], source_commit=candidate['approved_source'],
+            plan_snapshot=dict(integration_only=True))
+        values['metadata'] = dict(commit=candidate['commit'], release_id=candidate['release_id'])
+        values['lease'] = dict(state='active', delivery_id=candidate['delivery_id'],
+            generation=candidate['publication_lease']['generation'], expires_at=values['owner']['expires_at'])
+        with self.assertRaisesRegex(RuntimeError, 'active verification'):
+            setup.validate_identity(**values)
+        candidate['status'] = 'verifying'
         setup.validate_identity(**values)
         for root, field, value in [('delivery', 'phase', 'testing'),
                                   ('delivery', 'plan_snapshot', {}),
@@ -95,11 +104,45 @@ class OwnershipTests(unittest.TestCase):
                                   ('lease', 'expires_at', '2020-01-01T00:00:00Z'),
                                   ('lease', 'delivery_id', 'foreign'),
                                   ('candidate', 'commit', 'foreign'),
-                                  ('installation', 'seed_sha256', 'foreign')]:
+                                  ('metadata', 'release_id', 'foreign'),
+                                  ('owner', 'execution_id', 'foreign'),
+                                  ('candidate', 'publication_lease', {}),
+                                  ('candidate', 'environment', 'prod')]:
             with self.subTest(root=root, field=field), self.assertRaises(RuntimeError):
                 changed = copy.deepcopy(values)
                 changed[root][field] = value
                 setup.validate_identity(**changed)
+
+    def test_int_preflight_never_reads_seed_before_candidate_validation(self):
+        # Modification 2. Exercise prepare itself so reintroducing the global seed read fails the test.
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        candidate = setup.json.loads(Path(__file__).with_name('fixtures').joinpath('supervision-int-candidate.json').read_text())
+        candidate['status'] = 'verifying'
+        expiry = self.values['owner']['expires_at']
+        status = dict(deliveries=[dict(id=candidate['delivery_id'], candidate_id=candidate['id'],
+            source_commit=candidate['approved_source'], phase='preparing_release',
+            plan_snapshot=dict(integration_only=True))], owner=self.values['owner'],
+            publication=dict(state='active', delivery_id=candidate['delivery_id'],
+                generation=candidate['publication_lease']['generation'], expires_at=expiry))
+        release = Mock(RUN=Path('/controlled'))
+        release.meta_path.side_effect = lambda env: env
+        release.candidate.return_value = candidate
+        release.lock.side_effect = lambda *args: nullcontext()
+        def read(path):
+            if path in ('prod', 'int'):
+                return dict(daemon_profile_path='profile', commit=candidate['commit'], release_id=candidate['release_id'])
+            if path == 'profile':
+                return {}
+            self.fail('Unexpected read, including a forbidden int seed dependency: ' + str(path))
+        release.read.side_effect = read
+        release.validate_candidate.side_effect = RuntimeError('reached pinned candidate validation')
+        args = SimpleNamespace(environment='int', issue='issue', delivery=candidate['delivery_id'], candidate=candidate['id'])
+        with patch.object(setup, 'load', return_value=release), patch.object(setup, 'api', return_value=status), \
+                patch.dict(setup.os.environ, MULTICA_TASK_ID='run'):
+            with self.assertRaisesRegex(RuntimeError, 'reached pinned candidate validation'):
+                setup.prepare(args)
+        release.validate_candidate.assert_called_once_with(candidate)
 
     def test_active_or_unavailable_task_inventory_refuses_restart(self):
         for code, output in ((0, '1'), (1, ''), (0, '')):

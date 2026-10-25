@@ -206,7 +206,8 @@ describe("CommentTriggerChips", () => {
       />,
     );
 
-    expect(screen.getByText("This reply will notify the issue owner Walt")).toBeInTheDocument();
+    expect(screen.queryByText("This reply will notify the issue owner Walt")).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Walt trigger: issue owner"})).toBeInTheDocument();
   });
 
   it("explains a human owner starts no agent", () => {

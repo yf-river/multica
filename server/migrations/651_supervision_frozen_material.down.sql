@@ -1,0 +1,1 @@
+DROP TABLE supervision_frozen_material;
