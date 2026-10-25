@@ -81,7 +81,8 @@ def prepare(r,source,evidence):
    git_common=r.output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),branch=r.output(['git','symbolic-ref','HEAD'],cwd=source))
   authorize(r,record)
   current=r.candidate() if r.candidate_path().exists() else None
-  if current and current['id']==version and current['status'] in ('verifying','accepted','queued'):
+  # Modification 3. A repaired source on an explicitly failed request needs a new candidate, preserving the request identity.
+  if current and current['id']==version and current.get('commit')==commit and current['status'] in ('verifying','accepted','queued'):
    r.validate_candidate(current);return current
   r.save_candidate(record)
   try:
