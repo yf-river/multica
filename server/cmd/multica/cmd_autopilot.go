@@ -224,16 +224,17 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 
 	fullID, _ := cmd.Flags().GetBool("full-id")
 	actors := loadActorDisplayLookup(ctx, client)
-	// NEXT_RUN 正是区分「有排期的 autopilot」与「根本没配触发器」的那一列：列表
-	// 载荷其实一直带着 next_run_at，但表格之前把它丢了，导致两种状态无法区分
-	// （MUL-6680）。
-	headers := []string{"ID", "TITLE", "STATUS", "MODE", "ASSIGNEE", "NEXT_RUN", "LAST_RUN"}
+	// NEXT_RUN is what distinguishes a scheduled autopilot from one with no
+	// trigger at all. The list payload has carried next_run_at all along, but
+	// the table dropped it, leaving the two indistinguishable here (MUL-6680).
+	headers := []string{"ID", "TITLE", "STATUS", "LAST_STATUS", "MODE", "ASSIGNEE", "NEXT_RUN", "LAST_RUN"}
 	rows := make([][]string, 0, len(resp.Autopilots))
 	for _, a := range resp.Autopilots {
 		rows = append(rows, []string{
 			displayID(strVal(a, "id"), fullID),
 			strVal(a, "title"),
 			strVal(a, "status"),
+			displayLastRunStatus(strVal(a, "last_run_status")),
 			strVal(a, "execution_mode"),
 			actors.agent(strVal(a, "assignee_id")),
 			relativeTimestamp(strVal(a, "next_run_at")),
@@ -244,8 +245,14 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// runAutopilotGet 执行 `autopilot get <id>`：取详情；webhook 凭据默认脱敏，
-// --show-secrets 才显示（日志不安全）。
+func displayLastRunStatus(status string) string {
+	trimmed := strings.TrimSpace(status)
+	if trimmed == "" {
+		return "—"
+	}
+	return trimmed
+}
+
 func runAutopilotGet(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
 	showSecrets, _ := cmd.Flags().GetBool("show-secrets")

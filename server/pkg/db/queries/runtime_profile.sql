@@ -81,13 +81,47 @@ DELETE FROM agent_runtime
 WHERE profile_id = $1 AND workspace_id = $2
 RETURNING id, workspace_id, owner_id, daemon_id, provider;
 
--- name: CountAgentsByProfile :one
--- Counts active (non-archived) agents bound to any runtime instance of this
--- profile. The profile-delete path uses this to refuse deletion (409) while
--- agents still depend on it, mirroring the runtime-delete guard.
-SELECT count(*) FROM agent a
-JOIN agent_runtime ar ON ar.id = a.runtime_id
-WHERE ar.profile_id = $1 AND ar.workspace_id = $2 AND a.archived_at IS NULL;
+-- name: ListActiveAgentsByProfile :many
+-- 返回最多 max_rows 个阻塞 Agent，窗口计数覆盖全部阻塞项及类别，避免分页遗漏特殊 Agent 的处理指引。
+WITH blockers AS (
+    SELECT
+        a.id,
+        a.name,
+        a.kind,
+        a.system_key,
+        ar.id AS runtime_id,
+        ar.name AS runtime_name,
+        ar.custom_name AS runtime_custom_name,
+        ar.status AS runtime_status,
+        CASE
+            WHEN a.system_key IS NULL OR btrim(a.system_key) = '' THEN 'user'
+            WHEN btrim(a.system_key) = 'mika' THEN 'mika'
+            -- system_key 前缀按字面匹配，避免把下划线当作通配符。
+            WHEN starts_with(btrim(a.system_key), 'agent_builder:') THEN 'agent_builder'
+            ELSE 'other_system'
+        END AS blocker_class
+    FROM agent a
+    JOIN agent_runtime ar ON ar.id = a.runtime_id
+    WHERE ar.profile_id = $1 AND ar.workspace_id = $2 AND a.archived_at IS NULL
+)
+SELECT
+    id,
+    name,
+    kind,
+    system_key,
+    runtime_id,
+    runtime_name,
+    runtime_custom_name,
+    runtime_status,
+    blocker_class,
+    count(*) OVER () AS total_count,
+    count(*) FILTER (WHERE blocker_class = 'user') OVER () AS user_count,
+    count(*) FILTER (WHERE blocker_class = 'mika') OVER () AS mika_count,
+    count(*) FILTER (WHERE blocker_class = 'agent_builder') OVER () AS agent_builder_count,
+    count(*) FILTER (WHERE blocker_class = 'other_system') OVER () AS other_system_count
+FROM blockers
+ORDER BY runtime_name ASC, name ASC
+LIMIT @max_rows::int;
 
 -- name: ListAgentRuntimeIDsByProfile :many
 -- Enumerates the runtime instance rows registered against a profile. The
