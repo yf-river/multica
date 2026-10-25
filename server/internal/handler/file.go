@@ -705,6 +705,22 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.writeSignedAttachmentMetadata(w, r, att)
+}
+
+// GetAttachmentForDownload resolves the workspace from the attachment, as the
+// durable Markdown download URL does. A link can be pasted into a different
+// workspace; the current workspace header must not change its target. The
+// membership check is the same one used by the protected download endpoint.
+func (h *Handler) GetAttachmentForDownload(w http.ResponseWriter, r *http.Request) {
+	att, ok := h.loadAttachmentForDownload(w, r)
+	if !ok {
+		return
+	}
+	h.writeSignedAttachmentMetadata(w, r, att)
+}
+
+func (h *Handler) writeSignedAttachmentMetadata(w http.ResponseWriter, r *http.Request, att db.Attachment) {
 
 	// 无论调用方声明了什么模式都签（除非代理/预签名），走签名：这个接口是"新鲜
 	// 的、可原生加载的 URL"的唯一来源。stable 模式调用方（CLI `attachment

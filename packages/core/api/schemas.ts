@@ -762,9 +762,11 @@ export const EMPTY_ISSUE_PROPERTIES_RESPONSE: IssuePropertiesResponse = {
 /** 应用级配置（CDN、登录、遥测、daemon 地址、功能开关、能力信号等）。 */
 export interface AppConfigResponse {
   cdn_domain: string;
-  // 为 true 表示 CDN 域名通过限时签名 URL（CloudFront 签名）提供私密内容——
-  // 该域名下的裸存储 URL 不能公开访问，绝不能用作原生媒体源（MUL-3254）。
-  // 旧服务器会省略该字段；按 false 处理。
+  attachment_public_url?: string;
+  // True when the CDN domain serves private content via time-bounded signed
+  // URLs (CloudFront signing) — raw storage URLs on that domain are NOT
+  // publicly fetchable and must not be used as native media sources
+  // (MUL-3254). Older servers omit the field; treat that as false.
   cdn_signed?: boolean;
   allow_signup: boolean;
   google_client_id?: string;
@@ -980,6 +982,7 @@ const FeatureFlagsSchema = z.preprocess(
 /** 校验应用级配置响应（与上方 AppConfigResponse 接口同形状的运行时版本）。 */
 export const AppConfigSchema = z.object({
   cdn_domain: z.string().default(""),
+  attachment_public_url: OptionalStringSchema,
   cdn_signed: BooleanWithDefaultSchema(false),
   allow_signup: BooleanWithDefaultSchema(true),
   google_client_id: OptionalStringSchema,
@@ -1003,6 +1006,7 @@ export const AppConfigSchema = z.object({
 /** 应用级配置的空值兜底。 */
 export const EMPTY_APP_CONFIG: AppConfigResponse = {
   cdn_domain: "",
+  attachment_public_url: "",
   cdn_signed: false,
   allow_signup: true,
   google_client_id: "",

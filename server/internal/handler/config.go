@@ -17,9 +17,11 @@ import (
 
 // AppConfig 是 GET /api/config 的响应：web 应用启动时读取的实例级公开配置。
 type AppConfig struct {
-	EnvironmentID   string `json:"environment_id,omitempty"`
-	EnvironmentName string `json:"environment_name,omitempty"`
-	CdnDomain       string `json:"cdn_domain"`
+	// 用于识别本部署的持久附件链接。
+	AttachmentPublicURL string `json:"attachment_public_url,omitempty"`
+	EnvironmentID       string `json:"environment_id,omitempty"`
+	EnvironmentName     string `json:"environment_name,omitempty"`
+	CdnDomain           string `json:"cdn_domain"`
 	// CdnSigned 告知客户端上面的 CDN 域名伺服的是「私有内容、经带时限的签名 URL 访问」
 	// （即开了 CloudFront 签名）。为 true 时，CDN 域名上的原始存储 URL 无法公开拉取——
 	// 渲染器不能把它当原生 <img>/<video> 源，应退回按附件的 API 端点或新签发的
@@ -105,6 +107,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()
 	}
+	config.AttachmentPublicURL = h.cfg.PublicURL
 	config.CdnSigned = h.CFSigner != nil
 	config.DaemonServerURL, config.DaemonAppURL = daemonSetupURLsFromEnv()
 	config.VCSIntegrationAvailable = h.cfg.VCSIntegrationEnabled

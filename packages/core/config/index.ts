@@ -13,9 +13,10 @@ import { useStore } from "zustand";
  */
 interface ConfigState {
   cdnDomain: string;
-  // 为 true 表示 cdnDomain 上的内容是带时限的签名 URL（服务端开启了
-  // CloudFront 签名）。渲染器不能把该域名下的裸存储地址当成可直接加载的
-  // 媒体源（MUL-3254）。
+  attachmentPublicUrl: string;
+  // True when cdnDomain serves private content via time-bounded signed URLs
+  // (CloudFront signing enabled server-side). Renderers must not treat a raw
+  // storage URL on that domain as a loadable media source (MUL-3254).
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
@@ -48,6 +49,7 @@ interface ConfigState {
   // promises nothing about replies and uses the legacy delete route.
   commentDeleteKeepRepliesSupported: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
+  setAttachmentPublicUrl: (url?: string) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
@@ -70,6 +72,7 @@ interface ConfigState {
 /** 底层的原生 Zustand store，宿主的启动代码往这里写入运行时配置。 */
 export const configStore = createStore<ConfigState>((set) => ({
   cdnDomain: "",
+  attachmentPublicUrl: "",
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
@@ -85,6 +88,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   issueCreatePropertiesSupported: false,
   commentDeleteKeepRepliesSupported: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
+  setAttachmentPublicUrl: (url = "") => set({ attachmentPublicUrl: url }),
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",

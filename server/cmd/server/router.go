@@ -1467,6 +1467,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// MUL-3130。下面的元数据/删除端点保持工作区作用域，因为它们是 JSON-API 消费方，
 		// 总带有工作区上下文。
 		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
+		// Markdown links may point to an attachment in a different workspace.
+		// Resolve that workspace from the row and check membership before minting
+		// a fresh URL; the workspace-scoped metadata route stays unchanged.
+		r.Get("/api/attachments/{id}/download-metadata", h.GetAttachmentForDownload)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
