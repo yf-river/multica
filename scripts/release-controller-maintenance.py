@@ -57,9 +57,23 @@ def authorize(r,record):
  if not auth.get('checks') or any(c.get('status')!='passed' or not c.get('name') or not c.get('evidence') for c in auth['checks']):raise RuntimeError('缺少准确维护候选检查证据')
  validate_source(r,record['source'],auth['base_commit'])
 
+def fenced_without_work(r, delivery):
+ # 被租约拒绝且没有实际占用的验收记录，不占用控制端维护窗口。
+ if delivery.get('phase')!='testing' or not delivery.get('id') or delivery.get('candidate_id') or delivery.get('verification_owner'):
+  return False
+ if (delivery.get('verification_run') or {}).get('status') in ('queued','dispatched','running','waiting_local_directory'):
+  return False
+ path=r.RUN/'verification-jobs'/(delivery['id']+'.json')
+ if not path.exists():return False
+ job=r.read(path)
+ if job.get('stage')!='fenced' or job.get('lease') or job.get('candidate_id'):return False
+ if any(slot.get('delivery_id')==delivery['id'] for slot in api(r,'delivery-queue/slots')):return False
+ units=r.subprocess.run(['systemctl','list-units','--all','--no-legend','--no-pager','--state=active,activating,deactivating','multica-verify-'+delivery['id']+'-*'],capture_output=True,text=True,check=True)
+ return not units.stdout.strip()
+
 def idle(r,production=False):
  rows=api(r,'delivery-queue')
- if any(d['phase'] in ('waiting_int','testing','approved','preparing_release','publishing') for d in rows):raise RuntimeError('其他交付正在使用控制端，维护保持等待')
+ if any(d['phase'] in ('waiting_int','testing','approved','preparing_release','publishing') and not fenced_without_work(r,d) for d in rows):raise RuntimeError('其他交付正在使用控制端，维护保持等待')
  for env in ('prod','int'):
   m=r.read(r.meta_path(env));r.check_process_ownership(env,m);r.check_live_environment(env,m,r.read(r.config_path(env)))
  for env in (('int','prod') if production else ('int',)):
