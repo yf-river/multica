@@ -118,14 +118,25 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
-	"639_test_agent_control_key":              "test_agent_control_key",
-	"655_agent_task_history_page_index":       "idx_agent_task_queue_history_page",
-	"652_supervision_frozen_material_key":     "supervision_frozen_material_key",
-	"647_supervision_manual_preparation_id":   "supervision_manual_preparation_id",
-	"648_supervision_manual_preparation_open": "supervision_manual_preparation_open",
-	"641_supervision_trace_material_key":      "supervision_trace_material_run_key",
-	"642_supervision_trace_material_pending":  "supervision_trace_material_pending",
-	"644_supervision_trace_material_id":       "supervision_trace_material_id",
+	"657_activity_log_member_assignee_frequency_index":      "idx_activity_log_member_assignee_frequency",
+	"658_chat_message_assistant_task_index":                 "idx_chat_message_assistant_task",
+	"659_agent_task_queue_autopilot_run_created_at_index":   "idx_agent_task_queue_autopilot_run_created_at",
+	"660_agent_task_queue_chat_session_index":               "idx_agent_task_queue_chat_session",
+	"661_dingtalk_bot_identity_workspace_index":             "idx_dingtalk_bot_identity_workspace",
+	"662_issue_to_label_label_id_index":                     "issue_to_label_label_idx",
+	"663_chat_session_agent_id_index":                       "idx_chat_session_agent_id",
+	"664_agent_task_queue_delegated_failure_evidence_index": "idx_agent_task_queue_delegated_failure_evidence",
+	"665_chat_session_runtime_id_index":                     "idx_chat_session_runtime_id",
+	"666_github_pr_address_index":                           "idx_github_pull_request_pr_owner_repo",
+
+	"639_test_agent_control_key":                  "test_agent_control_key",
+	"655_agent_task_history_page_index":           "idx_agent_task_queue_history_page",
+	"652_supervision_frozen_material_key":         "supervision_frozen_material_key",
+	"647_supervision_manual_preparation_id":       "supervision_manual_preparation_id",
+	"648_supervision_manual_preparation_open":     "supervision_manual_preparation_open",
+	"641_supervision_trace_material_key":          "supervision_trace_material_run_key",
+	"642_supervision_trace_material_pending":      "supervision_trace_material_pending",
+	"644_supervision_trace_material_id":           "supervision_trace_material_id",
 	"637_run_text_change_task_idx":                "run_text_change_task_idx",
 	"568_upstream_sync_absorption_item":           "upstream_sync_absorption_task_item",
 	"566_task_trace_identity_compatibility":       "task_trace_event_pkey",
@@ -403,6 +414,17 @@ var concurrentIndexCleanups = map[string]string{
 // 重试，裸 CREATE 又会卡在 "already exists"——两种情况都需要在回滚安全重试前
 // 做一次"方向相关"的清理。
 var concurrentDownIndexCleanups = map[string]string{
+	"657_activity_log_member_assignee_frequency_index":      "idx_activity_log_member_assignee_frequency",
+	"658_chat_message_assistant_task_index":                 "idx_chat_message_assistant_task",
+	"659_agent_task_queue_autopilot_run_created_at_index":   "idx_agent_task_queue_autopilot_run_created_at",
+	"660_agent_task_queue_chat_session_index":               "idx_agent_task_queue_chat_session",
+	"661_dingtalk_bot_identity_workspace_index":             "idx_dingtalk_bot_identity_workspace",
+	"662_issue_to_label_label_id_index":                     "issue_to_label_label_idx",
+	"663_chat_session_agent_id_index":                       "idx_chat_session_agent_id",
+	"664_agent_task_queue_delegated_failure_evidence_index": "idx_agent_task_queue_delegated_failure_evidence",
+	"665_chat_session_runtime_id_index":                     "idx_chat_session_runtime_id",
+	"666_github_pr_address_index":                           "idx_github_pull_request_pr_owner_repo",
+
 	"551_supervision_parallel":                              "supervision_active_workspace",
 	"144_drop_agent_task_queue_chat_pending_v1":             "idx_agent_task_queue_chat_pending",
 	"171_drop_legacy_label_namespace_index":                 "issue_label_workspace_name_lower_idx",
