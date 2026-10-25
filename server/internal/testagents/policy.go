@@ -52,7 +52,7 @@ func Resolve(ctx context.Context, db Reader, workspace, agentID string) (Selecti
 	}
 	var raw []byte
 	var daemon string
-	err := db.QueryRow(ctx, `SELECT COALESCE(desired->'overrides'->$3,desired->'policy'),observed->>'daemon_id' FROM test_agent_control WHERE workspace_id=$1 AND name=$2`, workspace, env, agentID).Scan(&raw, &daemon)
+	err := db.QueryRow(ctx, `SELECT COALESCE(desired->'overrides'->$3,desired->'policy'),observed->>'daemon_id' FROM test_agent_control WHERE name=$2 ORDER BY (workspace_id=$1) DESC,updated_at DESC LIMIT 1`, workspace, env, agentID).Scan(&raw, &daemon)
 	var result Selection
 	if err != nil || json.Unmarshal(raw, &result.Policy) != nil || !result.Policy.Valid() {
 		return result, true, fmt.Errorf("本环境测试 Agent 默认配置尚未就绪")
