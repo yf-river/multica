@@ -5560,7 +5560,12 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid offset")
 		return
 	}
-	tasks, err := h.Queries.ListTaskSummariesByIssue(r.Context(), db.ListTaskSummariesByIssueParams{IssueID: issue.ID, Limit: 50, Offset: int32(offset)})
+	// 旧 CLI 和监督工具未传分页参数，仍读取完整身份集合；两种入口都只返回摘要。
+	limit := int32(50)
+	if r.URL.Query().Get("offset") == "" {
+		limit = 2147483647
+	}
+	tasks, err := h.Queries.ListTaskSummariesByIssue(r.Context(), db.ListTaskSummariesByIssueParams{IssueID: issue.ID, Limit: limit, Offset: int32(offset)})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list tasks")
 		return

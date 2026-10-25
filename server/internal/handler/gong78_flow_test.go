@@ -129,3 +129,23 @@ func TestGong78ExternalConfirmationDoesNotDispatchOrComment(t *testing.T) {
 		t.Fatalf("external confirmation triggered work: comments %d -> %d, tasks=%d", before, after, tasks)
 	}
 }
+
+func TestGong78PaginationKeepsLegacyRunIdentityCoverage(t *testing.T) {
+	issue := dbfx.Issue(t, "history compatibility", nil)
+	agent := dbfx.Agent(t, "history", testRuntimeID)
+	for n := 0; n < 51; n++ {
+		dbfx.Task(t, agent, testutil.Cols{"issue_id": issue, "runtime_id": testRuntimeID, "status": "completed"})
+	}
+	for _, tc := range []struct {
+		query string
+		count int
+	}{{"", 51}, {"?offset=0", 50}, {"?offset=50", 1}} {
+		req := withURLParam(newRequest("GET", "/history"+tc.query, nil), "id", issue)
+		rec := httptest.NewRecorder()
+		testHandler.ListTasksByIssue(rec, req)
+		var runs []AgentTaskResponse
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &runs) != nil || len(runs) != tc.count {
+			t.Fatalf("%s: HTTP %d count %d", tc.query, rec.Code, len(runs))
+		}
+	}
+}
