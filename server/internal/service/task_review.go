@@ -30,7 +30,7 @@ func (s *TaskService) EnqueueIssueReviewTask(ctx context.Context, issue db.Issue
 	if !agent.RuntimeID.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("review agent has no runtime")
 	}
-	runtime, err := s.Queries.GetAgentRuntime(ctx, agent.RuntimeID)
+	runtime, err := s.runtimeLookup().Get(ctx, agent.RuntimeID)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load review runtime: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -338,8 +339,28 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		}
 	}
 
-	// 5-6. 解析当前 Chat 路由，然后要么正常追加、要么原子地创建下一条 Chat 路由
-	//（带它可选的首轮内容）。
+	// 4b. Invoke permission (MUL-3963): the same verdict the web chat applies
+	//     before it opens a session. It judges the SENDER, never the installer
+	//     who owns a group's route, and it runs before anything is stored — so
+	//     a refused turn reaches no Chat, no /issue, and no later run's context.
+	allowed, err := r.tasks.MemberMayInvokeAgent(ctx, inst.AgentID, identity.UserID)
+	if err != nil {
+		// Release rather than mark: a lookup that did not answer is not a
+		// denial, and the redelivery is this message's remaining chance.
+		return Result{}, finalizeRelease, fmt.Errorf("check invoke permission: %w", err)
+	}
+	if !allowed {
+		_ = set.Audit.RecordDrop(ctx, inst.ID, msg, DropReasonInvokeDenied)
+		return Result{
+			Outcome:        OutcomeInvokeDenied,
+			DropReason:     DropReasonInvokeDenied,
+			InstallationID: inst.ID,
+			Sender:         msg.Source.SenderID,
+		}, finalizeMark, nil
+	}
+
+	// 5-6. Resolve the current Chat route, then either append normally or
+	// atomically create the next Chat route with its optional first turn.
 	sessionCreator := identity.UserID
 	if msg.Source.ChatType == channel.ChatTypeGroup {
 		sessionCreator = inst.InstallerUserID
@@ -351,7 +372,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		parsedCommand, _ = ParseIssueCommand(msg.CommandText)
 	}
 	issueNeedsUsage := parsedCommand != nil && parsedCommand.Title == ""
+	hasSelectedContext := msg.HasSelectedContext && strings.TrimSpace(msg.Text) != ""
 	hasMedia := set.Media != nil && set.Media.HasMedia(msg)
+	bareFresh = bareFresh && !hasSelectedContext && !hasMedia
 	resolveMedia := !issueNeedsUsage && hasMedia
 	localMediaDeadline := time.Now().Add(r.mediaTimeout)
 	if resolveMedia {
@@ -371,7 +394,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 
 		if startChat {
 			startedTask = db.AgentTaskQueue{}
-			persistMessage := msg.CommandText != "" || hasMedia
+			persistMessage := msg.CommandText != "" || hasSelectedContext || hasMedia
 			var beforeCommit func(context.Context, pgx.Tx, db.ChatSession) error
 			if persistMessage && !msg.SkipAgentRun {
 				prepared, prepareErr := r.tasks.PrepareChatTaskEnqueue(ctx, inst.AgentID, identity.UserID)
@@ -429,7 +452,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 				startTaskCommitted = true
 			}
 			r.notifyChatStarted(inst, sessionCreator, msg.Source.ChannelType, started)
-			if msg.CommandText == "" && !hasMedia {
+			if msg.CommandText == "" && !hasSelectedContext && !hasMedia {
 				finalize := finalizeMark
 				if appendRes.DedupMarked {
 					finalize = finalizeNone
@@ -635,7 +658,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		if !startChat && !appendRes.BecameVisible {
 			r.lifecycle.ChannelChatTitleInitialized(inst.WorkspaceID, sessionCreator, sessionID, appendRes.InitialTitle)
 		}
-		r.lifecycle.GenerateChannelChatTitle(inst.WorkspaceID, sessionCreator, sessionID, appendRes.InitialTitle, msg.Text)
+		r.lifecycle.GenerateChannelChatTitle(inst.WorkspaceID, sessionCreator, sessionID, appendRes.InitialTitle, chatTitleSource(msg.Text, msg.CommandText, !startChat && msg.ForceFresh))
 	}
 	return res, postAppendFinalize, nil
 }

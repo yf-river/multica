@@ -53,7 +53,7 @@ func NewResolverSet(
 	set := engine.ResolverSet{
 		Installation: &installationResolver{store: store},
 		Identity:     &identityResolver{store: store},
-		Dedup:        &deduper{store: store},
+		Dedup:        NewDeduper(store),
 		Session:      &sessionBinder{session: session},
 		Audit:        &auditor{store: store},
 		OriginType:   originWecomChat,
@@ -89,7 +89,7 @@ func (r *sessionBinder) StartSession(ctx context.Context, p engine.StartSessionP
 			BindingKey: p.Message.Source.ChatID, ChatType: p.Message.Source.ChatType,
 		},
 		Initiator: p.Sender,
-		Body:      p.Message.Text, MessageID: p.Message.MessageID,
+		Body:      p.Message.Text, CommandText: p.Message.CommandText, MessageID: p.Message.MessageID,
 		ClaimToken: p.ClaimToken, MediaPendingSeconds: p.MediaPendingSeconds,
 		PersistMessage: p.PersistMessage, HistoryBoundaryPending: p.HistoryBoundaryPending,
 		BeforeCommit: p.BeforeCommit,
@@ -173,8 +173,14 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 
 // ---- dedup ----
 
-// deduper 是 wecom 的 Deduper。它用共享的 channel_inbound_message_dedup sqlc 查
-// 询——和飞书 / Slack 同一张表——让两阶段幂等不变量在各通道间被统一执行。
+// NewDeduper builds the claim store the Router and the adapter share. Both must
+// go through it: they claim the same (installation, message) key on the same
+// table, which is what keeps one message from being answered in both places.
+func NewDeduper(store *Store) engine.Deduper { return &deduper{store: store} }
+
+// deduper is the wecom Deduper. It uses the shared channel_inbound_message_dedup
+// sqlc queries — the same table Feishu / Slack use — so the two-phase
+// idempotency invariant is enforced uniformly across channels.
 type deduper struct{ store *Store }
 
 func (d *deduper) Claim(ctx context.Context, installationID pgtype.UUID, messageID string) (pgtype.UUID, error) {

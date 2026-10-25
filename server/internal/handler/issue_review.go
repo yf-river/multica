@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/testagents"
 	"log/slog"
 	"net/http"
@@ -179,7 +180,7 @@ func (h *Handler) UpdateReviewSettings(w http.ResponseWriter, r *http.Request) {
 		hasRuntime = true
 		runtimeChanged = !hasAgent || !current.RuntimeID.Valid || current.RuntimeID != targetRuntime.ID
 	} else if hasAgent && current.RuntimeID.Valid {
-		if targetRuntime, err = qtx.GetAgentRuntime(ctx, current.RuntimeID); err == nil {
+		if targetRuntime, err = (service.RuntimeLookup{Queries: qtx, Metrics: h.Metrics, Source: obsmetrics.RuntimeLookupSourceRuntimeAPI}).Get(ctx, current.RuntimeID); err == nil {
 			hasRuntime = true
 		}
 	}

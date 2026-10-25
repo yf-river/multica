@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -37,7 +38,7 @@ func (s *TaskService) EnqueueSupervisionTaskTx(ctx context.Context, q *db.Querie
 	if agent.WorkspaceID != ws || agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("监督 Agent 不可用")
 	}
-	if _, err := q.GetAgentRuntime(ctx, agent.RuntimeID); err != nil {
+	if _, err := (RuntimeLookup{Queries: q, Metrics: s.Metrics, Source: obsmetrics.RuntimeLookupSourceTask}).Get(ctx, agent.RuntimeID); err != nil {
 		return db.AgentTaskQueue{}, err
 	}
 	ready, err := AgentReadiness(ctx, s.runtimeLookup(), agent)

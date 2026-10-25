@@ -1694,8 +1694,21 @@ type PreparedChatTaskEnqueue struct {
 	runtimeOverlay   runtimeMCPOverlayData
 }
 
-// PrepareChatTaskEnqueue 在调用方开事务前做读取与可选的外部集成工作。BuildTaskOverlay 可能产生网络 I/O，
-// 绝不能在 /new 持有路由切换锁时执行。
+// MemberMayInvokeAgent 在渠道消息落库前核对发送者的真实调用权限；查询失败须交回平台重试。
+func (s *TaskService) MemberMayInvokeAgent(ctx context.Context, agentID, userID pgtype.UUID) (bool, error) {
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load agent: %w", err)
+	}
+	return memberMayInvokeAgent(ctx, s.Queries, agent, userID, agent.WorkspaceID)
+}
+
+// PrepareChatTaskEnqueue performs reads and optional external integration work
+// before the caller opens a transaction. BuildTaskOverlay may perform network
+// I/O and must never run while /new holds route-rotation locks.
 func (s *TaskService) PrepareChatTaskEnqueue(
 	ctx context.Context,
 	agentID, initiatorUserID pgtype.UUID,

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/testagents"
 	"net/http"
 	"strconv"
@@ -294,7 +295,7 @@ func (h *Handler) UpdateSupervision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if hasAgent && current.RuntimeID.Valid {
-		if targetRuntime, err = qtx.GetAgentRuntime(ctx, current.RuntimeID); err == nil {
+		if targetRuntime, err = (service.RuntimeLookup{Queries: qtx, Metrics: h.Metrics, Source: obsmetrics.RuntimeLookupSourceRuntimeAPI}).Get(ctx, current.RuntimeID); err == nil {
 			hasRuntime = true
 		}
 	}

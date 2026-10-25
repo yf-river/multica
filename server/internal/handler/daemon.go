@@ -5337,7 +5337,7 @@ func (h *Handler) renewUpstreamLeaseForPolledTask(r *http.Request, task db.Agent
 		if userID == "" || !task.RuntimeID.Valid {
 			return
 		}
-		runtime, err := h.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+		runtime, err := h.getAgentRuntime(ctx, obsmetrics.RuntimeLookupSourceTask, task.RuntimeID)
 		if err != nil || uuidToString(runtime.WorkspaceID) != workspaceID ||
 			(runtime.OwnerID.Valid && uuidToString(runtime.OwnerID) != userID && runtime.Visibility != "workspace") {
 			return

@@ -84,7 +84,7 @@ func newOutboundWithMedia(t *testing.T, q outboundQueries, objects mediaObjectSt
 	if objects != nil {
 		opts = append(opts, WithAttachments(objects))
 	}
-	o := NewOutbound(q, reg, slog.Default(), opts...)
+	o := NewOutbound(q, reg, nil, slog.Default(), opts...)
 	o.spawn = func(f func()) { f() }
 	return o, instID, conn
 }
@@ -345,7 +345,7 @@ func TestSendAttachments_ADeliveredFileIsNotAnnounced(t *testing.T) {
 	if len(got) != 1 || got[0] != "Here it is." {
 		t.Errorf("text sends = %v, want the answer alone — a delivered file needs no commentary", got)
 	}
-	for _, notice := range []string{mediaSendFailedText, mediaSendUnknownText, mediaLookupFailedText} {
+	for _, notice := range []string{copyFor(DefaultLocale).MediaSendFailed, copyFor(DefaultLocale).MediaSendUnknown, copyFor(DefaultLocale).MediaLookupFailed} {
 		if slices.Contains(got, notice) {
 			t.Errorf("a delivered file was reported to the user as %q", notice)
 		}
@@ -372,10 +372,10 @@ func TestSendAttachments_ARefusedFileIsReportedAsDefinitelyFailed(t *testing.T) 
 	if len(got) != 2 {
 		t.Fatalf("text sends = %v, want the answer and a note that the file failed", got)
 	}
-	if got[1] != mediaSendFailedText {
+	if got[1] != copyFor(DefaultLocale).MediaSendFailed {
 		t.Errorf("second message = %q, want the definite failure notice — the server refused it, so there is no doubt to hedge", got[1])
 	}
-	if strings.Contains(got[1], mediaSendUnknownText) {
+	if strings.Contains(got[1], copyFor(DefaultLocale).MediaSendUnknown) {
 		t.Error("a refusal was reported with the hedged wording; a definite failure the user is invited to doubt is a failure they will not act on")
 	}
 	if n := len(mediaSends(t, conn)); n != 0 {
@@ -414,10 +414,10 @@ func TestSendAttachments_AnUnconfirmedSendIsNotCalledAFailureAndIsNotRetried(t *
 	if len(got) != 1 {
 		t.Fatalf("text sends = %v, want one notice about the unconfirmed file", got)
 	}
-	if got[0] == mediaSendFailedText {
+	if got[0] == copyFor(deploymentLocale()).MediaSendFailed {
 		t.Error("an unconfirmed send was reported as a definite failure; the file may be in the chat the user is reading")
 	}
-	if got[0] != mediaSendUnknownText {
+	if got[0] != copyFor(deploymentLocale()).MediaSendUnknown {
 		t.Errorf("notice = %q, want the non-definitive wording", got[0])
 	}
 }
@@ -447,10 +447,10 @@ func TestSendAttachments_ADefiniteFailureAndAnUnknownAreBothReported(t *testing.
 	if len(got) != 1 {
 		t.Fatalf("text sends = %v, want one notice covering both files", got)
 	}
-	if !strings.Contains(got[0], mediaSendFailedText) {
+	if !strings.Contains(got[0], copyFor(deploymentLocale()).MediaSendFailed) {
 		t.Errorf("notice = %q, missing the definite failure for the oversize file", got[0])
 	}
-	if !strings.Contains(got[0], mediaSendUnknownText) {
+	if !strings.Contains(got[0], copyFor(deploymentLocale()).MediaSendUnknown) {
 		t.Errorf("notice = %q, missing the unconfirmed send — folded into the definite one", got[0])
 	}
 }
@@ -517,7 +517,7 @@ func TestSendAttachments_ALookupFailureIsSaidOutLoud(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("text sends = %v, want the answer and a note that the lookup failed", got)
 	}
-	if got[1] != mediaLookupFailedText {
+	if got[1] != copyFor(DefaultLocale).MediaLookupFailed {
 		t.Errorf("second message = %q, want the lookup-failure notice", got[1])
 	}
 }
@@ -547,7 +547,7 @@ func TestSendAttachments_ADeliveryShedForBacklogIsSaidOutLoud(t *testing.T) {
 		t.Fatalf("upload init frames = %d, want 0 — the delivery was supposed to be shed", n)
 	}
 	got := markdownSends(t, conn)
-	if len(got) != 2 || got[1] != mediaSendFailedText {
+	if len(got) != 2 || got[1] != copyFor(DefaultLocale).MediaSendFailed {
 		t.Errorf("text sends = %v, want the answer and the failure notice — a shed delivery the user is never told about is a file that silently vanishes", got)
 	}
 }
@@ -598,7 +598,7 @@ func TestSendAttachment_RefusesAnOversizeAttachmentWithoutReadingIt(t *testing.T
 		t.Errorf("upload init frames = %d, want 0", n)
 	}
 	got := markdownSends(t, conn)
-	if len(got) != 2 || got[1] != mediaSendFailedText {
+	if len(got) != 2 || got[1] != copyFor(DefaultLocale).MediaSendFailed {
 		t.Errorf("text sends = %v, want the answer and the definite failure notice", got)
 	}
 }
@@ -620,7 +620,7 @@ func TestSendAttachments_ReportsAnUnreadableObject(t *testing.T) {
 		t.Errorf("upload init frames = %d, want 0 — there were no bytes to upload", n)
 	}
 	got := markdownSends(t, conn)
-	if len(got) != 2 || got[1] != mediaSendFailedText {
+	if len(got) != 2 || got[1] != copyFor(DefaultLocale).MediaSendFailed {
 		t.Errorf("text sends = %v, want the answer and the failure notice", got)
 	}
 }
@@ -897,7 +897,7 @@ func newMediaRigWithMetrics(t *testing.T, q outboundQueries, objects mediaObject
 	if objects != nil {
 		opts = append(opts, WithAttachments(objects))
 	}
-	o := NewOutbound(q, reg, slog.Default(), opts...)
+	o := NewOutbound(q, reg, nil, slog.Default(), opts...)
 	o.spawn = func(f func()) { f() }
 	return o, instID, conn, mx
 }
@@ -1123,7 +1123,7 @@ func TestNoLiveSender_SettlesEveryKnownFile(t *testing.T) {
 	instID := mustTestUUID(t)
 	q.sessionBinding.InstallationID = instID
 	q.installation.ID = instID
-	o := NewOutbound(q, reg, slog.Default(), WithOutboundMetrics(mx), WithAttachments(&fakeObjectStore{}))
+	o := NewOutbound(q, reg, nil, slog.Default(), WithOutboundMetrics(mx), WithAttachments(&fakeObjectStore{}))
 	o.spawn = func(f func()) { f() }
 
 	o.sendAttachments(context.Background(), mustParseTaskUUID(t, testMessageID), mustParseTaskUUID(t, testWorkspaceID),

@@ -193,14 +193,14 @@ func (r *wecomMediaResolver) ingestOne(ctx context.Context, inst engine.Resolved
 		// 都覆盖着这个对象。
 		return channel.MediaRef{}, fmt.Errorf("upload media: %w", err)
 	}
-	return channel.MediaRef{
+	return m.inline(channel.MediaRef{
 		Type:       m.Kind,
 		StorageKey: key,
 		StorageURL: link,
 		Filename:   filename,
 		MimeType:   contentType,
 		SizeBytes:  int64(len(plain)),
-	}, nil
+	}), nil
 }
 
 // mediaObjectKey 给对象起名。它从 CHAT 消息派生而不是从企微消息派生，理由 lark
@@ -434,12 +434,12 @@ func (r *wecomMediaResolver) ingestStreaming(
 	if _, err := streamer.UploadStream(ctx, key, plain, size, contentType, filename); err != nil {
 		return channel.MediaRef{}, fmt.Errorf("upload media: %w", err)
 	}
-	return channel.MediaRef{
+	return m.inline(channel.MediaRef{
 		Type:       m.Kind,
 		StorageKey: key,
 		StorageURL: link,
 		Filename:   filename,
 		MimeType:   contentType,
 		SizeBytes:  size,
-	}, nil
+	}), nil
 }

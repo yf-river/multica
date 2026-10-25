@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -54,6 +55,18 @@ type InstallationService struct {
 	// 安全不变量，所以没有「失败即放行」的开关——安装时连不上企微就吃 503、
 	// 稍后重试，绝不会允许拿未核验的凭据去覆盖别人的行。
 	probe CredentialProbe
+
+	// logger is only ever used to say what a bot swap threw away. Nil-safe
+	// through log() below, the same shape channel_media_reconciler.go uses, so
+	// a struct built in a test does not have to supply one.
+	logger *slog.Logger
+}
+
+func (s *InstallationService) log() *slog.Logger {
+	if s.logger == nil {
+		return slog.Default()
+	}
+	return s.logger
 }
 
 // InstallationOption 用于在构造时配置该服务。
@@ -83,10 +96,11 @@ func NewInstallationService(queries *db.Queries, tx engine.TxStarter, box *secre
 		return nil, errors.New("wecom: InstallationService requires a non-nil secretbox.Box")
 	}
 	svc := &InstallationService{
-		store: NewStore(queries),
-		tx:    tx,
-		box:   box,
-		probe: NewHandshakeProbe(nil, ""),
+		store:  NewStore(queries),
+		tx:     tx,
+		box:    box,
+		probe:  NewHandshakeProbe(nil, ""),
+		logger: slog.Default(),
 	}
 	for _, o := range opts {
 		o(svc)
@@ -196,10 +210,61 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 	if err != nil {
 		return Installation{}, err
 	}
-	// 会话名在对话框里是可选项，所以管理员在轮换泄露的密钥时常把它留空——而一
-	// 旦留空被清掉，群里的斜杠命令就会退回这个字段本来要替代的「空白启发式猜
-	// 名」。因此保留行上已有的名字。换机器人（bot SWAP）则不同：旧名字属于旧机
-	// 器人，把它带过去会让新机器人应答一个不是自己的 @。
+	// A bot SWAP on an existing installation: the row and its id are reused —
+	// UpsertChannelInstallation conflicts on (workspace_id, agent_id,
+	// channel_type) and only rewrites config — so every dependent row keyed on
+	// installation_id would otherwise survive into a bot it does not belong to.
+	//
+	// They are not merely stale. A WeCom aibot userid is anonymized per (bot,
+	// user), which is the premise the whole binding flow rests on (binding.go),
+	// so a carried-over channel_user_binding holds an id from a namespace the
+	// new bot does not share. Outbound.tryDeliverInbox looks that binding up by
+	// (workspace, member, channel_type) — not by bot — resolves the sender by
+	// its installation_id, which is now the LIVE NEW bot, and addresses the OLD
+	// bot's userid over it. A p2p chat binding carries the same userid as its
+	// channel_chat_id, and a queued task delivery carries it again.
+	//
+	// Runs in this transaction, before the upsert, so a swap that fails later
+	// leaves the old bot's rows intact rather than half-cleared. (#6547)
+	//
+	// The sweep is not airtight, and cannot be from here. The slot lock taken
+	// above is the NEW bot's; the OLD bot's socket stays live until the
+	// Supervisor tears it down, so an inbound message arriving under it between
+	// this DELETE and the COMMIT re-inserts a binding that outlives the sweep.
+	// The window is short and self-healing, but not silently: that binding is
+	// the old bot's namespace, so what the user sees while it heals is one
+	// message that gets no answer and no line saying why, until they re-bind.
+	// Closing it properly means a second clear once the old connection is
+	// confirmed down, which this transaction cannot observe — a Supervisor
+	// signal for "old connection torn down" is the hook to hang it on.
+	if carried.ID.Valid && carried.BotID != "" && carried.BotID != p.BotID {
+		cleared, err := qtx.Queries.ClearChannelInstallationBotScopedRows(ctx, carried.ID)
+		if err != nil {
+			return Installation{}, fmt.Errorf("wecom: clear previous bot's rows: %w", err)
+		}
+		// A queued task delivery is a RUNNING task's answer. Dropping it is
+		// right — its address is the old bot's userid, unreachable from the new
+		// connection either way — but processEvent then finds no row and
+		// returns nil, with no counter and no line of its own, so this is the
+		// only place that can say where the answer went. A queued outbound
+		// message is the same story one table over, usually zero for WeCom, and
+		// counted here rather than reasoned about the day it is not.
+		s.log().InfoContext(ctx, "wecom: bot swap cleared the previous bot's rows",
+			"installation_id", uuidStringPub(carried.ID),
+			"previous_bot_id", carried.BotID,
+			"user_bindings", cleared.UserBindings,
+			"chat_session_bindings", cleared.ChatSessionBindings,
+			"queued_task_deliveries_dropped", cleared.TaskDeliveries,
+			"queued_outbound_messages_dropped", cleared.OutboundMessages,
+		)
+	}
+
+	// The chat name is optional in the dialog, so an admin rotating a leaked
+	// secret leaves it blank — and blanking it would put group slash commands
+	// back to the whitespace guess that this field exists to replace. Keep what
+	// is on the row. A bot SWAP is different: the old name belongs to the old
+	// bot, and carrying it would make the new bot answer to a mention that is
+	// not its own.
 	displayName := p.BotDisplayName
 	if displayName == "" && carried.BotID == p.BotID {
 		displayName = carried.BotDisplayName

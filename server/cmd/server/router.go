@@ -233,12 +233,14 @@ type RouterOptions struct {
 	// WecomMetrics 是 WeCom 适配器的健康指标接收器。nil 表示丢弃所有计数器，即关闭
 	// /metrics 的部署得到的待遇。
 	WecomMetrics *obsmetrics.WecomMetrics
+
 	DaemonHub    *daemonws.Hub
 	DaemonWakeup service.TaskWakeupNotifier
 	FeatureFlags *featureflag.Service
-	// HeartbeatScheduler 非 nil 时，替换构造出的 Handler 上默认的同步直通调度器。
-	// main.go 在这里注入一个 BatchedHeartbeatScheduler，调用方还可以驱动 Run/Stop；
-	// 测试留 nil 得到旧的同步行为。
+	// HeartbeatScheduler, when non-nil, replaces the default synchronous
+	// passthrough scheduler on the constructed Handler. main.go injects a
+	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
+	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
 	// LLMMaxRetries 携带解析后的 MULTICA_LLM_MAX_RETRIES 预算。与另外三个
 	// MULTICA_LLM_* 兄弟不同，它靠注入而非在本函数里读环境变量——非法值必须让启动
@@ -821,12 +823,29 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				if wecomSenders == nil {
 					wecomSenders = wecom.NewSendersRegistry()
 				}
+				// One registry, one metrics sink. Every outbound write goes
+				// through here, and so do the counters that say how the
+				// bubble ended — which is why the outbound subscriber takes
+				// no sink of its own.
+				wecomSenders.WithMetrics(wecomMetricsOrNil(opts.WecomMetrics))
+
+				// Which language the bot writes its OWN copy in for readers
+				// it cannot look a language up for — a group chat, or anyone
+				// not linked to a Multica account yet. A linked person always
+				// overrides this with their profile language. An unrecognised
+				// value leaves the default (zh-Hans) in place, which is why
+				// the resolved one is logged rather than the raw one.
+				slog.Info("wecom deployment locale",
+					"locale", wecom.SetDeploymentLocale(os.Getenv("MULTICA_WECOM_DEFAULT_LOCALE")))
 
 				wecomReplier := wecom.NewOutboundReplier(wecom.OutboundReplierConfig{
 					Binding: wecomBinding,
 					Senders: wecomSenders,
 					AppURL:  appURLFromEnv(),
-					Logger:  slog.Default(),
+					// Without this the replier has no way to read a reader's
+					// profile language and every notice falls back to the
+					// deployment's, which is the whole of what this is for.
+					Logger: slog.Default(),
 				})
 
 				// WeCom 共享 engine.ChatSession（按 channel_type 分键），使 /issue、
@@ -842,12 +861,56 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Credentials: credsResolver,
 					Senders:     wecomSenders,
 					Metrics:     wecomMetricsOrNil(opts.WecomMetrics),
-					Logger:      slog.Default(),
+					// Same store the Router claims on, so the receipt this
+					// adapter sends before the Router sees the message cannot
+					// also be answered there.
+					Dedup:  wecom.NewDeduper(wecomStore),
+					Logger: slog.Default(),
 				})
-				// 入站媒体：回调带着一条预签名的 COS URL 和每 URL 一个的 key，所以
-				// resolver 不需要任何 WeCom 凭据——只需要一处能放字节的持久存储。没有
-				// 对象存储就没有可指向的附件，resolver 保持 nil，附件保留为占位文本。
-				// 与上面 DingTalk 的 nil 守卫相同。
+				// Streaming replies: WeCom's smart-bot protocol has no
+				// typing indicator, no reaction and no read receipt, so the
+				// only way to say "working on it" is to open the reply early.
+				// The typing indicator paints a stream bubble the moment a
+				// message is ingested and the outbound subscriber replaces
+				// that same bubble with the answer. The store is the seam
+				// between them — it carries the inbound frame's req_id, which
+				// only the read loop ever sees and every stream frame must
+				// echo — so both sides are built with the one instance.
+				wecomStreams := wecom.NewStreamStore()
+				wecomTyping := wecom.NewTypingIndicator(wecom.TypingIndicatorConfig{
+					Senders: wecomSenders,
+					Streams: wecomStreams,
+					// The origin gate. A failure notice is written into a
+					// group chat, so before saying one the adapter reads the
+					// run's input batch to establish the question was asked
+					// over WeCom and not by the installer in their own
+					// browser — both runs fail on this same bus carrying the
+					// same session. Also backs the retry-clone lookup, and a
+					// fallback read of the session off the task row for a
+					// task:failed that carries none.
+					Tasks: queries,
+					// A run that fails after its bubble is gone — the process
+					// restarted mid-run, or the opening frame was refused —
+					// still gets its notice, addressed by the task's own
+					// delivery row the way the answer is.
+					Deliveries: queries,
+					// The bubble's own words are written in the reader's
+					// language, resolved when the round is opened and carried
+					// on the handle to whichever closer gets there.
+					Logger: slog.Default(),
+				})
+				// Subscribes task:failed and task:cancelled — neither a failed
+				// nor a cancelled run publishes chat:done, so this is the sole
+				// path that stops the bubble spinning once a run ends without
+				// an answer.
+				wecomTyping.Register(bus)
+
+				// Inbound media: a callback carries a pre-signed COS url and
+				// a per-url key, so the resolver needs no WeCom credential —
+				// only somewhere durable to put the bytes. Without an object
+				// store there is nothing to point an attachment at, so the
+				// resolver is left nil and attachments stay as their
+				// placeholder text. Same nil-guard as DingTalk above.
 				var wecomMedia engine.MediaResolver
 				if store != nil {
 					wecomMedia = wecom.NewMediaResolver(
@@ -857,9 +920,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						slog.Default(),
 					)
 				}
-				channelRouter.Register(wecom.TypeWecom, wecom.NewResolverSet(
-					wecomStore, wecomSession, wecomReplier, wecomMedia,
-				))
+				wecomSet := wecom.NewResolverSet(wecomStore, wecomSession, wecomReplier, wecomMedia)
+				// The bubble IS this platform's typing indicator, so the
+				// notifier slot the other adapters leave empty is the one that
+				// opens it. NewResolverSet does not take it: the set is shaped
+				// by the engine, and the engine's own tests build a WeCom set
+				// without one.
+				wecomSet.Typing = wecomTyping
+				channelRouter.Register(wecom.TypeWecom, wecomSet)
 
 				// EventChatDone 订阅者：把 agent 的聊天回复经入站循环同一条 aibot
 				// WebSocket 推回去。与 slack.NewOutbound(...).Register(bus) 对位。
@@ -889,9 +957,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				if opts.WecomRelayOutbound != nil {
 					opts.WecomRelayOutbound.SetMetrics(wecomMetricsOrNil(opts.WecomMetrics))
 					wecomOutboundOpts = append(wecomOutboundOpts, wecom.WithRelay(opts.WecomRelayOutbound))
+					// The indicator routes too. A run's ending can be produced
+					// on any replica while exactly one holds the socket, so
+					// without this a failure notice is delivered only when the
+					// two happen to coincide.
+					wecomTyping.WithRelay(opts.WecomRelayOutbound)
 					slog.Info("wecom integration: cross-replica outbound routing enabled")
 				}
-				wecomOutbound := wecom.NewOutbound(queries, wecomSenders, slog.Default(), wecomOutboundOpts...)
+				// wecomStreams is the same store the typing indicator paints
+				// into: the subscriber closes the bubble that indicator opened
+				// by writing the answer into it, so both sides must hold the
+				// one instance or the answer lands as a new message and the
+				// bubble spins until the protocol's window runs out on it.
+				wecomOutbound := wecom.NewOutbound(queries, wecomSenders, wecomStreams, slog.Default(), wecomOutboundOpts...)
 				wecomOutbound.Register(bus)
 				// dispatcher 在本路由存在之前就已在消费；这里才让它知道由谁执行投递。
 				// 它此前读到的一切都在自己的队列里等着。
