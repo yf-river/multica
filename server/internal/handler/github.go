@@ -1814,6 +1814,16 @@ func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtyp
 // advanceIssueToDone 在 PR 合并自动推进场景里把 issue 状态置为 done，并沿平台
 // 的"子 issue 完成通知父 issue"路径发事件。只在本文件关闭意图闸通过后调用。
 func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
+	hasDelivery, err := h.Queries.IssueHasDelivery(ctx, db.IssueHasDeliveryParams{WorkspaceID: issue.WorkspaceID, IssueID: issue.ID})
+	if err != nil {
+		slog.Warn("github: delivery ownership check failed", "error", err, "issue_id", uuidToString(issue.ID))
+		return
+	}
+	if hasDelivery {
+		slog.Info("github: completion belongs to delivery acceptance", "issue_id", uuidToString(issue.ID))
+		return
+	}
+
 	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 		ID:          issue.ID,
 		Status:      "done",

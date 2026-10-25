@@ -284,6 +284,29 @@ func (q *Queries) GetPendingGitHubInstallation(ctx context.Context, installation
 	return i, err
 }
 
+const issueHasDelivery = `-- name: IssueHasDelivery :one
+SELECT EXISTS (
+    SELECT 1 FROM issue_delivery d
+    WHERE d.workspace_id = $1 AND d.issue_id = $2
+    UNION ALL
+    SELECT 1 FROM issue_delivery_plan p
+    WHERE p.workspace_id = $1 AND p.issue_id = $2
+)
+`
+
+type IssueHasDeliveryParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+// 已登记方案或交付的任务由发布验收流程收尾，PR 合并仅更新关联信息。
+func (q *Queries) IssueHasDelivery(ctx context.Context, arg IssueHasDeliveryParams) (bool, error) {
+	row := q.db.QueryRow(ctx, issueHasDelivery, arg.WorkspaceID, arg.IssueID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const linkIssueToPullRequest = `-- name: LinkIssueToPullRequest :exec
 
 INSERT INTO issue_pull_request (

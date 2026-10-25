@@ -2868,7 +2868,7 @@ func TestWebhook_PullRequest_AmbiguousCloseAcrossWorkspaces(t *testing.T) {
 		WorkspaceID: wsA.ID,
 		Title:       "unrelated issue that happens to share a number",
 		Status:      "in_progress",
-		Priority:    "none",
+		Priority:    "not_important_not_urgent",
 		CreatorType: "member",
 		CreatorID:   parseUUID(testUserID),
 		Number:      issueB.Number,
