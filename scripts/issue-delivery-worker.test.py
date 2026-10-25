@@ -5,6 +5,16 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    # Modification 1. Historical result retries must not prevent an accepted verification from claiming int.
+    def test_pending_integration_precedes_historical_result_notice(self):
+        worker=object.__new__(w.Worker);worker.env='prod'
+        delivery=dict(id='integration',phase='awaiting_review',integration_pending=True,plan_snapshot={})
+        rows=[dict(id='old',phase='published'),delivery]
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'recover_release_windows'),patch.object(r,'lock'),patch.object(r,'candidate_path',return_value=Path(folder)/'missing'),patch.object(worker,'api',return_value=rows),patch.object(worker,'recover_finished_publications'),patch.object(worker,'pool_enabled',return_value=False),patch.object(worker,'pool_dispatch',return_value=set()),patch.object(worker,'batch_config',return_value=False),patch.object(worker,'pin'),patch.object(worker,'busy',return_value=False),patch.object(worker,'advance') as advance,patch.object(worker,'prepare') as prepare:
+            worker.tick()
+            advance.assert_called_once_with(delivery,'claim-integration')
+            prepare.assert_called_once_with(delivery)
+
     # Modification 1. The int-only consumer finalizes review and releases its lease without publishing.
     def test_int_only_accept_does_not_validate_or_publish(self):
         worker=object.__new__(w.Worker)
