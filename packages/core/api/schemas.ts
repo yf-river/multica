@@ -3275,3 +3275,10 @@ export const UpstreamRunsSchema = z.object({ runs: z.array(UpstreamRunSchema), t
 export type UpstreamSnapshot = z.output<typeof UpstreamSnapshotSchema>;
 export type UpstreamItem = z.output<typeof UpstreamItemSchema>;
 export type UpstreamRun = z.output<typeof UpstreamRunSchema>;
+
+export const TestEnvironmentControlSchema = z.object({
+ name:z.string(), revision:z.number(),
+ desired:z.object({policy:z.object({provider:z.enum(["codebuddy","codex"]),model:z.string(),thinking_level:z.string(),service_tier:z.string()}),overrides:z.record(z.string(),z.object({provider:z.enum(["codebuddy","codex"]),model:z.string(),thinking_level:z.string(),service_tier:z.string()}))}),
+ observed:z.object({status:z.string().optional(),revision:z.number().optional(),error:z.string().optional(),agents:z.array(z.object({id:z.string(),name:z.string(),model:z.string().nullable(),runtime_id:z.string().nullable(),status:z.string(),archived_at:z.string().nullable()})).optional(),runtimes:z.array(z.object({id:z.string(),provider:z.string()})).optional()}).passthrough(),
+ observed_at:z.string().nullable(),
+});

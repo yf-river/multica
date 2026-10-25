@@ -33,7 +33,7 @@ describe("CustomPricingDialog deletion", () => {
     fireEvent.change(screen.getAllByRole("spinbutton")[0]!, { target: { value: "99" } });
     fireEvent.click(screen.getByRole("button", { name: "Remove custom price" }));
     expect(useCustomPricingStore.getState().pricings[MODEL]).toBeUndefined();
-    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(useCustomPricingStore.getState().pricings[MODEL]).toBeUndefined();
     fireEvent.click(screen.getByRole("button", { name: "Reopen prices" }));
     expect(screen.queryByRole("button", { name: "Remove custom price" })).toBeNull();
@@ -42,21 +42,21 @@ describe("CustomPricingDialog deletion", () => {
   it("keeps immediate deletion when cancelling the dialog", () => {
     renderWithI18n(<Fixture />);
     fireEvent.click(screen.getByRole("button", { name: "Remove custom price" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(useCustomPricingStore.getState().pricings[MODEL]).toBeUndefined();
   });
 
   it("discards an unsaved edit on cancel and saves an explicit new price after deletion", () => {
     renderWithI18n(<Fixture />);
     fireEvent.change(screen.getAllByRole("spinbutton")[0]!, { target: { value: "99" } });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(useCustomPricingStore.getState().pricings[MODEL]).toEqual(PRICE);
     fireEvent.click(screen.getByRole("button", { name: "Reopen prices" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove custom price" }));
     for (const input of screen.getAllByRole("spinbutton")) {
       fireEvent.change(input, { target: { value: "2" } });
     }
-    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(useCustomPricingStore.getState().pricings[MODEL]).toEqual({
       input: 2, output: 2, cacheRead: 2, cacheWrite: 2,
     });

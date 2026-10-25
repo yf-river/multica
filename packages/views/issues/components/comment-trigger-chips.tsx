@@ -159,7 +159,7 @@ export function CommentTriggerChips({
   // 读成输入框噪音。
   if (agents.length === 0 && blocked.length === 0 && !reviewReply) return null;
 
-  const reviewNotice = reviewReply ? (
+  const reviewNotice = reviewReply && reviewReply.status !== "will_notify" ? (
     <ReviewReplyNotice reviewReply={reviewReply} t={t} />
   ) : null;
 

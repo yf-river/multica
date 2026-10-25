@@ -92,7 +92,7 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 			text = fmt.Sprintf("/note 交付 %s 的候选 %s 已发布；本次发布恢复执行已完成生产验收，任务已完成。", delivery, candidate)
 		}
 		payload, _ := json.Marshal(map[string]any{"id": id, "content": mention + text})
-		rr := r.Clone(r.Context())
+		rr := r.Clone(context.WithValue(r.Context(), systemCommentContextKey{}, true))
 		rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(id)))
 		route := chi.NewRouteContext()
 		route.URLParams.Add("id", issue)

@@ -45,7 +45,7 @@ var secretLinePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`),
 	regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`),
 	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),
-	regexp.MustCompile(`(?i)(api[_-]?key|secret|password|passwd|token)\s*[:=]\s*["']?[A-Za-z0-9_\-+/=]{16,}`),
+	regexp.MustCompile(`(?i)(api[_-]?key|secret|password|passwd|token)["']?\s*[:=]\s*["']?[A-Za-z0-9_\-+/=]{16,}`),
 }
 
 const redactedMarker = "[redacted: potential secret]"
@@ -79,4 +79,27 @@ func RedactLine(line string) (string, bool) {
 		}
 	}
 	return line, false
+}
+
+// RedactDiff 在服务端留存边界再次脱敏，兼容尚未升级的 Daemon。
+func RedactDiff(diff *Diff) {
+	if diff == nil {
+		return
+	}
+	redact := func(file *File) {
+		if IsSecretPath(file.Path) {
+			file.Patch = ""
+			file.Redacted = true
+			return
+		}
+		file.Patch = redactPatch(file.Patch, &file.Redacted)
+	}
+	for i := range diff.Files {
+		redact(&diff.Files[i])
+	}
+	for i := range diff.Roots {
+		for j := range diff.Roots[i].Files {
+			redact(&diff.Roots[i].Files[j])
+		}
+	}
 }

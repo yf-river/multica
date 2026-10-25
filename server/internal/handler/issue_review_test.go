@@ -239,7 +239,8 @@ func TestReviewRoundRejectsWakesDeveloperAndPassWritesGreenCheck(t *testing.T) {
 		t.Fatal("reject did not wake the developer agent")
 	}
 
-	// 再次提交审核：进入第 2 轮，并把上一轮问题带进开场。
+	dbfx.Comment(t, issueID, "用户追加验收要求：核对更新后的错误处理交付")
+	// 新要求再次提交审核，进入第 2 轮并携带上一轮问题。
 	if w := moveIssueTo(t, issueID, "in_review"); w.Code != http.StatusOK {
 		t.Fatalf("move back to review: %d %s", w.Code, w.Body.String())
 	}

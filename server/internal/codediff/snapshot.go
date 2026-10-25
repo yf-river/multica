@@ -196,7 +196,7 @@ func TakeSnapshot(ctx context.Context, root string, opts Options) (*Snapshot, er
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() {
+		if !entry.Type().IsRegular() && entry.Type()&os.ModeSymlink == 0 {
 			return nil
 		}
 		if len(snap.Files) >= opts.MaxFiles {
@@ -256,7 +256,21 @@ func (s *Snapshot) readFile(path, rel string, entry fs.DirEntry, opts Options, c
 	if err != nil {
 		return nil
 	}
-	meta := &fileMeta{Size: info.Size(), Mode: uint32(info.Mode().Perm())}
+	mode := uint32(0100000) | uint32(info.Mode().Perm())
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			s.Skipped = append(s.Skipped, rel)
+			return nil
+		}
+		data := []byte(target)
+		meta := &fileMeta{Size: int64(len(data)), Mode: 0120000, Sum: sha256Hex(data), Text: true, Lines: countLines(data), Redacted: IsSecretPath(rel)}
+		if !meta.Redacted && s.storeContent(meta.Sum, data) == nil {
+			meta.Stored = true
+		}
+		return meta
+	}
+	meta := &fileMeta{Size: info.Size(), Mode: mode}
 	meta.Redacted = IsSecretPath(rel)
 	if info.Size() > opts.MaxHashBytes {
 		// Too large to read on every capture: compare by size alone and say so.
@@ -275,6 +289,7 @@ func (s *Snapshot) readFile(path, rel string, entry fs.DirEntry, opts Options, c
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		s.Skipped = append(s.Skipped, rel)
 		return meta
 	}
 	meta.Sum = sha256Hex(data)

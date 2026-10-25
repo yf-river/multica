@@ -32,6 +32,8 @@ type File struct {
 	Patch       string `json:"patch"`
 	Change      string `json:"change,omitempty"` // added | modified | deleted
 	Size        int64  `json:"size,omitempty"`
+	BeforeMode  uint32 `json:"before_mode,omitempty"`
+	Mode        uint32 `json:"mode,omitempty"`
 	BeforeSize  int64  `json:"before_size,omitempty"`
 	Lines       int    `json:"lines,omitempty"`
 	BeforeLines int    `json:"before_lines,omitempty"`
@@ -181,8 +183,11 @@ func BuildRoot(ctx context.Context, spec RootSpec, opts Options) Root {
 			paths[path] = struct{}{}
 		}
 	}
-	for _, files := range baselines {
+	for rel, files := range baselines {
 		for path := range files {
+			if rel != "." {
+				path = rel + "/" + path
+			}
 			paths[path] = struct{}{}
 		}
 	}
@@ -217,7 +222,20 @@ func BuildRoot(ctx context.Context, spec RootSpec, opts Options) Root {
 				beforeContent, beforeHasContent = spec.Before.Content(path)
 			}
 		}
+		// 已有仓库以运行开始的实际状态为准；新检出仓库才使用提交树。
+		if spec.Before != nil {
+			if _, existed := spec.Before.Repos[repoRel]; existed {
+				baseFile = nil
+			}
+		}
 		afterMeta := after.Files[path]
+		// 缺项只有在完整、可读的快照里才表示不存在。
+		if afterMeta == nil && (after.Truncated || skippedPath(path, after.Skipped)) {
+			continue
+		}
+		if beforeMeta == nil && spec.Before != nil && (spec.Before.Truncated || skippedPath(path, spec.Before.Skipped)) {
+			continue
+		}
 		if beforeMeta == nil && baseFile == nil && afterMeta == nil {
 			continue
 		}
@@ -259,6 +277,15 @@ func trimSkipped(paths []string) []string {
 		return paths
 	}
 	return append(paths[:maxSkippedPaths:maxSkippedPaths], fmt.Sprintf("…等 %d 个路径", len(paths)))
+}
+
+func skippedPath(path string, skipped []string) bool {
+	for _, prefix := range skipped {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func owningRepo(path string, repos map[string]string) (string, bool) {
@@ -304,10 +331,10 @@ func classify(beforeMeta *fileMeta, baseFile *baselineFile, afterMeta *fileMeta)
 		}
 		return "modified"
 	}
-	if beforeMeta != nil && beforeMeta.Sum != "" && afterMeta.Sum == beforeMeta.Sum {
+	if beforeMeta != nil && beforeMeta.Sum != "" && afterMeta.Sum == beforeMeta.Sum && afterMeta.Mode == beforeMeta.Mode {
 		return ""
 	}
-	if beforeMeta == nil && baseFile != nil && baseFile.Sum != "" && afterMeta.Sum == baseFile.Sum {
+	if beforeMeta == nil && baseFile != nil && baseFile.Sum != "" && afterMeta.Sum == baseFile.Sum && afterMeta.Mode == baseFile.Mode {
 		return ""
 	}
 	return "modified"
@@ -316,6 +343,14 @@ func classify(beforeMeta *fileMeta, baseFile *baselineFile, afterMeta *fileMeta)
 func buildFile(path, change string, beforeMeta *fileMeta, baseFile *baselineFile, afterMeta *fileMeta,
 	beforeContent string, beforeHasContent bool, after *Snapshot, opts Options, totalPatch *int) *File {
 	file := &File{Path: path, Change: change}
+	if beforeMeta != nil {
+		file.BeforeMode = beforeMeta.Mode
+	} else if baseFile != nil {
+		file.BeforeMode = baseFile.Mode
+	}
+	if afterMeta != nil {
+		file.Mode = afterMeta.Mode
+	}
 	var beforeSize int64
 	var beforeLines int
 	if beforeMeta != nil {
@@ -439,7 +474,7 @@ func diffDirs(before, after *Snapshot) []DirSummary {
 			seen[path] = struct{}{}
 		}
 	}
-	if before != nil {
+	if before != nil && after != nil && !after.Truncated {
 		for path, dir := range before.Dirs {
 			if _, ok := seen[path]; ok {
 				continue

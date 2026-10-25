@@ -2,6 +2,8 @@
 
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+import { testAgentControlOptions } from "@multica/core/test-agents";
 import React, { lazy, Suspense } from "react";
 import {
   User,
@@ -154,10 +156,14 @@ const SETTINGS_TAB_TRIGGER_CLASS =
 export function SettingsPage() {
   const { t } = useT("settings");
   const paths = useWorkspacePaths();
-  const workspaceName = useCurrentWorkspace()?.name;
+  const workspace = useCurrentWorkspace();
+  const workspaceName = workspace?.name;
   const navigation = useNavigation();
   const isMobile = useIsMobile();
   const production = useConfigStore(state => state.environmentName) === "生产";
+  const ws = workspace?.id ?? "";
+  const capability = useQuery({...testAgentControlOptions(ws),enabled:production && !!ws,retry:false});
+  const testAgentsAvailable = production && capability.isSuccess;
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
 
   // 只保留被 feature flag 打开的标签；plugins 默认隐藏。
@@ -165,9 +171,9 @@ export function SettingsPage() {
     () =>
       WORKSPACE_TAB_KEYS.filter(
         (key) =>
-          (key !== "plugins" || pluginsEnabled) && (key !== "test_agents" || production),
+          (key !== "plugins" || pluginsEnabled) && (key !== "test_agents" || testAgentsAvailable),
       ),
-    [pluginsEnabled, production],
+    [pluginsEnabled, testAgentsAvailable],
   );
 
   // 有效标签值的白名单；未知的 ?tab=… 值会静默回退到默认标签。

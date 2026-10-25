@@ -379,6 +379,7 @@ type TaskIssueStatusData struct {
 // autopilot / quick_create / 直接指派）由 Kind 判别，各自的来源上下文
 // （TriggerCommentID / ChatSessionID / AutopilotRunID 等）按需携带。
 type AgentTaskResponse struct {
+	ReviewCommit         string                 `json:"review_commit,omitempty"`
 	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
 	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
 	ID                   string                 `json:"id"`
@@ -2114,9 +2115,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	// 1. 记录本次运行对提示词的改动：agent.instructions / description 存在库里，
 	//    文件 diff 看不到它们，审核时需要单独一条文本差异。
-	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+	h.recordRunTextChangeTx(r.Context(), tx, r, uuidToString(updated.WorkspaceID),
 		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "instructions", existing.Instructions, updated.Instructions)
-	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+	h.recordRunTextChangeTx(r.Context(), tx, r, uuidToString(updated.WorkspaceID),
 		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "description", existing.Description, updated.Description)
 
 	// 可空 runtime 覆盖项：请求里 null/空表示显式清空字段。UpdateAgent 的

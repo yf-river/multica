@@ -224,7 +224,8 @@ func sourceSQL(kind string) (string, error) {
 func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cutoff pgtype.Timestamptz) ([]Material, error) {
 	rows, err := tx.Query(ctx, `SELECT m.kind,m.source_id::text,COALESCE(m.run_id::text,''),m.generation,
       CASE WHEN m.generation<>m.reviewed_generation THEN m.reviewed_offset ELSE 0 END
-      FROM supervision_material m
+      FROM (SELECT workspace_id,issue_id,kind,source_id,run_id,generation,reviewed_generation,reviewed_offset,changed_at FROM supervision_frozen_material WHERE material_cutoff=$3
+      UNION ALL SELECT workspace_id,issue_id,kind,source_id,run_id,generation,reviewed_generation,reviewed_offset,changed_at FROM supervision_material WHERE $3::timestamptz IS NULL) m
       LEFT JOIN task_message tm ON m.kind='message' AND tm.id=m.source_id
       LEFT JOIN agent_task_queue t ON t.id=m.run_id
       WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.generation>m.reviewed_generation
@@ -258,13 +259,20 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cu
 		if err != nil {
 			return nil, err
 		}
+		if cutoff.Valid {
+			query = `SELECT body FROM supervision_frozen_material WHERE source_id=$1 AND workspace_id=$2 AND kind='` + m.Kind + `' AND material_cutoff=$5`
+		}
 		size := min(40000, budget)
 		if size <= 0 {
 			break
 		}
 		m.UnreadOffset = m.Offset
 		m.Offset = max(0, m.Offset-min(1000, size/4))
-		err = tx.QueryRow(ctx, `SELECT length(body),substring(body from $3::integer for $4::integer) FROM (`+query+`) source(body)`, m.ID, ws, m.Offset+1, size).Scan(&m.Length, &m.Text)
+		args := []any{m.ID, ws, m.Offset + 1, size}
+		if cutoff.Valid {
+			args = append(args, cutoff)
+		}
+		err = tx.QueryRow(ctx, `SELECT length(body),substring(body from $3::integer for $4::integer) FROM (`+query+`) source(body)`, args...).Scan(&m.Length, &m.Text)
 		if errors.Is(err, pgx.ErrNoRows) {
 			m.Text = "原始材料已删除，不能确认其原有内容。"
 			m.Length = m.Offset + len([]rune(m.Text))
@@ -394,8 +402,8 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
       WHERE s.workspace_id=$1 AND s.next_attempt_at<=now() AND s.failures<3
       AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=s.workspace_id AND b.issue_id=s.issue_id AND b.status IN('preparing','running'))
       AND (s.force_review OR (`+categoryOf("i")+`='done' AND r.id IS NOT NULL
-        AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
-          AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)))
+        AND EXISTS(SELECT 1 FROM supervision_frozen_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
+          AND m.generation>m.reviewed_generation AND m.round_id=r.id)))
       ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id LIMIT 1`, ws).Scan(&issue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
@@ -426,8 +434,8 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 			return err
 		}
 		var pending bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=$1 AND m.issue_id=$2
-          AND m.generation>m.reviewed_generation AND m.changed_at<=$3::timestamptz)`, ws, issue, round.Cutoff).Scan(&pending); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_frozen_material m WHERE m.workspace_id=$1 AND m.issue_id=$2
+          AND m.generation>m.reviewed_generation AND m.material_cutoff=$3::timestamptz)`, ws, issue, round.Cutoff).Scan(&pending); err != nil {
 			return err
 		}
 		hasRound = done && pending
@@ -497,8 +505,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 
 const currentIssueSnapshotSQL = `SELECT jsonb_build_object('title',title,'description',left(description,8000),'acceptance_criteria',left(acceptance_criteria::text,4000),'status',status,
       'requirement_truncated',length(COALESCE(description,''))>8000 OR length(COALESCE(acceptance_criteria::text,''))>4000,
-      'pending_materials',(SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation
-        AND ($3::timestamptz IS NULL OR changed_at<=$3::timestamptz)),
+      'pending_materials',CASE WHEN $3::timestamptz IS NULL THEN (SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation) ELSE (SELECT count(*) FROM supervision_frozen_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation AND material_cutoff=$3) END,
       'previous_attempt_error',(SELECT left(error,1000) FROM supervision_subject WHERE workspace_id=$2 AND issue_id=$1),
       'finding_decisions',(SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT f.id,f.status,f.human_resolution,left(f.title,300) title,left(a.reason,2000) reason,a.action,a.created_at
         FROM supervision_finding f JOIN LATERAL (SELECT reason,action,created_at FROM supervision_action WHERE workspace_id=$2 AND finding_id=f.id AND action IN('open','in_progress','resolved','ignored','auto_resolved') ORDER BY created_at DESC,id DESC LIMIT 1) a ON true
@@ -965,6 +972,17 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	}
 	for _, ranges := range groups {
 		first := ranges[0]
+		if roundID != "" {
+			var offset, length int
+			first := ranges[0]
+			if err = tx.QueryRow(ctx, `SELECT reviewed_offset,length(body) FROM supervision_frozen_material WHERE workspace_id=$1 AND round_id=$2 AND kind=$3 AND source_id=$4 AND generation=$5 FOR UPDATE`, ws, roundID, first.Kind, first.ID, first.Generation).Scan(&offset, &length); err != nil {
+				return err
+			}
+			end := ContiguousEnd(offset, ranges)
+			if _, err = tx.Exec(ctx, `UPDATE supervision_frozen_material SET reviewed_offset=$6,reviewed_generation=CASE WHEN $6 >= $7 THEN generation ELSE reviewed_generation END WHERE workspace_id=$1 AND round_id=$2 AND kind=$3 AND source_id=$4 AND generation=$5`, ws, roundID, first.Kind, first.ID, first.Generation, end, length); err != nil {
+				return err
+			}
+		}
 		var generation int64
 		var offset int
 		if err = tx.QueryRow(ctx, `SELECT generation,reviewed_offset FROM supervision_material WHERE workspace_id=$1 AND kind=$2 AND source_id=$3 FOR UPDATE`, ws, first.Kind, first.ID).Scan(&generation, &offset); err != nil {

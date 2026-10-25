@@ -889,3 +889,9 @@ describe("parseWithFallback", () => {
     expect(out).toBe(fallback);
   });
 });
+
+it("rejects malformed test environment management payloads", async () => {
+ const {TestEnvironmentControlSchema}=await import("./schemas");
+ expect(TestEnvironmentControlSchema.array().safeParse([{name:"int",desired:{policy:"bad"}}]).success).toBe(false);
+ expect(TestEnvironmentControlSchema.array().safeParse([]).success).toBe(true);
+});

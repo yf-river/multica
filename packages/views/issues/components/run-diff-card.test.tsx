@@ -4,13 +4,12 @@ import { cleanup, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentTask } from "@multica/core/types";
-import { issueKeys } from "@multica/core/issues/queries";
 import { renderWithI18n } from "../../test/i18n";
 
 const listTasksByIssue = vi.fn();
 
 vi.mock("@multica/core/api", () => ({
-  api: { listTasksByIssue: (...args: unknown[]) => listTasksByIssue(...args) },
+  api: { getIssueTaskRun: (...args: unknown[]) => listTasksByIssue(...args).then((tasks:AgentTask[])=>tasks.find(task=>task.id===args[1])??null) },
 }));
 
 import { RunDiffCard } from "./run-diff-card";
@@ -49,7 +48,7 @@ function renderCard(tasks: AgentTask[] | Error, taskId = "task-1") {
   if (tasks instanceof Error) {
     listTasksByIssue.mockRejectedValue(tasks);
   } else {
-    client.setQueryData(issueKeys.tasks("issue-1"), tasks);
+    client.setQueryData(["run-diff","issue-1",taskId,"summary"], tasks.find(task=>task.id===taskId)??null);
     listTasksByIssue.mockResolvedValue(tasks);
   }
   return renderWithI18n(

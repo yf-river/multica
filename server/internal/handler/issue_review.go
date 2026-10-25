@@ -334,7 +334,7 @@ func (h *Handler) SubmitIssueReviewVerdict(w http.ResponseWriter, r *http.Reques
 	}
 	verdict := review.ParseVerdict(body.Verdict)
 	if verdict == "" {
-		writeError(w, http.StatusBadRequest, "verdict 只能是 pass、reject 或 stalled")
+		writeError(w, http.StatusBadRequest, "verdict 只能是 pass、reject、stalled 或 no_action")
 		return
 	}
 
@@ -368,6 +368,10 @@ func (h *Handler) SubmitIssueReviewVerdict(w http.ResponseWriter, r *http.Reques
 	}
 
 	switch {
+	case verdict == review.VerdictNoAction:
+		h.setReviewPassed(r.Context(), issue, false)
+		h.recordReviewState(r.Context(), issue.ID, ws, cfg.AgentID, review.StateNoAction, round, findingsJSON, findings.Summary)
+		writeJSON(w, http.StatusOK, map[string]any{"state": review.StateNoAction, "round": round})
 	case verdict == review.VerdictPass:
 		h.recordReviewState(r.Context(), issue.ID, ws, cfg.AgentID, review.StatePassed, round, findingsJSON, findings.Summary)
 		h.setReviewPassed(r.Context(), issue, true)
@@ -446,6 +450,12 @@ func (h *Handler) startReviewRound(ctx context.Context, issue db.Issue) {
 		return
 	}
 	if err == nil {
+		if previousState == review.StateNoAction || previousState == review.StatePassed || previousState == review.StateRejected {
+			unchanged, e := h.reviewInputUnchanged(ctx, issue, headSHA)
+			if e != nil || unchanged {
+				return
+			}
+		}
 		switch previousState {
 		case review.StateRejected:
 			round = lastRound + 1
@@ -469,11 +479,11 @@ func (h *Handler) startReviewRound(ctx context.Context, issue db.Issue) {
 		return
 	}
 
-	if _, err := h.DB.Exec(ctx, `INSERT INTO issue_review(issue_id,workspace_id,agent_id,developer_agent_id,round,state,head_sha)
-		VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(issue_id) DO UPDATE SET
+	if _, err := h.DB.Exec(ctx, `INSERT INTO issue_review(issue_id,workspace_id,agent_id,developer_agent_id,round,state,head_sha,input_version)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(issue_id) DO UPDATE SET
 		workspace_id=EXCLUDED.workspace_id,agent_id=EXCLUDED.agent_id,developer_agent_id=EXCLUDED.developer_agent_id,
-		round=EXCLUDED.round,state=EXCLUDED.state,head_sha=EXCLUDED.head_sha,updated_at=now()`,
-		issue.ID, issue.WorkspaceID, cfg.AgentID, nullableUUID(issue.AssigneeID), round, review.StateDispatched, headSHA); err != nil {
+		round=EXCLUDED.round,state=EXCLUDED.state,head_sha=EXCLUDED.head_sha,input_version=EXCLUDED.input_version,updated_at=now()`,
+		issue.ID, issue.WorkspaceID, cfg.AgentID, nullableUUID(issue.AssigneeID), round, review.StateDispatched, headSHA, h.reviewInputVersion(ctx, issue, headSHA)); err != nil {
 		slog.Warn("review: record round failed", "issue_id", uuidToString(issue.ID), "error", err)
 		return
 	}
@@ -494,7 +504,7 @@ func buildReviewHandoff(round int, headSHA, previousState, previousFindings stri
 	if headSHA != "" {
 		fmt.Fprintf(&b, "- 被审提交：%s\n", headSHA)
 	} else {
-		b.WriteString("- 被审提交：未关联 PR，请以当前工作目录的最新提交为准\n")
+		b.WriteString("- 被审提交：未绑定代码候选；只判断交付材料是否需要处理。仅调查咨询可提交 no_action；要求实现却缺少候选时报告缺口，禁止读取无关目录代码\n")
 	}
 	if previousState == review.StateRejected && strings.TrimSpace(previousFindings) != "" && previousFindings != "{}" {
 		b.WriteString("- 上一轮问题（逐条核对是否已改动）：\n\n```json\n")
@@ -710,4 +720,19 @@ func derefTrimmed(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+func (h *Handler) reviewInputVersion(ctx context.Context, issue db.Issue, head string) string {
+	var version string
+	err := h.DB.QueryRow(ctx, `SELECT md5(COALESCE(title,'')||COALESCE(description,'')||COALESCE(acceptance_criteria::text,'')||$2||COALESCE((SELECT string_agg(c.id::text||':'||c.revision::text,',' ORDER BY c.id) FROM comment c WHERE c.issue_id=i.id AND c.author_type='member' AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=c.id)),'')) FROM issue i WHERE i.id=$1`, issue.ID, head).Scan(&version)
+	if err != nil {
+		return ""
+	}
+	return version
+}
+func (h *Handler) reviewInputUnchanged(ctx context.Context, issue db.Issue, head string) (bool, error) {
+	var previous string
+	err := h.DB.QueryRow(ctx, `SELECT input_version FROM issue_review WHERE issue_id=$1 AND workspace_id=$2`, issue.ID, issue.WorkspaceID).Scan(&previous)
+	current := h.reviewInputVersion(ctx, issue, head)
+	return previous != "" && current != "" && previous == current, err
 }

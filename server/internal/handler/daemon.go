@@ -2099,6 +2099,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// changing task state, but Agent mutations do not stay locked through HTTP
 	// response assembly. Recheck the freshly loaded Agent here so a rebind or
 	// owner change that committed after the claim cannot reach the daemon.
+	if agent.SystemKey.String == "issue_review" {
+		var reviewContext struct {
+			Head string `json:"head_sha"`
+		}
+		if json.Unmarshal(task.Context, &reviewContext) == nil {
+			resp.ReviewCommit = reviewContext.Head
+		}
+	}
 	if agent.RuntimeID != task.RuntimeID {
 		slog.Warn("daemon claim: agent runtime changed before delivery; refusing dispatch",
 			"task_id", uuidToString(task.ID),
@@ -3758,7 +3766,7 @@ func (h *Handler) ListPendingTasksByRuntime(w http.ResponseWriter, r *http.Reque
 
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+		resp[i] = taskToResponse(db.AgentTaskQueue(t), workspaceID)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -3950,6 +3958,7 @@ func sanitizeTaskFailRequest(req *TaskFailRequest) {
 // The whole value lands in a JSONB column, so an embedded NUL anywhere would
 // roll the terminal transaction back (GH #7098).
 func sanitizeCodeDiff(diff *codediff.Diff) {
+	codediff.RedactDiff(diff)
 	if diff == nil {
 		return
 	}
@@ -5497,7 +5506,7 @@ func (h *Handler) GetActiveTaskForIssue(w http.ResponseWriter, r *http.Request) 
 	workspaceID := uuidToString(issue.WorkspaceID)
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+		resp[i] = taskToResponse(db.AgentTaskQueue(t), workspaceID)
 	}
 	// Same issue-facing attribution surface as ListTasksByIssue — hydrate names.
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
@@ -5546,7 +5555,12 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.Queries.ListTasksByIssue(r.Context(), issue.ID)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		writeError(w, 400, "invalid offset")
+		return
+	}
+	tasks, err := h.Queries.ListTaskSummariesByIssue(r.Context(), db.ListTaskSummariesByIssueParams{IssueID: issue.ID, Limit: 50, Offset: int32(offset)})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list tasks")
 		return
@@ -5555,7 +5569,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	workspaceID := uuidToString(issue.WorkspaceID)
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+		resp[i] = taskToResponse(db.AgentTaskQueue(t), workspaceID)
 	}
 	// Execution-log rows render the "on behalf of <member>" badge, so this
 	// issue-facing surface must resolve initiator/originator names (departed-safe,
@@ -5955,4 +5969,36 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 		"status":       task.Status,
 		"completed_at": task.CompletedAt.Time,
 	})
+}
+
+// GetIssueTaskRun 读取固定运行的完整结果，沿用议题访问权限。
+func (h *Handler) GetIssueTaskRun(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "taskId"), "task_id")
+	if !ok {
+		return
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), id)
+	if err != nil || task.IssueID != issue.ID {
+		writeError(w, 404, "task not found")
+		return
+	}
+	if r.URL.Query().Get("summary") == "true" {
+		var value map[string]json.RawMessage
+		_ = json.Unmarshal(task.Result, &value)
+		diff := value["code_diff"]
+		texts := value["text_changes"]
+		var captured codediff.Diff
+		_ = json.Unmarshal(diff, &captured)
+		changed := captured.Truncated || captured.Unavailable || len(captured.Files) > 0
+		for _, root := range captured.Roots {
+			changed = changed || len(root.Files) > 0 || len(root.Dirs) > 0 || root.Truncated || root.Unavailable
+		}
+		changed = changed || (len(texts) > 0 && string(texts) != "[]" && string(texts) != "null")
+		task.Result, _ = json.Marshal(map[string]any{"summary_only": true, "has_changes": changed, "task_id": uuidToString(task.ID), "issue_id": uuidToString(issue.ID)})
+	}
+	writeJSON(w, 200, taskToResponse(task, uuidToString(issue.WorkspaceID)))
 }

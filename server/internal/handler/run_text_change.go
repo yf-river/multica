@@ -3,7 +3,9 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5"
 	"log/slog"
+	"unicode/utf8"
 
 	"net/http"
 
@@ -37,22 +39,22 @@ type runTextChangePayload struct {
 // recordRunTextChange stores one field edit made by the agent that is running
 // this task. It is best effort: a failure here must never fail the edit the
 // user asked for, only cost the record.
-func (h *Handler) recordRunTextChange(ctx context.Context, q *db.Queries, r *http.Request, workspaceID string, target runTextTarget, field, before, after string) {
+func (h *Handler) recordRunTextChange(ctx context.Context, q *db.Queries, r *http.Request, workspaceID string, target runTextTarget, field, before, after string) error {
 	if before == after {
-		return
+		return nil
 	}
 	task, ok := h.taskFromRequestHeader(r)
 	if !ok {
-		return
+		return nil
 	}
 	// Attribution needs a live run: a member editing in the UI, or an agent
 	// writing after its run finished, is not "this task changed it".
 	if task.Status != "running" {
-		return
+		return nil
 	}
 	agent, err := h.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil || uuidToString(agent.WorkspaceID) != workspaceID {
-		return
+		return nil
 	}
 	added, deleted := codediff.CountLineChanges(before, after)
 	redacted := codediff.ContainsSecret(before) || codediff.ContainsSecret(after)
@@ -78,7 +80,10 @@ func (h *Handler) recordRunTextChange(ctx context.Context, q *db.Queries, r *htt
 		Redacted:    redacted,
 	}); err != nil {
 		slog.Warn("record run text change failed", "task_id", util.UUIDToString(task.ID), "field", field, "error", err)
+		return err
 	}
+
+	return nil
 }
 
 // attachRunTextChanges folds the text edits of this task into the terminal
@@ -127,7 +132,11 @@ func clipText(text string) string {
 	if len(text) <= maxRunTextBytes {
 		return text
 	}
-	return text[:maxRunTextBytes] + "\n…（已截断）"
+	end := maxRunTextBytes
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end] + "\n…（已截断）"
 }
 
 // parseResultEnvelope reads a marshalled terminal payload back into its fields
@@ -149,4 +158,26 @@ func marshalResultEnvelope(envelope map[string]json.RawMessage) []byte {
 		return []byte("{}")
 	}
 	return encoded
+}
+
+// 审计失败只回滚嵌套事务，不污染 Agent/Skill 主修改。
+func (h *Handler) recordRunTextChangeTx(ctx context.Context, tx pgx.Tx, r *http.Request, workspaceID string, target runTextTarget, field, before, after string) {
+	if before == after || r.Header.Get("X-Task-ID") == "" {
+		return
+	}
+	nested, err := tx.Begin(ctx)
+	if err != nil {
+		slog.Warn("begin text audit savepoint", "error", err)
+		return
+	}
+	defer nested.Rollback(ctx)
+	if err = h.recordRunTextChange(ctx, db.New(nested), r, workspaceID, target, field, before, after); err != nil {
+		if rollbackErr := nested.Rollback(ctx); rollbackErr != nil {
+			slog.Warn("text audit rollback failed", "error", rollbackErr)
+		}
+		return
+	}
+	if err = nested.Commit(ctx); err != nil {
+		slog.Warn("text audit rolled back", "error", err)
+	}
 }
