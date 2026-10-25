@@ -46,8 +46,8 @@ function repairListItems(node: JsonNode): { node: JsonNode; changed: boolean } {
  *
  * 在评论里输入 `1.`（或 `- `）后留下的文档，会以草稿 `"1. \n\n"` 持久化。
  * 重新挂载时 `@tiptap/markdown` 把那个空项解析成不含子节点、不合 schema
- * 的 `listItem`（见 {@link repairListItems}）；随后文档只剩 `AllSelection`
- * 而没有一个光标，浏览器就把插入符画到下一个块上——即被报告的那个 bug：
+ * 的 `listItem`（见 {@link repairListItems}），无法容纳光标，
+ * 浏览器会把插入符画到下一个块上——即被报告的那个 bug：
  * “输入 `1.`，切走工单再切回来，光标跳到列表项外面，怎么都移不回去。”
  * 注意这只影响*空*项的往返；非空项（`"1. buy milk"`）会逐字节原样往返。
  *
@@ -68,8 +68,7 @@ export function repairEmptyListItems(
   );
   if (!changed) return false;
 
-  // 损坏的解析留下了 `AllSelection`。若在选区仍存活的时重设内容，会让
-  // ProseMirror 的 replace 把整个列表压成裸段落，所以要先把选区钉在真实位置。
+  // 先落到有效文本位置，避免已有 AllSelection 让 replace 把列表压成段落。
   editor.view.dispatch(
     editor.state.tr
       .setSelection(TextSelection.near(editor.state.doc.resolve(0)))

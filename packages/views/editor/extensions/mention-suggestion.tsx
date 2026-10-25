@@ -34,6 +34,7 @@ import {
   isProjectDirectHit,
 } from "@multica/core/search/cancelled-rank";
 import { isImeComposing } from "@multica/core/utils";
+import { isMentionBoundaryAfter } from "@multica/core/markdown";
 import type {
   Issue,
   ListIssuesCache,
@@ -56,6 +57,7 @@ import { cn } from "@multica/ui/lib/utils";
 import type { IssueStatus, IssueStatusCategory, ProjectStatus } from "@multica/core/types";
 import { PROJECT_STATUS_CONFIG } from "@multica/core/projects/config";
 import type { SuggestionOptions } from "@tiptap/suggestion";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { PluginKey } from "@tiptap/pm/state";
 import {
   getRecencyMap,
@@ -411,9 +413,14 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         // pickerNavigationDirection。
         const direction = pickerNavigationDirection(event);
         if (direction !== null) {
+          // With no rows, including while remote search is pending, the picker
+          // has nothing to navigate. Let the host editor own the key instead.
+          if (orderedItems.length === 0) return false;
           const selectableIndexes = orderedItems.flatMap((item, index) =>
             item.disabledReason ? [] : [index],
           );
+          // Rows exist but all are disabled: keep the picker inert rather than
+          // moving the caret behind the visible popup.
           if (selectableIndexes.length === 0) return true;
           const current = selectableIndexes.indexOf(selectedIndex);
           const delta =
@@ -429,6 +436,11 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         // Enter 是规范确认键；纯 Tab 是附加别名（见 isPickerAcceptKey）。
         // Shift/修饰键 + Tab 落进焦点导航。
         if (isPickerAcceptKey(event)) {
+          // An empty picker cannot accept anything, so preserve the editor's
+          // newline, submit shortcut, and focus-navigation behavior.
+          if (orderedItems.length === 0) return false;
+          // A non-empty list can still have no selectable row when every item
+          // is disabled. Keep those visible rows inert instead of falling through.
           if (selectedIndex < 0) return true;
           selectItem(orderedItems[selectedIndex]);
           return true;
@@ -679,7 +691,15 @@ function projectToMention(p: { id: string; title: string; description?: string |
   };
 }
 
-/** 候选是否命中当前查询（子串 + 拼音匹配，label 与 description 都查）。 */
+/** 读取完整 Unicode 字符并复用提及边界规则。 */
+function isMentionBoundary(doc: ProseMirrorNode, pos: number): boolean {
+  if (pos <= 0) return true;
+  // Two units wide, so a code point outside the BMP arrives whole; one would
+  // hand back a lone surrogate. Across a block boundary this is the separator,
+  // which is not a word character either.
+  return isMentionBoundaryAfter(doc.textBetween(Math.max(0, pos - 2), pos, "\n", "\n"));
+}
+
 function matchesMentionQuery(item: MentionItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -812,9 +832,15 @@ export function createMentionSuggestion(
   return {
     pluginKey,
     allowSpaces: true,
-    // 只对用户真正敲下的 `@` 打开。Tiptap 只看文档内容匹配，没有这条的话，
-    // 粘贴、拖放、撤销或服务端加载的 `@` 也会一样打开弹层（MUL-5429）。
-    shouldShow: ({ editor, range }) => isTriggerArmedAt(editor, range.from),
+    // The boundary rule is isMentionBoundary's, not Tiptap's default of "a
+    // half-width space and nothing else" (see the note there).
+    allowedPrefixes: null,
+    // Only open over an `@` the user actually typed. Tiptap matches on document
+    // content alone, so without this a pasted, dropped, undone or server-loaded
+    // `@` opens the picker just as readily (MUL-5429).
+    shouldShow: ({ editor, range, transaction }) =>
+      isTriggerArmedAt(editor, range.from) &&
+      isMentionBoundary(transaction.doc, range.from),
     items: ({ query }) => {
       if (options.mode === "context") {
         const normalizedQuery = query.trim();
