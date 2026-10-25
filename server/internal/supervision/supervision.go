@@ -82,6 +82,15 @@ func uuid(s string) pgtype.UUID { u, _ := util.ParseUUID(s); return u }
 // noCutoff 表示不限制材料时间：手动检查读取当前全部未读材料。
 var noCutoff pgtype.Timestamptz
 
+// Material prompt budget. Each batch inlines one bounded page per material;
+// the investigation tools read whatever does not fit, and pages that do not fit
+// stay unread for the next batch. Lowering the budget trims every supervision
+// prompt (the dominant per-run cost) without dropping evidence.
+const (
+	supervisionMaterialBudget  = 30000
+	supervisionMaterialPageCap = 20000
+)
+
 // Tick 仅安排有待办的工作区；每个工作区的配置行与任务唯一索引共同限制并发派发。
 func (s *Service) Tick(ctx context.Context) error {
 	rows, err := s.Pool.Query(ctx, `SELECT workspace_id::text FROM supervision_config ORDER BY workspace_id`)
@@ -262,7 +271,12 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cu
 	if err != nil {
 		return nil, err
 	}
-	budget := 48000
+	// The prompt carries one bounded page per material; the investigation tools
+	// read the remaining evidence. Keeping the page budget near the model's
+	// actual working set keeps per-run prompts (and their cache-read cost) down
+	// without dropping material: pages that do not fit stay unread for the next
+	// batch instead of being marked reviewed.
+	budget := supervisionMaterialBudget
 	out := []Material{}
 	for _, m := range items {
 		query, err := sourceSQL(m.Kind)
@@ -272,7 +286,7 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cu
 		if cutoff.Valid {
 			query = `SELECT body FROM supervision_frozen_material WHERE source_id=$1 AND workspace_id=$2 AND kind='` + m.Kind + `' AND material_cutoff=$5`
 		}
-		size := min(40000, budget)
+		size := min(supervisionMaterialPageCap, budget)
 		// 3. Keep entry prompts short; the existing material tool reads the remaining evidence.
 		if m.Kind == "trace_usage" {
 			size = min(size, 1500)

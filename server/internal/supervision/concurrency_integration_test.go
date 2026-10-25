@@ -86,7 +86,7 @@ func TestIntConcurrentDispatchAndLongHistory(t *testing.T) {
 		}
 		if p.ID == long {
 			found = true
-			if p.End != 40000 {
+			if p.End != 20000 {
 				t.Fatalf("long page end=%d", p.End)
 			}
 		}

@@ -155,3 +155,16 @@ func TestContiguousReadDoesNotJumpOverUnreadText(t *testing.T) {
 		t.Fatal("cursor moved backwards")
 	}
 }
+
+// TestMaterialBudgetStaysBounded pins the supervision prompt budget: one page per
+// material, with a total that keeps a single batch prompt near the model working
+// set. Growing the budget back to the old 48k silently triples per-run cost.
+func TestMaterialBudgetStaysBounded(t *testing.T) {
+	t.Parallel()
+	if supervisionMaterialPageCap <= 0 || supervisionMaterialPageCap > supervisionMaterialBudget {
+		t.Fatalf("page cap %d must be positive and <= budget %d", supervisionMaterialPageCap, supervisionMaterialBudget)
+	}
+	if supervisionMaterialBudget > 32000 {
+		t.Fatalf("material budget %d is back above the reviewed bound", supervisionMaterialBudget)
+	}
+}
