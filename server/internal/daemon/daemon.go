@@ -160,8 +160,8 @@ func taskScopedAuthToken(task Task) (string, error) {
 	return token, nil
 }
 
-func taskMulticaEnvironment(task Task, agentName, token, configRoot, workspacesRoot, serverURL string, healthPort, slot int, tempDir string) map[string]string {
-	return map[string]string{
+func taskMulticaEnvironment(task Task, provider, agentName, token, configRoot, workspacesRoot, serverURL string, healthPort, slot int, tempDir string) map[string]string {
+	env := map[string]string{
 		"MULTICA_TOKEN":        token,
 		cli.TaskConfigRootEnv:  configRoot,
 		TaskWorkspacesRootEnv:  workspacesRoot,
@@ -176,6 +176,33 @@ func taskMulticaEnvironment(task Task, agentName, token, configRoot, workspacesR
 		"TMP":                  tempDir,
 		"TEMP":                 tempDir,
 	}
+	if runtime.GOOS != "windows" {
+		return env
+	}
+	// MSYS (Git Bash) resolves its `/tmp usertemp` mount from TMP/TEMP once,
+	// in the first process, and every live MSYS process of this user shares
+	// that mount table — whichever provider started it. A task-private TMP/TEMP
+	// would pin /tmp to a directory this daemon deletes when that task ends,
+	// breaking /tmp for every later task (#8824). So on Windows no task
+	// overrides TMP/TEMP; they inherit the daemon user's host temp, and only
+	// TMPDIR stays task-private.
+	delete(env, "TMP")
+	delete(env, "TEMP")
+	if provider == "claude" {
+		// Claude Code reads CLAUDE_CODE_TMPDIR for its own temp files; default
+		// it to the task dir so they stay private, unless the user set it.
+		if os.Getenv("CLAUDE_CODE_TMPDIR") == "" {
+			env["CLAUDE_CODE_TMPDIR"] = tempDir
+			if task.Agent != nil {
+				for key := range task.Agent.CustomEnv {
+					if strings.EqualFold(key, "CLAUDE_CODE_TMPDIR") {
+						delete(env, "CLAUDE_CODE_TMPDIR")
+					}
+				}
+			}
+		}
+	}
+	return env
 }
 
 // taskRunner 执行单个 agent 任务并返回结果。抽成接口是为了让测试注入假实现，
@@ -7350,7 +7377,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Error("task auth token invalid; refusing to start agent", "error", err)
 		return TaskResult{}, err
 	}
-	agentEnv := taskMulticaEnvironment(task, agentName, agentToken, env.MulticaConfigRoot, d.cfg.WorkspacesRoot, d.cfg.ServerBaseURL, d.cfg.HealthPort, slot, taskTempDir)
+	agentEnv := taskMulticaEnvironment(task, provider, agentName, agentToken, env.MulticaConfigRoot, d.cfg.WorkspacesRoot, d.cfg.ServerBaseURL, d.cfg.HealthPort, slot, taskTempDir)
 	if checkoutMode := repoCheckoutModeFor(provider, runtime.GOOS); checkoutMode != "" {
 		agentEnv[repoCheckoutModeEnv] = checkoutMode
 	}

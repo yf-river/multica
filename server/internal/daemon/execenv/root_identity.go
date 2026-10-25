@@ -132,15 +132,52 @@ func installTaskRootRecord(recordDir string, record taskRootRecord) error {
 	if err := os.WriteFile(filepath.Join(tmpDir, taskRootRecordFile), data, 0o644); err != nil {
 		return fmt.Errorf("execenv: write task root record: %w", err)
 	}
-	if err := os.Rename(tmpDir, recordDir); err != nil {
-		// 一个完整且非空的目录才算原子安装成功。若目标目录已存在，说明另一
-		// 认领者赢了，它的记录才是权威。
-		if _, readErr := readTaskRootRecord(recordDir); readErr == nil {
-			return nil
-		}
+	if err := renameTaskRootRecord(tmpDir, recordDir); err != nil {
 		return fmt.Errorf("execenv: install task root record: %w", err)
 	}
 	return nil
+}
+
+var taskRootRenameRetryDelays = [...]time.Duration{
+	25 * time.Millisecond,
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	200 * time.Millisecond,
+	400 * time.Millisecond,
+	800 * time.Millisecond,
+}
+
+func renameTaskRootRecord(tmpDir, recordDir string) error {
+	return renameTaskRootRecordWithRetry(
+		tmpDir,
+		recordDir,
+		os.Rename,
+		isRetryableTaskRootRenameError,
+		time.Sleep,
+	)
+}
+
+func renameTaskRootRecordWithRetry(
+	tmpDir, recordDir string,
+	rename func(string, string) error,
+	retryable func(error) bool,
+	sleep func(time.Duration),
+) error {
+	for attempt := 0; ; attempt++ {
+		err := rename(tmpDir, recordDir)
+		if err == nil {
+			return nil
+		}
+		// A complete non-empty directory is installed atomically. If it exists,
+		// another claimant won and its record is authoritative.
+		if _, readErr := readTaskRootRecord(recordDir); readErr == nil {
+			return nil
+		}
+		if attempt == len(taskRootRenameRetryDelays) || !retryable(err) {
+			return err
+		}
+		sleep(taskRootRenameRetryDelays[attempt])
+	}
 }
 
 // validateTaskRootRecord 对任何它无法担保的东西一律"失败关闭"：一个无法证明

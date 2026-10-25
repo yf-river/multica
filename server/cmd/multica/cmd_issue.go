@@ -111,6 +111,13 @@ func ensureFileFlagWithinWorkdir(cmd *cobra.Command, fileFlag, flagName, filePat
 		return fmt.Errorf("resolve --%s path %q: %w", fileFlag, filePath, err)
 	}
 	if !within {
+		if !pathExists(filePath) {
+			return fmt.Errorf(
+				"--%s path %q does not exist; it also resolves outside the current working directory, "+
+					"so --allow-external-file would not make this read succeed. Write the file inside the "+
+					"task workdir (e.g. ./%s.md) and pass that path.",
+				fileFlag, filePath, flagName)
+		}
 		return fmt.Errorf(
 			"--%s path %q resolves outside the current working directory; "+
 				"write agent temp files inside the task workdir (e.g. ./%s.md) rather than machine-shared "+
@@ -121,40 +128,89 @@ func ensureFileFlagWithinWorkdir(cmd *cobra.Command, fileFlag, flagName, filePat
 	return nil
 }
 
-// fileWithinWorkingDir 判断 filePath 解析后是否落在进程当前工作目录之内。判断
-// 双方都先做符号链接解析，这样被软链别名化的根路径（如 macOS /tmp -> /private/tmp）
-// 或工作目录内埋的软链，都会按失败处理（fail closed）。对尚不存在的路径，按其
-// 清理后的绝对路径形态判断——文件不存在时，后续调用方的 os.ReadFile 仍会报出
-// 真实的「找不到文件」错误。
+// pathExists reports whether filePath names something on disk. It exists to
+// separate the two facts the containment guard used to merge: a rejected path
+// that is ALSO missing has no stale file behind it for anyone to read by
+// mistake, so leading with --allow-external-file sends the caller to disable
+// the guard and hit an unrelated not-found error on the retry. Any stat error
+// other than "not exists" (a permission wall, a broken mount) is treated as
+// "exists" so the guard keeps its own wording and stays fail-closed.
+func pathExists(filePath string) bool {
+	_, err := os.Stat(filePath)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+// fileWithinWorkingDir reports whether filePath resolves to a location inside
+// the process working directory. Both sides are canonicalized the same way, so
+// aliased roots (e.g. macOS /tmp -> /private/tmp), symlinks planted inside the
+// workdir, and directory junctions pointing out of it all fail closed. A path
+// that does not exist yet is resolved as far as it exists, so the caller's
+// os.ReadFile still surfaces the real not-found error afterwards.
+//
+// Windows relative paths are handed over for what they are, not for what they
+// look like: `\tmp\desc.md` resolves against the workdir's volume ROOT and
+// `C:tmp\desc.md` against the current directory on C:, so prefixing the
+// workdir onto either would judge a shadow file while os.ReadFile opens the
+// real one. util.ResolveSymlinksBestEffort preserves those kinds, for link
+// targets as well as for the input itself.
 func fileWithinWorkingDir(filePath string) (bool, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return false, err
 	}
-	base := cwd
-	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
-		base = resolved
+	base, err := util.ResolveSymlinksBestEffort(cwd)
+	if err != nil {
+		// The workdir's own resolution cannot be determined (an unobservable
+		// drive, a reparse point no query can name). Comparing a candidate
+		// against a root that cannot be named judges whatever string the
+		// resolver would have guessed, so fail closed.
+		return false, nil
 	}
-	abs := filePath
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(cwd, abs)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	} else {
-		// 文件可能还不存在（真实的 not-found 由调用方的 os.ReadFile 报出）。
-		// 改为解析父目录的符号链接，使比较基准与候选路径共享同一份规范化前缀
-		// ——否则位于软链根下的工作目录（如 macOS 临时目录）会被误判为「在外部」。
-		// 父目录也不存在时退回做一次普通 clean。
-		if resolvedParent, perr := filepath.EvalSymlinks(filepath.Dir(abs)); perr == nil {
-			abs = filepath.Join(resolvedParent, filepath.Base(abs))
-		} else {
-			abs = filepath.Clean(abs)
-		}
+	// Canonicalize the candidate exactly the way the base was, and hand it over
+	// as typed: util.ResolveSymlinksBestEffort makes it absolute itself, because
+	// pre-joining it here would clean the string first and collapse a ".."
+	// across a symlink — judging a different path than the one os.ReadFile then
+	// opens.
+	//
+	// os.Getwd() returns the LOGICAL working directory when $PWD names it (a
+	// shell's `cd`, and the PWD the daemon exports to agent processes, both
+	// carry unresolved symlinks), so the two sides only agree once both are
+	// resolved. Resolving best-effort is what makes that possible for a
+	// candidate that does not exist yet — a typo, or an artifact a build step
+	// never produced — and every cheaper approximation gets one direction wrong:
+	//
+	//   - Leaving the candidate unresolved (filepath.Clean) reads a path inside
+	//     the workdir as outside it, which reports a missing file as a
+	//     guardrail violation and points the caller at --allow-external-file
+	//     instead of at the real error.
+	//   - Resolving only one level up (filepath.Dir) still breaks once an
+	//     intermediate directory is missing, and worse: with an already-
+	//     canonical cwd it reads `escape/sub/x.md` — under a symlink pointing
+	//     out of the workdir — as INSIDE it, because the unresolvable tail
+	//     falls back to a lexical clean that never sees the symlink.
+	abs, err := util.ResolveSymlinksBestEffort(filePath)
+	if err != nil {
+		// ErrUnresolvablePath: the kernel may open this path somewhere this
+		// process cannot name — a reparse point that redirects but survives
+		// both os.Readlink and a handle query, or a drive-relative path on a
+		// drive whose current directory is unobservable. The string the input
+		// spells is not evidence of where the kernel would read, so fail
+		// closed; the caller's own os.ReadFile would surface a plain error
+		// for the same path.
+		return false, nil
 	}
 	rel, err := filepath.Rel(base, abs)
 	if err != nil {
-		return false, err
+		// Two absolute paths that filepath.Rel cannot relate are on different
+		// volumes, which is as far outside the workdir as a path can get. Only
+		// Windows produces this: with a workdir on C:, `--content-file
+		// Z:\report.md` used to surface `Rel: can't make Z:\report.md relative
+		// to C:\...` as an internal resolve failure instead of the guardrail's
+		// own explanation — the same misleading-diagnosis shape this guard is
+		// being fixed for. Measured on 10.0.19045 / go1.26.6. There is no Unix
+		// input that reaches this branch, so the windows-tagged test in this
+		// package is the only thing that covers it.
+		return false, nil
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false, nil
@@ -274,6 +330,17 @@ var issueCommentAddCmd = &cobra.Command{
 	Short: "Add a comment to an issue",
 	Args:  exactArgs(1),
 	RunE:  runIssueCommentAdd,
+}
+
+var issueCommentUpdateCmd = &cobra.Command{
+	Use:   "update <comment-id>",
+	Short: "Update a comment",
+	Long: "Update a comment you authored. Workspace owners and admins can update any comment.\n\n" +
+		"Pass the revision returned by `multica issue comment list <issue-id> --output json`; " +
+		"the update is rejected if another editor changed the comment first. Changing the content " +
+		"uses the same agent-trigger behavior as editing the comment in the app.",
+	Args: exactArgs(1),
+	RunE: runIssueCommentUpdate,
 }
 
 var issueCommentDeleteCmd = &cobra.Command{
@@ -477,6 +544,7 @@ func init() {
 
 	issueCommentCmd.AddCommand(issueCommentListCmd)
 	issueCommentCmd.AddCommand(issueCommentAddCmd)
+	issueCommentCmd.AddCommand(issueCommentUpdateCmd)
 	issueCommentCmd.AddCommand(issueCommentDeleteCmd)
 	issueCommentCmd.AddCommand(issueCommentResolveCmd)
 	issueCommentCmd.AddCommand(issueCommentUnresolveCmd)
@@ -541,7 +609,7 @@ func init() {
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
-	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
+	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times). Each file is uploaded and its markdown reference is appended to the description, which is what makes it render on the issue page")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
 
 	// issue update
@@ -549,7 +617,8 @@ func init() {
 	issueUpdateCmd.Flags().String("description", "", "New description (decodes \\n, \\r, \\t, \\\\; pipe via --description-stdin to preserve literal backslashes)")
 	issueUpdateCmd.Flags().Bool("description-stdin", false, "Read new description from stdin (preserves multi-line content verbatim)")
 	issueUpdateCmd.Flags().String("description-file", "", "Read new description from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
-	issueUpdateCmd.Flags().Bool("allow-external-file", false, "Allow --description-file to read a path outside the current working directory. Off by default so a stale temp file from another run/environment can't be picked up (MUL-4252).")
+	issueUpdateCmd.Flags().Bool("allow-external-file", false, "Allow --description-file / --attachment to read a path outside the current working directory. Off by default so a stale temp file from another run/environment can't be picked up (MUL-4252).")
+	issueUpdateCmd.Flags().StringSlice("attachment", nil, "Local file path(s) to attach to the issue description (repeatable); references are appended to the end of the description")
 	issueUpdateCmd.Flags().String("status", "", "New status")
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
 	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
@@ -618,6 +687,14 @@ func init() {
 	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID to reply under. A comment-triggered agent task must reply under its trigger comment; omitting --parent to post a top-level comment is rejected")
 	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
+
+	// issue comment update
+	issueCommentUpdateCmd.Flags().String("content", "", "New comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
+	issueCommentUpdateCmd.Flags().Bool("content-stdin", false, "Read new comment content from stdin (preserves multi-line content verbatim)")
+	issueCommentUpdateCmd.Flags().String("content-file", "", "Read new comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
+	issueCommentUpdateCmd.Flags().Bool("allow-external-file", false, "Allow --content-file to read a path outside the current working directory. Off by default so a stale file from another run/environment can't be picked up (MUL-4252).")
+	issueCommentUpdateCmd.Flags().Int64("expected-revision", 0, "Current positive comment revision from `issue comment list --output json` (required; prevents overwriting a concurrent edit)")
+	issueCommentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue comment resolve/unresolve
 	issueCommentResolveCmd.Flags().String("output", "json", "Output format: table or json")
@@ -1078,6 +1155,13 @@ func ensureAttachmentWithinWorkdir(cmd *cobra.Command, filePath string) error {
 		return fmt.Errorf("resolve --attachment path %q: %w", filePath, err)
 	}
 	if !within {
+		if !pathExists(filePath) {
+			return fmt.Errorf(
+				"--attachment path %q does not exist; it also resolves outside the current working "+
+					"directory, so --allow-external-file would not make this upload succeed. Generate the "+
+					"file inside the task workdir and attach that path.",
+				filePath)
+		}
 		return fmt.Errorf(
 			"--attachment path %q resolves outside the current working directory; "+
 				"attach files generated inside the task workdir rather than machine-shared "+
@@ -1120,8 +1204,49 @@ func collectLocalAttachments(cmd *cobra.Command, attachments []string) ([]pendin
 	return pending, nil
 }
 
-// appendUniqueStrings 把 values 逐个 trim 后追加到 dst 中，跳过空串与已出现的重复项，
-// 返回一个新切片（不改动 dst）。用于合并不同来源的附件 ID 列表。
+// appendAttachmentReferences appends the markdown snippet of every uploaded
+// attachment to an issue description, so the file renders on the issue page
+// instead of only existing as a stored row. Each snippet goes in its own
+// paragraph because file cards are block-level. An attachment the description
+// already references is skipped — a caller may have composed the markdown
+// itself (quick-create keeps the user's pasted image inline), and appending it
+// again would render the same file twice.
+func appendAttachmentReferences(description string, attachments []cli.AttachmentResponse) string {
+	snippets := make([]string, 0, len(attachments))
+	for _, att := range attachments {
+		if descriptionReferencesAttachment(description, att) {
+			continue
+		}
+		snippets = append(snippets, attachmentMarkdown(filepath.Base(att.Filename), att.ContentType, att.MarkdownURL))
+	}
+	if len(snippets) == 0 {
+		return description
+	}
+	appended := strings.Join(snippets, "\n\n")
+	if strings.TrimSpace(description) == "" {
+		return appended
+	}
+	return strings.TrimRight(description, "\n") + "\n\n" + appended
+}
+
+// descriptionReferencesAttachment reports whether a description body already
+// points at this attachment. It matches the durable `markdown_url` and the
+// `/api/attachments/<id>` path it is built from rather than the raw storage
+// `url`, which bodies never carry — the same rule the web composers use
+// (`contentReferencesAttachment`).
+func descriptionReferencesAttachment(description string, att cli.AttachmentResponse) bool {
+	if description == "" {
+		return false
+	}
+	if att.MarkdownURL != "" && strings.Contains(description, att.MarkdownURL) {
+		return true
+	}
+	if att.ID != "" && strings.Contains(description, "/api/attachments/"+att.ID) {
+		return true
+	}
+	return false
+}
+
 func appendUniqueStrings(dst []string, values ...string) []string {
 	seen := make(map[string]struct{}, len(dst)+len(values))
 	out := make([]string, 0, len(dst)+len(values))
@@ -1199,7 +1324,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 			"Deliver the file itself with `multica issue create --attachment <path>` (repeatable) and drop the link."); err != nil {
 			return err
 		}
-		body["description"] = desc
 	}
 	if statusFlag != "" {
 		body["status"] = statusFlag
@@ -1261,9 +1385,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	attachmentIDs = appendUniqueStrings(attachmentIDs, envAttachmentIDs...)
-	if len(attachmentIDs) > 0 {
-		body["attachment_ids"] = attachmentIDs
-	}
 
 	// 在创建 issue 之前先预校验附件：坏的路径绝不能产生一个建了一半的 issue
 	// （否则调用方——尤其是正在 quick-create 的 agent——会整体重试 `issue create`，
@@ -1274,25 +1395,39 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Upload BEFORE creating the issue, and append each file's markdown to the
+	// description. A file is visible on an issue only when the description
+	// references it — every other writer honors that (the web create dialog and
+	// the description editor bind exactly what the body references). Uploading
+	// after the create, as this used to, stored the file with an `issue_id` and
+	// left the description untouched, so it rendered nowhere on web, desktop or
+	// mobile (MUL-7600 / #8692). Uploading first also removes the old
+	// partial-success state: a failure here means no issue was created, so the
+	// retry is safe and cannot duplicate.
+	uploaded := make([]cli.AttachmentResponse, 0, len(pending))
+	for _, att := range pending {
+		result, uploadErr := client.UploadIssueAttachment(ctx, att.data, att.path, "")
+		if uploadErr != nil {
+			return fmt.Errorf("upload attachment %s (no issue created): %w", att.path, uploadErr)
+		}
+		uploaded = append(uploaded, result)
+		attachmentIDs = appendUniqueStrings(attachmentIDs, result.ID)
+		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+	}
+	desc = appendAttachmentReferences(desc, uploaded)
+	if hasDesc || len(uploaded) > 0 {
+		body["description"] = desc
+	}
+	if len(attachmentIDs) > 0 {
+		body["attachment_ids"] = attachmentIDs
+	}
+
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues", body, &result); err != nil {
 		if msg, ok := activeDuplicateIssueCreateMessage(err); ok {
 			return errors.New(msg)
 		}
 		return fmt.Errorf("create issue: %w", err)
-	}
-
-	// 上传附件并把它们绑定到刚创建的 issue。这一步失败属于「部分成功」：issue 已经
-	// 存在了，若让调用方拿到非零退出码，会诱使它重试整个命令从而重复建 issue。
-	// 所以只往 stderr 打警告并继续。
-	issueID := strVal(result, "id")
-	for _, att := range pending {
-		if _, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID); uploadErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: upload attachment %s failed (issue already created, %s): %v\n",
-				att.path, strVal(result, "identifier"), uploadErr)
-			continue
-		}
-		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -1336,6 +1471,7 @@ func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 // description/status/priority/assignee/project/日期/parent/stage/position）收集成
 // 请求体。description 只读取一次——三个来源 flag 都传时由 resolveTextFlag 报互斥错。
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
+	attachmentPaths, _ := cmd.Flags().GetStringSlice("attachment")
 	noStart, _ := cmd.Flags().GetBool("no-start")
 	statusChanged := cmd.Flags().Changed("status")
 	statusFlag, _ := cmd.Flags().GetString("status")
@@ -1357,7 +1493,11 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
+	timeout := cli.APITimeout()
+	if len(attachmentPaths) > 0 {
+		timeout = cli.AtLeastAPITimeout(60 * time.Second)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	issueRef, err := resolveIssueRef(ctx, client, args[0])
@@ -1378,7 +1518,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		// `issue update` 没有 --attachment 参数，所以这里的提示必须指向带该参数的命令。
 		// 如果只让 agent「传 --attachment」，指的就是本命令会拒绝的参数名。
 		if err := guardLocalPathLinks(desc, "issue description",
-			"`multica issue update` cannot carry files — deliver the file with `multica issue comment add <issue-id> --attachment <path>` instead, and drop the link."); err != nil {
+			"Attach the file with `multica issue update <issue-id> --attachment <path>` and drop the local-path link."); err != nil {
 			return err
 		}
 		body["description"] = desc
@@ -1443,8 +1583,44 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		body["position"] = v
 	}
 
-	if len(body) == 0 {
+	if len(body) == 0 && len(attachmentPaths) == 0 {
 		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
+	}
+	// Validate every path before any upload so an invalid later path cannot
+	// leave earlier files uploaded and unbound.
+	pending, err := collectLocalAttachments(cmd, attachmentPaths)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 && len(pending) == 0 {
+		return fmt.Errorf("no local attachments to update; --attachment accepts file paths, not URLs")
+	}
+	desc, changed := body["description"].(string)
+	if len(pending) > 0 && !changed {
+		var issue struct {
+			Description *string `json:"description"`
+		}
+		if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID), &issue); err != nil {
+			return fmt.Errorf("get issue description before binding attachments: %w", err)
+		}
+		if issue.Description != nil {
+			desc = *issue.Description
+		}
+	}
+	attachmentIDs := make([]string, 0, len(pending))
+	attachmentRefs := make([]cli.AttachmentResponse, 0, len(pending))
+	for _, att := range pending {
+		uploaded, uploadErr := client.UploadIssueAttachment(ctx, att.data, att.path, "")
+		if uploadErr != nil {
+			return fmt.Errorf("upload attachment %s: %w; already uploaded IDs: %v", att.path, uploadErr, attachmentIDs)
+		}
+		attachmentIDs = append(attachmentIDs, uploaded.ID)
+		attachmentRefs = append(attachmentRefs, uploaded)
+		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+	}
+	if len(attachmentRefs) > 0 {
+		body["description"] = appendAttachmentReferences(desc, attachmentRefs)
+		body["attachment_ids"] = attachmentIDs
 	}
 	if noStart {
 		body["suppress_run"] = true
@@ -1452,6 +1628,9 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result); err != nil {
+		if len(attachmentIDs) > 0 {
+			return fmt.Errorf("update issue (uploaded IDs: %v): %w", attachmentIDs, err)
+		}
 		return fmt.Errorf("update issue: %w", err)
 	}
 
@@ -2106,8 +2285,49 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
-// runIssueCommentDelete 执行 `issue comment delete <comment-id>`：按评论 UUID 直接
-// 删除评论。
+func runIssueCommentUpdate(cmd *cobra.Command, args []string) error {
+	expectedRevision, _ := cmd.Flags().GetInt64("expected-revision")
+	if !cmd.Flags().Changed("expected-revision") || expectedRevision < 1 {
+		return fmt.Errorf("--expected-revision is required and must be a positive integer; read the current revision with `multica issue comment list <issue-id> --output json`")
+	}
+
+	content, hasContent, err := resolveTextFlag(cmd, "content")
+	if err != nil {
+		return err
+	}
+	if !hasContent {
+		return fmt.Errorf("--content, --content-stdin, or --content-file is required")
+	}
+	if err := guardLocalPathLinks(content, "comment body",
+		"Comment updates cannot attach files; deliver the file in a new comment with `multica issue comment add <issue-id> --attachment <path>` and drop the link."); err != nil {
+		return err
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	commentID := args[0]
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/comments/"+url.PathEscape(commentID), map[string]any{
+		"content":           content,
+		"expected_revision": expectedRevision,
+	}, &result); err != nil {
+		return fmt.Errorf("update comment: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Comment %s updated.\n", commentID)
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
 func runIssueCommentDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {

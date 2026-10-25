@@ -104,17 +104,17 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 	var skillMd *zip.File
 	rootPrefix := ""
 	for _, f := range zr.File {
-		if f.FileInfo().IsDir() {
+		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, `\`) {
 			continue
 		}
-		if !validateFilePath(strings.TrimSuffix(f.Name, "/")) {
+		if !validateFilePath(strings.TrimSuffix(strings.ReplaceAll(f.Name, `\`, "/"), "/")) {
 			return nil, fmt.Errorf("unsafe archive path: %s", f.Name)
 		}
-		if seen[f.Name] {
+		clean := cleanArchiveEntryName(f.Name)
+		if seen[clean] {
 			return nil, fmt.Errorf("duplicate archive path: %s", f.Name)
 		}
-		seen[f.Name] = true
-		clean := path.Clean(f.Name)
+		seen[clean] = true
 		if !strings.EqualFold(path.Base(clean), skillpkg.ContentFilename) {
 			continue
 		}
@@ -151,13 +151,13 @@ func parseSkillArchive(data []byte, filename string) (*importedSkill, error) {
 	}
 
 	for _, f := range zr.File {
-		if f.FileInfo().IsDir() {
+		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, `\`) {
 			continue
 		}
-		if !validateFilePath(strings.TrimSuffix(f.Name, "/")) {
+		if !validateFilePath(strings.TrimSuffix(strings.ReplaceAll(f.Name, `\`, "/"), "/")) {
 			return nil, fmt.Errorf("unsafe archive path: %s", f.Name)
 		}
-		clean := path.Clean(f.Name)
+		clean := cleanArchiveEntryName(f.Name)
 		// 只有解析出的技能根之下的文件才属于这个技能。
 		if rootPrefix != "" && !strings.HasPrefix(clean, rootPrefix) {
 			continue
@@ -251,4 +251,9 @@ func readZipFile(f *zip.File, maxSize int64) (string, error) {
 		return "", fmt.Errorf("file %q exceeds %d bytes", f.Name, maxSize)
 	}
 	return string(data), nil
+}
+
+// cleanArchiveEntryName 将 Windows 归档分隔符转换为统一的包内路径。
+func cleanArchiveEntryName(name string) string {
+	return path.Clean(strings.ReplaceAll(name, "\\", "/"))
 }

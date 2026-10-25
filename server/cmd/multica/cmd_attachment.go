@@ -101,13 +101,7 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	filename := filepath.Base(path)
-	// 转义文件名里的 markdown 标签元字符：像 `report[v2].pdf` 这样的名字不会把
-	// 片段标签截断。文件渲染成块级附件卡片 !file[...]( )；图片用 ![...]( ) 内联。
-	label := escapeMarkdownLabel(filename)
-	markdown := fmt.Sprintf("!file[%s](%s)", label, att.MarkdownURL)
-	if strings.HasPrefix(att.ContentType, "image/") {
-		markdown = fmt.Sprintf("![%s](%s)", label, att.MarkdownURL)
-	}
+	markdown := attachmentMarkdown(filename, att.ContentType, att.MarkdownURL)
 	fmt.Fprintln(os.Stderr, "Uploaded:", filename)
 
 	return cli.PrintJSON(os.Stdout, map[string]any{
@@ -118,10 +112,25 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// escapeMarkdownLabel 转义 markdown 链接/图片标签中不允许裸用的元字符
-// （[ ] ( ) 和反斜杠），使 `report[v2].pdf` 这样的文件名仍是一整个合法标签而不是
-// 把片段截断。与渲染端的反转义集合保持一致
-// （packages/ui/markdown/file-cards.ts）。
+// attachmentMarkdown renders the markdown snippet that makes an uploaded file
+// visible in a body: images inline via `![...]( )`, every other file as a
+// block-level attachment card via `!file[...]( )`. The label is escaped so a
+// name like `report[v2].pdf` stays one label instead of truncating the
+// snippet. Shared by `attachment upload` (prints it for the agent to paste)
+// and `issue create --attachment` (appends it to the description).
+func attachmentMarkdown(filename, contentType, markdownURL string) string {
+	label := escapeMarkdownLabel(filename)
+	if strings.HasPrefix(contentType, "image/") {
+		return fmt.Sprintf("![%s](%s)", label, markdownURL)
+	}
+	return fmt.Sprintf("!file[%s](%s)", label, markdownURL)
+}
+
+// escapeMarkdownLabel escapes the metacharacters a markdown link/image label
+// may not contain unescaped ([ ] ( ) and backslash), so a filename like
+// `report[v2].pdf` stays a single valid label instead of truncating the
+// snippet. Kept in sync with the renderers' unescape set
+// (packages/ui/markdown/file-cards.ts).
 func escapeMarkdownLabel(s string) string {
 	return strings.NewReplacer(
 		`\`, `\\`,

@@ -198,7 +198,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	for key, value := range b.cfg.Env {
 		env[key] = value
 	}
-	cmd.Env = buildEnv(env)
+	cmd.Env = buildCodebuddyEnv(env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -258,6 +258,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		var finalResultText string
 		sawResult := false
 		resultIsError := false
+		sawBackgroundTask := false
 		var sessionID string
 		var requestID string
 		usage := make(map[string]TokenUsage)
@@ -321,6 +322,10 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			case "user":
 				b.handleUser(msg, msgCh)
 			case "system":
+				// 无头执行不能在结果回传后继续接收后台任务通知。
+				if codebuddySystemIsBackgroundTask(msg.Subtype) {
+					sawBackgroundTask = true
+				}
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
 				sawResult = true
@@ -357,6 +362,10 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		// 要么已成功、要么遇到 broken pipe、要么被结束 cmd 的 kill 解除阻塞。
 		writeErr := <-writeDone
 
+		completionGuardError := ""
+		if sawBackgroundTask {
+			completionGuardError = "codebuddy emitted a background task system event; Multica-managed runs require foreground execution (set CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS=1)"
+		}
 		finalStatus, finalOutput, finalError := finalizeStreamResult(
 			"codebuddy",
 			timeout,
@@ -371,11 +380,14 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 				resultIsError:     resultIsError,
 				scanErr:           scanErr,
 			},
-			"",
+			completionGuardError,
 		)
 
+		// cmd.Wait() has returned — stderrBuf.Tail() is complete. Resume
+		// rejection phrases often land only on stderr (mirror Claude MUL-4966).
+		stderrTail := stderrBuf.Tail()
 		if finalError != "" {
-			finalError = withAgentStderr(finalError, "codebuddy", stderrBuf.Tail())
+			finalError = withAgentStderr(finalError, "codebuddy", stderrTail)
 		}
 		logStreamProtocolObservation(b.cfg.Logger, streamProtocolObservation{
 			provider:                   "codebuddy",
@@ -397,8 +409,8 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 
 		b.cfg.Logger.Info("codebuddy finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
-		resumeRejected := resumeWasRejected(opts.ResumeSessionID, sessionID, finalStatus == "failed", finalError)
-		reportedSessionID := resolveSessionID(opts.ResumeSessionID, sessionID, finalStatus == "failed", finalError)
+		resumeRejected := resumeWasRejected(opts.ResumeSessionID, sessionID, finalStatus == "failed", finalError, stderrTail)
+		reportedSessionID := resolveSessionID(opts.ResumeSessionID, sessionID, finalStatus == "failed", finalError, stderrTail)
 		if resumeRejected {
 			b.cfg.Logger.Info("codebuddy resume was rejected; dropping session id and signalling fresh-session retry",
 				"requested_resume", opts.ResumeSessionID,
@@ -574,6 +586,10 @@ func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin i
 	if inputMap == nil {
 		inputMap = map[string]any{}
 	}
+	// Do not rewrite run_in_background here: under bypassPermissions most
+	// tools never emit control_request, and CodeBuddy does not use Claude's
+	// async_launched tool_result shape. Background work is disabled via
+	// CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS before tool execution.
 
 	response := map[string]any{
 		"type": "control_response",
@@ -628,7 +644,33 @@ func writeCodebuddyInput(w io.Writer, prompt string) error {
 	return nil
 }
 
-// ── CodeBuddy SDK JSON 类型 ──
+const codebuddyDisableBackgroundTasksEnv = "CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS"
+
+// buildCodebuddyEnv merges task env and always forces background tasks off.
+// Multica's adapter closes stdin after the first result; CodeBuddy's
+// background lifecycle can push task_notification after that point, which we
+// cannot observe. The official CLI documents this variable for exactly that
+// headless shape (https://www.codebuddy.ai/docs/cli/headless).
+//
+// Append the forced entry last so os/exec's platform-aware dedup
+// (case-insensitive on Windows, last-wins) keeps our "=1" even when the
+// inherited or custom_env key differs only by case.
+func buildCodebuddyEnv(extra map[string]string) []string {
+	return append(buildEnv(extra), codebuddyDisableBackgroundTasksEnv+"=1")
+}
+
+// codebuddySystemIsBackgroundTask reports CodeBuddy's real background-task
+// system subtypes (not Claude's async_launched tool_result).
+func codebuddySystemIsBackgroundTask(subtype string) bool {
+	switch strings.TrimSpace(subtype) {
+	case "task_started", "task_progress", "task_updated", "task_notification":
+		return true
+	default:
+		return false
+	}
+}
+
+// ── Codebuddy SDK JSON types ──
 
 // codebuddySDKMessage 是 stdout 上每一行 stream-json 事件的统一信封；不同 type 使用
 // 不同的字段子集（assistant/user 用 Message，result 用 result 字段，log 用 Log，

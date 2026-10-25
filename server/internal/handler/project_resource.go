@@ -171,6 +171,9 @@ func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	}
 	payload.DefaultBranchHint = strings.TrimSpace(payload.DefaultBranchHint)
 	payload.Ref = strings.TrimSpace(payload.Ref)
+	if err := validateGitRef(payload.Ref); err != nil {
+		return nil, fmt.Errorf("github_repo: %w", err)
+	}
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -448,10 +451,67 @@ func isDriveLetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
-// isValidGitRepoURL 接受用户从 GitHub 的 Code 菜单可能贴出的三种形态：https://、
-// 带显式协议的 ssh://、以及 scp 风格简写 git@host:owner/repo.git。检查刻意保持
-// 宽松——我们防的是“not-a-url”这类粘贴垃圾，而不是强制严格文法——因为真正的
-// 拉取由客户端侧 git clone 完成，git 给用户的报错比我们给的更清楚。
+// gitRefMaxLength caps the stored checkout ref. Git's own limit is the
+// filesystem's, but a loose ref has to fit in a file name, so 255 is the
+// conservative ceiling every platform honors — far past any real branch name.
+// The cap exists to stop a pasted document from reaching the database, not to
+// police naming.
+const gitRefMaxLength = 255
+
+// validateGitRef rejects input git itself could never resolve, and nothing
+// more. It mirrors the subset of `git check-ref-format` that applies to a ref a
+// user types, so every branch, tag and commit SHA we advertise stays
+// acceptable — the check is about SHAPE only.
+//
+// Whether the ref exists on the remote is a different question, answered at
+// checkout time by the daemon. It must not gate saving project config: the
+// daemon may be offline, the repository may be private, and the server cannot
+// inspect the repository at all. An empty ref is valid and means "use the
+// repository's default branch".
+//
+// Keep in sync with validateGitRef in packages/core/github/repo-ref.ts, which
+// gives the same verdict in the UI before the request is sent.
+func validateGitRef(ref string) error {
+	if ref == "" {
+		return nil
+	}
+	if len(ref) > gitRefMaxLength {
+		return fmt.Errorf("ref must be at most %d characters", gitRefMaxLength)
+	}
+	// ASCII control characters, DEL, space, and the characters git reserves
+	// for its own revision syntax.
+	for _, r := range ref {
+		if r <= ' ' || r == '\x7f' || strings.ContainsRune("~^:?*[\\", r) {
+			return errors.New("ref must not contain spaces, control characters, or any of ~ ^ : ? * [ \\")
+		}
+	}
+	// Path-shape rules. "@{" is reflog syntax, a lone "@" is shorthand for
+	// HEAD, ".." would read as a range, and ".lock" is what git names its own
+	// lock files.
+	if strings.Contains(ref, "..") ||
+		strings.Contains(ref, "@{") ||
+		ref == "@" ||
+		strings.HasPrefix(ref, "/") ||
+		strings.HasPrefix(ref, "-") ||
+		strings.HasSuffix(ref, "/") ||
+		strings.Contains(ref, "//") ||
+		strings.HasSuffix(ref, ".") {
+		return errors.New("ref is not a valid branch, tag, or commit")
+	}
+	for _, segment := range strings.Split(ref, "/") {
+		if strings.HasPrefix(segment, ".") || strings.HasSuffix(segment, ".lock") {
+			return errors.New("ref is not a valid branch, tag, or commit")
+		}
+	}
+	return nil
+}
+
+// isValidGitRepoURL accepts the three forms a user can paste from GitHub's
+// "Code" menu: https://, ssh:// (with explicit scheme), and the scp-like
+// shorthand `git@host:owner/repo.git`. The check is intentionally lax — we are
+// guarding against pasted garbage like "not-a-url", not enforcing a strict
+// grammar — because the actual fetch happens client-side via `git clone` and
+// the user gets a clearer error from git than from us.
 func isValidGitRepoURL(s string) bool {
 	if u, err := url.Parse(s); err == nil && u.Host != "" {
 		switch u.Scheme {
