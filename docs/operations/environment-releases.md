@@ -351,6 +351,21 @@ quarantined、旧租约过期且原种子仍已验证时，负责人提交：
 
 请求记录保存 failure_stage、脱敏 error、log_path 和 journal_unit。子进程输出进入同一脱敏请求日志；原始 journal 可用 `journalctl -u <journal_unit>` 定位，仅由受控运维读取，不上传认证文件。发布器未运行时不启动第二套常驻 worker，显式恢复仍使用原单请求 systemd 执行入口。
 
+### 无生产授权的固定 int 验收
+
+未批准交付在 verification 已提交且声明 integration 必验项时，控制端队列返回
+`integration_pending=true`。既有外部 worker 用当前 revision 调用 `claim-integration`，
+服务端锁定交付并复核方案和 verification 证据，再进入 `preparing_release`，在原快照
+标记 `integration_only`。此动作不写生产批准。原 verify 证据保留在 delivery_evidence，
+清空当前候选与 acceptance_submitted；新 int 候选经既有 int-prod 租约、固定基线整合、
+构建、prepared 和通知流程准备。环境池继续服务其他任务。
+
+负责人仍使用 `delivery accept` 提交当前准确 int 候选的 integration 业务证据。
+worker 的 `integrated` 动作校验候选、revision、worker token、publication generation
+与有效租约，成功后记录 integration_complete、进入 awaiting_review 和 in_review，
+释放 int 候选及占用。重复领取或过期回调被拒绝；中断沿原 publication 恢复路径续接，
+失败保留 needs_changes，不算完成。生产 validated/publishing 仍独立检查发布授权，
+仅集成验收不能更新生产。后续获批准仍由原发布路径准备并复核准确候选。
 ### 修复审计请求与 operations 单独更新
 
 `slots/advance` 的请求上限保持 8192 字节。repair 在本地比较完整制品清单与实际
@@ -374,3 +389,5 @@ SHA-256 和后续实际 worker 入口；保留旧包及回退入口。不逐文�
 HTTP 失败在 `.run/publisher/http-failure-<env>-<PID>.json` 保存状态码、最多 4096
 字节响应的脱敏文本、接口路径、失败阶段、日志路径及 journal unit；不记录请求
 正文或 Authorization。保留 HTTPError 类型与可读错误体，409 围栏处理继续有效。
+
+维护候选必须包含当时远端维护主线，发布前 fetch 后校验祖先关系并仅快进推送。生产版本可以落后于已合入的维护提交；生产基线仍单独核对，不能覆盖后来推进的主线。

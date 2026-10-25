@@ -41,7 +41,7 @@ func (h *Handler) ListDeliveryQueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND (q.trigger_comment_id=CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END OR CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END=ANY(q.coalesced_comment_ids)) ORDER BY q.created_at DESC LIMIT 1) AS verification_run,(SELECT jsonb_build_object('execution_id',o.execution_id,'generation',o.generation,'expires_at',o.expires_at,'external',NOT EXISTS(SELECT 1 FROM agent_task_queue native WHERE native.id::text=o.execution_id)) FROM delivery_owner o WHERE o.workspace_id=d.workspace_id AND o.issue_id=d.issue_id AND o.expires_at>now()) AS verification_owner,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR (d.phase='awaiting_review' AND COALESCE(d.plan_snapshot->>'authorization_stalled','')<>'true' AND NOT EXISTS(SELECT 1 FROM agent_task_queue aq WHERE aq.issue_id=d.issue_id AND aq.status IN('queued','dispatched','running','waiting_local_directory')) AND ((d.plan_snapshot->'authorization_notice' IS NOT NULL AND COALESCE((d.plan_snapshot->'authorization_notice'->>'notified_at')::timestamptz,'-infinity'::timestamptz)<=now()-interval '10 minutes') OR (d.plan_snapshot->'authorization_notice' IS NULL AND d.plan_snapshot->>'authorization_pending' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member'))))) OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage IN ('published','needs_changes','batch_ready') AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,(d.phase='awaiting_review' AND d.approved_by IS NULL AND d.acceptance_submitted AND d.plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(d.plan_snapshot->'required_checks','[]')) c WHERE c->>'stage'='integration')) AS integration_pending,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND (q.trigger_comment_id=CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END OR CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END=ANY(q.coalesced_comment_ids)) ORDER BY q.created_at DESC LIMIT 1) AS verification_run,(SELECT jsonb_build_object('execution_id',o.execution_id,'generation',o.generation,'expires_at',o.expires_at,'external',NOT EXISTS(SELECT 1 FROM agent_task_queue native WHERE native.id::text=o.execution_id)) FROM delivery_owner o WHERE o.workspace_id=d.workspace_id AND o.issue_id=d.issue_id AND o.expires_at>now()) AS verification_owner,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.approved_by IS NULL AND d.acceptance_submitted AND d.plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(d.plan_snapshot->'required_checks','[]')) c WHERE c->>'stage'='integration')) OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR (d.phase='awaiting_review' AND COALESCE(d.plan_snapshot->>'authorization_stalled','')<>'true' AND NOT EXISTS(SELECT 1 FROM agent_task_queue aq WHERE aq.issue_id=d.issue_id AND aq.status IN('queued','dispatched','running','waiting_local_directory')) AND ((d.plan_snapshot->'authorization_notice' IS NOT NULL AND COALESCE((d.plan_snapshot->'authorization_notice'->>'notified_at')::timestamptz,'-infinity'::timestamptz)<=now()-interval '10 minutes') OR (d.plan_snapshot->'authorization_notice' IS NULL AND d.plan_snapshot->>'authorization_pending' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member'))))) OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage IN ('published','needs_changes','batch_ready') AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付队列失败")
 		return
@@ -91,8 +91,8 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	var phase, token, issue, commit string
 	var rev int64
-	var approved bool
-	err = tx.QueryRow(r.Context(), `SELECT phase,COALESCE(worker_token::text,''),issue_id::text,source_commit,revision,approved_by IS NOT NULL FROM issue_delivery WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, ws, body.ID).Scan(&phase, &token, &issue, &commit, &rev, &approved)
+	var approved, integrationOnly bool
+	err = tx.QueryRow(r.Context(), `SELECT phase,COALESCE(worker_token::text,''),issue_id::text,source_commit,revision,approved_by IS NOT NULL,COALESCE(plan_snapshot->>'integration_only'='true',false) FROM issue_delivery WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, ws, body.ID).Scan(&phase, &token, &issue, &commit, &rev, &approved, &integrationOnly)
 	if err != nil {
 		writeError(w, 404, "交付不存在")
 		return
@@ -215,7 +215,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if body.Action == "prepared" || body.Action == "accepted" || body.Action == "notify" || body.Action == "tested" {
+	if phase == "testing" && (body.Action == "prepared" || body.Action == "accepted" || body.Action == "notify" || body.Action == "tested") {
 		var valid bool
 		candidate := body.Candidate
 		err = tx.QueryRow(r.Context(), `SELECT NOT EXISTS(SELECT 1 FROM verification_slot WHERE delivery_id=$1) OR EXISTS(SELECT 1 FROM verification_slot s JOIN issue_delivery d ON d.id=s.delivery_id WHERE s.delivery_id=$1 AND s.workspace_id=$2 AND s.worker_token::text=$3 AND s.source_commit=$4 AND s.state='verifying' AND s.lease_expires_at>now() AND s.candidate_id=CASE WHEN $5='' THEN d.candidate_id ELSE $5 END)`, body.ID, ws, token, commit, candidate).Scan(&valid)
@@ -233,6 +233,34 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	notifyReview := false
 	automaticComplete := false
 	switch body.Action {
+	case "claim-integration":
+		// Modification 1. Reuse the serialized int stage without granting production approval.
+		if phase != "awaiting_review" || approved {
+			writeError(w, 409, "当前交付不能领取仅集成验收")
+			return
+		}
+		var valid bool
+		if tx.QueryRow(r.Context(), deliveryPlanValidSQL, body.ID).Scan(&valid) != nil || !valid {
+			writeError(w, 409, "方案已变化")
+			return
+		}
+		if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "verification"); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
+		var eligible bool
+		if err = tx.QueryRow(r.Context(), `SELECT acceptance_submitted AND plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM jsonb_array_elements(plan_snapshot->'required_checks') c WHERE c->>'stage'='integration') FROM issue_delivery WHERE id=$1`, body.ID).Scan(&eligible); err != nil || !eligible {
+			writeError(w, 409, "缺少独立验收或已完成集成")
+			return
+		}
+		// Retain the verification candidate in delivery_evidence; the new int identity must supply its own checks.
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot||'{"integration_only":true}'::jsonb,release_comment_id=gen_random_uuid(),acceptance_submitted=false,candidate_id='',candidate_url='' WHERE id=$1`, body.ID)
+		if err != nil {
+			writeError(w, 500, "登记集成验收失败")
+			return
+		}
+		token = dbid.NewV7().String()
+		next = "preparing_release"
 	case "claim":
 
 		var valid bool
@@ -374,6 +402,27 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 500, "保存授权复核状态失败")
 				return
 			}
+		case "integrated":
+			// Modification 2. Int evidence completes review only; publishing still requires independent authorization.
+			if phase != "preparing_release" || !integrationOnly || approved {
+				writeError(w, 409, "当前交付不是仅集成验收")
+				return
+			}
+			if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "integration"); err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
+			var submitted bool
+			if tx.QueryRow(r.Context(), `SELECT acceptance_submitted AND candidate_id=$2 AND candidate_id<>'' FROM issue_delivery WHERE id=$1`, body.ID, body.Candidate).Scan(&submitted) != nil || !submitted {
+				writeError(w, 409, "缺少准确 int 候选验收")
+				return
+			}
+			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot||'{"integration_complete":true}'::jsonb WHERE id=$1`, body.ID)
+			if err != nil {
+				writeError(w, 500, "保存集成结果失败")
+				return
+			}
+			next = "awaiting_review"
 		case "validated":
 			if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "integration"); err != nil {
 				writeError(w, 409, err.Error())
@@ -516,7 +565,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	// 1. 交付验收通过也把任务推进到审核中；把前后两版任务行留到事务外，提交后
 	// 与手动改状态共用同一个后处理入口，避免这条写入路径单独漏掉审查派发和清绿勾。
 	var previous, updated db.Issue
-	if err == nil && (next == "awaiting_review" || body.Action == "accepted") {
+	if err == nil && (body.Action == "integrated" || body.Action == "validated") {
 		q := h.Queries.WithTx(tx)
 		previous, err = q.GetIssue(r.Context(), parseUUID(issue))
 		if err == nil {
@@ -601,6 +650,10 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 		return rev + 1
 	}(), "worker_token": token, "issue_id": issue}
+	if body.Action == "claim-integration" {
+		receipt["candidate_id"] = ""
+		receipt["acceptance_submitted"] = false
+	}
 	if body.Action == "tested" || body.Action == "prepared" {
 		receipt["acceptance_submitted"] = automaticComplete
 	}

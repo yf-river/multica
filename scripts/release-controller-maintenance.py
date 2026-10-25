@@ -9,6 +9,11 @@ import urllib.request
 
 # 1. Maintenance is confined to control-plane recovery; application migrations and supervision implementation are excluded.
 ALLOWED={
+ # Existing installed target-Agent maintenance and bounded repair protocol are preserved byte-for-byte.
+ 'scripts/test-agent-models.py','scripts/test-agent-models.mjs','scripts/test-agent-models.test.py','scripts/test-agent-models.test.mjs',
+ # Modification 1. Integration scheduling is control-plane maintenance, with no supervision or migration changes.
+ 'server/internal/handler/delivery_authorization_review_test.go','server/internal/handler/issue_review_sweeper_test.go',
+ 'server/internal/handler/issue_delivery_worker.go','server/internal/handler/issue_delivery_checks_test.go',
  'scripts/release-controller-maintenance.py','scripts/release-controller-maintenance.test.py',
  'scripts/delivery-operations.json','scripts/release-environments.py','scripts/release-environments.test.py',
  'scripts/issue-delivery-worker.py','scripts/issue-delivery-worker.test.py',
@@ -76,7 +81,8 @@ def prepare(r,source,evidence):
    git_common=r.output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),branch=r.output(['git','symbolic-ref','HEAD'],cwd=source))
   authorize(r,record)
   current=r.candidate() if r.candidate_path().exists() else None
-  if current and current['id']==version and current['status'] in ('verifying','accepted','queued'):
+  # Modification 3. A repaired source on an explicitly failed request needs a new candidate, preserving the request identity.
+  if current and current['id']==version and current.get('commit')==commit and current['status'] in ('verifying','accepted','queued'):
    r.validate_candidate(current);return current
   r.save_candidate(record)
   try:
@@ -98,3 +104,9 @@ def guard(r,record):
   authorize(r,record);idle(r,production=True)
   # Ordinary release guards are database-backed; this bounded maintenance window instead holds the same queue and publisher locks.
   yield lambda:authorize(r,record)
+
+# Modification 2. The remote maintenance history must be included in the reviewed candidate; production may lag it.
+def check_mainline(r,record):
+ current=r.output(['git','rev-parse','origin/personal-studio-upstream'],cwd=record['source'])
+ if r.subprocess.run(['git','merge-base','--is-ancestor',current,record['commit']],cwd=record['source']).returncode:
+  raise RuntimeError('维护主分支已变化，候选未包含当前主线')

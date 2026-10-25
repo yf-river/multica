@@ -35,4 +35,22 @@ class MaintenanceTests(unittest.TestCase):
   with patch.object(m,'api',return_value=[dict(phase='publishing')]):
    with self.assertRaisesRegex(RuntimeError,'其他交付'):m.idle(Mock(),production=True)
 
+# Modification 1. Real Git ancestry permits an included maintenance mainline and rejects concurrent unrelated updates.
+class MainlineTests(unittest.TestCase):
+ def test_actual_git_mainline_ancestry(self):
+  import subprocess
+  with tempfile.TemporaryDirectory() as directory:
+   def git(*args):return subprocess.check_output(['git',*args],cwd=directory,text=True).strip()
+   git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.invalid')
+   git('commit','--allow-empty','-qm','base');base=git('rev-parse','HEAD')
+   git('commit','--allow-empty','-qm','maintenance mainline');main=git('rev-parse','HEAD')
+   git('update-ref','refs/remotes/origin/personal-studio-upstream',main)
+   git('commit','--allow-empty','-qm','reviewed candidate');candidate=git('rev-parse','HEAD')
+   r=Mock();r.subprocess=subprocess;r.output.side_effect=lambda args,cwd:subprocess.check_output(args,cwd=cwd,text=True).strip()
+   record=dict(source=directory,commit=candidate,maintenance=dict(base_commit=base))
+   m.check_mainline(r,record)
+   git('checkout','-q','--detach',base);git('commit','--allow-empty','-qm','concurrent update')
+   git('update-ref','refs/remotes/origin/personal-studio-upstream',git('rev-parse','HEAD'))
+   with self.assertRaisesRegex(RuntimeError,'主分支已变化'):m.check_mainline(r,record)
+
 if __name__=='__main__':unittest.main()

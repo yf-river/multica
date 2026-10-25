@@ -280,7 +280,11 @@ class Worker:
             evidence=r.RUN/'delivery-evidence'/(d['id']+'.json')
             r.write(evidence,dict(candidate=c['id'],summary='任务负责人提交的实际功能验收',checks=d['evidence']),True)
             r.accept(c['id'],evidence)
-        if release:self.advance(d,'validated')
+        # Modification 1. Complete an int-only candidate without invoking any production gate.
+        if release and d.get('plan_snapshot',{}).get('integration_only') is True and not d.get('approved_by'):
+            self.advance(d,'integrated',candidate_id=c['id'])
+            r.release_candidate(c['id']);self.finish_publication(d)
+        elif release:self.advance(d,'validated')
         else:
             self.advance(d,'accepted')
             r.release_candidate(c['id'])
@@ -953,6 +957,12 @@ class Worker:
                         if result.get('notification_deferred'):continue
                         return
                     if phase=='awaiting_review':
+                        # Modification 2. The server decides eligibility; pool stays enabled for other deliveries.
+                        if d.get('integration_pending') is True:
+                            if self.busy(d):return
+                            self.advance(d,'claim-integration')
+                            d.setdefault('plan_snapshot',{})['integration_only']=True
+                            self.prepare(d);return
                         if self.publication_path(d).exists():self.publication(d,'heartbeat')
                         self.advance(d,'notify-authorization');return
                     if phase in ('waiting_int','approved'):

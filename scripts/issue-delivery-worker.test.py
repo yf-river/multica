@@ -5,6 +5,17 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    # Modification 1. The int-only consumer finalizes review and releases its lease without publishing.
+    def test_int_only_accept_does_not_validate_or_publish(self):
+        worker=object.__new__(w.Worker)
+        d=dict(id='delivery',candidate_id='int',plan_snapshot=dict(integration_only=True),approved_by=None)
+        with patch.object(worker,'own_candidate',return_value=dict(id='int',status='accepted')),patch.object(worker,'advance') as advance,patch.object(r,'release_candidate') as release,patch.object(worker,'finish_publication') as finish,patch.object(worker,'publish') as publish:
+            worker.accept(d,release=True)
+            advance.assert_called_once_with(d,'integrated',candidate_id='int')
+            release.assert_called_once_with('int');finish.assert_called_once_with(d);publish.assert_not_called()
+
+
+
     # Modification 1. Real inventory scale and long evidence must stay below the actual slot API's 8KB contract.
     def test_large_repair_inventory_is_bounded_and_canonical(self):
         import hashlib
