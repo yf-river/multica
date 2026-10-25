@@ -675,6 +675,16 @@ def reviewed_trace_preparation_change(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def reviewed_curated_nullable_columns(migration):
+    # 三个可空列无默认值、回填或约束；旧程序的显式列查询与写入兼容。
+    reviewed = {
+        '654_daemon_token_owner.up.sql': '658c92ab5dd86686af6a5cd59e82422610d5840cf13d408037d25a21bae2dc74',
+        '656_comment_deleted_at.up.sql': '46b6041f9cee1a34187ac5c3a4fa7236ccc9138b6d1a9da40026267797cb8cf1',
+        '667_task_message_call_id.up.sql': 'ff06e362dc7c3b21f22037034279ef0faaa10d818e5dcc11649da3881012499f',
+    }
+    return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
+
+
 def additive_statement(statement):
     # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
     return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
@@ -690,7 +700,7 @@ def validate_pending_migrations(release, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             if additive_statement(statement): continue
-            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration):
+            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration) or reviewed_curated_nullable_columns(migration):
                 continue
             raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
 def prepare_database(release, cfg, previous):
