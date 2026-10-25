@@ -1,6 +1,7 @@
 package execenv
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -109,5 +110,18 @@ func TestDshBriefRendersCustomStatuses(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Errorf("DSH brief must render custom status %q\n---\n%s", want, content)
 		}
+	}
+}
+
+// TestDshBriefDump writes the rendered brief to DSH_BRIEF_OUT when set. It
+// exists so a real DSH run can consume the exact brief a task would receive
+// without deploying a candidate environment.
+func TestDshBriefDump(t *testing.T) {
+	out := os.Getenv("DSH_BRIEF_OUT")
+	if out == "" {
+		t.Skip("set DSH_BRIEF_OUT to dump the rendered DSH brief")
+	}
+	if err := os.WriteFile(out, []byte(buildDshMetaSkillContent(dshTestContext())), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
