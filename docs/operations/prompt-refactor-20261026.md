@@ -53,3 +53,11 @@
 - 用 `prompt composed` 对比同一任务在 DSH 与 Codex 的固定前缀体量。
 - 监督 prompt 体量继续按周采样；若下降后单次输出 token 未降，下一步压缩监督输出 schema 与 `MaxTurns`。
 - 评估 OpenViking 仅限 int、长生命周期角色，指标见计划。
+
+## 角色指令收敛（2026-10-26 复核）
+
+- **交付审查员**：生产 `agent.instructions` 与代码默认 `server/internal/review/default_instructions.md` **逐字节一致**（5,332 字节），无漂移，无需改动。
+- **质量监督**：生产自定义提示词 8,637 字符与代码默认相似度 97.7%，缺少 4 处平台规则（`round.scope` 语义、`round` 字段、`trace_usage` 材料类型、调查时刻与完成快照的区分）。已将生产配置切回默认：`instructions=""`，`instructions_version=default-31c7db8b`，`instructions_customized=false`；enabled、300 秒间隔、调查开关、运行时、模型 `gpt-6-luna`、thinking medium 均保持不变。原自定义文本备份在 `/tmp/sup-prod.txt`。
+- **Mika / 上游观察员**：保留工作区自有指令（4,716 / 2,752 字节），不自动覆盖；如后续要收敛，需要逐段合并工作区特有内容后再清空自定义。
+
+结论：审查与监督的提示词已回到单一来源；后续平台修正默认文本会自动生效，生产不再维护近似副本。
