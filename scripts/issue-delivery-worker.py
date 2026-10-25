@@ -78,9 +78,8 @@ class Worker:
             target.parent.mkdir(parents=True,exist_ok=True)
             diagnostic['log_path']=str(target)
             r.write(target,diagnostic,True)
-            error.fp=io.BytesIO(raw)
-            error.msg='HTTP %s: %s; stage=%s; log=%s'%(error.code,clean,diagnostic['failure_stage'],target)
-            raise
+            message='HTTP %s: %s; stage=%s; log=%s'%(error.code,clean,diagnostic['failure_stage'],target)
+            raise urllib.error.HTTPError(error.url,error.code,message,error.headers,io.BytesIO(raw)) from None
     def advance(self,d,action,**extra):
         receipt=self.api('delivery-queue/advance',dict(id=d['id'],revision=d['revision'],worker_token=d.get('worker_token') or '',action=action,source_commit=d['source_commit'],publication_generation=d.get('publication_generation',0),**extra))
         d.update(receipt)
