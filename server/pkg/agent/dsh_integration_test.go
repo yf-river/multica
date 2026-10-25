@@ -29,8 +29,16 @@ func TestDshRealRuntimeSmoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	cwd := t.TempDir()
+	// The advertised catalog differs per DSH profile: an account-backed profile
+	// advertises deepseek-account/<model>, a key-backed one another provider. The
+	// operator names the model to avoid pinning a catalog entry this machine may
+	// not have; list it with `dsh --profile multica --list-models`.
+	model := os.Getenv("MULTICA_DSH_SMOKE_MODEL")
+	if model == "" {
+		model = "deepseek-account/deepseek-flash"
+	}
 	session, err := b.Execute(ctx, "Remember the code word PINEAPPLE. Reply with exactly DSH_MULTICA_OK and nothing else.", ExecOptions{
-		Cwd: cwd, Model: "deepseek-official/deepseek-v4-flash", ThinkingLevel: "off",
+		Cwd: cwd, Model: model, ThinkingLevel: "off",
 		Timeout: 90 * time.Second,
 	})
 	if err != nil {
@@ -50,7 +58,7 @@ func TestDshRealRuntimeSmoke(t *testing.T) {
 	}
 
 	resumed, err := b.Execute(ctx, "Reply with exactly the code word from the previous turn and nothing else.", ExecOptions{
-		Cwd: cwd, Model: "deepseek-official/deepseek-v4-flash", ThinkingLevel: "off",
+		Cwd: cwd, Model: model, ThinkingLevel: "off",
 		ResumeSessionID: result.SessionID, Timeout: 90 * time.Second,
 	})
 	if err != nil {

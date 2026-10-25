@@ -749,6 +749,15 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 	kind := classifyTask(ctx)
 
+	// DSH tasks use a dedicated, much shorter brief: DeepSeek Harness already
+	// supplies the agent loop, planning, skills and compaction, so this brief
+	// carries only the platform contract. Chat needs its surface instructions and
+	// the governed Life job has its own boundary, so both keep the shared path.
+	// See runtime_config_dsh.go.
+	if provider == "dsh" && kind == kindIssue {
+		return buildDshMetaSkillContent(ctx)
+	}
+
 	// Session Continuity Notice、Task Initiator、Connected Apps 曾在本地渲染。它们是
 	// 每次运行各自的值，写进这份文件会在每次恢复时破坏提示缓存前缀稳定性；如今它们改随
 	// 每轮用户消息（daemon.BuildPrompt）下发。见 MUL-5377。

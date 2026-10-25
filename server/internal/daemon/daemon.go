@@ -7846,6 +7846,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	// 1. Keep final composition shared with the JSON-supervision regression boundary.
 	prompt := buildExecutionPrompt(task, provider, env, envReused, localAssignment == nil, promptOptions...)
+	// Prompt-size telemetry: brief and prompt bytes are the two costs every run
+	// pays before any work starts. Keep them observable so prompt refactors can be
+	// measured on real tasks instead of estimated from source.
+	taskLog.Info("prompt composed", "provider", provider, "brief_bytes", len(runtimeBrief), "agent_instructions_bytes", len(taskCtx.AgentInstructions), "prompt_bytes", len(prompt))
 
 	// 传任务级鉴权凭据与上下文，好让被拉起的 agent CLI 能调 Multica API 与本地
 	// daemon（如 `multica repo checkout`）。MULTICA_TASK_SLOT 从 daemon 级并发池
