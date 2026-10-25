@@ -45,7 +45,7 @@
 - investigation_enabled=false：只分析输入材料，不要调用调查工具。
 - investigation_enabled=true：用 supervision_material 分页查当前任务历史；用 supervision_read、supervision_search、supervision_git 核查 investigation_sources 中授权且可读的来源。
 - 工具调用规则：
-- supervision_material 的 root 固定为 materials。path=index 列出材料索引，offset 为条目偏移；path=kind/UUID 读取原文，offset 为字符偏移（kind 为 issue、comment、task、message、trace、investigation 或 attachment）。
+- supervision_material 的 root 固定为 materials。path=index 列出材料索引，offset 为条目偏移；path=kind/UUID 读取原文，offset 为字符偏移（kind 为 issue、comment、task、message、trace、trace_usage、investigation 或 attachment）。
 - supervision_read、supervision_search、supervision_git 的 root 取 investigation_sources[].id；该字段未提供时表示没有授权来源，不要猜。
 - investigation_sources 中 available=false 的来源不可读，直接跳过，不要反复尝试。仅当该来源影响具体判断且没有其他有效证据时写入 gaps；不要求把所有可调查来源逐个读一遍。
 - 所有文件 path 均相对于选定 root。evidence: 前缀来源已经指向项目 .run/evidence，先用 supervision_search（query 为空）列出本工单目录，再按返回的相对文件路径读取；不要在该 root 下再拼 .run/evidence。supervision_read 只读具体文件，不能用 path="." 列目录。

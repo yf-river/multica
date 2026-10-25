@@ -40,3 +40,22 @@ python3 scripts/quality-agent-skills.py \
 配置同步测试使用内存 API 验证保留字段、角色绑定隔离、幂等、用户改动和中断恢复；它不等同于真实 Agent 验收。职责材料还应以受控案例检查：合理短答不误报、未同步的受影响文档能被识别、具体方案风险有依据、trace 缺失不编造 token 成本。真实工作区需回读技能及设置，并核对后续新运行是否加载对应技能。
 
 GONG-67 维护自动监督范围与轮次，需按其交付实际发布状态核对，不能仅凭本次提示词称“只监督 done”已生效。GONG-51 维护执行、外部 trace 关联和用量准确性；关联与汇总未验证完整时，监督只分析可确认的局部数据，不宣称全部 trace 或精确节省。token 优化实现另按用户决定推进。
+
+
+### Trace preparation rollback and recovery
+
+Trace preparation is opt-in through `MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE`.
+For a runtime rollback, unset that cutoff and restore the previous runtime and
+supervision instructions/skill. Keep `supervision_trace_material` and existing
+`trace_usage` materials. Migrations 640, 643 and 645 intentionally retain evidence,
+the compatible material constraint and the consumed round allowance on downgrade;
+a migration down file is not authorization to delete stored evidence. Do not
+reset the preparation counters during recovery. External requests are reserved
+atomically on the completion round before HTTP, shared across runs and delayed
+versions, with 40 requests and 120 seconds from its first request. A crash may
+consume allowance without retaining a response; it must never replenish it.
+
+AgentLens `Retry-After` seconds and HTTP dates delay retries within that same
+round deadline. A delay exceeding the remaining allowance yields partial coverage
+without another request. Published evidence remains available after preparation
+is disabled.

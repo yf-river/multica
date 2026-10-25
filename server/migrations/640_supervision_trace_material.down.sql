@@ -1,1 +1,2 @@
-DROP TABLE IF EXISTS supervision_trace_material;
+-- Retain immutable evidence when reverting the runtime; deletion requires separate authorization.
+SELECT 1;

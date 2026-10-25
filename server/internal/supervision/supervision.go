@@ -121,6 +121,11 @@ func (s *Service) Tick(ctx context.Context) error {
 			s.setError(ctx, ws, err)
 			continue
 		}
+		// 1. Prepare execution evidence outside dispatch transactions; external gaps do not stop local supervision.
+		if err = s.prepareConfiguredTraceMaterials(ctx, ws); err != nil {
+			s.setError(ctx, ws, err)
+			continue
+		}
 		// 无执行记录的任务不调用模型；只对已完成且开放轮次的任务记账，未完成任务
 		// 不会被标成已监督。
 		_, err = s.Pool.Exec(ctx, `UPDATE supervision_subject s SET reviewed_version=desired_version,summary='暂无执行记录，尚无法评价执行质量。'
@@ -214,6 +219,9 @@ func sourceSQL(kind string) (string, error) {
 		return `SELECT jsonb_build_object('id',m.id,'seq',m.seq,'type',m.type,'tool',m.tool,'content',m.content,'input',m.input,'output',m.output,'created_at',m.created_at)::text FROM task_message m JOIN agent_task_queue t ON t.id=m.task_id JOIN issue i ON i.id=t.issue_id WHERE m.id=$1 AND i.workspace_id=$2`, nil
 	case "trace":
 		return `SELECT jsonb_build_object('id',id,'event_type',event_type,'status',status,'error_type',error_type,'failure_reason',failure_reason,'metadata',metadata,'created_at',created_at)::text FROM task_trace_event WHERE id=$1 AND workspace_id=$2`, nil
+	// 2. Published report bodies are immutable; their source UUID pins the evidence version.
+	case "trace_usage":
+		return `SELECT jsonb_build_object('id',id,'run_id',run_id,'runtime',runtime,'status',status,'material_version',material_version,'queried_at',queried_at,'report',report::jsonb)::text FROM supervision_trace_material WHERE id=$1 AND workspace_id=$2 AND status NOT IN('pending','processing')`, nil
 	default:
 		return "", fmt.Errorf("unknown material kind %q", kind)
 	}
@@ -259,6 +267,10 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cu
 			return nil, err
 		}
 		size := min(40000, budget)
+		// 3. Keep entry prompts short; the existing material tool reads the remaining evidence.
+		if m.Kind == "trace_usage" {
+			size = min(size, 1500)
+		}
 		if size <= 0 {
 			break
 		}
@@ -392,6 +404,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	err = tx.QueryRow(ctx, `SELECT s.issue_id::text FROM supervision_subject s JOIN issue i ON i.id=s.issue_id
       LEFT JOIN supervision_round r ON r.workspace_id=s.workspace_id AND r.issue_id=s.issue_id AND r.status='open'
       WHERE s.workspace_id=$1 AND s.next_attempt_at<=now() AND s.failures<3
+      AND NOT EXISTS(SELECT 1 FROM supervision_trace_material p JOIN supervision_round pr ON pr.id=p.round_id AND pr.workspace_id=p.workspace_id WHERE p.workspace_id=s.workspace_id AND p.issue_id=s.issue_id AND pr.status='open' AND p.status IN('pending','processing'))
       AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=s.workspace_id AND b.issue_id=s.issue_id AND b.status IN('preparing','running'))
       AND (s.force_review OR (`+categoryOf("i")+`='done' AND r.id IS NOT NULL
         AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
@@ -648,7 +661,8 @@ func receiptMaterials(receipts map[string]Receipt) []Material {
 			continue
 		}
 		switch parts[0] {
-		case "issue", "comment", "task", "message", "trace":
+		// 4. Trace material pages participate in the same contiguous evidence coverage checks.
+		case "issue", "comment", "task", "message", "trace", "trace_usage":
 		default:
 			continue
 		}
