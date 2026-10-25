@@ -1,0 +1,26 @@
+{
+  "revision": 3,
+  "candidate_id": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1-1792918336641334079",
+  "evidence": [
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify51-final/REPORT.md；本候选Flash真实首次3/同session续接2请求match，原生子调用parent关联1请求，CodeBuddy运行中取消与重试材料分离；runtime-and-session-proof.json及各report/pages/messages。AgentLens完整性保留partial。"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify51-final/REPORT.md；真实Codex所属Daemon记录、外部请求0；同任务2次CodeBuddy及1次Codex按历史runtime分流。34个隔离数据库测试通过、5个int专用跳过；各subject/report及fixture-supervision-tests.log。"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify51-final/REPORT.md；连续分页、400/401/404及缺失墓碑，重开轮次closed/reopened；准确backend重启后7份历史正文SHA256/长度一致。coverage-generation与正文版本区别见immutable-after-restart.json；权限及清理凭据证据均保存。"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify51-final/REPORT.md；6真实监督批次completed，准确候选技能逐字加载；必要读取及取消不误报，多余两次GET有具体finding及验证建议、不虚构节省；浏览器详情刷新/移动视口持久化，模型成本单列。loaded-skills-and-tools.json、waste-subject.json、截图及实录。"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "01a17245-bf75-78c2-8824-bbc0501be37d",
+  "agent_id": "695b5ac6-498e-41b5-999c-afbcbf3d7b9b",
+  "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+  "issue_id": "01a17244-ebf8-77bc-9a27-87dfcf225c4a",
+  "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+  "status": "queued",
+  "priority": 1,
+  "dispatched_at": null,
+  "started_at": null,
+  "completed_at": null,
+  "result": null,
+  "error": null,
+  "attempt": 1,
+  "max_attempts": 2,
+  "created_at": "2026-10-25T16:55:36+08:00",
+  "delivered_comment_ids": [],
+  "kind": "direct",
+  "attribution": {
+    "source": "direct_human",
+    "precise": true,
+    "initiator": {
+      "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+      "name": "verification",
+      "email": "verification"
+    },
+    "originator": {
+      "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+      "name": "verification",
+      "email": "verification"
+    },
+    "evidence": {
+      "kind": "issue_assignment",
+      "ref_id": "01a17244-ebf8-77bc-9a27-87dfcf225c4a"
+    },
+    "rerun_of_task_id": "01a17244-ebfa-7c10-91c0-898496e4f161"
+  }
+}

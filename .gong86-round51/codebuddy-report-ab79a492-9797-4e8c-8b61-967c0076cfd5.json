@@ -1,0 +1,829 @@
+{
+  "preparation_status": "partial",
+  "material_version": 1,
+  "local_session_evidence": [
+    {
+      "runtime": "codebuddy",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+      "sdk_trace_id": "3612c346248383808c06aae9271292df",
+      "source_sha256": "6da2d18a4aa35988b9c461a38b90b78fe3d7542aaaec5b1b439e6b505ab2acf8",
+      "started_at": "2026-10-25T16:54:42.131150767+08:00",
+      "ended_at": "2026-10-25T08:54:50.167624047Z",
+      "requests": [
+        {
+          "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+          "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+          "sdk_trace_id": "3612c346248383808c06aae9271292df",
+          "message_id": "01a17244f95d7ecd8a3e81936a7fae51",
+          "model": "deepseek-v4.1-flash-ioa",
+          "raw_usage": {
+            "prompt_tokens": 27467,
+            "completion_tokens": 162,
+            "total_tokens": 27629,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 38,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 27264
+            },
+            "prompt_cache_hit_tokens": 27264,
+            "prompt_cache_miss_tokens": 203,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "prompt_cache_write_tokens": 0,
+            "completion_thinking_tokens": 38,
+            "credit": 0.02,
+            "cached_tokens": 0
+          }
+        },
+        {
+          "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+          "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+          "sdk_trace_id": "3612c346248383808c06aae9271292df",
+          "message_id": "01a17245021873a3b12c24031a612fff",
+          "model": "deepseek-v4.1-flash-ioa",
+          "raw_usage": {
+            "prompt_tokens": 28210,
+            "completion_tokens": 108,
+            "total_tokens": 28318,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 106,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 27520
+            },
+            "prompt_cache_hit_tokens": 27520,
+            "prompt_cache_miss_tokens": 690,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "prompt_cache_write_tokens": 0,
+            "completion_thinking_tokens": 106,
+            "credit": 0.02,
+            "cached_tokens": 0
+          }
+        }
+      ],
+      "events": [
+        {
+          "content": [
+            {
+              "text": "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: 01a17244-86dd-73c6-813e-dcf3b3824581\n\nStart by running `multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json` to understand your task, then complete it.\nIf comment context is missing or stale, scan the threads with `multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n",
+              "type": "input_text"
+            }
+          ],
+          "providerData": {
+            "conversationRequestId": "01a17244f2227d9b9050f53cd53bedf3",
+            "messageId": "",
+            "model": "",
+            "rawUsage": null,
+            "traceId": ""
+          },
+          "type": "message"
+        },
+        {
+          "content": [],
+          "providerData": {
+            "conversationRequestId": "01a17244f2227d9b9050f53cd53bedf3",
+            "messageId": "01a17244f95d7ecd8a3e81936a7fae51",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "3612c346248383808c06aae9271292df"
+          },
+          "type": "reasoning"
+        },
+        {
+          "arguments": "{\"command\": \"multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json && multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json\", \"description\": \"Re-read issue and comments\"}",
+          "callId": "call_00_wJTEnALZQgt1caJq7gU91645",
+          "message": {
+            "usage": {
+              "cache_read_input_tokens": 27264,
+              "input_tokens": 27467,
+              "output_tokens": 162,
+              "total_tokens": 27629
+            }
+          },
+          "name": "Bash",
+          "providerData": {
+            "conversationRequestId": "01a17244f2227d9b9050f53cd53bedf3",
+            "messageId": "01a17244f95d7ecd8a3e81936a7fae51",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": {
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cached_tokens": 0,
+              "completion_thinking_tokens": 38,
+              "completion_tokens": 162,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 38,
+                "rejected_prediction_tokens": 0
+              },
+              "credit": 0.02,
+              "prompt_cache_hit_tokens": 27264,
+              "prompt_cache_miss_tokens": 203,
+              "prompt_cache_write_tokens": 0,
+              "prompt_tokens": 27467,
+              "prompt_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 27264,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "total_tokens": 27629
+            },
+            "traceId": "3612c346248383808c06aae9271292df"
+          },
+          "type": "function_call"
+        },
+        {
+          "callId": "call_00_wJTEnALZQgt1caJq7gU91645",
+          "name": "Bash",
+          "output": {
+            "text": "Stdout: {\n  \"assignee_id\": \"695b5ac6-498e-41b5-999c-afbcbf3d7b9b\",\n  \"assignee_type\": \"agent\",\n  \"created_at\": \"2026-10-25T16:54:16+08:00\",\n  \"creator_id\": \"0641d4f0-04c6-4632-bcf3-7e5840e0c9ed\",\n  \"creator_type\": \"member\",\n  \"description\": \"隔离验收：只回答17+25结果。不要修改文件、创建任务或调用其他Agent。允许读取本工单。\",\n  \"due_date\": null,\n  \"id\": \"01a17244-86dd-73c6-813e-dcf3b3824581\",\n  \"identifier\": \"DEV-5\",\n  \"labels\": [],\n  \"last_activity_at\": \"2026-10-25T16:54:30.263656+08:00\",\n  \"metadata\": {},\n  \"number\": 5,\n  \"parent_issue_id\": null,\n  \"position\": -3,\n  \"priority\": \"not_important_not_urgent\",\n  \"project_id\": null,\n  \"properties\": {},\n  \"revision\": 2,\n  \"stage\": null,\n  \"start_date\": null,\n  \"status\": \"todo\",\n  \"status_category\": \"todo\",\n  \"status_name\": \"\",\n  \"title\": \"G86-51 codebuddy真实轨迹样本\",\n  \"updated_at\": \"2026-10-25T16:54:30+08:00\",\n  \"workspace_id\": \"c90d5776-cb29-4db3-8d3e-20d05776e5a9\"\n}\n[\n  {\n    \"author_id\": \"695b5ac6-498e-41b5-999c-afbcbf3d7b9b\",\n    \"author_type\": \"agent\",\n    \"content\": \"17 + 25 = 42\",\n    \"content_truncated\": false,\n    \"created_at\": \"2026-10-25T16:54:30+08:00\",\n    \"id\": \"01a17244-be7c-754d-864b-dad6380edfcf\",\n    \"last_activity_at\": \"2026-10-25T16:54:30+08:00\",\n    \"reply_count\": 0,\n    \"revision\": 1,\n    \"type\": \"comment\"\n  }\n]\n\nStderr: (empty)\nExit Code: 0\nSignal: (none)",
+            "type": "text"
+          },
+          "providerData": {
+            "conversationRequestId": "01a17244f2227d9b9050f53cd53bedf3",
+            "messageId": "01a17244f95d7ecd8a3e81936a7fae51",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "3612c346248383808c06aae9271292df"
+          },
+          "type": "function_call_result"
+        },
+        {
+          "content": [],
+          "providerData": {
+            "conversationRequestId": "01a17244f2227d9b9050f53cd53bedf3",
+            "messageId": "01a17245021873a3b12c24031a612fff",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "3612c346248383808c06aae9271292df"
+          },
+          "type": "reasoning"
+        },
+        {
+          "content": [
+            {
+              "providerData": {
+                "annotations": []
+              },
+              "text": "42",
+              "type": "output_text"
+            }
+          ],
+          "message": {
+            "usage": {
+              "cache_read_input_tokens": 27520,
+              "input_tokens": 28210,
+              "output_tokens": 108,
+              "total_tokens": 28318
+            }
+          },
+          "providerData": {
+            "conversationRequestId": "01a17244f2227d9b9050f53cd53bedf3",
+            "messageId": "01a17245021873a3b12c24031a612fff",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": {
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cached_tokens": 0,
+              "completion_thinking_tokens": 106,
+              "completion_tokens": 108,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 106,
+                "rejected_prediction_tokens": 0
+              },
+              "credit": 0.02,
+              "prompt_cache_hit_tokens": 27520,
+              "prompt_cache_miss_tokens": 690,
+              "prompt_cache_write_tokens": 0,
+              "prompt_tokens": 28210,
+              "prompt_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 27520,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "total_tokens": 28318
+            },
+            "traceId": "3612c346248383808c06aae9271292df"
+          },
+          "type": "message"
+        }
+      ],
+      "gaps": []
+    }
+  ],
+  "request_comparisons": [
+    {
+      "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "response_id": "01a17244f95d7ecd8a3e81936a7fae51",
+      "span_id": "01a17244f95d7ecd8a3e81936a7fae51",
+      "external_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+      "local_sdk_trace_id": "3612c346248383808c06aae9271292df",
+      "external_sdk_trace_id": "3612c346248383808c06aae9271292df",
+      "sdk_matches": true,
+      "parent_sdk_matches": false,
+      "model": "deepseek-v4.1-flash-ioa",
+      "input_including_cache_comparison": "match",
+      "output_comparison": "match",
+      "cache_read_comparison": "match",
+      "raw_local_usage": {
+        "prompt_tokens": 27467,
+        "completion_tokens": 162,
+        "total_tokens": 27629,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 38,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 27264
+        },
+        "prompt_cache_hit_tokens": 27264,
+        "prompt_cache_miss_tokens": 203,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 38,
+        "credit": 0.02,
+        "cached_tokens": 0
+      },
+      "verified_span": {
+        "attributes": [
+          {
+            "key": "message_id",
+            "type": "string",
+            "value": "01a17244f2227d9b9050f53cd53bedf3"
+          },
+          {
+            "key": "gen_ai.span.kind",
+            "type": "string",
+            "value": "LLM"
+          },
+          {
+            "key": "gen_ai.framework",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "gen_ai.framework.version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "gen_ai.session.id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "gen_ai.user.id",
+            "type": "string",
+            "value": "yunfeihu"
+          },
+          {
+            "key": "gen_ai.business.scenario",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "gen_ai.request.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash"
+          },
+          {
+            "key": "gen_ai.response.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash-ioa"
+          },
+          {
+            "key": "gen_ai.response.finish_reason",
+            "type": "string",
+            "value": "tool_calls"
+          },
+          {
+            "key": "gen_ai.response.id",
+            "type": "string",
+            "value": "01a17244f95d7ecd8a3e81936a7fae51"
+          },
+          {
+            "key": "gen_ai.response.time_to_first_token",
+            "type": "int64",
+            "value": "636000000"
+          },
+          {
+            "key": "gen_ai.usage.input_tokens",
+            "type": "int64",
+            "value": "27467"
+          },
+          {
+            "key": "gen_ai.usage.output_tokens",
+            "type": "int64",
+            "value": "162"
+          },
+          {
+            "key": "gen_ai.usage.total_tokens",
+            "type": "int64",
+            "value": "27629"
+          },
+          {
+            "key": "gen_ai.usage.cache_creation.input_tokens",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "gen_ai.usage.cache_read.input_tokens",
+            "type": "int64",
+            "value": "27264"
+          },
+          {
+            "key": "status_code",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "codebuddy.ide.type",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.agent",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "codebuddy.ide.agent_version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "codebuddy.scene",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "codebuddy.event_code",
+            "type": "string",
+            "value": "model_request"
+          },
+          {
+            "key": "codebuddy.conversation_id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "codebuddy.conversation_message_id",
+            "type": "string",
+            "value": "01a17244f95d7ecd8a3e81936a7fae51"
+          },
+          {
+            "key": "codebuddy.conversation_request_id",
+            "type": "string",
+            "value": "01a17244f2227d9b9050f53cd53bedf3"
+          },
+          {
+            "key": "codebuddy.trace_id",
+            "type": "string",
+            "value": "3612c346248383808c06aae9271292df"
+          },
+          {
+            "key": "gen_ai.request.max_tokens",
+            "type": "int64",
+            "value": "128000"
+          },
+          {
+            "key": "gen_ai.request.is_stream",
+            "type": "bool",
+            "value": "true"
+          },
+          {
+            "key": "gen_ai.completions.0.finish_reason",
+            "type": "string",
+            "value": "tool_calls"
+          },
+          {
+            "key": "gen_ai.completions.0.role",
+            "type": "string",
+            "value": "assistant"
+          },
+          {
+            "key": "gen_ai.completions.0.reasoning_content",
+            "type": "string",
+            "value": "The user re-sent the prompt. I already answered 42. Perhaps this is a new turn triggering again. Let me re-read the issue to confirm nothing changed, and check comments."
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.id",
+            "type": "string",
+            "value": "call_00_wJTEnALZQgt1caJq7gU91645"
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.name",
+            "type": "string",
+            "value": "Bash"
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.arguments",
+            "type": "string",
+            "value": "{\"command\": \"multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json && multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json\", \"description\": \"Re-read issue and comments\"}"
+          },
+          {
+            "key": "input.value",
+            "type": "string",
+            "value": "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: 01a17244-86dd-73c6-813e-dcf3b3824581\n\nStart by running `multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json` to understand your task, then complete it.\nIf comment context is missing or stale, scan the threads with `multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `"
+          },
+          {
+            "key": "tps.tenant.id",
+            "type": "string",
+            "value": "20477#apm-log-gabb94cb59f3b9ba#21523_196768___apm"
+          },
+          {
+            "key": "topic.id",
+            "type": "string",
+            "value": "apm-trace-e9a5g8c3c48e15c3"
+          },
+          {
+            "key": "service.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "service.instance",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "type": "string",
+            "value": "skywalking"
+          }
+        ],
+        "cacheHitRate": 0.9926093129937743,
+        "cacheReadTokens": 27264,
+        "duration": 1273000000,
+        "endTime": "1792918486273000000",
+        "events": [],
+        "inputTokens": 27467,
+        "llmSpanKind": "LLM",
+        "outputTokens": 162,
+        "parentSpanID": "",
+        "serviceInstance": "CodeBuddy",
+        "serviceName": "CLI",
+        "sessionID": "01a17244-8ce4-771b-8d19-304b197b5854",
+        "spanID": "01a17244f95d7ecd8a3e81936a7fae51",
+        "spanKind": "SPAN_KIND_CLIENT",
+        "spanName": "model_request",
+        "startTime": "1792918485000000000",
+        "statusCode": 1,
+        "tokens": 27629,
+        "traceID": "01a17244f2227d9b9050f53cd53bedf3",
+        "userID": "yunfeihu"
+      }
+    },
+    {
+      "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "response_id": "01a17245021873a3b12c24031a612fff",
+      "span_id": "01a17245021873a3b12c24031a612fff",
+      "external_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+      "local_sdk_trace_id": "3612c346248383808c06aae9271292df",
+      "external_sdk_trace_id": "3612c346248383808c06aae9271292df",
+      "sdk_matches": true,
+      "parent_sdk_matches": false,
+      "model": "deepseek-v4.1-flash-ioa",
+      "input_including_cache_comparison": "match",
+      "output_comparison": "match",
+      "cache_read_comparison": "match",
+      "raw_local_usage": {
+        "prompt_tokens": 28210,
+        "completion_tokens": 108,
+        "total_tokens": 28318,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 106,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 27520
+        },
+        "prompt_cache_hit_tokens": 27520,
+        "prompt_cache_miss_tokens": 690,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 106,
+        "credit": 0.02,
+        "cached_tokens": 0
+      },
+      "verified_span": {
+        "attributes": [
+          {
+            "key": "message_id",
+            "type": "string",
+            "value": "01a17244f2227d9b9050f53cd53bedf3"
+          },
+          {
+            "key": "gen_ai.span.kind",
+            "type": "string",
+            "value": "LLM"
+          },
+          {
+            "key": "gen_ai.framework",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "gen_ai.framework.version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "gen_ai.session.id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "gen_ai.user.id",
+            "type": "string",
+            "value": "yunfeihu"
+          },
+          {
+            "key": "gen_ai.business.scenario",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "gen_ai.request.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash"
+          },
+          {
+            "key": "gen_ai.response.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash-ioa"
+          },
+          {
+            "key": "gen_ai.response.finish_reason",
+            "type": "string",
+            "value": "stop"
+          },
+          {
+            "key": "gen_ai.response.id",
+            "type": "string",
+            "value": "01a17245021873a3b12c24031a612fff"
+          },
+          {
+            "key": "gen_ai.response.time_to_first_token",
+            "type": "int64",
+            "value": "751000000"
+          },
+          {
+            "key": "gen_ai.usage.input_tokens",
+            "type": "int64",
+            "value": "28210"
+          },
+          {
+            "key": "gen_ai.usage.output_tokens",
+            "type": "int64",
+            "value": "108"
+          },
+          {
+            "key": "gen_ai.usage.total_tokens",
+            "type": "int64",
+            "value": "28318"
+          },
+          {
+            "key": "gen_ai.usage.cache_creation.input_tokens",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "gen_ai.usage.cache_read.input_tokens",
+            "type": "int64",
+            "value": "27520"
+          },
+          {
+            "key": "status_code",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "codebuddy.ide.type",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.agent",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "codebuddy.ide.agent_version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "codebuddy.scene",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "codebuddy.event_code",
+            "type": "string",
+            "value": "model_request"
+          },
+          {
+            "key": "codebuddy.conversation_id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "codebuddy.conversation_message_id",
+            "type": "string",
+            "value": "01a17245021873a3b12c24031a612fff"
+          },
+          {
+            "key": "codebuddy.conversation_request_id",
+            "type": "string",
+            "value": "01a17244f2227d9b9050f53cd53bedf3"
+          },
+          {
+            "key": "codebuddy.trace_id",
+            "type": "string",
+            "value": "3612c346248383808c06aae9271292df"
+          },
+          {
+            "key": "gen_ai.request.max_tokens",
+            "type": "int64",
+            "value": "128000"
+          },
+          {
+            "key": "gen_ai.request.is_stream",
+            "type": "bool",
+            "value": "true"
+          },
+          {
+            "key": "gen_ai.completions.0.finish_reason",
+            "type": "string",
+            "value": "stop"
+          },
+          {
+            "key": "gen_ai.completions.0.role",
+            "type": "string",
+            "value": "assistant"
+          },
+          {
+            "key": "gen_ai.completions.0.content",
+            "type": "string",
+            "value": "42"
+          },
+          {
+            "key": "gen_ai.completions.0.reasoning_content",
+            "type": "string",
+            "value": "Already answered. Nothing new. Just answer again briefly — no duplicate comment needed. The final answer becomes a comment; but the previous run already posted \"17 + 25 = 42\". Replying again would duplicate. Best: just answer 42 concisely, since the answer is the deliverable.\n\nThe guidance says a trigger re-run should produce an answer. I'll just respond with 42 without side effects. Could avoid duplicate comment... but the final answer is auto-saved as a comment. That's fine."
+          },
+          {
+            "key": "input.value",
+            "type": "string",
+            "value": "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: 01a17244-86dd-73c6-813e-dcf3b3824581\n\nStart by running `multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json` to understand your task, then complete it.\nIf comment context is missing or stale, scan the threads with `multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `"
+          },
+          {
+            "key": "output.value",
+            "type": "string",
+            "value": "<thinking>Already answered. Nothing new. Just answer again briefly — no duplicate comment needed. The final answer becomes a comment; but the previous run already posted \"17 + 25 = 42\". Replying again would duplicate. Best: just answer 42 concisely, since the answer is the deliverable.\n\nThe guidance says a trigger re-run should produce an answer. I'll just respond with 42 without side effects. Could avoid duplicate comment... but the final answer is auto-saved as a comment. That's fine.</thinking>\n42"
+          },
+          {
+            "key": "tps.tenant.id",
+            "type": "string",
+            "value": "20477#apm-log-gabb94cb59f3b9ba#21523_196768___apm"
+          },
+          {
+            "key": "topic.id",
+            "type": "string",
+            "value": "apm-trace-e9a5g8c3c48e15c3"
+          },
+          {
+            "key": "service.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "service.instance",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "type": "string",
+            "value": "skywalking"
+          }
+        ],
+        "cacheHitRate": 0.9755405884438143,
+        "cacheReadTokens": 27520,
+        "duration": 1476000000,
+        "endTime": "1792918489476000000",
+        "events": [],
+        "inputTokens": 28210,
+        "llmSpanKind": "LLM",
+        "outputTokens": 108,
+        "parentSpanID": "",
+        "serviceInstance": "CodeBuddy",
+        "serviceName": "CLI",
+        "sessionID": "01a17244-8ce4-771b-8d19-304b197b5854",
+        "spanID": "01a17245021873a3b12c24031a612fff",
+        "spanKind": "SPAN_KIND_CLIENT",
+        "spanName": "model_request",
+        "startTime": "1792918488000000000",
+        "statusCode": 1,
+        "tokens": 28318,
+        "traceID": "01a17244f2227d9b9050f53cd53bedf3",
+        "userID": "yunfeihu"
+      }
+    }
+  ],
+  "run_id": "01a17244-ebe1-747d-92d0-118a5769dc59",
+  "runtime": "codebuddy",
+  "runtime_source": "task_trace_event.task.started.provider",
+  "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+  "query_start": "2026-10-25T08:49:42.121281Z",
+  "query_end": "2026-10-25T08:59:50.206783Z",
+  "platform_usage": [
+    {
+      "model": "deepseek-v4.1-flash-ioa",
+      "provider": "codebuddy",
+      "input_tokens": 893,
+      "output_tokens": 270,
+      "cache_read_tokens": 54784,
+      "cache_write_tokens": 0
+    }
+  ],
+  "references": [
+    {
+      "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "correlation": "exact",
+      "source": "local_session_jsonl",
+      "metadata": {
+        "sdk_trace_id": "3612c346248383808c06aae9271292df",
+        "sdk_trace_source_path": "providerData.traceId",
+        "sdk_trace_source_sha256": "6da2d18a4aa35988b9c461a38b90b78fe3d7542aaaec5b1b439e6b505ab2acf8"
+      }
+    }
+  ],
+  "agentlens_traces": null,
+  "gaps": [
+    "trace_pagination_unverified_pending_recheck",
+    "trace_discovery_incomplete_pending_recheck"
+  ],
+  "preparation_http_requests": 2,
+  "discovery_pending": true,
+  "preparation_duration_ms": 1376,
+  "queried_at": "2026-10-25T08:58:32.78349151Z"
+}

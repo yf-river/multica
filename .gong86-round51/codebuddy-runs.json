@@ -1,0 +1,240 @@
+[
+  {
+    "id": "01a17246-9ec1-73ef-8698-f1ba2673cb8e",
+    "agent_id": "3574804a-a55e-4a2a-92ae-85eb94dae8ec",
+    "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+    "issue_id": "01a17244-86dd-73c6-813e-dcf3b3824581",
+    "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T16:57:37+08:00",
+    "started_at": "2026-10-25T16:57:37+08:00",
+    "completed_at": "2026-10-25T16:57:49+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "4e1a25f9d89a",
+        "files": [],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-f1ba2673cb8e/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "42",
+      "pr_url": "",
+      "session_id": "01a17247-9cd6-7610-95ca-96eb08faf5a5",
+      "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-f1ba2673cb8e/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T16:56:33+08:00",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-f1ba2673cb8e/workdir",
+    "relative_work_dir": "dev-20d05776e5a9/dev-5-f1ba2673cb8e/workdir",
+    "delivered_comment_ids": [],
+    "kind": "direct",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "originator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a17244-86dd-73c6-813e-dcf3b3824581"
+      }
+    },
+    "usage": [
+      {
+        "provider": "codex",
+        "model": "gpt-6.1-sol",
+        "input_tokens": 8649,
+        "output_tokens": 82,
+        "cache_read_tokens": 32512,
+        "cache_write_tokens": 0
+      }
+    ]
+  },
+  {
+    "id": "01a17244-ebe1-747d-92d0-118a5769dc59",
+    "agent_id": "695b5ac6-498e-41b5-999c-afbcbf3d7b9b",
+    "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+    "issue_id": "01a17244-86dd-73c6-813e-dcf3b3824581",
+    "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T16:54:42+08:00",
+    "started_at": "2026-10-25T16:54:42+08:00",
+    "completed_at": "2026-10-25T16:54:50+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "d5d85768d0d2",
+        "files": [],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-399b39286acc/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "42",
+      "pr_url": "",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-399b39286acc/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T16:54:41+08:00",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-399b39286acc/workdir",
+    "relative_work_dir": "workdir",
+    "delivered_comment_ids": [],
+    "kind": "direct",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "originator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a17244-86dd-73c6-813e-dcf3b3824581"
+      },
+      "rerun_of_task_id": "01a17244-86e3-7cf2-8508-399b39286acc"
+    },
+    "usage": [
+      {
+        "provider": "codebuddy",
+        "model": "deepseek-v4.1-flash-ioa",
+        "input_tokens": 893,
+        "output_tokens": 270,
+        "cache_read_tokens": 54784,
+        "cache_write_tokens": 0
+      }
+    ],
+    "traces": [
+      {
+        "provider": "codebuddy",
+        "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+        "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+        "correlation": "exact",
+        "source": "local_session_jsonl",
+        "sdk_trace_id": "3612c346248383808c06aae9271292df",
+        "sdk_trace_source_sha256": "6da2d18a4aa35988b9c461a38b90b78fe3d7542aaaec5b1b439e6b505ab2acf8",
+        "sdk_trace_source_path": "providerData.traceId"
+      }
+    ]
+  },
+  {
+    "id": "01a17244-86e3-7cf2-8508-399b39286acc",
+    "agent_id": "695b5ac6-498e-41b5-999c-afbcbf3d7b9b",
+    "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+    "issue_id": "01a17244-86dd-73c6-813e-dcf3b3824581",
+    "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T16:54:16+08:00",
+    "started_at": "2026-10-25T16:54:16+08:00",
+    "completed_at": "2026-10-25T16:54:30+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "d5d85768d0d2",
+        "files": [],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-399b39286acc/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "17 + 25 = 42",
+      "pr_url": "",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-399b39286acc/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T16:54:16+08:00",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-5-399b39286acc/workdir",
+    "relative_work_dir": "dev-20d05776e5a9/dev-5-399b39286acc/workdir",
+    "delivered_comment_ids": [],
+    "kind": "direct",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "originator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a17244-86dd-73c6-813e-dcf3b3824581"
+      }
+    },
+    "usage": [
+      {
+        "provider": "codebuddy",
+        "model": "deepseek-v4.1-flash-ioa",
+        "input_tokens": 24319,
+        "output_tokens": 477,
+        "cache_read_tokens": 55936,
+        "cache_write_tokens": 0
+      }
+    ],
+    "traces": [
+      {
+        "provider": "codebuddy",
+        "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+        "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+        "correlation": "exact",
+        "source": "local_session_jsonl",
+        "sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+        "sdk_trace_source_sha256": "40a5ec782aaa3c1704e1bc50cf1738419f29c1f75d9bb06f13bd7bc90a15e02d",
+        "sdk_trace_source_path": "providerData.traceId"
+      }
+    ]
+  }
+]

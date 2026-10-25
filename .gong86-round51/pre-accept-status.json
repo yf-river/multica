@@ -1,0 +1,14 @@
+{
+  "owner": {
+    "expires_at": "2026-10-25T09:03:47.347168+00:00",
+    "generation": 20,
+    "execution_id": "01a17243-49fb-77c9-966f-d2c5957c2b0b"
+  },
+  "delivery": {
+    "id": "01a1723e-ac21-78a7-a120-5842f6732045",
+    "revision": 3,
+    "phase": "testing",
+    "candidate_id": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1-1792918336641334079",
+    "source_commit": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1"
+  }
+}

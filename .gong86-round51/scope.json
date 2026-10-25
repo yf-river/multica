@@ -1,0 +1,15 @@
+{
+  "environment": "verify-1",
+  "delivery_id": "01a1723e-ac21-78a7-a120-5842f6732045",
+  "candidate_id": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1-1792918336641334079",
+  "source_commit": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1",
+  "execution_id": "01a17243-49fb-77c9-966f-d2c5957c2b0b",
+  "owner_generation": 20,
+  "generation": 36,
+  "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+  "agent_id": "695b5ac6-498e-41b5-999c-afbcbf3d7b9b",
+  "revision": 7,
+  "seed_id": "seed-20261025-agent-control-v4",
+  "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+  "operation_id": "8d754596-f857-4a58-86ee-02cbaa918ad7"
+}
