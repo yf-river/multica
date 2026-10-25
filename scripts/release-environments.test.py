@@ -418,7 +418,7 @@ class ReleaseTests(unittest.TestCase):
     # Modification 1. A changed or unknown migration cannot inherit trace compatibility approval.
     def test_reviewed_trace_migrations_reject_changed_sql(self):
         source=Path(__file__).parent.parent/'server/migrations'
-        names=('643_supervision_material_trace_usage.up.sql', '645_supervision_round_preparation_budget.up.sql', '646_supervision_manual_preparation.up.sql', '649_supervision_trace_scope.up.sql', '650_supervision_preparation_recheck.up.sql')
+        names=('643_supervision_material_trace_usage.up.sql', '645_supervision_round_preparation_budget.up.sql', '649_supervision_trace_scope.up.sql')
         for name in names:
             with tempfile.TemporaryDirectory() as folder:
                 target=Path(folder)/name
@@ -430,6 +430,29 @@ class ReleaseTests(unittest.TestCase):
             target=Path(folder)/'999_unknown.up.sql'
             target.write_bytes((source/names[0]).read_bytes())
             self.assertFalse(r.reviewed_trace_preparation_change(target))
+
+    # Modification 2. Check the complete pending set through the real gate, not just its hash helper.
+    def test_trace_pending_set_requires_review_before_database_write(self):
+        source=Path(__file__).parent.parent/'server/migrations'
+        with tempfile.TemporaryDirectory() as folder:
+            old=Path(folder)/'old';new=Path(folder)/'new'
+            (old/'server/migrations').mkdir(parents=True)
+            target=new/'server/migrations';target.mkdir(parents=True)
+            pending=[p for p in source.glob('*.up.sql') if '640'<=p.name[:3]<='649']
+            self.assertEqual(len(pending),10)
+            for migration in pending:
+                (target/migration.name).write_bytes(migration.read_bytes())
+            with patch.object(r,'migrate') as migrate,patch.object(r,'check_database') as check:
+                r.prepare_database(new,{},old)
+                migrate.assert_called_once_with(new,{},previous=old)
+                self.assertEqual(check.call_args_list, [unittest.mock.call(old,{}),unittest.mock.call(new,{})])
+            for name in ('643_supervision_material_trace_usage.up.sql','645_supervision_round_preparation_budget.up.sql','649_supervision_trace_scope.up.sql'):
+                migration=target/name; original=migration.read_bytes()
+                migration.write_bytes(original+b'\n-- changed after review\n')
+                with patch.object(r,'migrate') as migrate,patch.object(r,'check_database'):
+                    with self.assertRaisesRegex(RuntimeError,name):r.prepare_database(new,{},old)
+                    migrate.assert_not_called()
+                migration.write_bytes(original)
 
     def test_task_provider_trace_migrations_follow_index_and_fk_rules(self):
         # 硬规则：不新增外键/级联；新增索引一律并发建、独立单语句迁移。

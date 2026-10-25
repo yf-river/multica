@@ -647,10 +647,8 @@ def reviewed_trace_preparation_change(migration):
     # Modification 1. Permit only the exact backward-compatible trace schema reviewed in quality-agents.md.
     reviewed = {
         '643_supervision_material_trace_usage.up.sql': '5d61987590982a5b32cc9122d2baae983db20f416c19b894a9b120a5c48bba6b',
-        '645_supervision_round_preparation_budget.up.sql': '59f9f5d6f56dbc30de2c688f6095d2546e56eef5a1364f061d9c6f49eb57697d',
-        '646_supervision_manual_preparation.up.sql': 'c3e27280bc20f9b391dd68499923b399f5e0fa488ea72f77e4155648dfc9dfb8',
+        '645_supervision_round_preparation_budget.up.sql': 'b4f5e9f057fa6f4f0e2cc51cbe9c5051bcf26aecb43c6fe3a8bcc8fe2e67c047',
         '649_supervision_trace_scope.up.sql': '2b6d874a52e55da706199f7fca2d6dcca98ef42cf40cf8fc2f0ecc32fe8f905e',
-        '650_supervision_preparation_recheck.up.sql': '30d318eb3aeeeb6b686d0dbeb5d0d8612e0f694079ec6912fbe5a8f32c5bc119',
     }
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 

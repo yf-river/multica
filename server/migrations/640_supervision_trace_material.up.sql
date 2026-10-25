@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS supervision_trace_material (
     round_id         uuid NOT NULL,
     run_id           uuid NOT NULL,
     runtime          text NOT NULL DEFAULT '',
+    manual           boolean NOT NULL DEFAULT false, -- 1. Define ownership at creation while this migration remains unapplied.
     source           text NOT NULL,
     status           text NOT NULL
         CHECK (status IN ('pending','processing','complete','partial','failed','not_applicable','disabled')),
