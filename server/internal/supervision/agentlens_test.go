@@ -123,14 +123,6 @@ func TestLensCredentialScope(t *testing.T) {
 
 // 4. Root identity and secret removal are independent of token magnitude or timestamp proximity.
 func TestLensOwnershipAndRedaction(t *testing.T) {
-	for _, data := range []string{`{}`, `{"trace_detail":{"trace_id":"other","spans":[{}]}}`, `{"trace_detail":{"trace_id":"owned","spans":[]}}`} {
-		if lensTraceOwned([]byte(data), "owned") {
-			t.Fatal("unproven ownership accepted")
-		}
-	}
-	if !lensTraceOwned([]byte(`{"trace_detail":{"trace_id":"owned","spans":[{}]}}`), "owned") {
-		t.Fatal("exact root rejected")
-	}
 	clean := sanitizeTraceJSON([]byte(`{"Authorization":"sensitive","input_tokens":99,"attributes":[{"password":"sensitive","message":"credential-value"}]}`), "credential-value")
 	if strings.Contains(clean, "sensitive") || strings.Contains(clean, "credential-value") || !strings.Contains(clean, `"input_tokens":99`) {
 		t.Fatalf("redaction failed: %s", clean)

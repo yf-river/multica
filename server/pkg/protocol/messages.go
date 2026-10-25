@@ -5,7 +5,10 @@ package protocol
 // 的 RPC 信封等。协议消息外层统一是 Message{Type, Payload}，Type 的取值与语义
 // 见 events.go。
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // daemon 与 app 客户端用来宣告「我支持哪些能力」的字符串常量。server / daemon
 // 靠它们做协议协商：daemon 报 capability、server 报 server_capabilities，
@@ -346,19 +349,34 @@ type DaemonHeartbeatPendingMcpCheck struct {
 }
 
 type DaemonHeartbeatAckPayload struct {
-	PendingMcpCheck         *DaemonHeartbeatPendingMcpCheck         `json:"pending_mcp_check,omitempty"`
-	RuntimeID               string                                  `json:"runtime_id"`
-	Status                  string                                  `json:"status"`
-	ServerCapabilities      []string                                `json:"server_capabilities,omitempty"`
-	RuntimeGone             bool                                    `json:"runtime_gone,omitempty"`
-	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
-	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
-	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
-	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
+	// 1. A workspace-scoped request names one historical run; it grants no path or shell access.
+	PendingExecutionEvidence *DaemonExecutionEvidenceRequest         `json:"pending_execution_evidence,omitempty"`
+	PendingMcpCheck          *DaemonHeartbeatPendingMcpCheck         `json:"pending_mcp_check,omitempty"`
+	RuntimeID                string                                  `json:"runtime_id"`
+	Status                   string                                  `json:"status"`
+	ServerCapabilities       []string                                `json:"server_capabilities,omitempty"`
+	RuntimeGone              bool                                    `json:"runtime_gone,omitempty"`
+	PendingUpdate            *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
+	PendingModelList         *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
+	PendingLocalSkills       *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
+	PendingLocalSkillImport  *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
 	// PendingLocalSkillImports 在同一次心跳里携带多条导入请求，让 daemon 可以
 	// 并发处理。不认识该字段的老 daemon 会按标准 JSON 行为静默忽略它，
 	// 回落到上面单数的 PendingLocalSkillImport。
 	PendingLocalSkillImports []DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_imports,omitempty"`
+}
+
+type DaemonExecutionEvidenceRequest struct {
+	MaterialID  string    `json:"material_id"`
+	NextSeq     int32     `json:"next_seq"`
+	TaskID      string    `json:"task_id"`
+	WorkspaceID string    `json:"workspace_id"`
+	Provider    string    `json:"provider"`
+	SessionID   string    `json:"session_id"`
+	CID         string    `json:"provider_trace_id"`
+	Cwd         string    `json:"cwd"`
+	Started     time.Time `json:"started_at"`
+	Ended       time.Time `json:"ended_at"`
 }
 
 // HeartbeatStatusRuntimeGone 是 ack 在 runtime 行已从 server 侧消失时使用的

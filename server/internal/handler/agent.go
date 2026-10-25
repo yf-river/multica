@@ -495,18 +495,20 @@ type AgentTaskResponse struct {
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // 历史 is_agent_intro 会话的兼容字段；新建 agent 不再创建这类聊天
 	// IsCompanion 与 LifeContext 标识受管控的 Life 聊天/后台运行。daemon 每次
 	// 运行都从 Multica 数据重建该上下文。
-	IsCompanion              bool            `json:"is_companion,omitempty"`
-	LifeContext              string          `json:"life_context,omitempty"`
-	LifeJobID                string          `json:"life_job_id,omitempty"`
-	LifeJobType              string          `json:"life_job_type,omitempty"`
-	LifeJobInput             json.RawMessage `json:"life_job_input,omitempty"`
-	AutopilotRunID           string          `json:"autopilot_run_id,omitempty"`          // autopilot 派生的任务非空
-	AutopilotID              string          `json:"autopilot_id,omitempty"`              // 派生本任务的 autopilot
-	AutopilotTitle           string          `json:"autopilot_title,omitempty"`           // 用作任务上下文的 autopilot 标题
-	AutopilotDescription     string          `json:"autopilot_description,omitempty"`     // 用作任务提示词的 autopilot 描述
-	AutopilotSource          string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
-	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发负载
-	SupervisionPrompt        string          `json:"supervision_prompt,omitempty"`
+	IsCompanion             bool            `json:"is_companion,omitempty"`
+	LifeContext             string          `json:"life_context,omitempty"`
+	LifeJobID               string          `json:"life_job_id,omitempty"`
+	LifeJobType             string          `json:"life_job_type,omitempty"`
+	LifeJobInput            json.RawMessage `json:"life_job_input,omitempty"`
+	AutopilotRunID          string          `json:"autopilot_run_id,omitempty"`          // autopilot 派生的任务非空
+	AutopilotID             string          `json:"autopilot_id,omitempty"`              // 派生本任务的 autopilot
+	AutopilotTitle          string          `json:"autopilot_title,omitempty"`           // 用作任务上下文的 autopilot 标题
+	AutopilotDescription    string          `json:"autopilot_description,omitempty"`     // 用作任务提示词的 autopilot 描述
+	AutopilotSource         string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
+	AutopilotTriggerPayload json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发负载
+	SupervisionPrompt       string          `json:"supervision_prompt,omitempty"`
+	// 1. Only the owning daemon receives this opt-in session extraction permission.
+	CaptureExecutionEvidence bool            `json:"capture_execution_evidence,omitempty"`
 	SupervisionInvestigation json.RawMessage `json:"supervision_investigation,omitempty"`
 	QuickCreatePrompt        string          `json:"quick_create_prompt,omitempty"`         // quick-create 任务的用户自然语言输入
 	QuickCreatePriority      string          `json:"quick_create_priority,omitempty"`       // quick-create 显式选择的优先级

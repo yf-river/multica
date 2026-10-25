@@ -59,3 +59,17 @@ AgentLens `Retry-After` seconds and HTTP dates delay retries within that same
 round deadline. A delay exceeding the remaining allowance yields partial coverage
 without another request. Published evidence remains available after preparation
 is disabled.
+
+### 轨迹材料配置与权限
+
+`MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE` 使用 RFC3339 时间，限定启用后新完成的自动轮次，避免批量重审历史任务。手动审查使用独立的一次性准备范围，不创建自动完成轮次；其请求额度、重试与产物同样持久化。取消准备只需关闭该配置；恢复不能清零已消耗的请求或自动补查额度。
+
+AgentLens 凭据由服务端 `MULTICA_AGENTLENS_CREDENTIAL_FILE` 指向私有普通文件（权限 0600，禁止符号链接），内容字段为 `workspace_id` 和 `token`。由运维从已授权密钥来源挂载，不将密钥写入仓库、Skill、Agent 配置或日志。每次准备重新读取文件，轮换时原子替换私有文件；鉴权失败不重试，保留失败状态及本地监督材料，更新凭据后显式重新审查。工作区必须与文件声明一致；固定空间的可见范围继续由 Token Owner 的 AgentLens 权限约束。URL、空间与账号不接受模型输入，不调整网络或 SSH 配置。
+
+新运行的本地快照随任务消息持久化；历史补读通过所属 runtime 的心跳请求同一 run/session。Codex 只读任务根目录索引指向且当前归属仍匹配的环境及指定会话；CodeBuddy 复用精确 CID/session/SDK 记录。目录已回收或归属改变时留下具体缺口，不搜索其他会话补齐。历史 Codex 用量同时限制起止时间，避免把后续续接的累计量算入早期运行。可见事件包括工具、压缩和 token 记录，不代表完整内部思维。
+
+CodeBuddy 先按精确请求标识发现外部候选，再核对本地 SDK 溯源、session、response ID 和模型；CID、SDK ID 与外部 trace ID 分开保留。子调用出现外部 SDK 继承父 SDK 时，仍须由同一份父执行快照证明其子请求，并独立匹配 session/response。未验证的 span 正文不进入材料。未知格式或不全的列表保留缺口，不与本地 usage 相加或回填历史账本。
+
+详情页先显示最新材料状态、已对照请求、差异与平台取数成本，再按需读取固定 UUID 的全文。模型调查仍受原有调用/字符预算约束。一次完成或手动范围最多消耗 40 次 HTTP 请求、120 秒，额度跨 run、版本和服务重启共享；最多登记一次自动延迟补查，其余由用户显式复查。生产同步提示词与技能仍需本任务的生产授权。
+
+日常回滚优先关闭准备配置，保留当前支持 `trace_usage` 的读路径、材料和索引。若回退到尚不支持此材料类型的旧程序，先暂停监督，避免旧版本反复读取不认识的类型；不通过删除材料恢复运行。迁移 646–650 的恢复脚本保留所有权和额度记录，不作为删除或重置授权。

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ type Material struct {
 	Text         string `json:"text,omitempty"`
 	Note         bool   `json:"supervisor_note,omitempty"`
 	ContextOnly  bool   `json:"context_only,omitempty"`
+	IndexOnly    bool   `json:"index_only,omitempty"`
 	UnreadOffset int    `json:"unread_offset,omitempty"`
 }
 type Finding struct {
@@ -216,12 +218,12 @@ func sourceSQL(kind string) (string, error) {
 	case "task":
 		return `SELECT jsonb_build_object('id',t.id,'status',t.status,'result',t.result,'error',t.error,'work_dir',t.work_dir,'created_at',t.created_at,'started_at',t.started_at,'completed_at',t.completed_at)::text FROM agent_task_queue t JOIN issue i ON i.id=t.issue_id WHERE t.id=$1 AND i.workspace_id=$2`, nil
 	case "message":
-		return `SELECT jsonb_build_object('id',m.id,'seq',m.seq,'type',m.type,'tool',m.tool,'content',m.content,'input',m.input,'output',m.output,'created_at',m.created_at)::text FROM task_message m JOIN agent_task_queue t ON t.id=m.task_id JOIN issue i ON i.id=t.issue_id WHERE m.id=$1 AND i.workspace_id=$2`, nil
+		return `SELECT (CASE WHEN m.type='execution_evidence' THEN jsonb_build_object('id',m.id,'seq',m.seq,'type',m.type,'run_id',m.task_id,'body_source','trace_usage material index') ELSE jsonb_build_object('id',m.id,'seq',m.seq,'type',m.type,'tool',m.tool,'content',m.content,'input',m.input,'output',m.output,'created_at',m.created_at) END)::text FROM task_message m JOIN agent_task_queue t ON t.id=m.task_id JOIN issue i ON i.id=t.issue_id WHERE m.id=$1 AND i.workspace_id=$2`, nil
 	case "trace":
 		return `SELECT jsonb_build_object('id',id,'event_type',event_type,'status',status,'error_type',error_type,'failure_reason',failure_reason,'metadata',metadata,'created_at',created_at)::text FROM task_trace_event WHERE id=$1 AND workspace_id=$2`, nil
 	// 2. Published report bodies are immutable; their source UUID pins the evidence version.
 	case "trace_usage":
-		return `SELECT jsonb_build_object('id',id,'run_id',run_id,'runtime',runtime,'status',status,'material_version',material_version,'queried_at',queried_at,'report',report::jsonb)::text FROM supervision_trace_material WHERE id=$1 AND workspace_id=$2 AND status NOT IN('pending','processing')`, nil
+		return `SELECT report FROM supervision_trace_material WHERE id=$1 AND workspace_id=$2 AND status NOT IN('pending','processing')`, nil
 	default:
 		return "", fmt.Errorf("unknown material kind %q", kind)
 	}
@@ -275,6 +277,25 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cu
 			break
 		}
 		m.UnreadOffset = m.Offset
+		// 3. Prepared bodies enter prompts as short indexes; only actual material pages advance reading.
+		if m.Kind == "trace_usage" {
+			var index string
+			var length int
+			err = tx.QueryRow(ctx, `SELECT length(p.report),jsonb_build_object('path','trace_usage/'||p.id::text,'run_id',p.run_id,'runtime',p.runtime,'status',p.status,'material_version',p.material_version,'coverage',p.coverage,'gap_count',jsonb_array_length(p.gaps))::text
+ FROM supervision_trace_material p JOIN supervision_config c ON c.workspace_id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2 AND c.investigation_enabled`, ws, m.ID).Scan(&length, &index)
+			if err == nil {
+				m.IndexOnly = true
+				m.Text = index
+				m.Length = length
+				m.End = m.Offset
+				budget -= len([]rune(index))
+				out = append(out, m)
+				continue
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return nil, err
+			}
+		}
 		m.Offset = max(0, m.Offset-min(1000, size/4))
 		err = tx.QueryRow(ctx, `SELECT length(body),substring(body from $3::integer for $4::integer) FROM (`+query+`) source(body)`, m.ID, ws, m.Offset+1, size).Scan(&m.Length, &m.Text)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -404,12 +425,12 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	err = tx.QueryRow(ctx, `SELECT s.issue_id::text FROM supervision_subject s JOIN issue i ON i.id=s.issue_id
       LEFT JOIN supervision_round r ON r.workspace_id=s.workspace_id AND r.issue_id=s.issue_id AND r.status='open'
       WHERE s.workspace_id=$1 AND s.next_attempt_at<=now() AND s.failures<3
-      AND NOT EXISTS(SELECT 1 FROM supervision_trace_material p JOIN supervision_round pr ON pr.id=p.round_id AND pr.workspace_id=p.workspace_id WHERE p.workspace_id=s.workspace_id AND p.issue_id=s.issue_id AND pr.status='open' AND p.status IN('pending','processing'))
+      AND (NOT $2::boolean OR NOT EXISTS(SELECT 1 FROM supervision_trace_material p JOIN supervision_trace_scope pr ON pr.id=p.round_id AND pr.workspace_id=p.workspace_id WHERE p.workspace_id=s.workspace_id AND p.issue_id=s.issue_id AND pr.status='open' AND p.status IN('pending','processing')))
       AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=s.workspace_id AND b.issue_id=s.issue_id AND b.status IN('preparing','running'))
       AND (s.force_review OR (`+categoryOf("i")+`='done' AND r.id IS NOT NULL
         AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
           AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)))
-      ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id LIMIT 1`, ws).Scan(&issue)
+      ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id LIMIT 1`, ws, os.Getenv("MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE") != "").Scan(&issue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	}
@@ -462,6 +483,11 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 		if err != nil {
 			return err
 		}
+		if manual {
+			if _, err = tx.Exec(ctx, `UPDATE supervision_manual_preparation SET status='closed' WHERE workspace_id=$1 AND issue_id=$2 AND status='open'`, ws, issue); err != nil {
+				return err
+			}
+		}
 		return tx.Commit(ctx)
 	}
 	batch := util.UUIDToString(dbid.NewV7())
@@ -500,6 +526,11 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	}
 	if _, err = tx.Exec(ctx, `UPDATE supervision_batch SET task_id=$2,status='running' WHERE id=$1`, batch, task.ID); err != nil {
 		return err
+	}
+	if manual {
+		if _, err = tx.Exec(ctx, `UPDATE supervision_manual_preparation SET status='closed' WHERE workspace_id=$1 AND issue_id=$2 AND status='open'`, ws, issue); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return err

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -1149,6 +1150,9 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// in the WS path and would be redundant noise on the HTTP path where the
 	// caller already knows which runtime it asked about.
 	resp := map[string]any{"status": ack.Status}
+	if ack.PendingExecutionEvidence != nil {
+		resp["pending_execution_evidence"] = ack.PendingExecutionEvidence
+	}
 	if ack.PendingMcpCheck != nil {
 		resp["pending_mcp_check"] = ack.PendingMcpCheck
 	}
@@ -1286,6 +1290,7 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 		ServerCapabilities: []string{protocol.DaemonCapabilityRPCV1},
 	}
 
+	ack.PendingExecutionEvidence = h.pendingExecutionEvidence(ctx, rt)
 	probeUpdateCtx, cancelProbeUpdate := context.WithTimeout(ctx, heartbeatHasPendingTimeout)
 	hasUpdate, probeUpdateErr := h.UpdateStore.HasPending(probeUpdateCtx, runtimeID)
 	cancelProbeUpdate()
@@ -3023,8 +3028,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// Quick-create task: no issue / chat / autopilot link — workspace and
 	// prompt come from the task's context JSONB. Resolve workspace from
 	// there so the isolation check below has something to compare.
+	// 1. Session extraction is additional investigation, excluded for supervision itself.
+	if os.Getenv("MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE") != "" {
+		_ = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM supervision_config WHERE workspace_id=$1 AND enabled AND investigation_enabled)`, runtimeWorkspaceID).Scan(&resp.CaptureExecutionEvidence)
+	}
 	var supervision service.SupervisionContext
 	if json.Unmarshal(task.Context, &supervision) == nil && supervision.Type == "quality_supervision" {
+		resp.CaptureExecutionEvidence = false
 		var owner string
 		var valid bool
 		err := h.DB.QueryRow(r.Context(), `SELECT c.owner_id::text,

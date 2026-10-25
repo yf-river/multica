@@ -3873,6 +3873,12 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp == nil {
 		return
 	}
+	// 1. Historical session extraction is a bounded daemon operation, separate from model execution.
+	if request := resp.PendingExecutionEvidence; request != nil {
+		if rt := d.findRuntime(runtimeID); rt != nil {
+			go d.handleExecutionEvidenceRequest(*rt, *request)
+		}
+	}
 	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
 		d.logger.Debug("heartbeat: pending actions",
 			"runtime_id", runtimeID,
@@ -7570,7 +7576,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	// 供下面的 resume 重试共享，让重试的 transcript 行给同一任务持续用递增的 seq。
 	var msgSeq atomic.Int32
+	// 1. Bind local evidence to this process interval, including failure and fresh-session retries.
+	evidenceStarted := time.Now()
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+	d.reportExecutionEvidence(task, provider, agentEnv, env.WorkDir, result, evidenceStarted, execOpts.ResumeSessionID != "", &msgSeq)
 	if err != nil {
 		// 执行失败（含被服务器取消、进程被杀）时，backend 往往已经跑过若干回合、
 		// 累计了真实 token 和根请求 id。返回空 TaskResult 会让这些用量和链路在下面
@@ -7637,7 +7646,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		freshPrompt := BuildPrompt(task, provider, promptOptions...)
 
+		// 2. A replacement session gets its own source and interval rather than inheriting the rejected session.
+		evidenceStarted = time.Now()
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+		d.reportExecutionEvidence(task, provider, agentEnv, env.WorkDir, retryResult, evidenceStarted, false, &msgSeq)
 		if retryErr != nil {
 			taskLog.Error("fresh session also failed to start; keeping the original poisoned result", "error", retryErr)
 		} else if retryResult.Status != "completed" && retryResult.SessionID == "" {

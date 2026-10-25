@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -17,21 +18,26 @@ type tracePreparation struct {
 	Attempts                                  int
 	Version                                   int64
 	Cursor                                    int
+	Manual                                    bool
 	Report                                    traceReport
 }
 
 type traceReport struct {
-	Run           string            `json:"run_id"`
-	Runtime       string            `json:"runtime"`
-	RuntimeSource string            `json:"runtime_source"`
-	Session       string            `json:"session_id"`
-	Usage         json.RawMessage   `json:"platform_usage"`
-	References    []traceReference  `json:"references"`
-	External      []json.RawMessage `json:"agentlens_traces"`
-	Gaps          []string          `json:"gaps"`
-	Requests      int               `json:"preparation_http_requests"`
-	DurationMS    int64             `json:"preparation_duration_ms"`
-	QueriedAt     time.Time         `json:"queried_at"`
+	Status        string                    `json:"preparation_status"`
+	Version       int64                     `json:"material_version"`
+	Local         []agent.ExecutionEvidence `json:"local_session_evidence"`
+	Comparisons   []requestComparison       `json:"request_comparisons"`
+	Run           string                    `json:"run_id"`
+	Runtime       string                    `json:"runtime"`
+	RuntimeSource string                    `json:"runtime_source"`
+	Session       string                    `json:"session_id"`
+	Usage         json.RawMessage           `json:"platform_usage"`
+	References    []traceReference          `json:"references"`
+	External      []json.RawMessage         `json:"agentlens_traces"`
+	Gaps          []string                  `json:"gaps"`
+	Requests      int                       `json:"preparation_http_requests"`
+	DurationMS    int64                     `json:"preparation_duration_ms"`
+	QueriedAt     time.Time                 `json:"queried_at"`
 }
 
 type traceReference struct {
@@ -69,7 +75,7 @@ func (s *Service) prepareTraceMaterialsSince(ctx context.Context, ws string, sin
  FROM supervision_round r JOIN supervision_config c ON c.workspace_id=r.workspace_id
  JOIN agent_task_queue t ON t.issue_id=r.issue_id
  WHERE r.workspace_id=$1 AND r.status='open' AND r.material_cutoff >= $2 AND c.enabled AND t.created_at<=r.material_cutoff
- AND t.status IN('completed','failed','cancelled')
+ AND t.status IN('completed','failed','cancelled') AND COALESCE(t.context->>'type','')<>'quality_supervision'
  AND NOT EXISTS(SELECT 1 FROM supervision_trace_material p WHERE p.workspace_id=r.workspace_id AND p.round_id=r.id AND p.run_id=t.id AND p.source='execution')
  LIMIT 100 ON CONFLICT DO NOTHING`, ws, since)
 	if err != nil {
@@ -79,12 +85,14 @@ func (s *Service) prepareTraceMaterialsSince(ctx context.Context, ws string, sin
 	var saved []byte
 	// 2. The lease survives process loss; one worker owns a row until its bounded call ends.
 	err = s.Pool.QueryRow(ctx, `UPDATE supervision_trace_material p SET status='processing',attempts=attempts+1,lease_until=now()+interval '150 seconds',updated_at=now()
- FROM (SELECT p.id FROM supervision_trace_material p JOIN supervision_round r ON r.id=p.round_id AND r.workspace_id=p.workspace_id
+ FROM (SELECT p.id FROM supervision_trace_material p JOIN supervision_trace_scope r ON r.id=p.round_id AND r.workspace_id=p.workspace_id
  WHERE p.workspace_id=$1 AND r.status='open' AND p.next_attempt_at<=now()
+ AND NOT EXISTS(SELECT 1 FROM supervision_subject sub WHERE sub.workspace_id=p.workspace_id AND sub.issue_id=p.issue_id AND sub.next_attempt_at='infinity')
+ AND (p.runtime NOT IN('codex','codebuddy') OR p.created_at<now()-interval '90 seconds' OR NOT EXISTS(SELECT 1 FROM supervision_config c WHERE c.workspace_id=p.workspace_id AND c.investigation_enabled) OR EXISTS(SELECT 1 FROM task_message m WHERE m.task_id=p.run_id AND m.type='execution_evidence'))
  AND (p.status='pending' OR (p.status='processing' AND p.lease_until<now()))
  ORDER BY p.created_at,p.id LIMIT 1 FOR UPDATE OF p SKIP LOCKED) candidate
- WHERE p.id=candidate.id RETURNING p.id::text,p.workspace_id::text,p.issue_id::text,p.round_id::text,p.run_id::text,p.runtime,p.attempts,COALESCE((p.cursor->>'reference')::integer,0),p.report,p.material_version`, ws).
-		Scan(&p.ID, &p.Workspace, &p.Issue, &p.Round, &p.Run, &p.Runtime, &p.Attempts, &p.Cursor, &saved, &p.Version)
+ WHERE p.id=candidate.id RETURNING p.id::text,p.workspace_id::text,p.issue_id::text,p.round_id::text,p.run_id::text,p.runtime,p.attempts,COALESCE((p.cursor->>'reference')::integer,0),p.report,p.material_version,p.manual`, ws).
+		Scan(&p.ID, &p.Workspace, &p.Issue, &p.Round, &p.Run, &p.Runtime, &p.Attempts, &p.Cursor, &saved, &p.Version, &p.Manual)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -102,6 +110,7 @@ func (s *Service) prepareTraceMaterialsSince(ctx context.Context, ws string, sin
 // 3. Source rows remain authoritative; this report is evidence, never a second usage ledger.
 func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	started := time.Now()
+	p.Report.Gaps = []string{}
 	var investigate bool
 	if err := s.Pool.QueryRow(ctx, `SELECT investigation_enabled FROM supervision_config WHERE workspace_id=$1`, p.Workspace).Scan(&investigate); err != nil {
 		return err
@@ -119,11 +128,37 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	if err = json.Unmarshal(refs, &p.Report.References); err != nil {
 		return err
 	}
+	rows, err := s.Pool.Query(ctx, `SELECT content FROM task_message WHERE task_id=$1 AND type='execution_evidence' AND tool='execution_evidence' ORDER BY seq,id`, p.Run)
+	if err != nil {
+		return err
+	}
+	p.Report.Local = nil
+	for rows.Next() {
+		var body []byte
+		if err = rows.Scan(&body); err != nil {
+			rows.Close()
+			return err
+		}
+		var e agent.ExecutionEvidence
+		if json.Unmarshal(body, &e) == nil && e.Runtime == p.Runtime {
+			p.Report.Local = append(p.Report.Local, e)
+			p.Report.Gaps = append(p.Report.Gaps, e.Gaps...)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+
+	if investigate && (p.Runtime == "codebuddy" || p.Runtime == "codex") && len(p.Report.Local) == 0 {
+		p.Report.Gaps = append(p.Report.Gaps, "owning_daemon_session_snapshot_unavailable")
+	}
 	status := "partial"
 	recheck := false
 	// The round owns the allowance, including all runs and delayed versions.
 	var budgetStarted time.Time
-	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(preparation_started_at,now()) FROM supervision_round WHERE workspace_id=$1 AND id=$2`, p.Workspace, p.Round).Scan(&budgetStarted); err != nil {
+	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(preparation_started_at,now()) FROM supervision_trace_scope WHERE workspace_id=$1 AND id=$2`, p.Workspace, p.Round).Scan(&budgetStarted); err != nil {
 		return err
 	}
 	budget := lensBudget{Started: budgetStarted, Reserve: func(callCtx context.Context) error {
@@ -137,7 +172,7 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 		p.Report.Gaps = append(p.Report.Gaps, "Additional investigation is disabled.")
 	case p.Runtime != "codebuddy":
 		status = "not_applicable"
-		p.Report.Gaps = append(p.Report.Gaps, "AgentLens does not apply to this runtime; platform usage is run-level evidence only.")
+		p.Report.Gaps = append(p.Report.Gaps, "AgentLens does not apply to this runtime; local session evidence and run-level usage are provided separately.")
 	case len(p.Report.References) == 0:
 		p.Report.Gaps = append(p.Report.Gaps, "No exact provider request identity; time-window matching cannot prove ownership.")
 	default:
@@ -157,23 +192,57 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 				status = "partial"
 				continue
 			}
-			data, queryErr := client.query(ctx, &budget, "traceDetail", map[string]any{"trace_id": ref.ID, "attr_type": "attr"})
+
+			tags, _ := json.Marshal([]map[string]string{{"key": "message_id", "value": ref.ID, "operator": "eq"}})
+			listed, queryErr := client.query(ctx, &budget, "traceList", map[string]any{"tags": string(tags), "session_id": ref.Session, "page_size": 50})
 			if queryErr != nil {
 				p.Report.Gaps = append(p.Report.Gaps, queryErr.Error())
 				status = "partial"
-				var failure *agentLensFailure
-				if errors.As(queryErr, &failure) {
-					recheck = failure.Retryable || failure.Kind == "budget_exhausted"
-				}
 				break
 			}
-			if !lensTraceOwned(data, ref.ID) {
-				p.Report.Gaps = append(p.Report.Gaps, "External response identity or format could not be verified.")
+			candidates, complete := lensCandidates(listed)
+			if !complete {
+				p.Report.Gaps = append(p.Report.Gaps, "trace_discovery_incomplete")
 				status = "partial"
-				p.Cursor++
-				continue
 			}
-			p.Report.External = append(p.Report.External, json.RawMessage(sanitizeTraceJSON(data, scope.Token)))
+			if len(candidates) == 0 {
+				p.Report.Gaps = append(p.Report.Gaps, "external_trace_not_yet_visible")
+				recheck = true
+				status = "partial"
+				break
+			}
+			referenceComplete := true
+			for _, candidate := range candidates {
+				data, queryErr := client.query(ctx, &budget, "traceDetail", map[string]any{"trace_id": candidate, "attr_type": "attr"})
+				if queryErr != nil {
+					p.Report.Gaps = append(p.Report.Gaps, queryErr.Error())
+					status = "partial"
+					referenceComplete = false
+					break
+				}
+				comparisons, gaps := mapLensRequests(data, ref, p.Report.Local)
+				p.Report.Gaps = append(p.Report.Gaps, gaps...)
+				if len(gaps) > 0 {
+					status = "partial"
+				}
+				for _, comparison := range comparisons {
+					comparison.RawSpan = json.RawMessage(sanitizeTraceJSON(comparison.RawSpan, scope.Token))
+					duplicate := false
+					for i, old := range p.Report.Comparisons {
+						if old.CID == comparison.CID && old.Session == comparison.Session && old.Message == comparison.Message {
+							duplicate = true
+							p.Report.Comparisons[i] = comparison
+							break
+						}
+					}
+					if !duplicate {
+						p.Report.Comparisons = append(p.Report.Comparisons, comparison)
+					}
+				}
+			}
+			if !referenceComplete {
+				break
+			}
 			p.Cursor++
 		}
 	}
@@ -182,6 +251,7 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	if len(p.Report.Gaps) > 0 && status == "complete" {
 		status = "partial"
 	}
+	p.Report.Status, p.Report.Version = status, p.Version
 	encoded, err := json.Marshal(p.Report)
 	if err != nil {
 		return err
@@ -193,14 +263,31 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	}
 	defer tx.Rollback(ctx)
 	var roundOpen bool
-	if err = tx.QueryRow(ctx, `SELECT status='open' FROM supervision_round WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, p.Workspace, p.Round).Scan(&roundOpen); err != nil {
+	scopeTable := "supervision_round"
+	if p.Manual {
+		scopeTable = "supervision_manual_preparation"
+	}
+	if err = tx.QueryRow(ctx, `SELECT status='open' FROM `+scopeTable+`  WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, p.Workspace, p.Round).Scan(&roundOpen); err != nil {
 		return err
 	}
 	if !roundOpen {
 		status = "partial"
+		p.Report.Status = status
+		encoded, err = json.Marshal(p.Report)
+		if err != nil {
+			return err
+		}
 	}
-	tag, err := tx.Exec(ctx, `UPDATE supervision_trace_material SET status=$3,report=$4,cursor=jsonb_build_object('reference',$5::integer),queried_at=$6,lease_until=NULL,updated_at=now()
- WHERE workspace_id=$1 AND id=$2 AND status='processing' AND attempts=$7`, p.Workspace, p.ID, status, string(encoded), p.Cursor, started, p.Attempts)
+	differences := 0
+	for _, c := range p.Report.Comparisons {
+		if c.Input == "different" || c.Output == "different" || c.CacheRead == "different" {
+			differences++
+		}
+	}
+	coverage, _ := json.Marshal(map[string]any{"matched_requests": len(p.Report.Comparisons), "local_snapshots": len(p.Report.Local), "preparation_http_requests": p.Report.Requests, "preparation_duration_ms": p.Report.DurationMS, "differences": differences})
+	gaps, _ := json.Marshal(p.Report.Gaps)
+	tag, err := tx.Exec(ctx, `UPDATE supervision_trace_material SET status=$3,report=$4,coverage=$8::jsonb,gaps=$9::jsonb,cursor=jsonb_build_object('reference',$5::integer),queried_at=$6,lease_until=NULL,updated_at=now()
+ WHERE workspace_id=$1 AND id=$2 AND status='processing' AND attempts=$7`, p.Workspace, p.ID, status, string(encoded), p.Cursor, started, p.Attempts, coverage, gaps)
 	if err != nil {
 		return err
 	}
@@ -208,34 +295,30 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 		return tx.Commit(ctx)
 	}
 	if roundOpen {
-		_, err = tx.Exec(ctx, `INSERT INTO supervision_material(workspace_id,issue_id,kind,source_id,run_id,changed_at)
- SELECT p.workspace_id,p.issue_id,'trace_usage',p.id,p.run_id,r.material_cutoff FROM supervision_trace_material p JOIN supervision_round r ON r.id=p.round_id AND r.workspace_id=p.workspace_id
- WHERE p.workspace_id=$1 AND p.id=$2 ON CONFLICT DO NOTHING`, p.Workspace, p.ID)
+		_, err = tx.Exec(ctx, `WITH inserted AS (INSERT INTO supervision_material(workspace_id,issue_id,kind,source_id,run_id,changed_at)
+ SELECT p.workspace_id,p.issue_id,'trace_usage',p.id,p.run_id,r.material_cutoff FROM supervision_trace_material p JOIN supervision_trace_scope r ON r.id=p.round_id AND r.workspace_id=p.workspace_id
+ WHERE p.workspace_id=$1 AND p.id=$2 ON CONFLICT DO NOTHING RETURNING issue_id) UPDATE supervision_subject SET desired_version=desired_version+1 WHERE workspace_id=$1 AND issue_id IN(SELECT issue_id FROM inserted)`, p.Workspace, p.ID)
 		if err != nil {
 			return err
 		}
 	}
 	if roundOpen && recheck && p.Version == 1 {
+		permit, permitErr := tx.Exec(ctx, `UPDATE `+scopeTable+` SET preparation_recheck_scheduled=true WHERE workspace_id=$1 AND id=$2 AND NOT preparation_recheck_scheduled`, p.Workspace, p.Round)
+		if permitErr != nil {
+			return permitErr
+		}
+		if permit.RowsAffected() == 0 {
+			return tx.Commit(ctx)
+		}
 		// Allow one delayed continuation, with a new immutable material identity.
-		_, err = tx.Exec(ctx, `INSERT INTO supervision_trace_material(id,workspace_id,issue_id,round_id,run_id,runtime,source,status,material_version,report,cursor,next_attempt_at)
-        SELECT gen_random_uuid(),workspace_id,issue_id,round_id,run_id,runtime,source,'pending',2,report,cursor,now()+interval '60 seconds'
+		_, err = tx.Exec(ctx, `INSERT INTO supervision_trace_material(id,workspace_id,issue_id,round_id,run_id,runtime,source,status,material_version,report,cursor,next_attempt_at,manual)
+        SELECT gen_random_uuid(),workspace_id,issue_id,round_id,run_id,runtime,source,'pending',2,report,cursor,now()+interval '60 seconds',manual
         FROM supervision_trace_material WHERE workspace_id=$1 AND id=$2 ON CONFLICT DO NOTHING`, p.Workspace, p.ID)
 		if err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
-}
-
-// 5. Only an exact external root ID establishes ownership; timestamps and SDK similarity do not.
-func lensTraceOwned(data []byte, id string) bool {
-	var response struct {
-		Detail struct {
-			ID    string            `json:"trace_id"`
-			Spans []json.RawMessage `json:"spans"`
-		} `json:"trace_detail"`
-	}
-	return json.Unmarshal(data, &response) == nil && response.Detail.ID == id && len(response.Detail.Spans) > 0
 }
 
 // 6. Strip secret-bearing objects before storage, then apply the shared text redactor.
@@ -282,12 +365,15 @@ func secretTraceKey(key string) bool {
 
 // 7. Reserve before sending HTTP: crashes can lose a response, but can never replenish quota.
 func (s *Service) reserveTraceRequest(ctx context.Context, workspace, round string) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE supervision_round
+	tag, err := s.Pool.Exec(ctx, `WITH auto AS (UPDATE supervision_round
  SET preparation_http_requests=preparation_http_requests+1,
  preparation_started_at=COALESCE(preparation_started_at,now())
  WHERE workspace_id=$1 AND id=$2 AND status='open'
  AND preparation_http_requests<40
- AND (preparation_started_at IS NULL OR preparation_started_at+interval '120 seconds'>clock_timestamp())`, workspace, round)
+ AND (preparation_started_at IS NULL OR preparation_started_at+interval '120 seconds'>clock_timestamp()) RETURNING id), manual AS (UPDATE supervision_manual_preparation
+ SET preparation_http_requests=preparation_http_requests+1,preparation_started_at=COALESCE(preparation_started_at,now())
+ WHERE workspace_id=$1 AND id=$2 AND status='open' AND preparation_http_requests<40
+ AND (preparation_started_at IS NULL OR preparation_started_at+interval '120 seconds'>clock_timestamp()) RETURNING id) SELECT id FROM auto UNION ALL SELECT id FROM manual`, workspace, round)
 	if err != nil {
 		return err
 	}

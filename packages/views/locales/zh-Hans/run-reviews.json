@@ -340,6 +340,22 @@
     "coverage_not_pass": "材料已覆盖只说明本轮材料读完，不代表没有质量问题；结论以上方问题和证据缺口为准。",
     "batch_round": "完成第 {{sequence}} 轮",
     "batch_manual": "手动检查",
-    "instructions_conflict": "自定义提示词仍按原文使用，平台不会覆盖。自动监督已改为只审查已完成任务：如果提示词里还要求持续跟踪开发中任务，请对照内置默认提示词修改，或用「恢复默认」跟随平台更新。"
+    "instructions_conflict": "自定义提示词仍按原文使用，平台不会覆盖。自动监督已改为只审查已完成任务：如果提示词里还要求持续跟踪开发中任务，请对照内置默认提示词修改，或用「恢复默认」跟随平台更新。",
+    "trace_title": "执行轨迹与用量对照",
+    "trace_hint": "取数状态和覆盖范围不代表质量结论；未知数据保留为证据缺口。",
+    "trace_complete": "完整",
+    "trace_partial": "部分",
+    "trace_failed": "失败",
+    "trace_not_applicable": "不适用",
+    "trace_disabled": "未启用",
+    "trace_pending": "准备中或未知",
+    "trace_unknown": "运行时未知",
+    "trace_counts": "已关联 {{matched}} 次请求 · 已确认 {{differences}} 处差异",
+    "trace_preparation_cost": "平台取数 {{requests}} 次请求 / {{milliseconds}} 毫秒 · {{snapshots}} 份本地快照（单列，不计入目标执行用量）",
+    "trace_evidence": "查看材料证据",
+    "trace_supervisor_cost": "本任务全部监督执行用量（不计入目标执行）",
+    "trace_supervisor_usage": "{{provider}} · {{model}} · {{tokens}} token",
+    "trace_state": "{{runtime}} · AgentLens {{state}}",
+    "trace_supervisor_unknown": "尚无可核对的监督用量上报，不能当作用量为零。"
   }
 }

@@ -3427,6 +3427,11 @@ func parseCodexSessionFile(path string) *codexSessionUsage {
 // total。resume 的 rollout 里无时间戳的事件只算作基线，直到某条明确晚于 startTime 的
 // 时间戳确立边界；全新会话则保持旧的整文件行为，因为每个事件都属于新任务。
 func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) *codexSessionUsage {
+	// 1. Historical evidence also supplies an end boundary, while live accounting keeps its existing behavior.
+	return parseCodexSessionFileBetween(path, startTime, time.Time{}, resumed)
+}
+
+func parseCodexSessionFileBetween(path string, startTime, endTime time.Time, resumed bool) *codexSessionUsage {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -3453,6 +3458,10 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 
 		var evt codexSessionTokenCount
 		if err := json.Unmarshal(line, &evt); err != nil || evt.Payload == nil {
+			continue
+		}
+		// 2. A later resume in the same file must never become part of an earlier run's evidence.
+		if !endTime.IsZero() && (evt.Timestamp.IsZero() || evt.Timestamp.After(endTime)) {
 			continue
 		}
 		timestampAfterStart := !startTime.IsZero() && !evt.Timestamp.IsZero() && evt.Timestamp.After(startTime)

@@ -103,16 +103,18 @@ type IssueStatusData struct {
 // Task 表示一条从服务器认领（claim）到的任务。
 // Agent 数据（name、skills）由 claim 端点填充。
 type Task struct {
-	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
-	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
-	ID                   string                 `json:"id"`
-	AgentID              string                 `json:"agent_id"`
-	RuntimeID            string                 `json:"runtime_id"`
-	IssueID              string                 `json:"issue_id"`
-	WorkspaceID          string                 `json:"workspace_id"`
-	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
-	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
-	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
+	// 1. The server gates extra session extraction by workspace investigation settings.
+	CaptureExecutionEvidence bool                   `json:"capture_execution_evidence,omitempty"`
+	ReleaseResumeTaskID      string                 `json:"release_resume_task_id,omitempty"`
+	ReleaseResumeRoot        string                 `json:"release_resume_root,omitempty"`
+	ID                       string                 `json:"id"`
+	AgentID                  string                 `json:"agent_id"`
+	RuntimeID                string                 `json:"runtime_id"`
+	IssueID                  string                 `json:"issue_id"`
+	WorkspaceID              string                 `json:"workspace_id"`
+	WorkspaceSlug            string                 `json:"workspace_slug,omitempty"`
+	IssueIdentifier          string                 `json:"issue_identifier,omitempty"`
+	RemoteMCPConnections     []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
 	// RemoteMCPDaemonToken 只留在 daemon 内部，用于给本地 broker 的凭证解析调用
 	// 做鉴权。它绝不能进入 agent 的环境变量或配置。
 	RemoteMCPDaemonToken string `json:"remote_mcp_daemon_token,omitempty"`

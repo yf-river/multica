@@ -144,3 +144,75 @@ func TestTraceMaterialStaleClaim(t *testing.T) {
 		t.Fatal("stale worker published evidence")
 	}
 }
+
+// 1. Manual investigation has one frozen scope and never opens an automatic completion round.
+func TestTraceManualPreparationScope(t *testing.T) {
+	t.Setenv("MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE", "2026-01-01T00:00:00Z")
+	x := newRoundFixture(t)
+	ctx := context.Background()
+	x.f.Cleanup(t, "DELETE FROM supervision_trace_material WHERE workspace_id=$1", x.workspace)
+	x.f.Cleanup(t, "DELETE FROM supervision_manual_preparation WHERE workspace_id=$1", x.workspace)
+	issue := x.issue(t, "in_progress")
+	run := x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed"})
+	x.f.Task(t, x.agent, dbfx.Cols{"issue_id": issue, "runtime_id": x.runtime, "status": "completed", "context": map[string]any{"type": "quality_supervision"}})
+	for i := 0; i < 2; i++ {
+		tx, err := x.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = PrepareManualMaterials(ctx, tx, x.workspace, issue); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := x.count(t, "SELECT count(*) FROM supervision_round WHERE workspace_id=$1 AND issue_id=$2", x.workspace, issue); n != 0 {
+		t.Fatal("manual investigation opened an automatic round")
+	}
+	if n := x.count(t, "SELECT count(*) FROM supervision_trace_material WHERE workspace_id=$1 AND run_id=$2", x.workspace, run); n != 1 {
+		t.Fatalf("manual replay duplicated jobs: %d", n)
+	}
+	if n := x.count(t, "SELECT count(*) FROM supervision_trace_material WHERE workspace_id=$1 AND issue_id=$2", x.workspace, issue); n != 1 {
+		t.Fatal("supervision created evidence for itself")
+	}
+	if err := x.svc.prepareTraceMaterials(ctx, x.workspace); err != nil {
+		t.Fatal(err)
+	}
+	if n := x.count(t, "SELECT count(*) FROM supervision_material WHERE workspace_id=$1 AND issue_id=$2 AND kind='trace_usage'", x.workspace, issue); n != 1 {
+		t.Fatal("manual evidence not published")
+	}
+	x.f.Exec(t, "UPDATE supervision_config SET investigation_enabled=true WHERE workspace_id=$1", x.workspace)
+	tx, err := x.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materials, err := x.svc.materials(ctx, tx, x.workspace, issue, noCutoff)
+	_ = tx.Rollback(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundIndex := false
+	for _, m := range materials {
+		if m.Kind == "trace_usage" {
+			foundIndex = true
+			if !m.IndexOnly || m.End != m.Offset || strings.Contains(m.Text, "local_session_evidence") || ContiguousEnd(m.Offset, []Material{m}) != m.Offset {
+				t.Fatalf("index claimed body coverage: %+v", m)
+			}
+		}
+	}
+	if !foundIndex {
+		t.Fatal("prepared material index missing")
+	}
+	var scope string
+	x.f.QueryRow(t, "SELECT id::text FROM supervision_manual_preparation WHERE workspace_id=$1 AND issue_id=$2", x.workspace, issue).Scan(&scope)
+	for i := 0; i < 40; i++ {
+		if err := x.svc.reserveTraceRequest(ctx, x.workspace, scope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if x.svc.reserveTraceRequest(ctx, x.workspace, scope) == nil {
+		t.Fatal("manual scope exceeded round budget")
+	}
+}

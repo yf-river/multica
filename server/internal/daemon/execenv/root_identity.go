@@ -34,6 +34,28 @@ type taskRootRecord struct {
 	RelativePath string `json:"relative_path"`
 }
 
+// ExistingRootDir resolves an existing owner-checked index without creating or repairing directories.
+// 1. Historical evidence extraction cannot allocate a new execution environment or inspect another task.
+func ExistingRootDir(params RootDirParams) (string, error) {
+	recordDir := taskRootRecordDir(params)
+	record, err := readTaskRootRecord(recordDir)
+	if err != nil {
+		return "", err
+	}
+	root, err := validateTaskRootRecord(params, recordDir, record)
+	if err != nil {
+		return "", err
+	}
+	owner, err := ReadEnvRootOwner(root)
+	if err != nil {
+		return "", err
+	}
+	if owner.WorkspaceID != params.WorkspaceID || owner.TaskID != params.TaskID {
+		return "", fmt.Errorf("task environment ownership changed")
+	}
+	return root, nil
+}
+
 // ResolveRootDir 返回分配给某任务的那一个物理环境根目录。第一个调用方会
 // 把可读路径冻结在一个只以稳定 id 为键的索引里；之后即便可读标签被改名或
 // 新增，后续认领仍保持该路径不变。
