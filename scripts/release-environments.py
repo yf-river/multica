@@ -1354,7 +1354,8 @@ def worker(request_id):
                         run(['git','push','--dry-run','origin',record['commit']+':refs/heads/personal-studio-upstream'],cwd=record['source'])
                         record['failure_stage']='git_fetch';write(target,record,True)
                         run(['git','fetch','origin','personal-studio-upstream'],cwd=record['source'])
-                        if output(['git','rev-parse','origin/personal-studio-upstream'],cwd=record['source']) not in (record['maintenance']['base_commit'],record['commit']):raise RuntimeError('维护主分支已变化')
+                        # Modification 3. Preserve previously merged maintenance history and reject any non-fast-forward update.
+                        controller_maintenance().check_mainline(sys.modules[__name__],record)
                         fence()
                         record['failure_stage']='git_push';write(target,record,True)
                         run(['git','push','origin',record['commit']+':refs/heads/personal-studio-upstream'],cwd=record['source'])

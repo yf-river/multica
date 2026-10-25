@@ -103,3 +103,9 @@ def guard(r,record):
   authorize(r,record);idle(r,production=True)
   # Ordinary release guards are database-backed; this bounded maintenance window instead holds the same queue and publisher locks.
   yield lambda:authorize(r,record)
+
+# Modification 2. The remote maintenance history must be included in the reviewed candidate; production may lag it.
+def check_mainline(r,record):
+ current=r.output(['git','rev-parse','origin/personal-studio-upstream'],cwd=record['source'])
+ if r.subprocess.run(['git','merge-base','--is-ancestor',current,record['commit']],cwd=record['source']).returncode:
+  raise RuntimeError('维护主分支已变化，候选未包含当前主线')
