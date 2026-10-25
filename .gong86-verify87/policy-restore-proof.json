@@ -1,0 +1,12 @@
+{
+  "target": "dd55deb4-d53b-4689-bdf9-093322da2400",
+  "restored": true,
+  "other_agents_unchanged": true,
+  "environment_policy_unchanged": true,
+  "retained_archived_agent_override": {
+    "model": "gpt-6.1-sol",
+    "provider": "codex",
+    "service_tier": "default",
+    "thinking_level": "low"
+  }
+}

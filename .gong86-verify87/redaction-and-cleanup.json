@@ -1,0 +1,9 @@
+{
+  "files_scanned": 124,
+  "credential_matches": 0,
+  "source_credential_removed": true,
+  "service_credential_removed": true,
+  "service_restored": true,
+  "test_agent_archived": true,
+  "managed_supervisor_retained_disabled": true
+}

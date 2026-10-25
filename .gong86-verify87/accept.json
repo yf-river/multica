@@ -1,0 +1,26 @@
+{
+  "revision": 3,
+  "candidate_id": "87e11863efd663bb220a0b073a9f914c697267a0-1792912266420670525",
+  "evidence": [
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第1项；普通样本2请求输入/输出/缓存match，原生子调用parent_sdk匹配1请求；外部不完整保留partial，详见各codebuddy/child report与pages。"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第2项、started-runtime-proof.json、mixed-runs.json、cancel-runs.json；真实Codex、同任务混合runtime、运行取消与重试材料分别归属，AgentLens请求0；execution-evidence-tests.log 13项通过。"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第3项、boundaries.json、restart.json、immutable-after-restart.json、reopen-lifecycle.json；真实分页/跨任务拒绝/重启恢复/重开保留；隔离候选PostgreSQL supervision 34项通过，5项固定int测试明确跳过待下一阶段。"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第4项、loaded-skills-and-tools.json、waste-subject.json、detail.png；8真实批次completed，准确技能加载/MCP读取及validate；必要读取不误报、受控重复读取指出2次额外调用并给提示词层调整及验证办法，不虚构节省比例；费用与缺口分列。"
+    }
+  ]
+}

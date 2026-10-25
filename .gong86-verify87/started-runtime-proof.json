@@ -1,0 +1,27 @@
+{
+  "codebuddy": [
+    {
+      "task_id": "01a171e8-bddf-7f08-a2e5-fe8b445ede4e",
+      "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "provider": "codebuddy",
+      "model": "",
+      "event_type": "task.started"
+    },
+    {
+      "task_id": "01a171ea-5ccc-7dff-bc6d-ea3d68cd3456",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "provider": "codex",
+      "model": "",
+      "event_type": "task.started"
+    }
+  ],
+  "codex": [
+    {
+      "task_id": "01a171e8-bdf2-72cd-8a22-38d6e8446fba",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "provider": "codex",
+      "model": "",
+      "event_type": "task.started"
+    }
+  ]
+}

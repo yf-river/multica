@@ -1,0 +1,124 @@
+[
+  {
+    "batch": "01a171ed-15e6-72de-b471-7a9ed4b29776",
+    "status": "completed",
+    "task": "01a171ed-15eb-72a3-9a19-f2380409beba",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "batch": "01a171eb-59a8-747d-885a-d1b5018f9a42",
+    "status": "completed",
+    "task": "01a171eb-59ac-7ce5-b549-efa4b6e25000",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "batch": "01a171e9-4ade-79ab-96f6-13ee6f2a2950",
+    "status": "completed",
+    "task": "01a171e9-4ae3-73cd-be82-5b825f12b7d2",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "batch": "01a171ed-4a67-7836-be0e-47718524c152",
+    "status": "completed",
+    "task": "01a171ed-4a6d-7f04-8c01-e21b948b556c",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "batch": "01a171e9-84ef-7451-a69b-d851c29b864c",
+    "status": "completed",
+    "task": "01a171e9-84f3-783e-8d8e-f23396e6b929",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "batch": "01a171f0-4c2c-74f3-a5f2-beea8c4e86a7",
+    "status": "completed",
+    "task": "01a171f0-4c30-7326-b30f-21fc2dec25d5",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "batch": "01a171f2-d0c3-7efc-90e7-2523c44dd76a",
+    "status": "completed",
+    "task": "01a171f2-d0c8-7006-bb7f-ae50bd36c317",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "batch": "01a171f3-3de3-7728-8b1e-7fc7b940e1c1",
+    "status": "completed",
+    "task": "01a171f3-3de7-73b1-ada4-53d068ef1b80",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  }
+]
