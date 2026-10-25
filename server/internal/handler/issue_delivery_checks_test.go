@@ -264,3 +264,51 @@ func TestIntegrationOnlyDeliveryPreservesVerificationAndRequiresInt(t *testing.T
 		t.Fatal("integration changed production authorization")
 	}
 }
+
+// Modification 1. Failed int retries preserve verification and failure history without granting production access.
+func TestIntegrationOnlyFailedCandidateRetest(t *testing.T) {
+	issue, plan, delivery, token, owner := businessFixture(t)
+	businessAction(t, issue, delivery, owner, map[string]any{"action": "bind-checks", "plan_id": plan, "required_checks": businessChecks()}).Want(200)
+	businessAction(t, issue, delivery, owner, map[string]any{"action": "accept", "candidate_id": "fixed-candidate", "evidence": []deliveryCheck{{Name: "真实业务", Status: "passed", Evidence: "verified"}}}).Want(200)
+	var generation int64
+	advance := func(action, worker string) *testutil.Response {
+		return testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": action, "worker_token": worker, "error": "real int failure", "publication_generation": generation}))
+	}
+	advance("accepted", token).Want(200)
+	var receipt struct {
+		Token string `json:"worker_token"`
+	}
+	advance("claim-integration", token).Want(200).JSON(&receipt)
+	dbfx.Cleanup(t, `DELETE FROM delivery_publication WHERE delivery_id=$1`, delivery)
+	var lease struct {
+		Generation int64 `json:"generation"`
+	}
+	testutil.Call(t, testHandler.PublicationLease, newRequest("POST", "/api/delivery-queue/publication", map[string]any{"action": "claim", "delivery_id": delivery, "worker_token": receipt.Token})).Want(200).JSON(&lease)
+	generation = lease.Generation
+	dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='failed-int' WHERE id=$1`, delivery)
+	advance("fail", receipt.Token).Want(200)
+	testutil.Call(t, testHandler.PublicationLease, newRequest("POST", "/api/delivery-queue/publication", map[string]any{"action": "release", "delivery_id": delivery, "worker_token": receipt.Token, "generation": generation})).Want(200)
+	request := map[string]any{"action": "retest", "candidate_id": "wrong", "evidence": []deliveryCheck{{Name: "repair checked", Status: "passed", Evidence: "exact candidate recovery"}}}
+	businessAction(t, issue, delivery, owner, request).Want(409)
+	request["candidate_id"] = "failed-int"
+	wrongOwner := owner
+	wrongOwner.Token = "00000000-0000-4000-8000-000000000001"
+	businessAction(t, issue, delivery, wrongOwner, request).Want(409)
+	delete(request, "evidence")
+	businessAction(t, issue, delivery, owner, request).Want(409)
+	request["evidence"] = []deliveryCheck{{Name: "repair checked", Status: "passed", Evidence: "exact candidate recovery"}}
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=$2,approved_at=now() WHERE id=$1`, delivery, testUserID)
+	businessAction(t, issue, delivery, owner, request).Want(409)
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,plan_snapshot=plan_snapshot||'{"integration_complete":true}'::jsonb WHERE id=$1`, delivery)
+	businessAction(t, issue, delivery, owner, request).Want(409)
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'integration_complete' WHERE id=$1`, delivery)
+	businessAction(t, issue, delivery, owner, request).Want(200)
+	var unapproved, history, accepted bool
+	var count int
+	dbfx.QueryRow(t, `SELECT approved_by IS NULL AND approved_at IS NULL,plan_snapshot->'integration_failures'->0->>'candidate_id'='failed-int' AND plan_snapshot->'integration_failures'->0->>'error'='real int failure',acceptance_submitted FROM issue_delivery WHERE id=$1`, delivery).Scan(&unapproved, &history, &accepted)
+	dbfx.QueryRow(t, `SELECT count(*) FROM delivery_evidence WHERE delivery_id=$1`, delivery).Scan(&count)
+	if !unapproved || !history || !accepted || count != 1 || deliveryPhase(t, delivery) != "awaiting_review" {
+		t.Fatal("retry lost evidence, failure, or authorization boundary")
+	}
+	advance("claim-integration", "").Want(200)
+}
