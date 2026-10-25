@@ -39,6 +39,12 @@ server/multica
 test-results/
 apps/web/test-results/
 
+# Agent task evidence. Delivery acceptance requires a clean candidate source:
+# write proof outside the checkout, or under an ignored path like this.
+.gong*-evidence/
+.gong86-*/
+.delivery-context.json*
+
 # context (agent workspace)
 .context
 .agent_context/
