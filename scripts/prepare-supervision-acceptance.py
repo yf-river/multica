@@ -37,9 +37,11 @@ def api(meta, profile, method, route, body=None):
 
 
 def require_idle(cfg):
-    # 2. A backend configuration change must not interrupt an active test model execution.
-    result = subprocess.run(['psql', '-X', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c',
-        "SELECT count(*) FROM agent_task_queue WHERE status IN ('queued','dispatched','running','waiting_local_directory')"],
+    # 2. Use the operations Node/pg client directly; ambient psql wrappers may silently redirect PGDATABASE.
+    result = subprocess.run(['node', '--input-type=module', '-e',
+        "import pg from 'pg';const db=new pg.Client({connectionString:process.env.PGDATABASE});"
+        "try{await db.connect();console.log((await db.query(\"SELECT count(*) FROM agent_task_queue WHERE status NOT IN ('completed','failed','cancelled')\")).rows[0].count)}finally{await db.end()}"],
+        cwd=Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().parent.parent)),
         env={**os.environ, 'PGDATABASE': cfg['server']['DATABASE_URL']}, capture_output=True, text=True, timeout=15)
     if result.returncode or result.stdout.strip() != '0':
         raise RuntimeError('Cannot apply service configuration while test tasks are active or inventory is unavailable')

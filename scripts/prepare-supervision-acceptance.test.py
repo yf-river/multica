@@ -62,8 +62,11 @@ class OwnershipTests(unittest.TestCase):
                     setup.require_idle({'server': {'DATABASE_URL': 'test-connection'}})
 
     def test_idle_inventory_allows_configuration(self):
-        with patch.object(setup.subprocess, 'run', return_value=Mock(returncode=0, stdout='0\n')):
+        # 1. Pin the checked-in direct client so an ambient psql wrapper cannot redirect this safety check.
+        with patch.object(setup.subprocess, 'run', return_value=Mock(returncode=0, stdout='0\n')) as run:
             setup.require_idle({'server': {'DATABASE_URL': 'test-connection'}})
+        self.assertEqual(run.call_args.args[0][:2], ['node', '--input-type=module'])
+        self.assertEqual(run.call_args.kwargs['env']['PGDATABASE'], 'test-connection')
 
     def test_invalid_credentials_do_not_mutate_services(self):
         with tempfile.TemporaryDirectory() as folder:
