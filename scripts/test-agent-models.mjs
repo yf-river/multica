@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
 
-const [environment, mode = 'audit'] = process.argv.slice(2);
+const [environment, mode = 'audit', policyFile] = process.argv.slice(2);
+const policyRoot = path.join(process.env.MULTICA_RELEASE_ROOT || '', '.run');
+const cachedPolicy = path.join(policyRoot,'test-agent-policy-'+environment+'.json');
+const desired = JSON.parse(fs.readFileSync(policyFile || (fs.existsSync(cachedPolicy) ? cachedPolicy : path.join(policyRoot,'test-agent-policy.json')),'utf8'));
+const valid = p => p && ((p.provider === 'codebuddy' && p.model === 'deepseek-v4.1-flash' && p.thinking_level === '' && p.service_tier === '') || (p.provider === 'codex' && p.model === 'gpt-6.1-sol' && p.thinking_level === 'low' && p.service_tier === 'default'));
+if (!valid(desired.policy) || Object.values(desired.overrides || {}).some(p => !valid(p))) throw Error('测试模型配置不受支持');
 if (!['int', 'verify-1', 'verify-2', 'verify-3'].includes(environment) || !['audit', 'apply'].includes(mode)) throw Error('仅接受固定测试环境及 audit/apply');
 const root = process.env.MULTICA_RELEASE_ROOT;
 if (!root) throw Error('缺少控制目录 MULTICA_RELEASE_ROOT');
@@ -43,23 +48,30 @@ try {
  if (mode === 'apply') await client.query('LOCK TABLE agent_task_queue, agent IN SHARE ROW EXCLUSIVE MODE');
  const busy = Number((await client.query("SELECT count(*) FROM agent_task_queue WHERE status IN ('queued','dispatched','running')")).rows[0].count);
  if (mode === 'apply' && busy) throw Error('测试环境仍有待执行任务，保留现场，空闲后再维护');
- const before = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at FROM agent ORDER BY id')).rows;
- const runtimes = (await client.query("SELECT id,workspace_id FROM agent_runtime WHERE provider='codebuddy' AND status='online' AND daemon_id=$1 AND profile_id IS NULL",[health.daemon_id])).rows;
+ const before = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at,name,custom_args FROM agent ORDER BY id')).rows;
+ const runtimes = (await client.query("SELECT id,workspace_id,provider,runtime_mode FROM agent_runtime WHERE provider IN ('codebuddy','codex') AND status='online' AND daemon_id=$1 AND profile_id IS NULL",[health.daemon_id])).rows;
  const bindings = new Map();
  for (const row of runtimes) {
-  if (bindings.has(row.workspace_id)) throw Error('工作区 CodeBuddy runtime 不唯一');
-  bindings.set(row.workspace_id,row.id);
+  if (bindings.has(row.workspace_id+'|'+row.provider)) throw Error('工作区 CodeBuddy runtime 不唯一');
+  bindings.set(row.workspace_id+'|'+row.provider,row);
  }
  if (mode === 'apply') {
   for (const row of before) {
-   const runtime = bindings.get(row.workspace_id);
+   const p = desired.overrides?.[row.id] || desired.policy;
+   if ((row.custom_args || []).some(x => /^(?:-m|-c)|^--(?:model|config)(?:=|$)|fast_mode/.test(x))) throw Error('Agent 含覆盖模型的启动参数，请先核对：'+row.name);
+   const runtime = bindings.get(row.workspace_id+'|'+p.provider);
    if (!runtime) throw Error('工作区缺少本环境在线 CodeBuddy runtime，停止维护');
-   await client.query("UPDATE agent SET runtime_id=$2,model='deepseek-v4.1-flash',thinking_level='',service_tier='',updated_at=now() WHERE id=$1 AND (runtime_id IS DISTINCT FROM $2::uuid OR model IS DISTINCT FROM 'deepseek-v4.1-flash' OR thinking_level IS DISTINCT FROM '' OR service_tier IS DISTINCT FROM '')",[row.id,runtime]);
+   await client.query("UPDATE agent SET runtime_id=$2,runtime_mode=$6,model=$3,thinking_level=$4,service_tier=$5,updated_at=now() WHERE id=$1 AND (runtime_id IS DISTINCT FROM $2::uuid OR model IS DISTINCT FROM $3 OR thinking_level IS DISTINCT FROM $4 OR service_tier IS DISTINCT FROM $5 OR runtime_mode IS DISTINCT FROM $6)",[row.id,runtime.id,p.model,p.thinking_level,p.service_tier,runtime.runtime_mode]);
   }
  }
- const after = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at FROM agent ORDER BY id')).rows;
+ if (mode === 'apply' && (await client.query("SELECT to_regclass('public.test_agent_control') AS name")).rows[0].name) {
+  for (const workspace of new Set((await client.query('SELECT id FROM workspace')).rows.map(w => w.id))) {
+   await client.query(`INSERT INTO test_agent_control(workspace_id,name,desired,observed) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id,name) DO UPDATE SET desired=EXCLUDED.desired,observed=EXCLUDED.observed,updated_at=now()`,[workspace,environment,desired,{daemon_id:health.daemon_id}]);
+  }
+ }
+ const after = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at,name,custom_args FROM agent ORDER BY id')).rows;
  await client.query('COMMIT');
- console.log(JSON.stringify({environment,mode,agents:before.length,busy,before,after}));
+ console.log(JSON.stringify({environment,mode,agents:before.length,busy,daemon_id:health.daemon_id,runtimes,before,after}));
 } catch(e) {
  await client.query('ROLLBACK');throw e;
 } finally {

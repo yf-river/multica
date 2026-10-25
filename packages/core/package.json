@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "exports": {
+    "./test-agents": "./test-agents/index.ts",
     "./health": "./health/index.ts",
     ".": "./index.ts",
     "./markdown": "./markdown/index.ts",

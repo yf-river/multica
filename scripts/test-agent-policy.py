@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""测试 Agent 创建参数：人工初始化默认 Flash，模型执行内严格继承本轮已解析配置。"""
+"""测试 Agent 创建参数：读取生产维护的测试默认配置。"""
 import argparse
 import json
 import os
@@ -11,21 +11,13 @@ TEST_ENVS = ('int', 'verify-1', 'verify-2', 'verify-3')
 
 def selection(context=None, environ=None):
     env = os.environ if environ is None else environ
-    if context is None:
-        if env.get('MULTICA_TASK_ID'):
-            path = Path(env.get('TMPDIR', '/nonexistent')) / 'multica-execution-model.json'
-            if not path.is_file():
-                raise RuntimeError('本轮缺少可信执行配置，停止创建测试 Agent；请保留现场并人工接入')
-            context = json.loads(path.read_text())
-        else:
-            return dict(provider='codebuddy', model=FLASH, thinking_level='', service_tier='')
-    if not context.get('resolved') or context.get('task_id') != env.get('MULTICA_TASK_ID') or not context.get('model'):
-        raise RuntimeError('本轮模型配置未解析或执行身份不匹配，停止创建测试 Agent')
-    result = {key: context.get(key, '') for key in ('provider', 'model', 'thinking_level', 'service_tier')}
-    if not result['provider']:
-        raise RuntimeError('本轮 runtime 未确定，停止创建测试 Agent')
-    if result['provider'] == 'codex' and (not result['thinking_level'] or not result['service_tier']):
-        raise RuntimeError('Codex 推理强度或速度未显式确定，停止创建测试 Agent')
+    root = Path(env.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().parent.parent))
+    source = root / '.run/test-agent-policy.json'
+    if not source.is_file():
+        raise RuntimeError('尚未同步生产测试模型设置，停止创建测试 Agent')
+    result = json.loads(source.read_text())['policy']
+    if result.get('provider') not in ('codebuddy','codex') or not result.get('model'):
+        raise RuntimeError('生产测试模型设置无效')
     return result
 
 

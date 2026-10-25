@@ -7449,10 +7449,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
 	model, thinkingLevel, serviceTier = selection.Model, selection.ThinkingLevel, selection.ServiceTier
-	// 测试 Agent 创建器读取本轮已解析的参数，避免把可变的 Agent 配置当作执行事实。
-	if err := writeTestAgentModelContext(taskTempDir, task.ID, provider, selection, append(append(append([]string{}, profileFixedArgs...), extraArgs...), customArgs...)); err != nil {
-		taskLog.Warn("test Agent model context unavailable", "error", err)
-	}
 
 	var idleWatchdogTimeout time.Duration
 	if provider == "opencode" || provider == "codearts" {

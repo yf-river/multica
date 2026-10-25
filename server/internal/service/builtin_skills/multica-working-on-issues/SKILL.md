@@ -401,4 +401,4 @@ When a `batch_ready` notice names a combination candidate and representative del
 
 ### Creating acceptance-test Agents
 
-Production Agent settings belong to the user. In Multica test environments, existing/seed Agents use CodeBuddy `deepseek-v4.1-flash`; Agents created by a model execution inherit that execution's provider, model, thinking level and service tier through `scripts/test-agent-policy.py`. Read `docs/operations/environment-releases.md` → 测试 Agent 模型维护 before creating one. Missing provenance or unavailable runtime/model means stop for human assistance, not provider fallback; preserve active work.
+Production Agent settings belong to the user. Test Agents follow the production Settings → Test environment agents policy, including environment defaults and explicit Agent overrides. New Agents and seed restore use the current test default through `scripts/test-agent-policy.py`; creator model identity does not override it. Read `docs/operations/environment-releases.md` → 测试 Agent 模型维护. Missing policy, unsupported runtime/model or persistent authentication failure requires human assistance; preserve active work and never switch provider automatically.

@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/testagents"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1271,6 +1273,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("description must be %d characters or fewer", maxAgentDescriptionLength))
 		return
 	}
+	if !h.applyTestAgentDefault(w, r, workspaceID, &req) {
+		return
+	}
 	if req.RuntimeID == "" {
 		writeError(w, http.StatusBadRequest, "runtime_id is required")
 		return
@@ -1453,6 +1458,18 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("create agent failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create agent: "+err.Error())
 		return
+	}
+	if testagents.Environment(auth.EnvironmentID()) {
+		// 创建事务持有 Agent 写锁，避免并发应用配置后插入旧选择。
+		if err := testagents.Apply(r.Context(), tx, workspaceID, uuidToString(created.ID)); err != nil {
+			writeError(w, 503, err.Error())
+			return
+		}
+		created, err = qtx.GetAgent(r.Context(), created.ID)
+		if err != nil {
+			writeError(w, 500, "读取已创建测试 Agent 失败")
+			return
+		}
 	}
 	if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, created.ID, parseUUID(ownerID), perm.targets); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save agent access")

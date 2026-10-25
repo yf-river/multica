@@ -25,12 +25,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useWorkspacePaths, useCurrentWorkspace } from "@multica/core/paths";
 import { PLUGINS_V1_FLAG } from "@multica/core/feature-flags";
-import { useFeatureEnabled } from "@multica/core/config";
+import { useFeatureEnabled, useConfigStore } from "@multica/core/config";
 import { useNavigation } from "../../navigation";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
+const TestAgentsTab = lazy(() => import("./test-agents-tab").then(module => ({default:module.TestAgentsTab})));
 const AccountTab = lazy(() => import("./account-tab").then((module) => ({ default: module.AccountTab })));
 const PreferencesTab = lazy(() => import("./preferences-tab").then((module) => ({ default: module.PreferencesTab })));
 const ChatTab = lazy(() => import("./chat-tab").then((module) => ({ default: module.ChatTab })));
@@ -67,6 +68,7 @@ function ActiveSettingsTab({ tab }: { tab: string }) {
     case "chat": return <ChatTab />;
     case "notifications": return <NotificationsTab />;
     case "tokens": return <TokensTab />;
+    case "test-agents": return <TestAgentsTab />;
     case "workspace": return <WorkspaceTab />;
     case "repositories": return <RepositoriesTab />;
     case "github": return <RepositoriesTab />;
@@ -94,6 +96,7 @@ const ACCOUNT_TAB_ICONS = {
 } as const;
 
 const WORKSPACE_TAB_KEYS = [
+  "test_agents",
   "general",
   "repositories",
   "integrations",
@@ -104,6 +107,7 @@ const WORKSPACE_TAB_KEYS = [
   "plugins",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
+  test_agents: "test-agents",
   general: "workspace",
   repositories: "repositories",
   integrations: "integrations",
@@ -116,6 +120,7 @@ const WORKSPACE_TAB_VALUES = {
   plugins: "plugins",
 } as const;
 const WORKSPACE_TAB_ICONS = {
+  test_agents: Server,
   general: Building2,
   repositories: FolderGit2,
   integrations: Plug,
@@ -152,6 +157,7 @@ export function SettingsPage() {
   const workspaceName = useCurrentWorkspace()?.name;
   const navigation = useNavigation();
   const isMobile = useIsMobile();
+  const production = useConfigStore(state => state.environmentName) === "生产";
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
 
   // 只保留被 feature flag 打开的标签；plugins 默认隐藏。
@@ -159,9 +165,9 @@ export function SettingsPage() {
     () =>
       WORKSPACE_TAB_KEYS.filter(
         (key) =>
-          key !== "plugins" || pluginsEnabled,
+          (key !== "plugins" || pluginsEnabled) && (key !== "test_agents" || production),
       ),
-    [pluginsEnabled],
+    [pluginsEnabled, production],
   );
 
   // 有效标签值的白名单；未知的 ?tab=… 值会静默回退到默认标签。

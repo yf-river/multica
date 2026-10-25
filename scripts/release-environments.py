@@ -329,7 +329,7 @@ def build(source, target, *, verification=False):
                 run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}', '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
     operations=target/'operations';operations.mkdir(exist_ok=True)
-    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','test-agent-policy.py','test-agent-models.py','test-agent-models.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
+    for name in ('release-environments.py','issue-delivery-worker.py','release-maintenance.py','verification-environments.py','verification-seed.py','verification-seed-copy.mjs','test-agent-control.py','test-agent-policy.py','test-agent-models.py','test-agent-models.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs'):
         script=source/'scripts'/name
         if script.exists():(operations/name).parent.mkdir(parents=True,exist_ok=True);(operations/name).write_bytes(script.read_bytes())
     for name in ('verify-release-browser.mjs','lib/goal-test-audit-env.mjs','lib/goal-test-browser-audit.mjs','lib/acceptance-artifacts.mjs'):
@@ -681,7 +681,10 @@ def check_readiness(metadata,timeout=30,prior_readiness=None):
 def launch(env, release, cfg, m,prior_readiness=None):
     result={}
     m['pids']=result
-    result['server']=start([release/'server/bin/server'],release,cfg['server'],m['log_paths']['server'])
+    server_env=dict(cfg['server'])
+    if env=='prod':
+        server_env['MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID']=read(m['daemon_profile_path'])['workspace_id']
+    result['server']=start([release/'server/bin/server'],release,server_env,m['log_paths']['server'])
     ready(m['backend_url']+'/health',pid=result['server'])
     check_readiness(m,prior_readiness=prior_readiness)
     stop_maintenance(env)

@@ -840,6 +840,11 @@ class Worker:
         # 固定 int/prod 只由生产控制队列调度，int 数据库不能另建同名占用抢写环境。
         if self.env!='prod':return
         r.recover_release_windows()
+        try:
+            spec=importlib.util.spec_from_file_location('test_agent_control',Path(__file__).with_name('test-agent-control.py'))
+            control=importlib.util.module_from_spec(spec);spec.loader.exec_module(control);control.tick(self)
+        except Exception as error:
+            print('测试 Agent 控制暂不可用：'+str(type(error).__name__),flush=True)
         with r.lock('delivery-worker-'+self.env):
             current=r.candidate() if r.candidate_path().exists() else None
             current_id=current.get('delivery_id') if current and current.get('status') not in ('released','succeeded','failed') else None
@@ -919,7 +924,7 @@ def install(env):
     r.require_control_directory()
     # 修改 3. 种子恢复由接力器调用，操作脚本必须与接力器同版本安装；沿用主工作区的旧脚本会让恢复和清理规则不同步。
     names=('issue-delivery-worker.py','release-environments.py','release-maintenance.py','verification-environments.py',
-           'verification-seed.py','verification-seed-copy.mjs','test-agent-policy.py','test-agent-models.py','test-agent-models.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs') + r.BROWSER_OPERATIONS
+           'verification-seed.py','verification-seed-copy.mjs','test-agent-control.py','test-agent-policy.py','test-agent-models.py','test-agent-models.mjs','verification-scrub.json','lib/verification-scrub.mjs','check-release-database.mjs') + r.BROWSER_OPERATIONS
     digest=r.hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in names)).hexdigest()[:16]
     directory=r.RUN/'publisher'/('delivery-'+env+'-'+digest)
     directory.mkdir(parents=True,exist_ok=True)

@@ -226,11 +226,14 @@ These rules apply when Mobile is explicitly reactivated or its own source is int
 
 ### 测试 Agent 的模型
 
-- 本规则只影响 int、verify 和明确登记的临时测试环境；生产 Agent 配置由用户管理。
-- 存量测试 Agent 与种子统一使用 CodeBuddy `deepseek-v4.1-flash`；种子导入清除来源 runtime 标识，启动本地 Daemon 后重新绑定。
-- 模型执行中创建测试 Agent，使用 `scripts/test-agent-policy.py` 从本轮执行上下文继承 runtime provider、模型、推理强度和速度，再绑定目标测试环境的同类 runtime。人工初始化默认 Flash，不能用模型自述或可变 Agent 配置代替实际执行参数。
-- 无可信上下文、模型或参数不支持、账号或网络持续失败时，保留现场并人工接入；不自动切换模型、账号或供应商。供应商内部不可观察的调用如实标明。
-- 维护入口、恢复与验收见 `docs/operations/environment-releases.md` 的“测试 Agent 模型维护”。不为更新模型重置已有测试库或中断活动执行。
+生产设置中的“测试环境 Agent”是 int 与 verify-1/2/3 的模型配置真源。默认 CodeBuddy `deepseek-v4.1-flash`；可显式选择独立登录的 Codex `gpt-6.1-sol`、`low`、正常速度（`default`），账号使用 `code`。生产业务 Agent 的配置由用户管理。
+
+- 管理员可以更新测试默认配置、单个环境或单个 Agent。应用默认配置会清除各环境的单独设置；新建测试 Agent 读取本环境已应用的默认配置。配置未就绪时创建返回明确错误。
+- 既有外部发布器同步配置和环境清单；每次最多维护一个环境。锁定候选、核对服务和数据库身份、确认无活动任务后，在事务内更新模型和本地 runtime 绑定，保留状态、权限、归档和提示词。忙碌环境显示待应用，运行中的任务不被中断。失败不切换模型或账号。
+- 已登记环境显示最近回报时间、期望版本与实际应用状态；管理员并发编辑使用版本号校验。控制入口仅在生产安装记录指定的工作区开放，浏览器不接触测试连接凭据或任意执行命令。
+- 发布器把默认值同步到控制目录 `.run/test-agent-policy.json`。辅助创建入口 `scripts/test-agent-policy.py` 读取此文件；种子恢复使用当前默认值并绑定本地 runtime，种子样本内的 Flash 仅为离线清理占位。配置变化不要求重建种子或重置已有测试库。
+- 原生 Codex 使用已有账号登录；各验收槽位复制授权账号凭据到隔离目录，不共享可写的账号主目录。可配置调用使用所选参数；供应商内部不可观察的调用如实注明。
+- 临时环境需要先核实安装归属并接入受控注册，当前界面只管理四个固定环境，未知环境不自动操作。
 
 Tests follow the code:
 
