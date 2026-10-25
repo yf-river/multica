@@ -318,6 +318,9 @@ func classify(beforeMeta *fileMeta, baseFile *baselineFile, afterMeta *fileMeta)
 	case !beforeExists:
 		return "added"
 	}
+	if beforeMeta != nil && beforeMeta.Mode != afterMeta.Mode {
+		return "modified"
+	}
 	if afterMeta.SizeOnly {
 		// Too large to hash: only a size delta is trustworthy.
 		beforeSize := int64(0)
@@ -334,7 +337,7 @@ func classify(beforeMeta *fileMeta, baseFile *baselineFile, afterMeta *fileMeta)
 	if beforeMeta != nil && beforeMeta.Sum != "" && afterMeta.Sum == beforeMeta.Sum && afterMeta.Mode == beforeMeta.Mode {
 		return ""
 	}
-	if beforeMeta == nil && baseFile != nil && baseFile.Sum != "" && afterMeta.Sum == baseFile.Sum && afterMeta.Mode == baseFile.Mode {
+	if beforeMeta == nil && baseFile != nil && baseFile.Sum != "" && afterMeta.Sum == baseFile.Sum && (afterMeta.Mode&0170111) == (baseFile.Mode&0170111) {
 		return ""
 	}
 	return "modified"

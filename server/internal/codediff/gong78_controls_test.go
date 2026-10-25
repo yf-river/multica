@@ -163,3 +163,22 @@ func TestGong78ExternalSkillDirectory(t *testing.T) {
 		t.Fatalf("non-Git skill edit missing: %+v", diff.Roots)
 	}
 }
+
+func TestGong78LargeFileModeChange(t *testing.T) {
+	before := &fileMeta{Mode: 0100644, Size: 100, SizeOnly: true}
+	after := &fileMeta{Mode: 0100755, Size: 100, SizeOnly: true}
+	if classify(before, nil, after) != "modified" {
+		t.Fatal("size-only capture lost mode change")
+	}
+}
+func TestGong78CloneModeRespectsGitExecutableSemantics(t *testing.T) {
+	baseline := &baselineFile{Mode: 0100644, Sum: "same"}
+	after := &fileMeta{Mode: 0100664, Sum: "same"}
+	if classify(nil, baseline, after) != "" {
+		t.Fatal("clone umask reported as run edit")
+	}
+	after.Mode = 0100755
+	if classify(nil, baseline, after) != "modified" {
+		t.Fatal("executable mode change absent")
+	}
+}

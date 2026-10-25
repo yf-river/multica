@@ -2354,11 +2354,16 @@ export class ApiClient {
   /** 列出与某议题关联的全部任务运行记录。 */
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {
     const result: AgentTask[] = [];
+    const seen = new Set<string>();
     for (let offset = 0; ; offset += 50) {
       const raw = await this.fetch<unknown>(`/api/issues/${issueId}/task-runs?offset=${offset}`);
       const page = parseWithFallback<AgentTask[]>(raw, AgentTaskListSchema, [], {endpoint:"GET /api/issues/:id/task-runs"});
-      result.push(...page);
-      if (page.length < 50) return result;
+      const fresh=page.filter(task=>!seen.has(task.id));
+      if(fresh.length===0)return result;
+      for(const task of fresh)seen.add(task.id);
+      result.push(...fresh);
+      // 旧服务端可能忽略 offset；重复页和非分页响应都必须终止。
+      if (page.length !== 50) return result;
     }
   }
 
