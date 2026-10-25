@@ -1248,7 +1248,22 @@ export interface RuntimeModel {
   supports_explicit_standard_service_tier?: boolean;
 }
 
-/** 一个运行时原生执行档位（服务档位，如 Codex 的 Fast/Priority）。 */
+/**
+ * A model the runtime named but will not run on that host — today only Claude
+ * Code, reporting one that needs a newer CLI than the installed one.
+ *
+ * These arrive in their own list and never inside `models`, which is what keeps
+ * an older client from offering one: it reads `models`, and they are not there.
+ * The picker shows them greyed out with `reason` so the gap reads as "your CLI
+ * is behind" rather than "Multica does not support this model" (MUL-6961).
+ */
+export interface RuntimeUnavailableModel {
+  id: string;
+  label: string;
+  /** The runtime's own remedy, e.g. "Update to 2.1.255+ to use Fable 5.1". */
+  reason?: string;
+}
+
 export interface RuntimeModelServiceTier {
   /** 原样发给 provider 协议的目录 id。 */
   id: string;
@@ -1293,7 +1308,8 @@ export interface RuntimeModelListRequest {
   status: RuntimeModelListStatus;
   /** 探测出的模型列表（完成时有）。 */
   models?: RuntimeModel[];
-  /** 该运行时是否支持"按 agent 选模型"。 */
+  /** Advisory rows the runtime cannot run; never selectable. */
+  unavailable_models?: RuntimeUnavailableModel[];
   supported: boolean;
   /** 失败原因（可选）。 */
   error?: string;
@@ -1315,6 +1331,13 @@ export interface RuntimeModelListRequest {
  */
 export interface RuntimeModelsResult {
   models: RuntimeModel[];
+  /**
+   * Rows the runtime named but cannot run. Kept out of `models` on purpose —
+   * see RuntimeUnavailableModel. Optional like `cached` beside it: the resolver
+   * always sets it, but a backend older than the field contributes nothing, so
+   * consumers read it defensively.
+   */
+  unavailableModels?: RuntimeUnavailableModel[];
   supported: boolean;
   /**
    * 服务器是否用目录缓存而非真跑 daemon 往返作答（MUL-5444）。驱动查询的

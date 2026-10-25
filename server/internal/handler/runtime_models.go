@@ -53,19 +53,25 @@ const (
 // RunStartedAt 在 PopPending 认领请求时被设置。它标 `json:"-"`，因为是服务端记账字段——
 // UI 只需要 Status / UpdatedAt 就能驱动轮询。
 type ModelListRequest struct {
-	ID           string          `json:"id"`
-	RuntimeID    string          `json:"runtime_id"`
-	Status       ModelListStatus `json:"status"`
-	Models       []ModelEntry    `json:"models,omitempty"`
-	Supported    bool            `json:"supported"`
-	Error        string          `json:"error,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	RunStartedAt *time.Time      `json:"-"`
-	// Cached 标记该响应来自服务端目录缓存而非一次实时的 daemon 往返（MUL-5444）。纯信息性：
-	// Status 已是 "completed"、Models 已填好，忽略此字段的客户端行为与以前完全一致。CachedAt
-	// 携带快照采集时间，给想展示新鲜度的客户端用。这两个字段从不写入请求存储，只存在于
-	// 合成的缓存命中响应上。
+	ID        string          `json:"id"`
+	RuntimeID string          `json:"runtime_id"`
+	Status    ModelListStatus `json:"status"`
+	Models    []ModelEntry    `json:"models,omitempty"`
+	// UnavailableModels is advisory display copy, never a source of pickable
+	// values. Older daemons omit it and older clients ignore it.
+	UnavailableModels []UnavailableModelEntry `json:"unavailable_models,omitempty"`
+	Supported         bool                    `json:"supported"`
+	Error             string                  `json:"error,omitempty"`
+	CreatedAt         time.Time               `json:"created_at"`
+	UpdatedAt         time.Time               `json:"updated_at"`
+	RunStartedAt      *time.Time              `json:"-"`
+	// Cached marks a response answered from the server-side catalog cache
+	// instead of a live daemon round trip (MUL-5444). Purely informational —
+	// Status is already "completed" and Models is already populated, so a client
+	// that ignores this field behaves exactly as before. CachedAt carries the
+	// snapshot's capture time for clients that want to surface freshness.
+	// Neither field is ever persisted in the request store; they only exist on
+	// the synthetic cache-hit response.
 	Cached   bool       `json:"cached,omitempty"`
 	CachedAt *time.Time `json:"cached_at,omitempty"`
 }
@@ -87,8 +93,22 @@ type ModelEntry struct {
 	SupportsExplicitStandardServiceTier bool               `json:"supports_explicit_standard_service_tier,omitempty"`
 }
 
-// ModelServiceTier 是模型服务等级（tier）的线上结构：服务商给模型分档定价/限速，
-// 每一档一个可选项。
+// UnavailableModelEntry is a model the runtime named but will not run on that
+// host — Claude Code reports one needing a newer CLI this way. `Reason` is the
+// runtime's own upgrade hint, shown so the gap reads as "your CLI is behind"
+// rather than "Multica does not support this model" (MUL-6961).
+//
+// INVARIANT: these never appear in `models`. A client that does not know this
+// field is an installed desktop build predating it, and such a client must not
+// be able to render one as a selectable model and persist an id its CLI
+// rejects. Keeping the lists disjoint is what makes that true without the old
+// client having to do anything.
+type UnavailableModelEntry struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Reason string `json:"reason,omitempty"`
+}
+
 type ModelServiceTier struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -135,7 +155,7 @@ type ModelListStore interface {
 	// "true" 没关系——PopPending 探测后若队列已空就返回 nil。
 	HasPending(ctx context.Context, runtimeID string) (bool, error)
 	PopPending(ctx context.Context, runtimeID string) (*ModelListRequest, error)
-	Complete(ctx context.Context, id string, models []ModelEntry, supported bool) error
+	Complete(ctx context.Context, id string, models []ModelEntry, unavailable []UnavailableModelEntry, supported bool) error
 	Fail(ctx context.Context, id string, errMsg string) error
 }
 
@@ -247,13 +267,14 @@ func (s *InMemoryModelListStore) PopPending(_ context.Context, runtimeID string)
 	return oldest, nil
 }
 
-func (s *InMemoryModelListStore) Complete(_ context.Context, id string, models []ModelEntry, supported bool) error {
+func (s *InMemoryModelListStore) Complete(_ context.Context, id string, models []ModelEntry, unavailable []UnavailableModelEntry, supported bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
 		req.Status = ModelListCompleted
 		req.Models = models
+		req.UnavailableModels = unavailable
 		req.Supported = supported
 		req.UpdatedAt = time.Now()
 	}
@@ -300,26 +321,30 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	resolvedRuntimeID := uuidToString(rt.ID)
 
-	if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); cached != nil {
-		age := cached.Age(time.Now())
-		if age >= modelCatalogRevalidateAfter {
-			h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
+	if r.URL.Query().Get("force") != "true" {
+		if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); cached != nil {
+			age := cached.Age(time.Now())
+			if age >= modelCatalogRevalidateAfter {
+				h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
+			}
+			storedAt := cached.StoredAt
+			writeJSON(w, http.StatusOK, &ModelListRequest{
+				// Synthetic ID: no store record backs a cache hit. Clients only poll
+				// GET /models/{id} while status is pending/running, which this
+				// response never is.
+				ID:                randomID(),
+				RuntimeID:         resolvedRuntimeID,
+				Status:            ModelListCompleted,
+				Models:            cached.Models,
+				UnavailableModels: cached.UnavailableModels,
+				Supported:         cached.Supported,
+				CreatedAt:         storedAt,
+				UpdatedAt:         storedAt,
+				Cached:            true,
+				CachedAt:          &storedAt,
+			})
+			return
 		}
-		storedAt := cached.StoredAt
-		writeJSON(w, http.StatusOK, &ModelListRequest{
-			// 合成 ID：缓存命中背后没有存储记录。客户端只在 status 为 pending/running 时才
-			// 轮询 GET /models/{id}，而这个响应永远不会是那两种状态。
-			ID:        randomID(),
-			RuntimeID: resolvedRuntimeID,
-			Status:    ModelListCompleted,
-			Models:    cached.Models,
-			Supported: cached.Supported,
-			CreatedAt: storedAt,
-			UpdatedAt: storedAt,
-			Cached:    true,
-			CachedAt:  &storedAt,
-		})
-		return
 	}
 
 	req, err := h.ModelListStore.Create(r.Context(), resolvedRuntimeID)
@@ -445,13 +470,17 @@ func (h *Handler) ReportModelListResult(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body struct {
-		Status    string       `json:"status"` // "completed" or "failed"
-		Models    []ModelEntry `json:"models"`
-		Supported *bool        `json:"supported"`
-		Error     string       `json:"error"`
-		// Fallback 标记一次 completed 上报的模型其实是 provider 在发现失败后替换的静态
-		// 占位目录，不是 runtime 的真实目录。老 daemon 省略它；缺省表示「这个 daemon 说不
-		// 清」，维持 MUL-5549 之前的行为。
+		Status string       `json:"status"` // "completed" or "failed"
+		Models []ModelEntry `json:"models"`
+		// UnavailableModels is what the runtime named but will not run. Older
+		// daemons omit it; absent simply means no advisory rows to show.
+		UnavailableModels []UnavailableModelEntry `json:"unavailable_models"`
+		Supported         *bool                   `json:"supported"`
+		Error             string                  `json:"error"`
+		// Fallback marks a completed report whose models are a static
+		// stand-in the provider substituted after discovery failed, not the
+		// runtime's real catalog. Older daemons omit it; absent means "this
+		// daemon cannot tell us", which stays the pre-MUL-5549 behaviour.
 		Fallback bool `json:"fallback"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -465,9 +494,11 @@ func (h *Handler) ReportModelListResult(w http.ResponseWriter, r *http.Request) 
 		if body.Supported != nil {
 			supported = *body.Supported
 		}
-		if err := h.ModelListStore.Complete(r.Context(), requestID, body.Models, supported); err != nil {
-			// 存储失败要回 5xx 让 daemon 重试，而不是吞掉这份上报（那会让请求卡在 running
-			// 直到服务端超时——正是我们要避免的「看着正常其实什么都没发生」那类 bug）。
+		if err := h.ModelListStore.Complete(r.Context(), requestID, body.Models, body.UnavailableModels, supported); err != nil {
+			// Surface the store failure as 5xx so the daemon can retry instead
+			// of swallowing the report (leaves the request stuck in running
+			// until the server-side timeout, which is exactly the "looks OK
+			// but nothing happens" class of bug we're trying to avoid).
 			slog.Error("ModelListStore Complete failed", "error", err, "request_id", requestID)
 			writeError(w, http.StatusInternalServerError, "failed to persist completion")
 			return
@@ -484,7 +515,7 @@ func (h *Handler) ReportModelListResult(w http.ResponseWriter, r *http.Request) 
 		if h.ModelCatalogCache != nil {
 			switch modelCatalogCacheDecision(body.Models, supported, body.Fallback) {
 			case modelCatalogCacheStore:
-				if err := h.ModelCatalogCache.Put(r.Context(), runtimeID, body.Models, supported); err != nil {
+				if err := h.ModelCatalogCache.Put(r.Context(), runtimeID, body.Models, body.UnavailableModels, supported); err != nil {
 					slog.Warn("model catalog cache write failed", "error", err, "runtime_id", runtimeID)
 				}
 			case modelCatalogCacheDrop:

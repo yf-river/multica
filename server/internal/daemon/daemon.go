@@ -4139,6 +4139,16 @@ func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID stri
 		ServiceTiers                        []modelServiceTierWire `json:"service_tiers,omitempty"`
 		SupportsExplicitStandardServiceTier bool                   `json:"supports_explicit_standard_service_tier,omitempty"`
 	}
+	// Models the runtime named but will not run here (Claude Code reporting one
+	// that needs a newer CLI). Reported in their own list, never inside
+	// `models`: a client that does not know this field — an installed desktop
+	// build predating it — then cannot offer one as a real model, which a flag
+	// on the model itself could not guarantee (MUL-6961).
+	type unavailableModelWire struct {
+		ID     string `json:"id"`
+		Label  string `json:"label"`
+		Reason string `json:"reason,omitempty"`
+	}
 	wire := make([]modelWire, 0, len(models))
 	for _, m := range models {
 		entry := modelWire{
@@ -4171,12 +4181,24 @@ func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID stri
 		}
 		wire = append(wire, entry)
 	}
+	unavailableWire := make([]unavailableModelWire, 0, len(catalog.Unavailable))
+	for _, m := range catalog.Unavailable {
+		unavailableWire = append(unavailableWire, unavailableModelWire{
+			ID:     m.ID,
+			Label:  m.Label,
+			Reason: m.Reason,
+		})
+	}
 	d.reportModelListResult(ctx, rt, requestID, map[string]any{
 		"status":    "completed",
 		"models":    wire,
 		"supported": agent.ModelSelectionSupported(rt.Provider),
-		// 附加字段：模型仍值得渲染，但服务器绝不能把它们持久化为该 runtime 的
-		// 真实目录（MUL-5549）。旧服务器会忽略它、保持原有行为。
+		// Additive: an older server drops the key and the picker simply shows
+		// no unavailable section, which is the pre-MUL-6961 behaviour.
+		"unavailable_models": unavailableWire,
+		// Additive field: the models are still worth rendering, but the server
+		// must not persist them as this runtime's real catalog (MUL-5549).
+		// Older servers ignore it and keep the previous behaviour.
 		"fallback": catalog.Fallback,
 	})
 }
@@ -6533,7 +6555,7 @@ func resolveTaskModelSelection(
 	if sel.ServiceTier != "" {
 		ok, err := agent.ValidateServiceTierWith(loadCatalog, provider, sel.Model, sel.ServiceTier)
 		if err != nil {
-			taskLog.Warn("service_tier: catalog lookup failed; passing through",
+			taskLog.Warn("service_tier: catalog cannot validate; passing through",
 				"provider", provider,
 				"model", sel.Model,
 				"service_tier", sel.ServiceTier,
@@ -6559,7 +6581,7 @@ func resolveTaskModelSelection(
 	if sel.ThinkingLevel != "" {
 		ok, err := agent.ValidateThinkingLevelWith(loadCatalog, provider, sel.Model, sel.ThinkingLevel)
 		if err != nil {
-			taskLog.Warn("thinking_level: catalog lookup failed; passing through",
+			taskLog.Warn("thinking_level: catalog cannot validate; passing through",
 				"provider", provider,
 				"model", sel.Model,
 				"thinking_level", sel.ThinkingLevel,

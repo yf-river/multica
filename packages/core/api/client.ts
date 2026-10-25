@@ -2436,15 +2436,22 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/update/${updateId}`);
   }
 
-  // 两个「发现类」端点都喂给同一个 UI 状态机（pending/running 时轮询，
-  // 然后渲染或失败），所以响应要校验而非强转：解析失败的响应体降级为一条
-  // 显式的 "failed" 记录——它展示发现错误、保留手动录入模型的入口，
-  // 而不是一个凭空捏造的空目录或无限转圈（MUL-5444）。
-  /** 发起一次「拉取 runtime 支持的模型列表」的异步任务（结果另行查询）。 */
-  async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
-    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
-      method: "POST",
-    });
+  // Both discovery endpoints feed a UI state machine (poll while
+  // pending/running, then render or fail), so the response is validated rather
+  // than cast: an unparseable body degrades to an explicit "failed" record that
+  // shows the discovery error and keeps manual model entry usable, instead of a
+  // fabricated empty catalog or an endless spinner (MUL-5444).
+  async initiateListModels(
+    runtimeId: string,
+    options: { force?: boolean } = {},
+  ): Promise<RuntimeModelListRequest> {
+    const query = options.force === true ? "?force=true" : "";
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/${runtimeId}/models${query}`,
+      {
+        method: "POST",
+      },
+    );
     return parseWithFallback<RuntimeModelListRequest>(
       raw,
       RuntimeModelListRequestSchema,

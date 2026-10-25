@@ -1,6 +1,4 @@
-// Runtime 模型目录（models）的发现与轮询查询：
-// 发起 list-models 请求（经心跳捎带）后轮询，直到 daemon 回报或超时。
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { RuntimeModelsResult } from "../types/agent";
 
@@ -62,8 +60,12 @@ export const MODELS_GC_TIME_MS = 30 * 60_000;
  */
 export async function resolveRuntimeModels(
   runtimeId: string,
+  options: { force?: boolean } = {},
 ): Promise<RuntimeModelsResult> {
-  const initial = await api.initiateListModels(runtimeId);
+  const initial =
+    options.force === true
+      ? await api.initiateListModels(runtimeId, { force: true })
+      : await api.initiateListModels(runtimeId);
   const start = Date.now();
   let current = initial;
   while (current.status === "pending" || current.status === "running") {
@@ -83,6 +85,7 @@ export async function resolveRuntimeModels(
   }
   return {
     models: current.models ?? [],
+    unavailableModels: current.unavailable_models ?? [],
     supported: current.supported !== false,
     cached: current.cached === true,
     cachedAt: current.cached_at,
@@ -113,5 +116,20 @@ export function runtimeModelsOptions(runtimeId: string | null | undefined) {
     staleTime: (query) => staleTimeFor(query.state.data),
     gcTime: MODELS_GC_TIME_MS,
     retry: false,
+  });
+}
+
+// refreshRuntimeModels is the explicit user refresh path. It reuses the
+// canonical query key so every model-dependent control updates together, while
+// its force flag skips the server's stale-while-revalidate catalog and waits
+// for the daemon's current answer.
+export function refreshRuntimeModels(
+  queryClient: QueryClient,
+  runtimeId: string,
+): Promise<RuntimeModelsResult> {
+  return queryClient.fetchQuery({
+    ...runtimeModelsOptions(runtimeId),
+    queryFn: () => resolveRuntimeModels(runtimeId, { force: true }),
+    staleTime: 0,
   });
 }
