@@ -21,6 +21,10 @@ type Metrics struct {
 	SlowEvictionsTotal   atomic.Int64
 	MessagesSentTotal    atomic.Int64
 	MessagesDroppedTotal atomic.Int64
+	// MembershipRemovalDroppedTotal counts target revalidations discarded when
+	// the bounded queue is full. Peer invalidation and content authorization
+	// still run.
+	MembershipRemovalDroppedTotal atomic.Int64
 
 	// InboundTooLargeTotal 统计「因对端发来单条超限消息（超过 inboundReadLimit）
 	// 而被关掉的连接数」，鉴权前/鉴权后两条读取路径都算。
@@ -203,18 +207,19 @@ func (m *Metrics) Snapshot() map[string]any {
 		nodeID, _ = v.(string)
 	}
 	return map[string]any{
-		"connects_total":          m.ConnectsTotal.Load(),
-		"disconnects_total":       m.DisconnectsTotal.Load(),
-		"active_connections":      m.ActiveConnections.Load(),
-		"slow_evictions_total":    m.SlowEvictionsTotal.Load(),
-		"messages_sent_total":     m.MessagesSentTotal.Load(),
-		"messages_dropped_total":  m.MessagesDroppedTotal.Load(),
-		"inbound_too_large_total": m.InboundTooLargeTotal.Load(),
-		"events_sent_by_type":     snapshotCounters(&m.eventSent),
-		"subscribes_total":        snapshotCounters(&m.subscribeTotal),
-		"unsubscribes_total":      snapshotCounters(&m.unsubscribeTotal),
-		"subscribe_denied_total":  snapshotCounters(&m.subscribeDeniedTotal),
-		"active_scope_rooms":      snapshotCounters(&m.scopeRooms),
+		"connects_total":                    m.ConnectsTotal.Load(),
+		"disconnects_total":                 m.DisconnectsTotal.Load(),
+		"active_connections":                m.ActiveConnections.Load(),
+		"slow_evictions_total":              m.SlowEvictionsTotal.Load(),
+		"messages_sent_total":               m.MessagesSentTotal.Load(),
+		"messages_dropped_total":            m.MessagesDroppedTotal.Load(),
+		"membership_removals_dropped_total": m.MembershipRemovalDroppedTotal.Load(),
+		"inbound_too_large_total":           m.InboundTooLargeTotal.Load(),
+		"events_sent_by_type":               snapshotCounters(&m.eventSent),
+		"subscribes_total":                  snapshotCounters(&m.subscribeTotal),
+		"unsubscribes_total":                snapshotCounters(&m.unsubscribeTotal),
+		"subscribe_denied_total":            snapshotCounters(&m.subscribeDeniedTotal),
+		"active_scope_rooms":                snapshotCounters(&m.scopeRooms),
 		"redis": map[string]any{
 			"connected":               m.RedisConnected.Load(),
 			"node_id":                 nodeID,
@@ -242,6 +247,7 @@ func (m *Metrics) Snapshot() map[string]any {
 
 // Reset 把所有计数器清零。仅供测试用。
 func (m *Metrics) Reset() {
+	m.MembershipRemovalDroppedTotal.Store(0)
 	m.ConnectsTotal.Store(0)
 	m.DisconnectsTotal.Store(0)
 	m.ActiveConnections.Store(0)

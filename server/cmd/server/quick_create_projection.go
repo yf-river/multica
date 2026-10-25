@@ -199,6 +199,9 @@ func projectQuickCreateCompleted(
 		ActorID:       projection.task.AgentID,
 		Details:       details,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create quick-create completion inbox: %w", err)
 	}
@@ -242,6 +245,9 @@ func projectQuickCreateFailed(
 		ActorID:       projection.task.AgentID,
 		Details:       details,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create quick-create failure inbox: %w", err)
 	}

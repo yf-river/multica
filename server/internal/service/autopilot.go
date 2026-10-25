@@ -698,6 +698,9 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 			ActorID:       leader.ID,
 			Details:       details,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("create autopilot subscriber inbox: %w", err)
 		}

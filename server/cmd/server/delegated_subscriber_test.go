@@ -59,7 +59,7 @@ func createAgentOriginIssue(t *testing.T, agentID, originType string, originTask
 	err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id,
 		                   position, number, origin_type, origin_id, parent_issue_id)
-		VALUES ($1, 'delegated subscriber test issue', 'todo', 'medium', 'agent', $2, 0,
+		VALUES ($1, 'delegated subscriber test issue', 'todo', 'not_important_not_urgent', 'agent', $2, 0,
 		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1),
 		        $3, $4, $5)
 		RETURNING id

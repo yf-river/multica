@@ -12,9 +12,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -375,6 +377,9 @@ func notifyIssueSubscribers(
 			ActorID:       optionalUUID(e.ActorID),
 			Details:       details,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -445,6 +450,9 @@ func notifyDirect(
 		ActorID:       optionalUUID(e.ActorID),
 		Details:       details,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -565,6 +573,9 @@ func notifyMentionedMembers(
 			ActorID:       optionalUUID(e.ActorID),
 			Details:       details,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return err
 		}

@@ -6229,6 +6229,9 @@ func (s *TaskService) exhaustDelegatedFailureRecovery(ctx context.Context, targe
 				ActorID:       pgtype.UUID{},
 				Details:       details,
 			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
 			if err != nil {
 				return fmt.Errorf("create delegated failure exhaustion inbox item: %w", err)
 			}
@@ -7623,6 +7626,12 @@ func (s *TaskService) persistQuickCreateOutcome(
 		Details:       details,
 		ID:            quickCreateOutcomeID(task.ID, inboxType),
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			slog.Error("quick-create outcome: commit without recipient failed", "error", commitErr)
+		}
+		return
+	}
 	if err != nil {
 		slog.Error("quick-create outcome: create inbox failed", "task_id", util.UUIDToString(task.ID), "error", err)
 		return
