@@ -1039,6 +1039,9 @@ func (s *TaskService) ResolveIssueReviewSHA(ctx context.Context, issueID pgtype.
 		return ""
 	}
 	sha, err := s.Queries.GetIssueReviewHeadSha(ctx, issueID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && sha == "") {
+		sha, err = s.Queries.GetIssueDeliveryReviewSHA(ctx, issueID)
+	}
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			slog.Warn("resolve issue review sha failed",
@@ -6013,7 +6016,7 @@ func loadDelegatedFailureRecoveryTarget(ctx context.Context, q *db.Queries, fail
 		}
 		return nil, fmt.Errorf("load source agent: %w", err)
 	}
-	if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid || agent.WorkspaceID != issue.WorkspaceID {
+	if agent.SystemKey.String == "issue_review" || agent.ArchivedAt.Valid || !agent.RuntimeID.Valid || agent.WorkspaceID != issue.WorkspaceID {
 		return nil, nil
 	}
 	if covered, err := delegatedIssueBarrierCoversResult(ctx, q, failed, issue, agent); err != nil || covered {

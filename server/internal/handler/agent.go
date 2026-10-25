@@ -390,6 +390,7 @@ type TaskIssueStatusData struct {
 // autopilot / quick_create / 直接指派）由 Kind 判别，各自的来源上下文
 // （TriggerCommentID / ChatSessionID / AutopilotRunID 等）按需携带。
 type AgentTaskResponse struct {
+	ReviewCommit         string                 `json:"review_commit,omitempty"`
 	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
 	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
 	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
@@ -507,18 +508,20 @@ type AgentTaskResponse struct {
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // 历史 is_agent_intro 会话的兼容字段；新建 agent 不再创建这类聊天
 	// IsCompanion 与 LifeContext 标识受管控的 Life 聊天/后台运行。daemon 每次
 	// 运行都从 Multica 数据重建该上下文。
-	IsCompanion              bool            `json:"is_companion,omitempty"`
-	LifeContext              string          `json:"life_context,omitempty"`
-	LifeJobID                string          `json:"life_job_id,omitempty"`
-	LifeJobType              string          `json:"life_job_type,omitempty"`
-	LifeJobInput             json.RawMessage `json:"life_job_input,omitempty"`
-	AutopilotRunID           string          `json:"autopilot_run_id,omitempty"`          // autopilot 派生的任务非空
-	AutopilotID              string          `json:"autopilot_id,omitempty"`              // 派生本任务的 autopilot
-	AutopilotTitle           string          `json:"autopilot_title,omitempty"`           // 用作任务上下文的 autopilot 标题
-	AutopilotDescription     string          `json:"autopilot_description,omitempty"`     // 用作任务提示词的 autopilot 描述
-	AutopilotSource          string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
-	AutopilotTriggerPayload  json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发负载
-	SupervisionPrompt        string          `json:"supervision_prompt,omitempty"`
+	IsCompanion             bool            `json:"is_companion,omitempty"`
+	LifeContext             string          `json:"life_context,omitempty"`
+	LifeJobID               string          `json:"life_job_id,omitempty"`
+	LifeJobType             string          `json:"life_job_type,omitempty"`
+	LifeJobInput            json.RawMessage `json:"life_job_input,omitempty"`
+	AutopilotRunID          string          `json:"autopilot_run_id,omitempty"`          // autopilot 派生的任务非空
+	AutopilotID             string          `json:"autopilot_id,omitempty"`              // 派生本任务的 autopilot
+	AutopilotTitle          string          `json:"autopilot_title,omitempty"`           // 用作任务上下文的 autopilot 标题
+	AutopilotDescription    string          `json:"autopilot_description,omitempty"`     // 用作任务提示词的 autopilot 描述
+	AutopilotSource         string          `json:"autopilot_source,omitempty"`          // manual、schedule、webhook 或 api
+	AutopilotTriggerPayload json.RawMessage `json:"autopilot_trigger_payload,omitempty"` // webhook/api 运行的可选触发负载
+	SupervisionPrompt       string          `json:"supervision_prompt,omitempty"`
+	// 1. Only the owning daemon receives this opt-in session extraction permission.
+	CaptureExecutionEvidence bool            `json:"capture_execution_evidence,omitempty"`
 	SupervisionInvestigation json.RawMessage `json:"supervision_investigation,omitempty"`
 	QuickCreatePrompt        string          `json:"quick_create_prompt,omitempty"`         // quick-create 任务的用户自然语言输入
 	QuickCreatePriority      string          `json:"quick_create_priority,omitempty"`       // quick-create 显式选择的优先级
@@ -2250,9 +2253,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	// 1. 记录本次运行对提示词的改动：agent.instructions / description 存在库里，
 	//    文件 diff 看不到它们，审核时需要单独一条文本差异。
-	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+	h.recordRunTextChangeTx(r.Context(), tx, r, uuidToString(updated.WorkspaceID),
 		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "instructions", existing.Instructions, updated.Instructions)
-	h.recordRunTextChange(r.Context(), qtx, r, uuidToString(updated.WorkspaceID),
+	h.recordRunTextChangeTx(r.Context(), tx, r, uuidToString(updated.WorkspaceID),
 		runTextTarget{Kind: "agent", ID: id, Name: updated.Name}, "description", existing.Description, updated.Description)
 
 	// 可空 runtime 覆盖项：请求里 null/空表示显式清空字段。UpdateAgent 的

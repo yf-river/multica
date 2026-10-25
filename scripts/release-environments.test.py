@@ -441,6 +441,44 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
 
+    # Modification 1. A changed or unknown migration cannot inherit trace compatibility approval.
+    def test_reviewed_trace_migrations_reject_changed_sql(self):
+        source=Path(__file__).parent.parent/'server/migrations'
+        names=('643_supervision_material_trace_usage.up.sql', '645_supervision_round_preparation_budget.up.sql', '649_supervision_trace_scope.up.sql')
+        for name in names:
+            with tempfile.TemporaryDirectory() as folder:
+                target=Path(folder)/name
+                target.write_bytes((source/name).read_bytes())
+                self.assertTrue(r.reviewed_trace_preparation_change(target))
+                target.write_text(target.read_text()+"\nDELETE FROM supervision_material;\n")
+                self.assertFalse(r.reviewed_trace_preparation_change(target))
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder)/'999_unknown.up.sql'
+            target.write_bytes((source/names[0]).read_bytes())
+            self.assertFalse(r.reviewed_trace_preparation_change(target))
+
+    # Modification 2. Check the complete pending set through the real gate, not just its hash helper.
+    def test_trace_pending_set_requires_review_before_database_write(self):
+        source=Path(__file__).parent.parent/'server/migrations'
+        with tempfile.TemporaryDirectory() as folder:
+            old=Path(folder)/'old';new=Path(folder)/'new'
+            (old/'server/migrations').mkdir(parents=True)
+            target=new/'server/migrations';target.mkdir(parents=True)
+            pending=[p for p in source.glob('*.up.sql') if '640'<=p.name[:3]<='649']
+            self.assertEqual(len(pending),10)
+            for migration in pending:
+                (target/migration.name).write_bytes(migration.read_bytes())
+            with patch.object(r,'migrate') as migrate,patch.object(r,'check_database') as check:
+                r.prepare_database(new,{},old)
+                migrate.assert_called_once_with(new,{},previous=old)
+                self.assertEqual(check.call_args_list, [unittest.mock.call(old,{}),unittest.mock.call(new,{})])
+            for name in ('643_supervision_material_trace_usage.up.sql','645_supervision_round_preparation_budget.up.sql','649_supervision_trace_scope.up.sql'):
+                migration=target/name; original=migration.read_bytes()
+                migration.write_bytes(original+b'\n-- changed after review\n')
+                with patch.object(r,'migrate') as migrate,patch.object(r,'check_database'):
+                    with self.assertRaisesRegex(RuntimeError,name):r.prepare_database(new,{},old)
+                    migrate.assert_not_called()
+                migration.write_bytes(original)
     # 1. Exact reviewed bytes pass; changed or unknown SQL fails before any migration call.
     def test_trace_compatibility_fingerprints_before_database_write(self):
         import shutil

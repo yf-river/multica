@@ -257,3 +257,10 @@ Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`
 - 接收人提示与回执文案：`packages/views/issues/review-reply-copy.ts`、`packages/views/issues/components/comment-trigger-chips.tsx`。
 
 - `server/internal/handler/delivery_batch.go`, `issue_delivery.go`, `delivery_notice.go`: fixed combination candidate, representative acceptance with exact candidate identity and idempotent evidence, persistent batch-ready notification and revocation recovery.
+
+## GONG-78 审查与差异依据
+
+- `no_action`、固定候选及输入去重：`internal/handler/issue_review.go`、`internal/review/default_instructions.md`。
+- 差异采集与附件输入基线：`internal/codediff/`、`internal/daemon/run_capture.go`、`cmd_attachment.go`；外部目录标记共享归属，不用当前工作树回填历史。
+- 完成材料冻结：`internal/supervision/round.go`；证据与阅读进度绑定完成轮次。
+- 操作和兼容边界：`docs/operations/environment-releases.md` 的 GONG-78 章节。

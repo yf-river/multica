@@ -1,0 +1,31 @@
+{
+  "revision": 3,
+  "candidate_id": "0e85290a0e05225ad73725162893296a2a8224fe-1792908535926189285",
+  "evidence": [
+    {
+      "name": "指定候选浏览器登录、暂停状态刷新及有限权限边界",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-f75fd82b4ad5/worktree/.gong86-acceptance/REPORT.md"
+    },
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "status": "failed",
+      "evidence": "测试监督绑定及取数配置未就绪，未完成；/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-f75fd82b4ad5/worktree/.gong86-acceptance/REPORT.md"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "status": "failed",
+      "evidence": "测试监督绑定及取数配置未就绪，未完成；/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-f75fd82b4ad5/worktree/.gong86-acceptance/REPORT.md"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "status": "failed",
+      "evidence": "测试监督绑定及取数配置未就绪，未完成；/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-f75fd82b4ad5/worktree/.gong86-acceptance/REPORT.md"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "status": "failed",
+      "evidence": "测试监督绑定及取数配置未就绪，未完成；/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-f75fd82b4ad5/worktree/.gong86-acceptance/REPORT.md"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+exec(open('.gong86-int-final/common.py').read())
+issue=json.load(open(D/'resume-issue.json'));runs=api('GET','issues/'+issue['id']+'/task-runs');assert len(runs)==1 and runs[0]['status']=='completed';save('resume-first-run',runs[0]);save('resume-first-messages',api('GET','tasks/'+runs[0]['id']+'/messages'));save('resume-receipt',api('POST','issues/'+issue['id']+'/rerun',dict(task_id=runs[0]['id'])));print('same-runtime source rerun requested',runs[0]['id'])

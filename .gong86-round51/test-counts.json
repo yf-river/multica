@@ -1,0 +1,10 @@
+{
+  "passed": 34,
+  "skipped": [
+    "TestIntConcurrentDispatchAndLongHistory",
+    "TestIntPersistenceAndResume",
+    "TestIntSupplementalReadingAdvancesOnlyContiguousCurrentGeneration",
+    "TestIntSupervisionStopAllAndOne",
+    "TestIntSupervisionPreservesNewHumanDecisions"
+  ]
+}

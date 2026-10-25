@@ -263,4 +263,33 @@ func TestIntegrationOnlyDeliveryPreservesVerificationAndRequiresInt(t *testing.T
 	if !unapproved || deliveryPhase(t, delivery) != "awaiting_review" {
 		t.Fatal("integration changed production authorization")
 	}
+	businessAction(t, issue, delivery, owner, map[string]any{"action": "approve"}).Want(200)
+}
+
+func TestIntegratedApprovalRejectsUnrelatedVerificationHistory(t *testing.T) {
+	for _, scenario := range []string{"different-source", "different-delivery", "incomplete-history", "missing-int", "unfinished-int"} {
+		t.Run(scenario, func(t *testing.T) {
+			issue, plan, delivery, _, owner := businessFixture(t)
+			businessAction(t, issue, delivery, owner, map[string]any{"action": "bind-checks", "plan_id": plan, "required_checks": businessChecks()}).Want(200)
+			dbfx.Exec(t, `UPDATE issue_delivery SET phase='awaiting_review',candidate_id='int-candidate',evidence='[{"name":"组合业务","status":"passed","evidence":"当前int"}]',plan_snapshot=plan_snapshot||'{"integration_complete":true}'::jsonb WHERE id=$1`, delivery)
+			var source string
+			dbfx.QueryRow(t, `SELECT source_commit FROM issue_delivery WHERE id=$1`, delivery).Scan(&source)
+			historyDelivery := delivery
+			history := `[{"name":"真实业务","status":"passed","evidence":"已接受的verify"}]`
+			switch scenario {
+			case "different-source":
+				source = strings.Repeat("f", 40)
+			case "different-delivery":
+				historyDelivery, _ = coordinationDelivery(t, issue, plan, "needs_changes")
+			case "incomplete-history":
+				history = `[{"name":"无关检查","status":"passed","evidence":"不满足清单"}]`
+			case "missing-int":
+				dbfx.Exec(t, `UPDATE issue_delivery SET evidence='[]' WHERE id=$1`, delivery)
+			case "unfinished-int":
+				dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=plan_snapshot- 'integration_complete' WHERE id=$1`, delivery)
+			}
+			dbfx.Exec(t, `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) VALUES($1,$2,$3,$4,'verify-candidate',$5,'{}',$6::jsonb)`, dbid.NewV7(), testWorkspaceID, issue, historyDelivery, source, history)
+			businessAction(t, issue, delivery, owner, map[string]any{"action": "approve"}).Want(409)
+		})
+	}
 }

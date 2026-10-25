@@ -837,6 +837,46 @@ type Issue struct {
 	WorkCompletedAt    pgtype.Timestamptz `json:"work_completed_at"`
 }
 
+type IssueDelivery struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	IssueID               pgtype.UUID        `json:"issue_id"`
+	OperationID           pgtype.UUID        `json:"operation_id"`
+	PlanID                pgtype.UUID        `json:"plan_id"`
+	PlanSnapshot          []byte             `json:"plan_snapshot"`
+	SourceCommit          string             `json:"source_commit"`
+	SourceBranch          string             `json:"source_branch"`
+	BaseCommit            string             `json:"base_commit"`
+	Phase                 string             `json:"phase"`
+	Evidence              []byte             `json:"evidence"`
+	AcceptanceSubmitted   bool               `json:"acceptance_submitted"`
+	VerificationCommentID pgtype.UUID        `json:"verification_comment_id"`
+	ReleaseCommentID      pgtype.UUID        `json:"release_comment_id"`
+	ReleaseValidated      bool               `json:"release_validated"`
+	CandidateID           string             `json:"candidate_id"`
+	CandidateUrl          string             `json:"candidate_url"`
+	ApprovedBy            pgtype.UUID        `json:"approved_by"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	ApprovalCommentID     pgtype.UUID        `json:"approval_comment_id"`
+	Error                 string             `json:"error"`
+	WorkerToken           pgtype.UUID        `json:"worker_token"`
+	Revision              int64              `json:"revision"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type IssueDeliveryPlan struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	CommentID       pgtype.UUID        `json:"comment_id"`
+	CommentRevision int32              `json:"comment_revision"`
+	ConfirmedBy     pgtype.UUID        `json:"confirmed_by"`
+	ConfirmedAt     pgtype.Timestamptz `json:"confirmed_at"`
+	ConfirmationID  pgtype.UUID        `json:"confirmation_id"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IssueDependency struct {
 	ID               pgtype.UUID `json:"id"`
 	IssueID          pgtype.UUID `json:"issue_id"`

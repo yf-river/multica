@@ -108,6 +108,50 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
 
             {canManage && !enabled && <p className="text-caption text-muted-foreground">{t(($) => $.supervision.recheck_paused)}</p>}
 
+            {((data.supervisor_usage?.length ?? 0) > 0 || (data.trace_materials?.length ?? 0) > 0) && (
+              <details className="rounded-lg border p-3">
+                <summary className="cursor-pointer text-body focus-visible:outline focus-visible:outline-ring">{t(($) => $.supervision.trace_supervisor_cost)}</summary>
+                {(data.supervisor_usage?.length ?? 0) === 0 && <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.supervision.trace_supervisor_unknown)}</p>}
+                <ul className="mt-2 space-y-1 text-caption tabular-nums text-muted-foreground">
+                  {data.supervisor_usage?.map((usage) => <li key={`${usage.provider}/${usage.model}`} className="break-words">{t(($) => $.supervision.trace_supervisor_usage, { provider: usage.provider, model: usage.model, tokens: usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_write_tokens })}</li>)}
+                </ul>
+              </details>
+            )}
+
+            {/* 1. Separate collection coverage and cost from the supervisor's quality conclusions. */}
+            {(data.trace_materials?.length ?? 0) > 0 && (
+              <section aria-labelledby="supervision-traces">
+                <h3 id="supervision-traces" className="font-semibold">{t(($) => $.supervision.trace_title)}</h3>
+                <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.supervision.trace_hint)}</p>
+                <div className="mt-3 space-y-3">
+                  {data.trace_materials?.map((material) => {
+                    const state = (() => {
+                      switch (material.status) {
+                        case "complete": return t(($) => $.supervision.trace_complete);
+                        case "partial": return t(($) => $.supervision.trace_partial);
+                        case "failed": return t(($) => $.supervision.trace_failed);
+                        case "not_applicable": return t(($) => $.supervision.trace_not_applicable);
+                        case "disabled": return t(($) => $.supervision.trace_disabled);
+                        default: return t(($) => $.supervision.trace_pending);
+                      }
+                    })();
+                    return (
+                      <details key={material.id} className="min-w-0 rounded-lg border p-3">
+                        <summary className="cursor-pointer break-words text-body focus-visible:outline focus-visible:outline-ring">
+                          {t(($) => $.supervision.trace_state, { runtime: material.runtime || t(($) => $.supervision.trace_unknown), state })}
+                          <span className="ml-2 text-caption tabular-nums text-muted-foreground">{t(($) => $.supervision.trace_counts, { matched: material.matched_requests, differences: material.differences })}</span>
+                        </summary>
+                        <p className="mt-2 break-all text-caption text-muted-foreground">{material.run_id} · {moment(material.queried_at)}</p>
+                        <p className="mt-2 text-caption tabular-nums">{t(($) => $.supervision.trace_preparation_cost, { requests: material.preparation_http_requests, milliseconds: material.preparation_duration_ms, snapshots: material.local_snapshots })}</p>
+                        {(material.gaps?.length ?? 0) > 0 && <ul className="mt-2 list-inside list-disc space-y-1 text-caption text-muted-foreground">{material.gaps.map((gap, index) => <li key={`${index}-${gap}`} className="break-words">{gap}</li>)}</ul>}
+                        <Button variant="outline" className="mt-3" disabled={material.status === "pending" || material.status === "processing"} onClick={() => setEvidence({ kind: "trace_usage", id: material.id, run: material.run_id })}>{t(($) => $.supervision.trace_evidence)}</Button>
+                      </details>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
             {!data.status_category || data.status_category === "done" ? (
               data.round ? (
                 <section aria-labelledby="supervision-round" className="rounded-lg border p-3">

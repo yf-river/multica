@@ -1211,3 +1211,21 @@ func TestIssueTasksStillSerialiseOnPathMutex(t *testing.T) {
 	}
 	release()
 }
+
+func TestGong78ReviewPinsWorktreeBeforeDirectoryLockSelection(t *testing.T) {
+	dir := t.TempDir()
+	ref, _ := json.Marshal(map[string]any{"daemon_id": "daemon", "local_path": dir, "execution_mode": "in_place"})
+	task := Task{ReviewCommit: strings.Repeat("a", 40), ProjectResources: []ProjectResourceData{{ResourceType: localDirectoryResourceType, ResourceRef: ref}}}
+	assignment, err := localDirectoryAssignmentForTask(task, "daemon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !assignment.UsesWorktree() || assignment.Ref.BaseRef != task.ReviewCommit {
+		t.Fatal("review would hold the in-place directory lock")
+	}
+	task.ReviewCommit = ""
+	ordinary, err := localDirectoryAssignmentForTask(task, "daemon")
+	if err != nil || ordinary.UsesWorktree() {
+		t.Fatal("ordinary task execution mode changed")
+	}
+}

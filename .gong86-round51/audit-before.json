@@ -1,0 +1,301 @@
+{
+  "environment": "verify-1",
+  "mode": "audit",
+  "agents": 11,
+  "busy": 0,
+  "daemon_id": "01a1635b-f6d5-7eb5-afea-dd918ed27ac2",
+  "runtimes": [
+    {
+      "id": "a527baa6-fe85-41e2-9c29-38e70e2013e9",
+      "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+      "provider": "codebuddy",
+      "runtime_mode": "local"
+    },
+    {
+      "id": "975c21ab-9d15-4bf1-bfa7-439f4acdd3ed",
+      "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+      "provider": "codex",
+      "runtime_mode": "local"
+    },
+    {
+      "id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "provider": "codebuddy",
+      "runtime_mode": "local"
+    },
+    {
+      "id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "provider": "codex",
+      "runtime_mode": "local"
+    }
+  ],
+  "before": [
+    {
+      "id": "01a16326-e34f-78f4-a544-c16e7351dfe7",
+      "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+      "runtime_id": "975c21ab-9d15-4bf1-bfa7-439f4acdd3ed",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "上游观察员 · b6ea8b7e-0dce-4aa3-bcb9-2a9ce9932a5e",
+      "custom_args": []
+    },
+    {
+      "id": "01a16330-2513-7076-a477-9356a0ca98c9",
+      "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+      "runtime_id": "975c21ab-9d15-4bf1-bfa7-439f4acdd3ed",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "上游观察员 · 54bae3c3-bb3e-4a1f-9532-f044cc6f06ed",
+      "custom_args": []
+    },
+    {
+      "id": "07f3c6b3-6794-4ceb-83ff-533252d6b8a5",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T09:25:18.479Z",
+      "name": "Native Asset Acceptance",
+      "custom_args": []
+    },
+    {
+      "id": "3522d11e-1810-406d-9596-1926b13d6788",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T10:04:14.145Z",
+      "name": "批量运行时验收 2",
+      "custom_args": []
+    },
+    {
+      "id": "3574804a-a55e-4a2a-92ae-85eb94dae8ec",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "差异卡片验收",
+      "custom_args": []
+    },
+    {
+      "id": "695b5ac6-498e-41b5-999c-afbcbf3d7b9b",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "idle",
+      "archived_at": null,
+      "name": "G86-51 Flash acceptance",
+      "custom_args": []
+    },
+    {
+      "id": "7a65a5b5-0580-40b4-a873-37cbc81465b5",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "质量监督",
+      "custom_args": []
+    },
+    {
+      "id": "dd2028b2-d0d6-4172-85d9-da5aec8d0584",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T10:04:14.127Z",
+      "name": "批量运行时验收 1",
+      "custom_args": []
+    },
+    {
+      "id": "ef0b9b7b-5e0b-43da-9795-9c182d971afc",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T09:46:48.580Z",
+      "name": "Skill Catalog Acceptance",
+      "custom_args": []
+    },
+    {
+      "id": "fcb46f9b-e1d0-41cd-b310-428a6640fe13",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "Mika",
+      "custom_args": []
+    },
+    {
+      "id": "fdb97d0f-5f0a-4700-b173-f19ef244cdda",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T10:58:26.850Z",
+      "name": "能力库发布验收",
+      "custom_args": []
+    }
+  ],
+  "after": [
+    {
+      "id": "01a16326-e34f-78f4-a544-c16e7351dfe7",
+      "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+      "runtime_id": "975c21ab-9d15-4bf1-bfa7-439f4acdd3ed",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "上游观察员 · b6ea8b7e-0dce-4aa3-bcb9-2a9ce9932a5e",
+      "custom_args": []
+    },
+    {
+      "id": "01a16330-2513-7076-a477-9356a0ca98c9",
+      "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+      "runtime_id": "975c21ab-9d15-4bf1-bfa7-439f4acdd3ed",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "上游观察员 · 54bae3c3-bb3e-4a1f-9532-f044cc6f06ed",
+      "custom_args": []
+    },
+    {
+      "id": "07f3c6b3-6794-4ceb-83ff-533252d6b8a5",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T09:25:18.479Z",
+      "name": "Native Asset Acceptance",
+      "custom_args": []
+    },
+    {
+      "id": "3522d11e-1810-406d-9596-1926b13d6788",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T10:04:14.145Z",
+      "name": "批量运行时验收 2",
+      "custom_args": []
+    },
+    {
+      "id": "3574804a-a55e-4a2a-92ae-85eb94dae8ec",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "差异卡片验收",
+      "custom_args": []
+    },
+    {
+      "id": "695b5ac6-498e-41b5-999c-afbcbf3d7b9b",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "idle",
+      "archived_at": null,
+      "name": "G86-51 Flash acceptance",
+      "custom_args": []
+    },
+    {
+      "id": "7a65a5b5-0580-40b4-a873-37cbc81465b5",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "质量监督",
+      "custom_args": []
+    },
+    {
+      "id": "dd2028b2-d0d6-4172-85d9-da5aec8d0584",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T10:04:14.127Z",
+      "name": "批量运行时验收 1",
+      "custom_args": []
+    },
+    {
+      "id": "ef0b9b7b-5e0b-43da-9795-9c182d971afc",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T09:46:48.580Z",
+      "name": "Skill Catalog Acceptance",
+      "custom_args": []
+    },
+    {
+      "id": "fcb46f9b-e1d0-41cd-b310-428a6640fe13",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": null,
+      "name": "Mika",
+      "custom_args": []
+    },
+    {
+      "id": "fdb97d0f-5f0a-4700-b173-f19ef244cdda",
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "model": "gpt-6.1-sol",
+      "thinking_level": "low",
+      "service_tier": "default",
+      "status": "offline",
+      "archived_at": "2026-10-13T10:58:26.850Z",
+      "name": "能力库发布验收",
+      "custom_args": []
+    }
+  ]
+}

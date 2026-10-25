@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ type Material struct {
 	Text         string `json:"text,omitempty"`
 	Note         bool   `json:"supervisor_note,omitempty"`
 	ContextOnly  bool   `json:"context_only,omitempty"`
+	IndexOnly    bool   `json:"index_only,omitempty"`
 	UnreadOffset int    `json:"unread_offset,omitempty"`
 }
 type Finding struct {
@@ -118,6 +120,11 @@ func (s *Service) Tick(ctx context.Context) error {
 			continue
 		}
 		if err = s.inventory(ctx, ws); err != nil {
+			s.setError(ctx, ws, err)
+			continue
+		}
+		// 1. Prepare execution evidence outside dispatch transactions; external gaps do not stop local supervision.
+		if err = s.prepareConfiguredTraceMaterials(ctx, ws); err != nil {
 			s.setError(ctx, ws, err)
 			continue
 		}
@@ -211,9 +218,12 @@ func sourceSQL(kind string) (string, error) {
 	case "task":
 		return `SELECT jsonb_build_object('id',t.id,'status',t.status,'result',t.result,'error',t.error,'work_dir',t.work_dir,'created_at',t.created_at,'started_at',t.started_at,'completed_at',t.completed_at)::text FROM agent_task_queue t JOIN issue i ON i.id=t.issue_id WHERE t.id=$1 AND i.workspace_id=$2`, nil
 	case "message":
-		return `SELECT jsonb_build_object('id',m.id,'seq',m.seq,'type',m.type,'tool',m.tool,'content',m.content,'input',m.input,'output',m.output,'created_at',m.created_at)::text FROM task_message m JOIN agent_task_queue t ON t.id=m.task_id JOIN issue i ON i.id=t.issue_id WHERE m.id=$1 AND i.workspace_id=$2`, nil
+		return `SELECT (CASE WHEN m.type='execution_evidence' THEN jsonb_build_object('id',m.id,'seq',m.seq,'type',m.type,'run_id',m.task_id,'body_source','trace_usage material index') ELSE jsonb_build_object('id',m.id,'seq',m.seq,'type',m.type,'tool',m.tool,'content',m.content,'input',m.input,'output',m.output,'created_at',m.created_at) END)::text FROM task_message m JOIN agent_task_queue t ON t.id=m.task_id JOIN issue i ON i.id=t.issue_id WHERE m.id=$1 AND i.workspace_id=$2`, nil
 	case "trace":
 		return `SELECT jsonb_build_object('id',id,'event_type',event_type,'status',status,'error_type',error_type,'failure_reason',failure_reason,'metadata',metadata,'created_at',created_at)::text FROM task_trace_event WHERE id=$1 AND workspace_id=$2`, nil
+	// 2. Published report bodies are immutable; their source UUID pins the evidence version.
+	case "trace_usage":
+		return `SELECT report FROM supervision_trace_material WHERE id=$1 AND workspace_id=$2 AND status NOT IN('pending','processing')`, nil
 	default:
 		return "", fmt.Errorf("unknown material kind %q", kind)
 	}
@@ -224,7 +234,8 @@ func sourceSQL(kind string) (string, error) {
 func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cutoff pgtype.Timestamptz) ([]Material, error) {
 	rows, err := tx.Query(ctx, `SELECT m.kind,m.source_id::text,COALESCE(m.run_id::text,''),m.generation,
       CASE WHEN m.generation<>m.reviewed_generation THEN m.reviewed_offset ELSE 0 END
-      FROM supervision_material m
+      FROM (SELECT workspace_id,issue_id,kind,source_id,run_id,generation,reviewed_generation,reviewed_offset,changed_at FROM supervision_frozen_material WHERE material_cutoff=$3
+      UNION ALL SELECT workspace_id,issue_id,kind,source_id,run_id,generation,reviewed_generation,reviewed_offset,changed_at FROM supervision_material WHERE $3::timestamptz IS NULL) m
       LEFT JOIN task_message tm ON m.kind='message' AND tm.id=m.source_id
       LEFT JOIN agent_task_queue t ON t.id=m.run_id
       WHERE m.workspace_id=$1 AND m.issue_id=$2 AND m.generation>m.reviewed_generation
@@ -258,13 +269,43 @@ func (s *Service) materials(ctx context.Context, tx pgx.Tx, ws, issue string, cu
 		if err != nil {
 			return nil, err
 		}
+		if cutoff.Valid {
+			query = `SELECT body FROM supervision_frozen_material WHERE source_id=$1 AND workspace_id=$2 AND kind='` + m.Kind + `' AND material_cutoff=$5`
+		}
 		size := min(40000, budget)
+		// 3. Keep entry prompts short; the existing material tool reads the remaining evidence.
+		if m.Kind == "trace_usage" {
+			size = min(size, 1500)
+		}
 		if size <= 0 {
 			break
 		}
 		m.UnreadOffset = m.Offset
+		// 3. Prepared bodies enter prompts as short indexes; only actual material pages advance reading.
+		if m.Kind == "trace_usage" {
+			var index string
+			var length int
+			err = tx.QueryRow(ctx, `SELECT length(p.report),jsonb_build_object('path','trace_usage/'||p.id::text,'run_id',p.run_id,'runtime',p.runtime,'status',p.status,'material_version',p.material_version,'coverage',p.coverage,'gap_count',jsonb_array_length(p.gaps))::text
+ FROM supervision_trace_material p JOIN supervision_config c ON c.workspace_id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2 AND c.investigation_enabled`, ws, m.ID).Scan(&length, &index)
+			if err == nil {
+				m.IndexOnly = true
+				m.Text = index
+				m.Length = length
+				m.End = m.Offset
+				budget -= len([]rune(index))
+				out = append(out, m)
+				continue
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return nil, err
+			}
+		}
 		m.Offset = max(0, m.Offset-min(1000, size/4))
-		err = tx.QueryRow(ctx, `SELECT length(body),substring(body from $3::integer for $4::integer) FROM (`+query+`) source(body)`, m.ID, ws, m.Offset+1, size).Scan(&m.Length, &m.Text)
+		args := []any{m.ID, ws, m.Offset + 1, size}
+		if cutoff.Valid {
+			args = append(args, cutoff)
+		}
+		err = tx.QueryRow(ctx, `SELECT length(body),substring(body from $3::integer for $4::integer) FROM (`+query+`) source(body)`, args...).Scan(&m.Length, &m.Text)
 		if errors.Is(err, pgx.ErrNoRows) {
 			m.Text = "原始材料已删除，不能确认其原有内容。"
 			m.Length = m.Offset + len([]rune(m.Text))
@@ -392,11 +433,12 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	err = tx.QueryRow(ctx, `SELECT s.issue_id::text FROM supervision_subject s JOIN issue i ON i.id=s.issue_id
       LEFT JOIN supervision_round r ON r.workspace_id=s.workspace_id AND r.issue_id=s.issue_id AND r.status='open'
       WHERE s.workspace_id=$1 AND s.next_attempt_at<=now() AND s.failures<3
+      AND (NOT $2::boolean OR NOT EXISTS(SELECT 1 FROM supervision_trace_material p JOIN supervision_trace_scope pr ON pr.id=p.round_id AND pr.workspace_id=p.workspace_id WHERE p.workspace_id=s.workspace_id AND p.issue_id=s.issue_id AND pr.status='open' AND p.status IN('pending','processing')))
       AND NOT EXISTS(SELECT 1 FROM supervision_batch b WHERE b.workspace_id=s.workspace_id AND b.issue_id=s.issue_id AND b.status IN('preparing','running'))
       AND (s.force_review OR (`+categoryOf("i")+`='done' AND r.id IS NOT NULL
-        AND EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
-          AND m.generation>m.reviewed_generation AND m.changed_at<=r.material_cutoff)))
-      ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id LIMIT 1`, ws).Scan(&issue)
+        AND EXISTS(SELECT 1 FROM supervision_frozen_material m WHERE m.workspace_id=s.workspace_id AND m.issue_id=s.issue_id
+          AND m.generation>m.reviewed_generation AND m.round_id=r.id)))
+      ORDER BY s.force_review DESC,s.last_checked_at NULLS FIRST,s.changed_at,s.issue_id LIMIT 1`, ws, os.Getenv("MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE") != "").Scan(&issue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	}
@@ -426,8 +468,8 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 			return err
 		}
 		var pending bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_material m WHERE m.workspace_id=$1 AND m.issue_id=$2
-          AND m.generation>m.reviewed_generation AND m.changed_at<=$3::timestamptz)`, ws, issue, round.Cutoff).Scan(&pending); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM supervision_frozen_material m WHERE m.workspace_id=$1 AND m.issue_id=$2
+          AND m.generation>m.reviewed_generation AND m.material_cutoff=$3::timestamptz)`, ws, issue, round.Cutoff).Scan(&pending); err != nil {
 			return err
 		}
 		hasRound = done && pending
@@ -448,6 +490,11 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 		_, err = tx.Exec(ctx, `UPDATE supervision_subject SET force_review=false WHERE workspace_id=$1 AND issue_id=$2`, ws, issue)
 		if err != nil {
 			return err
+		}
+		if manual {
+			if _, err = tx.Exec(ctx, `UPDATE supervision_manual_preparation SET status='closed' WHERE workspace_id=$1 AND issue_id=$2 AND status='open'`, ws, issue); err != nil {
+				return err
+			}
 		}
 		return tx.Commit(ctx)
 	}
@@ -488,6 +535,11 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 	if _, err = tx.Exec(ctx, `UPDATE supervision_batch SET task_id=$2,status='running' WHERE id=$1`, batch, task.ID); err != nil {
 		return err
 	}
+	if manual {
+		if _, err = tx.Exec(ctx, `UPDATE supervision_manual_preparation SET status='closed' WHERE workspace_id=$1 AND issue_id=$2 AND status='open'`, ws, issue); err != nil {
+			return err
+		}
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -497,8 +549,7 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 
 const currentIssueSnapshotSQL = `SELECT jsonb_build_object('title',title,'description',left(description,8000),'acceptance_criteria',left(acceptance_criteria::text,4000),'status',status,
       'requirement_truncated',length(COALESCE(description,''))>8000 OR length(COALESCE(acceptance_criteria::text,''))>4000,
-      'pending_materials',(SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation
-        AND ($3::timestamptz IS NULL OR changed_at<=$3::timestamptz)),
+      'pending_materials',CASE WHEN $3::timestamptz IS NULL THEN (SELECT count(*) FROM supervision_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation) ELSE (SELECT count(*) FROM supervision_frozen_material WHERE workspace_id=$2 AND issue_id=$1 AND generation>reviewed_generation AND material_cutoff=$3) END,
       'previous_attempt_error',(SELECT left(error,1000) FROM supervision_subject WHERE workspace_id=$2 AND issue_id=$1),
       'finding_decisions',(SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT f.id,f.status,f.human_resolution,left(f.title,300) title,left(a.reason,2000) reason,a.action,a.created_at
         FROM supervision_finding f JOIN LATERAL (SELECT reason,action,created_at FROM supervision_action WHERE workspace_id=$2 AND finding_id=f.id AND action IN('open','in_progress','resolved','ignored','auto_resolved') ORDER BY created_at DESC,id DESC LIMIT 1) a ON true
@@ -648,7 +699,8 @@ func receiptMaterials(receipts map[string]Receipt) []Material {
 			continue
 		}
 		switch parts[0] {
-		case "issue", "comment", "task", "message", "trace":
+		// 4. Trace material pages participate in the same contiguous evidence coverage checks.
+		case "issue", "comment", "task", "message", "trace", "trace_usage":
 		default:
 			continue
 		}
@@ -965,6 +1017,17 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 	}
 	for _, ranges := range groups {
 		first := ranges[0]
+		if roundID != "" {
+			var offset, length int
+			first := ranges[0]
+			if err = tx.QueryRow(ctx, `SELECT reviewed_offset,length(body) FROM supervision_frozen_material WHERE workspace_id=$1 AND round_id=$2 AND kind=$3 AND source_id=$4 AND generation=$5 FOR UPDATE`, ws, roundID, first.Kind, first.ID, first.Generation).Scan(&offset, &length); err != nil {
+				return err
+			}
+			end := ContiguousEnd(offset, ranges)
+			if _, err = tx.Exec(ctx, `UPDATE supervision_frozen_material SET reviewed_offset=$6::bigint,reviewed_generation=CASE WHEN $6::bigint >= $7::bigint THEN generation ELSE reviewed_generation END WHERE workspace_id=$1 AND round_id=$2 AND kind=$3 AND source_id=$4 AND generation=$5`, ws, roundID, first.Kind, first.ID, first.Generation, end, length); err != nil {
+				return err
+			}
+		}
 		var generation int64
 		var offset int
 		if err = tx.QueryRow(ctx, `SELECT generation,reviewed_offset FROM supervision_material WHERE workspace_id=$1 AND kind=$2 AND source_id=$3 FOR UPDATE`, ws, first.Kind, first.ID).Scan(&generation, &offset); err != nil {

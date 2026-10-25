@@ -1,0 +1,31 @@
+{
+  "revision": 3,
+  "candidate_id": "96b302c78548dcf5bdba997fa1bc04972c3a1549-1792909468815044667",
+  "evidence": [
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-ae216ca12574/worktree/.gong86-current/REPORT.md；真实监督在模型调用前JSON解析失败，详见报告及failure.log。"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-ae216ca12574/worktree/.gong86-current/REPORT.md；真实监督在模型调用前JSON解析失败，详见报告及failure.log。"
+    },
+    {
+      "name": "先通过受控前置脚本配置监督runtime、候选技能和服务凭据，再建立真实模型样本；默认off不判业务失败",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-ae216ca12574/worktree/.gong86-current/REPORT.md；真实监督在模型调用前JSON解析失败，详见报告及failure.log。"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-ae216ca12574/worktree/.gong86-current/REPORT.md；真实监督在模型调用前JSON解析失败，详见报告及failure.log。"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-ae216ca12574/worktree/.gong86-current/REPORT.md；真实监督在模型调用前JSON解析失败，详见报告及failure.log。"
+    }
+  ]
+}

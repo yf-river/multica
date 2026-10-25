@@ -1,0 +1,12 @@
+[
+  {
+    "task": "01a17256-064c-743c-bf6d-9e6cb151823e",
+    "status": "running",
+    "skill_loaded": false
+  },
+  {
+    "task": "01a17255-cbb1-77d6-973a-6768ae25b112",
+    "status": "running",
+    "skill_loaded": true
+  }
+]

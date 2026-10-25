@@ -13,7 +13,8 @@ import (
 // repositories whose worktrees it may have created outside that directory.
 type CaptureSpec struct {
 	// WorkDir is the directory the agent ran in.
-	WorkDir string
+	WorkDir        string
+	InputDirectory string
 	// WorkDirKind is "workdir" for a disposable directory and
 	// "local_directory" for a user directory used in place.
 	WorkDirKind string
@@ -31,6 +32,7 @@ type CaptureSpec struct {
 }
 
 type externalRepo struct {
+	before    *Snapshot
 	path      string
 	head      string
 	worktrees map[string]string
@@ -71,10 +73,17 @@ func StartCapture(ctx context.Context, spec CaptureSpec) *Capture {
 			continue
 		}
 		seen[abs] = struct{}{}
-		if !isGitRepo(ctx, abs) {
+		if info, err := os.Stat(abs); err != nil || !info.IsDir() {
 			continue
 		}
+		var baseline *Snapshot
+		if !pathInside(abs, spec.WorkDir) && !pathInside(spec.WorkDir, abs) && len(capture.external) < MaxRoots-1 {
+			options := spec.Options
+			options.ExcludePaths = append(options.ExcludePaths, spec.ExcludePaths...)
+			baseline, _ = TakeSnapshot(ctx, abs, options)
+		}
 		capture.external = append(capture.external, externalRepo{
+			before:    baseline,
 			path:      abs,
 			head:      gitHead(ctx, abs),
 			worktrees: worktreePaths(ctx, abs),
@@ -95,6 +104,7 @@ func (c *Capture) Finish(ctx context.Context) *Diff {
 			c.before = nil
 		}
 	}()
+	c.loadInputs()
 	roots := []Root{}
 	workRoot := Root{Path: c.spec.WorkDir, Kind: c.spec.WorkDirKind, Label: "任务目录"}
 	if c.workDirState != "" {
@@ -128,6 +138,18 @@ func (c *Capture) Finish(ctx context.Context) *Diff {
 	//         behind a boundary that rendered as "no change".
 	remaining := MaxRoots - 1
 	for _, repo := range c.external {
+		if repo.before != nil {
+			defer repo.before.Close()
+			if remaining > 0 {
+				options := c.spec.Options
+				options.ExcludePaths = append(options.ExcludePaths, c.spec.ExcludePaths...)
+				root := BuildRoot(ctx, RootSpec{Path: repo.path, Kind: "external", Label: "关联目录", Before: repo.before, Attribution: "shared"}, options)
+				if len(root.Files) > 0 || len(root.Dirs) > 0 || root.Truncated {
+					roots = append(roots, root)
+					remaining--
+				}
+			}
+		}
 		now := worktreePaths(ctx, repo.path)
 		var created []string
 		for path := range now {

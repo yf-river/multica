@@ -17,6 +17,24 @@ function renderPage() {
 }
 beforeEach(() => { vi.clearAllMocks(); mocks.params = new URLSearchParams(); mocks.snapshot.mockResolvedValue({ ...EMPTY_SUPERVISION, can_manage: true }); mocks.list.mockResolvedValue({ items: [], has_more: false, offset: 0 }); });
 describe("quality supervision", () => {
+  // 1. Partial collection is explicit and opens its immutable material without leaving the task detail.
+  it("opens partial trace evidence while keeping coverage gaps visible", async () => {
+    mocks.params = new URLSearchParams({ selected: "issue" });
+    mocks.detail.mockResolvedValue({
+      title: "轨迹对照", description: "", assignee_type: null, assignee_id: null,
+      subject: { summary: "等待核验", efficiency: "uncertain", correctness: "uncertain", gaps: [], desired_version: 1, reviewed_version: 0, last_checked_at: null, error: "", failures: 0 },
+      findings: [], notes: [], actions: [], batches: [], investigations: [], coverage: { materials: 1, covered: 0, runs: 1 },
+      trace_materials: [{ id: "material", run_id: "run", runtime: "codebuddy", status: "partial", material_version: 1, queried_at: null, gaps: ["request identity missing"], matched_requests: 1, differences: 0, local_snapshots: 1, preparation_http_requests: 2, preparation_duration_ms: 40 }],
+    });
+    mocks.evidence.mockResolvedValue({ kind: "trace_usage", id: "material", issue_id: "issue", text: "固定版本材料", offset: 0, end: 6, length: 6, deleted: false });
+    renderPage();
+    fireEvent.click(await screen.findByText(/codebuddy · AgentLens 部分/));
+    expect(screen.getByText("request identity missing")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "查看材料证据" }));
+    expect(await screen.findByText("固定版本材料")).toBeInTheDocument();
+    expect(mocks.evidence).toHaveBeenCalledWith("trace_usage", "material", 0, undefined);
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
   it("opens the cited batch snapshot without paging into edited live content", async () => {
     mocks.params = new URLSearchParams({ evidence_kind: "trace", evidence_id: "source", evidence_batch: "batch-snapshot" });
     mocks.evidence.mockResolvedValue({ kind: "trace", id: "source", issue_id: "issue", snapshot: true, batch_id: "batch-snapshot", text: "审查当时的片段", offset: 20000, end: 28000, length: 100000, deleted: false });

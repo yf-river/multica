@@ -1,0 +1,85 @@
+[
+  {
+    "id": "01a17246-7736-77cf-bc57-8e00495e1831",
+    "agent_id": "695b5ac6-498e-41b5-999c-afbcbf3d7b9b",
+    "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+    "issue_id": "01a17246-7733-7e8b-a699-5ab2a4e47c8c",
+    "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T16:57:21+08:00",
+    "started_at": "2026-10-25T16:57:21+08:00",
+    "completed_at": "2026-10-25T16:57:37+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "1f2225820502",
+        "files": [],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-9-8e00495e1831/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "17 + 25 = 42\n\n（按受控验收要求，已用三个独立调用完成同一 `multica issue get` 的首次读取与两次同内容复读；未比较、未行动，也未修改文件或创建任务。）",
+      "pr_url": "",
+      "session_id": "01a17247-6283-7c97-ab4f-43fa832969f6",
+      "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-9-8e00495e1831/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T16:56:23+08:00",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-9-8e00495e1831/workdir",
+    "relative_work_dir": "dev-20d05776e5a9/dev-9-8e00495e1831/workdir",
+    "delivered_comment_ids": [],
+    "kind": "direct",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "originator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a17246-7733-7e8b-a699-5ab2a4e47c8c"
+      }
+    },
+    "usage": [
+      {
+        "provider": "codebuddy",
+        "model": "deepseek-v4.1-flash-ioa",
+        "input_tokens": 25174,
+        "output_tokens": 695,
+        "cache_read_tokens": 84352,
+        "cache_write_tokens": 0
+      }
+    ],
+    "traces": [
+      {
+        "provider": "codebuddy",
+        "session_id": "01a17247-6283-7c97-ab4f-43fa832969f6",
+        "provider_trace_id": "01a17247625671958cc8dd7dc5d0f2de",
+        "correlation": "exact",
+        "source": "local_session_jsonl",
+        "sdk_trace_id": "b3e27f919c15595ab10b157cc81731fd",
+        "sdk_trace_source_sha256": "91b22090861f1f2edf36de2495c2a01ba2bead42426940a4d86521f017b04063",
+        "sdk_trace_source_path": "providerData.traceId"
+      }
+    ]
+  }
+]

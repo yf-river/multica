@@ -501,11 +501,22 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	canManage := member.Role == "owner" || member.Role == "admin"
-	var findings, batches, notes, actions, investigations json.RawMessage
+	var findings, batches, notes, actions, investigations, traceMaterials, supervisorUsage json.RawMessage
 	for _, query := range []struct {
 		sql  string
 		dest *json.RawMessage
 	}{
+		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT u.provider,u.model,sum(u.input_tokens) input_tokens,sum(u.output_tokens) output_tokens,sum(u.cache_read_tokens) cache_read_tokens,sum(u.cache_write_tokens) cache_write_tokens
+ FROM task_usage u JOIN supervision_batch b ON b.task_id=u.task_id WHERE b.workspace_id=$1 AND b.issue_id=$2 GROUP BY u.provider,u.model)x`, &supervisorUsage},
+		// 1. Return only the latest preparation summary per run; full private evidence uses the existing reader.
+		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT DISTINCT ON(run_id) id,run_id,runtime,status,material_version,queried_at,
+ gaps,
+ COALESCE((coverage->>'matched_requests')::integer,0) matched_requests,
+ COALESCE((coverage->>'local_snapshots')::integer,0) local_snapshots,
+ COALESCE((coverage->>'preparation_http_requests')::integer,0) preparation_http_requests,
+ COALESCE((coverage->>'preparation_duration_ms')::bigint,0) preparation_duration_ms,
+ COALESCE((coverage->>'differences')::integer,0) differences
+ FROM supervision_trace_material WHERE workspace_id=$1 AND issue_id=$2 AND report<>'' ORDER BY run_id,created_at DESC,material_version DESC)x`, &traceMaterials},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,batch_id,created_at,request,result-'text' result FROM supervision_investigation WHERE workspace_id=$1 AND issue_id=$2 ORDER BY created_at DESC LIMIT 100)x`, &investigations},
 		{`SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.last_seen_at DESC),'[]') FROM supervision_finding f WHERE workspace_id=$1 AND issue_id=$2`, &findings},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT b.id,b.task_id,b.status,b.error,b.rules_version,b.created_at,b.completed_at,EXTRACT(EPOCH FROM (COALESCE(t.started_at,t.completed_at,now())-b.created_at)) queue_seconds,
@@ -571,7 +582,7 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
 		"description": issue.Description.String, "business_status": issue.Status,
 		"status_category": issuestatus.Effective(r.Context(), h.Queries, issue.WorkspaceID, issue.Status),
 		"assignee_type":   textToPtr(issue.AssigneeType), "assignee_id": uuidToPtr(issue.AssigneeID),
-		"findings": findings, "batches": batches, "notes": notes, "actions": actions, "investigations": investigations, "coverage": coverage})
+		"findings": findings, "batches": batches, "notes": notes, "actions": actions, "investigations": investigations, "coverage": coverage, "trace_materials": traceMaterials, "supervisor_usage": supervisorUsage})
 }
 
 func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
@@ -672,13 +683,18 @@ func (h *Handler) CheckSupervision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.IssueID != "" {
+		// 2. Acquire preparation scope before subject, matching the worker publication lock order.
+		if err = supervision.PrepareManualMaterials(r.Context(), tx, ws, body.IssueID); err != nil {
+			writeError(w, 500, "准备手动监督材料失败")
+			return
+		}
 		var subject string
 		if err = tx.QueryRow(r.Context(), `SELECT issue_id::text FROM supervision_subject WHERE workspace_id=$1 AND issue_id=$2 FOR UPDATE`, ws, body.IssueID).Scan(&subject); err != nil {
 			writeError(w, 404, "任务尚未登记")
 			return
 		}
 	}
-	if body.Full {
+	if body.Full && err == nil {
 		if body.IssueID == "" {
 			writeError(w, 400, "重新审查需要指定任务")
 			return
@@ -778,6 +794,10 @@ func (h *Handler) UpdateSupervisionFinding(w http.ResponseWriter, r *http.Reques
 // deleteSupervisionData 与既有删除事务共同清理任务或工作区的监督记录。
 func deleteSupervisionData(ctx context.Context, tx pgx.Tx, ws string, issue string) error {
 	for _, query := range []string{
+		// 任务的准备证据和冻结材料在同一删除事务中清理。
+		`DELETE FROM supervision_manual_preparation WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
+		`DELETE FROM supervision_trace_material WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
+		`DELETE FROM supervision_frozen_material WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,
 		`DELETE FROM supervision_investigation WHERE workspace_id=$1 AND ($2='' OR issue_id::text=$2)`,
 		`DELETE FROM supervision_action WHERE workspace_id=$1 AND ($2='' OR finding_id IN(SELECT id FROM supervision_finding WHERE workspace_id=$1 AND issue_id=NULLIF($2,'')::uuid))`,
 		`DELETE FROM supervision_finding WHERE workspace_id=$1 AND ($2='' OR issue_id=NULLIF($2,'')::uuid)`,

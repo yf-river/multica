@@ -1,0 +1,17 @@
+{
+  "error": "",
+  "model": "gpt-6.1-sol",
+  "enabled": false,
+  "agent_id": "7a65a5b5-0580-40b4-a873-37cbc81465b5",
+  "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+  "concurrency": 3,
+  "instructions": "",
+  "last_scan_at": "2026-10-25T09:02:44.931354+00:00",
+  "thinking_level": "low",
+  "last_success_at": "2026-10-25T09:02:02.77874+00:00",
+  "interval_seconds": 300,
+  "inventory_complete": true,
+  "instructions_version": "default-31c7db8b",
+  "investigation_enabled": false,
+  "instructions_customized": false
+}

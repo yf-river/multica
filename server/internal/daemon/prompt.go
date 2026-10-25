@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -916,4 +917,25 @@ func writeSourceContextPrompt(b *strings.Builder, task Task) {
 		}
 	}
 	b.WriteString("\n")
+}
+
+// buildExecutionPrompt composes the final task payload with environment context.
+// 1. Supervision is a JSON protocol; ordinary runtime suffixes belong only to task prompts.
+func buildExecutionPrompt(task Task, provider string, env *execenv.Environment, envReused, noLocalAssignment bool, options ...PromptOption) string {
+	prompt := BuildPrompt(task, provider, options...)
+	if task.SupervisionPrompt != "" {
+		return prompt
+	}
+
+	if provider == "codex" && env.CodexHome != "" {
+		prompt += fmt.Sprintf("\nCurrent runtime paths: CODEX_HOME=%q; installed skill paths and content fingerprints: %q. Use these paths for this turn; paths from older turns may belong to a previous task environment.\n", env.CodexHome, filepath.Join(env.CodexHome, "skills-manifest.json"))
+	}
+	if env.LocalWorktree != nil {
+		prompt += fmt.Sprintf("\nThis task's isolated worktree is %q on branch %q, based on %s. Reuse this branch when the task requires SOP or MR delivery.\n", env.WorkDir, env.LocalWorktree.Branch, env.LocalWorktree.BaseCommit)
+	}
+	if task.PriorWorkDir != "" && !envReused && noLocalAssignment {
+		prompt += fmt.Sprintf("\nThe previous working directory was %q. Check whether relevant work is still available there before recreating it. This run uses a fresh working directory and session.\n", task.PriorWorkDir)
+	}
+
+	return prompt
 }

@@ -1,0 +1,54 @@
+{
+  "id": "01a17245-b2d1-743b-9b23-841cd7ed58c1",
+  "agent_id": "7a65a5b5-0580-40b4-a873-37cbc81465b5",
+  "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+  "issue_id": "",
+  "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+  "status": "completed",
+  "priority": 0,
+  "dispatched_at": "2026-10-25T16:55:32+08:00",
+  "started_at": "2026-10-25T16:55:32+08:00",
+  "completed_at": "2026-10-25T16:56:12+08:00",
+  "result": {
+    "code_diff": {
+      "after": "",
+      "before": "31e2b2581bd3",
+      "files": [],
+      "roots": [
+        {
+          "attribution": "task",
+          "files": [],
+          "kind": "workdir",
+          "label": "任务目录",
+          "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-841cd7ed58c1/workdir"
+        }
+      ],
+      "truncated": false,
+      "unavailable": false,
+      "version": 2
+    },
+    "output": "{\"summary\":\"本轮已核对的结果正确，执行效率仍有证据缺口。最终回复和工单评论均为42，符合17+25的要求；可见调用仅为获准的工单读取，变更记录为空，未见创建任务或调用其他Agent。读取要求前出现通用进度说明，不能据此认定违反当时已知要求。真实轨迹与用量全文尚未读完，暂不判断精确成本或全程效率。\",\"efficiency\":\"uncertain\",\"correctness\":\"clear\",\"gaps\":[\"trace_usage/bcefeedc-5e6d-4249-a5c1-9fe8c1e75f4b 共59329字符，本轮仅补读0—8000；8000—59329尚未核对，入口的not_applicable与matched_requests=0不能证明没有调用或没有效率问题，也不足以计算精确用量。\"],\"covered\":[{\"kind\":\"issue\",\"id\":\"01a17244-86ef-7e93-a6d0-3e605d60557e\"},{\"kind\":\"comment\",\"id\":\"01a17244-ec7d-7468-99e5-f561ede7954d\"},{\"kind\":\"task\",\"id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"message\",\"id\":\"01a17244-e485-7a99-be8e-1870b06c80a1\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"message\",\"id\":\"01a17244-e679-7e51-b212-4c19bcc53f81\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"message\",\"id\":\"01a17244-e67a-70c0-b373-4da5826f9fd7\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"message\",\"id\":\"01a17244-eb9d-7185-8201-bab44e1fa145\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"message\",\"id\":\"01a17244-ec3b-7d30-98c8-78ded41cd0e8\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"trace\",\"id\":\"b3fd73ed-f416-412a-bc23-fc920f2bf789\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"trace\",\"id\":\"0671e8ec-8cfc-4df0-95a5-0ca5f6f009e8\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"trace\",\"id\":\"cb947c72-de08-4f16-bfa8-51b504682197\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"trace_usage\",\"id\":\"bcefeedc-5e6d-4249-a5c1-9fe8c1e75f4b\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"}],\"findings\":[],\"resolutions\":[]}",
+    "pr_url": "",
+    "session_id": "01a17245-b493-7a91-a7f1-6e95c79c03e7",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-841cd7ed58c1/workdir"
+  },
+  "error": null,
+  "attempt": 1,
+  "max_attempts": 2,
+  "created_at": "2026-10-25T16:55:32+08:00",
+  "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-841cd7ed58c1/workdir",
+  "relative_work_dir": "dev-20d05776e5a9/task-841cd7ed58c1/workdir",
+  "delivered_comment_ids": [],
+  "kind": "quick_create",
+  "attribution": {
+    "source": "trigger_owner",
+    "precise": true,
+    "initiator": {
+      "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed"
+    },
+    "evidence": {
+      "kind": "supervision_batch",
+      "ref_id": "01a17245-b2cc-7e00-9e80-2886ab63de7a"
+    }
+  }
+}

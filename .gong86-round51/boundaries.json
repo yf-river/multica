@@ -1,0 +1,14 @@
+{
+  "negative-offset": {
+    "status": 400,
+    "body": "{\"error\":\"读取位置无效\"}\n"
+  },
+  "invalid-id": {
+    "status": 400,
+    "body": "{\"error\":\"invalid source_id\"}\n"
+  },
+  "other-task-batch": {
+    "status": 404,
+    "body": "{\"error\":\"证据不存在或已不可访问\"}\n"
+  }
+}

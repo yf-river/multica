@@ -1,0 +1,37 @@
+{
+  "id": "01a171f0-4d3c-769b-b07d-90d3c285515c",
+  "agent_id": "3574804a-a55e-4a2a-92ae-85eb94dae8ec",
+  "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+  "issue_id": "01a171f0-4d39-7d25-af1b-9d17e1ae0cf0",
+  "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+  "status": "running",
+  "priority": 1,
+  "dispatched_at": "2026-10-25T15:23:47+08:00",
+  "started_at": "2026-10-25T15:23:47+08:00",
+  "completed_at": null,
+  "result": null,
+  "error": null,
+  "attempt": 1,
+  "max_attempts": 2,
+  "created_at": "2026-10-25T15:22:16+08:00",
+  "delivered_comment_ids": [],
+  "kind": "direct",
+  "attribution": {
+    "source": "direct_human",
+    "precise": true,
+    "initiator": {
+      "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+      "name": "verification",
+      "email": "verification"
+    },
+    "originator": {
+      "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+      "name": "verification",
+      "email": "verification"
+    },
+    "evidence": {
+      "kind": "issue_assignment",
+      "ref_id": "01a171f0-4d39-7d25-af1b-9d17e1ae0cf0"
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "id": "01a17248-ac8a-7411-9a93-d8eaaebe2ee5",
+  "agent_id": "7a65a5b5-0580-40b4-a873-37cbc81465b5",
+  "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+  "issue_id": "",
+  "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+  "status": "completed",
+  "priority": 0,
+  "dispatched_at": "2026-10-25T16:59:41+08:00",
+  "started_at": "2026-10-25T16:59:41+08:00",
+  "completed_at": "2026-10-25T17:00:41+08:00",
+  "result": {
+    "code_diff": {
+      "after": "",
+      "before": "31e2b2581bd3",
+      "files": [],
+      "roots": [
+        {
+          "attribution": "task",
+          "files": [],
+          "kind": "workdir",
+          "label": "任务目录",
+          "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-d8eaaebe2ee5/workdir"
+        }
+      ],
+      "truncated": false,
+      "unavailable": false,
+      "version": 2
+    },
+    "output": "{\"summary\":\"本轮核对的结果正确，未发现可确认的执行浪费。真实轨迹显示先读取获准工单，随后最终回答42，符合17+25要求；可见执行段未出现修改文件、创建任务或调用其他Agent。用量尾页区分了运行级输入与缓存，不能据此推算请求级成本或认定浪费。此次为手动检查，任务仍为进行中；另一份轨迹快照及部分截断上下文尚待核对，全程效率保留不确定。\",\"efficiency\":\"uncertain\",\"correctness\":\"clear\",\"gaps\":[\"trace_usage/2da0adb9-28ca-4a75-a8be-2f4da51f4a72 本批仅提供索引，0—59330字符正文尚未核对，不能确认其与已读快照完全一致。\",\"trace_usage/bcefeedc-5e6d-4249-a5c1-9fe8c1e75f4b 本轮续读8000—59329字符；其中系统、开发者和AGENTS输入事件仅保留截断前缀，且用量注明运行级事件不能证明请求级归属，因此不能完整评估上下文成本及精确请求用量。\"],\"covered\":[{\"kind\":\"issue\",\"id\":\"01a17244-86ef-7e93-a6d0-3e605d60557e\"},{\"kind\":\"trace_usage\",\"id\":\"bcefeedc-5e6d-4249-a5c1-9fe8c1e75f4b\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"},{\"kind\":\"trace_usage\",\"id\":\"2da0adb9-28ca-4a75-a8be-2f4da51f4a72\",\"run_id\":\"01a17244-86f5-76fc-a903-bd0a41d60ff3\"}],\"findings\":[],\"resolutions\":[]}",
+    "pr_url": "",
+    "session_id": "01a17249-80b3-7f73-9abe-121e41d44766",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-d8eaaebe2ee5/workdir"
+  },
+  "error": null,
+  "attempt": 1,
+  "max_attempts": 2,
+  "created_at": "2026-10-25T16:58:47+08:00",
+  "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-d8eaaebe2ee5/workdir",
+  "relative_work_dir": "dev-20d05776e5a9/task-d8eaaebe2ee5/workdir",
+  "delivered_comment_ids": [],
+  "kind": "quick_create",
+  "attribution": {
+    "source": "trigger_owner",
+    "precise": true,
+    "initiator": {
+      "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed"
+    },
+    "evidence": {
+      "kind": "supervision_batch",
+      "ref_id": "01a17248-ac86-7b45-90f5-ef79fb8cdf1b"
+    }
+  }
+}

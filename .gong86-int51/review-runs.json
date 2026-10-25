@@ -1,0 +1,93 @@
+[
+  {
+    "id": "01a17254-67d0-7810-b803-cc729345f4e7",
+    "agent_id": "e019da77-beb6-422f-b136-2cb9d33aefb5",
+    "runtime_id": "b6ea8b7e-0dce-4aa3-bcb9-2a9ce9932a5e",
+    "issue_id": "01a17254-67b6-7d8c-bd89-12452ca4107f",
+    "workspace_id": "57c88553-33a3-473a-a14f-98231f059bda",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T17:11:36+08:00",
+    "started_at": "2026-10-25T17:11:36+08:00",
+    "completed_at": "2026-10-25T17:11:59+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "ff9f728da4c1",
+        "files": [
+          {
+            "added": 5,
+            "binary": false,
+            "change": "added",
+            "deleted": 0,
+            "lines": 5,
+            "patch": "--- a/review-findings.json\n+++ b/review-findings.json\n@@ -0,0 +1,5 @@\n+{\n+  \"summary\": \"通过：17+25=42，符合本次算术验收要求。\",\n+  \"items\": [],\n+  \"unchanged_previous\": []\n+}\n",
+            "path": "review-findings.json",
+            "size": 116,
+            "truncated": false
+          }
+        ],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [
+              {
+                "added": 5,
+                "binary": false,
+                "change": "added",
+                "deleted": 0,
+                "lines": 5,
+                "patch": "--- a/review-findings.json\n+++ b/review-findings.json\n@@ -0,0 +1,5 @@\n+{\n+  \"summary\": \"通过：17+25=42，符合本次算术验收要求。\",\n+  \"items\": [],\n+  \"unchanged_previous\": []\n+}\n",
+                "path": "review-findings.json",
+                "size": 116,
+                "truncated": false
+              }
+            ],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-102-cc729345f4e7/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "17+25=42",
+      "pr_url": "",
+      "session_id": "01a17254-6960-77c3-b715-2082bbb2acec",
+      "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-102-cc729345f4e7/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T17:11:36+08:00",
+    "work_dir": "/data/cbs/worktree/int/ai-studio-98231f059bda/aist-102-cc729345f4e7/workdir",
+    "relative_work_dir": "ai-studio-98231f059bda/aist-102-cc729345f4e7/workdir",
+    "delivered_comment_ids": [],
+    "handoff_note": "## 本次审查\n\n- 轮次：第 1 轮（上限 6 轮）\n- 被审提交：未关联 PR，请以当前工作目录的最新提交为准\n- 上一轮问题：无，这是第一轮审查\n\n通过、打回、停滞都要用 `multica issue review submit` 提交结论；提交本身会写状态，不要自行改任务状态、受理人或元数据。\n",
+    "kind": "direct",
+    "attribution": {
+      "source": "trigger_owner",
+      "precise": true,
+      "initiator": {
+        "id": "7d2ff25b-1045-46bf-9235-ac5083be4758",
+        "name": "dev",
+        "email": "dev"
+      },
+      "evidence": {
+        "kind": "issue_review",
+        "ref_id": "01a17254-67b6-7d8c-bd89-12452ca4107f"
+      }
+    },
+    "usage": [
+      {
+        "provider": "codex",
+        "model": "gpt-6.1-sol",
+        "input_tokens": 13356,
+        "output_tokens": 579,
+        "cache_read_tokens": 108032,
+        "cache_write_tokens": 0
+      }
+    ]
+  }
+]

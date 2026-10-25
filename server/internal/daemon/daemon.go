@@ -3916,6 +3916,12 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp == nil {
 		return
 	}
+	// 1. Historical session extraction is a bounded daemon operation, separate from model execution.
+	if request := resp.PendingExecutionEvidence; request != nil {
+		if rt := d.findRuntime(runtimeID); rt != nil {
+			go d.handleExecutionEvidenceRequest(*rt, *request)
+		}
+	}
 	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
 		d.logger.Debug("heartbeat: pending actions",
 			"runtime_id", runtimeID,
@@ -6808,6 +6814,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// execenv。handleTask 已经为 worker 任务校验并锁过路径；leader 任务刻意跳过
 	// assignment。
 	localAssignment, _ := localDirectoryAssignmentForTask(task, d.cfg.DaemonID)
+	if task.ReviewCommit != "" {
+		task.PriorWorkDir = ""
+		task.PriorSessionID = ""
+	}
 	// local_directory 任务刻意跳过 Reuse：prior WorkDir 是用户自己的路径（总是存
 	// 在），但复用路径会丢掉 GC 循环需要的 envRoot 关联，而且对着稳定用户路径重跑
 	// Prepare 很便宜（没有 clone、没有拷贝）。Leader 任务没有 localAssignment；
@@ -7165,6 +7175,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		d.markActiveEnvRoot(env.RootDir)
 		defer d.unmarkActiveEnvRoot(env.RootDir)
 	}
+
 	// 在"每个"退出路径上收尾 worktree，成功失败都算：先提交 agent 留下的未提交
 	// 改动，再把 worktree 从用户仓库注销。挂到具名返回值上，让中途失败的任务仍能
 	// 交还持有其部分工作的分支，而不是被 `git worktree remove --force` 删掉。任务
@@ -7217,6 +7228,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				returnErr = errors.Join(returnErr, wrapped)
 			}
 		}()
+	}
+	if task.ReviewCommit != "" {
+		reviewDirectory := env.WorkDir
+		if localAssignment == nil {
+			if len(task.Repos) != 1 || d.repoCache == nil {
+				return TaskResult{}, fmt.Errorf("审查候选未绑定唯一可访问仓库，停止启动模型")
+			}
+			checked, err := d.repoCache.CreateWorktree(repocache.WorktreeParams{WorkspaceID: task.WorkspaceID, RepoURL: task.Repos[0].URL, WorkDir: env.WorkDir, Ref: task.ReviewCommit, TaskID: task.ID, AgentName: "review", IsolatedGitMetadata: true})
+			if err != nil {
+				return TaskResult{}, fmt.Errorf("准备审查候选: %w", err)
+			}
+			reviewDirectory = checked.Path
+		}
+		head, err := codediff.GitCommand(ctx, reviewDirectory, "rev-parse", "HEAD")
+		if err != nil || strings.TrimSpace(head) != task.ReviewCommit {
+			return TaskResult{}, fmt.Errorf("审查目录提交与固定候选不一致，停止启动模型")
+		}
+		task.HandoffNote += fmt.Sprintf("\n审查仓库：%s；固定提交：%s。只读取这个候选。\n", reviewDirectory, task.ReviewCommit)
 	}
 	defer func() {
 		if pauseErr := d.preserveReleaseTask(ctx, task, env, taskResult.SessionID); pauseErr != nil {
@@ -7362,16 +7391,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.LocalWorktree != nil && len(env.LocalWorktree.ReplayConflicts) > 0 {
 		promptOptions = append(promptOptions, WithWorktreeReplayConflicts(env.LocalWorktree.ReplayConflicts))
 	}
-	prompt := BuildPrompt(task, provider, promptOptions...)
-	if provider == "codex" && env.CodexHome != "" {
-		prompt += fmt.Sprintf("\nCurrent runtime paths: CODEX_HOME=%q; installed skill paths and content fingerprints: %q. Use these paths for this turn; paths from older turns may belong to a previous task environment.\n", env.CodexHome, filepath.Join(env.CodexHome, "skills-manifest.json"))
-	}
-	if env.LocalWorktree != nil {
-		prompt += fmt.Sprintf("\nThis task's isolated worktree is %q on branch %q, based on %s. Reuse this branch when the task requires SOP or MR delivery.\n", env.WorkDir, env.LocalWorktree.Branch, env.LocalWorktree.BaseCommit)
-	}
-	if task.PriorWorkDir != "" && !envReused && localAssignment == nil {
-		prompt += fmt.Sprintf("\nThe previous working directory was %q. Check whether relevant work is still available there before recreating it. This run uses a fresh working directory and session.\n", task.PriorWorkDir)
-	}
+	// 1. Keep final composition shared with the JSON-supervision regression boundary.
+	prompt := buildExecutionPrompt(task, provider, env, envReused, localAssignment == nil, promptOptions...)
 
 	// 传任务级鉴权凭据与上下文，好让被拉起的 agent CLI 能调 Multica API 与本地
 	// daemon（如 `multica repo checkout`）。MULTICA_TASK_SLOT 从 daemon 级并发池
@@ -7522,6 +7543,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 1. 运行前取一次基线：workdir 的完整文件快照，加上任务相关仓库的工作树清单。
 	//    快照不再是 git 树快照——非 git 目录、被 ignore 的文件、未跟踪文件都要算进来，
 	//    而 git 基线只用来回答"checkout 出来的那些文件本来就在，不算改动"。
+	agentEnv["MULTICA_INPUT_BASELINES"] = filepath.Join(env.RootDir, "input-baselines", task.ID)
+	agentEnv["MULTICA_INPUT_ISSUE_ID"] = task.IssueID
+	agentEnv["MULTICA_INPUT_STARTED_AT"] = runStartedAt.UTC().Format(time.RFC3339Nano)
 	capture := d.startRunCapture(ctx, task, env)
 	defer func() {
 		diff := capture.finish()
@@ -7688,7 +7712,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	// 供下面的 resume 重试共享，让重试的 transcript 行给同一任务持续用递增的 seq。
 	var msgSeq atomic.Int32
+	// 1. Bind local evidence to this process interval, including failure and fresh-session retries.
+	evidenceStarted := time.Now()
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+	d.reportExecutionEvidence(task, provider, agentEnv, env.WorkDir, result, evidenceStarted, execOpts.ResumeSessionID != "", &msgSeq)
 	if err != nil {
 		// 执行失败（含被服务器取消、进程被杀）时，backend 往往已经跑过若干回合、
 		// 累计了真实 token 和根请求 id。返回空 TaskResult 会让这些用量和链路在下面
@@ -7755,7 +7782,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		freshPrompt := BuildPrompt(task, provider, promptOptions...)
 
+		// 2. A replacement session gets its own source and interval rather than inheriting the rejected session.
+		evidenceStarted = time.Now()
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+		d.reportExecutionEvidence(task, provider, agentEnv, env.WorkDir, retryResult, evidenceStarted, false, &msgSeq)
 		if retryErr != nil {
 			taskLog.Error("fresh session also failed to start; keeping the original poisoned result", "error", retryErr)
 		} else if retryResult.Status != "completed" && retryResult.SessionID == "" {

@@ -335,6 +335,8 @@ import {
   CreateIssueResponseSchema,
   IssueSchema,
   AgentTaskSchema,
+  TestEnvironmentControlSchema,
+  TestAgentControlCapabilitySchema,
   SourceContextPreviewSchema,
   CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
@@ -804,8 +806,17 @@ export class ApiClient {
     this.options.onUnauthorized?.();
   }
 
+  async getTestAgentControlCapability(): Promise<boolean> {
+    const value = parseWithFallback(
+      await this.fetch<unknown>("/api/test-agent-control/capability"),
+      TestAgentControlCapabilitySchema,
+      { available: false },
+      { endpoint: "GET /api/test-agent-control/capability" },
+    );
+    return value.available === true;
+  }
   async getTestAgentControl(): Promise<TestEnvironmentControl[]> {
-    return this.fetch("/api/test-agent-control");
+    return parseWithFallback(await this.fetch<unknown>("/api/test-agent-control"),TestEnvironmentControlSchema.array(),[],{endpoint:"GET /api/test-agent-control"});
   }
   async configureTestAgents(body: {action: "configure"; name: string; revision: number; policy: TestAgentPolicy; agent_id?: string}) {
     return this.fetch<{ok: boolean}>("/api/test-agent-control", {method:"POST",body:JSON.stringify(body)});
@@ -2435,10 +2446,22 @@ export class ApiClient {
 
   /** 列出与某议题关联的全部任务运行记录。 */
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/task-runs`);
-    return parseWithFallback<AgentTask[]>(raw, AgentTaskListSchema, [], {
-      endpoint: "GET /api/issues/:id/task-runs",
-    });
+    const result: AgentTask[] = [];
+    const seen = new Set<string>();
+    for (let offset = 0; ; offset += 50) {
+      const raw = await this.fetch<unknown>(`/api/issues/${issueId}/task-runs?offset=${offset}`);
+      const page = parseWithFallback<AgentTask[]>(raw, AgentTaskListSchema, [], {endpoint:"GET /api/issues/:id/task-runs"});
+      const fresh=page.filter(task=>!seen.has(task.id));
+      if(fresh.length===0)return result;
+      for(const task of fresh)seen.add(task.id);
+      result.push(...fresh);
+      // 旧服务端可能忽略 offset；重复页和非分页响应都必须终止。
+      if (page.length !== 50) return result;
+    }
+  }
+
+  async getIssueTaskRun(issueId: string, taskId: string, summary = false): Promise<AgentTask | null> {
+    return parseWithFallback(await this.fetch<unknown>(`/api/issues/${issueId}/task-runs/${taskId}?summary=${summary}`), AgentTaskSchema, null, {endpoint:"GET /api/issues/:id/task-runs/:taskId"});
   }
 
   /** 列出某议题任务执行轨迹（trace）事件，用于耗时/失败分析。 */

@@ -1,0 +1,37 @@
+[
+  {
+    "id": "01a17254-67bb-7715-ae7f-5eab0e3be6a6",
+    "issue_id": "01a17254-67b6-7d8c-bd89-12452ca4107f",
+    "author_type": "member",
+    "author_id": "7d2ff25b-1045-46bf-9235-ac5083be4758",
+    "content": "验收样本结果：17+25=42。未修改代码；计算已人工复核。仅验收环境样本，不包含生产发布。",
+    "type": "comment",
+    "parent_id": null,
+    "created_at": "2026-10-25T17:11:36+08:00",
+    "updated_at": "2026-10-25T17:11:36+08:00",
+    "revision": 1,
+    "resolved_at": null,
+    "resolved_by_type": null,
+    "resolved_by_id": null,
+    "reactions": [],
+    "attachments": []
+  },
+  {
+    "id": "01a17254-a9e4-77ad-af38-b636e77edba4",
+    "issue_id": "01a17254-67b6-7d8c-bd89-12452ca4107f",
+    "author_type": "agent",
+    "author_id": "e019da77-beb6-422f-b136-2cb9d33aefb5",
+    "content": "通过。交付评论给出 17+25=42，独立复核计算正确，符合本任务要求；不涉及代码、文档或生产发布。当前目录没有 Git 仓库，本任务无需代码提交证据。无 blocking 或 quality 问题。",
+    "type": "comment",
+    "parent_id": null,
+    "created_at": "2026-10-25T17:11:53+08:00",
+    "updated_at": "2026-10-25T17:11:53+08:00",
+    "revision": 1,
+    "resolved_at": null,
+    "resolved_by_type": null,
+    "resolved_by_id": null,
+    "source_task_id": "01a17254-67d0-7810-b803-cc729345f4e7",
+    "reactions": [],
+    "attachments": []
+  }
+]

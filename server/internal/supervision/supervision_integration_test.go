@@ -298,8 +298,8 @@ func TestIntPersistenceAndResume(t *testing.T) {
 
 	// 持续新增日志不能让运行中任务无限等待安静窗口。
 	f.Task(t, agent, dbfx.Cols{"runtime_id": runtime, "issue_id": issues[0], "status": "running", "started_at": dbfx.Raw("now()")})
-	// 自动监督只处理已完成任务的完成轮次，这两个任务先转入完成状态。
-	f.Exec(t, "UPDATE issue SET status='done' WHERE id IN($1,$2)", issues[0], issues[1])
+	// 1. Isolate the continuously updated subject so an unrelated first review cannot satisfy dispatch.
+	f.Exec(t, "UPDATE issue SET status='done' WHERE id=$1", issues[0])
 	if err = svc.reconcileRounds(ctx, f.WorkspaceID); err != nil {
 		t.Fatal(err)
 	}
@@ -307,16 +307,33 @@ func TestIntPersistenceAndResume(t *testing.T) {
 	f.Exec(t, "UPDATE supervision_subject SET last_checked_at=now()-interval '10 minutes',changed_at=now(),desired_version=reviewed_version+1,force_review=false WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[0])
 	svc.Tasks = service.NewTaskService(db.New(pool), pool, nil, nil)
 	svc.Authorize = func(context.Context, string, string, string) bool { return true }
-	// 不支持的夹具 provider 在选中待审任务后拒绝派发，不会启动用户 CLI。
-	if err = svc.dispatch(ctx, f.WorkspaceID); err == nil || !strings.Contains(err.Error(), "首版监督支持") {
+	// 2. An online runtime without a real daemon proves dispatch without executing an installed CLI.
+	f.Exec(t, "UPDATE agent_runtime SET provider='codebuddy',status='online',daemon_id=$2 WHERE id=$1", runtime, "no-daemon-"+stamp)
+	if err = svc.dispatch(ctx, f.WorkspaceID); err != nil {
 		t.Fatalf("continuous updates starved review: %v", err)
 	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_batch b JOIN agent_task_queue q ON q.id=b.task_id JOIN supervision_batch_round r ON r.batch_id=b.id WHERE b.workspace_id=$1 AND b.issue_id=$2 AND b.status='running' AND q.status='queued' AND q.runtime_id=$3 AND r.scope='completion'", f.WorkspaceID, issues[0], runtime); n != 1 {
+		t.Fatalf("continuous updates dispatched %d completion batches, want 1; total running=%d other=%d", n, f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND status='running'", f.WorkspaceID), f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND issue_id=$2 AND status='running'", f.WorkspaceID, issues[1]))
+	}
+	// 3. Finish only the fixture batch, then assert which issue wins the next real queue insertion.
+	f.Exec(t, "UPDATE agent_task_queue SET status='completed' WHERE id IN (SELECT task_id FROM supervision_batch WHERE workspace_id=$1)", f.WorkspaceID)
+	f.Exec(t, "UPDATE supervision_batch SET status='completed' WHERE workspace_id=$1", f.WorkspaceID)
 	// 用户点选的重新审查先于首轮队列中的其他任务。
 	f.Exec(t, "UPDATE supervision_subject SET reviewed_version=0,last_checked_at=NULL WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[1])
-	f.Exec(t, "UPDATE supervision_material SET reviewed_generation=generation WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[1])
+	f.Exec(t, "UPDATE issue SET status='done' WHERE id=$1", issues[1])
+	if err = svc.reconcileRounds(ctx, f.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
 	f.Exec(t, "UPDATE supervision_subject SET force_review=true WHERE workspace_id=$1 AND issue_id=$2", f.WorkspaceID, issues[0])
-	if err = svc.dispatch(ctx, f.WorkspaceID); err == nil || !strings.Contains(err.Error(), "首版监督支持") {
+	if err = svc.dispatch(ctx, f.WorkspaceID); err != nil {
 		t.Fatalf("manual recheck lost priority: %v", err)
+	}
+
+	if n := f.Count(t, "SELECT count(*) FROM supervision_batch b JOIN agent_task_queue q ON q.id=b.task_id JOIN supervision_batch_round r ON r.batch_id=b.id WHERE b.workspace_id=$1 AND b.issue_id=$2 AND b.status='running' AND q.status='queued' AND r.scope='manual'", f.WorkspaceID, issues[0]); n != 1 {
+		t.Fatalf("manual recheck dispatched %d priority batches, want 1", n)
+	}
+	if n := f.Count(t, "SELECT count(*) FROM supervision_batch WHERE workspace_id=$1 AND issue_id=$2 AND status='running'", f.WorkspaceID, issues[1]); n != 0 {
+		t.Fatal("first-review queue overtook explicit recheck")
 	}
 
 	// 创建时间较早的评论被编辑后，必须进入最近决定清单，而非被六条新评论挤掉。

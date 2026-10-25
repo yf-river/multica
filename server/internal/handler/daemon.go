@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -1416,6 +1417,9 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// in the WS path and would be redundant noise on the HTTP path where the
 	// caller already knows which runtime it asked about.
 	resp := map[string]any{"status": ack.Status}
+	if ack.PendingExecutionEvidence != nil {
+		resp["pending_execution_evidence"] = ack.PendingExecutionEvidence
+	}
 	if ack.PendingMcpCheck != nil {
 		resp["pending_mcp_check"] = ack.PendingMcpCheck
 	}
@@ -1560,6 +1564,7 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 		ServerCapabilities: []string{protocol.DaemonCapabilityRPCV1},
 	}
 
+	ack.PendingExecutionEvidence = h.pendingExecutionEvidence(ctx, rt)
 	probeUpdateCtx, cancelProbeUpdate := context.WithTimeout(ctx, heartbeatHasPendingTimeout)
 	hasUpdate, probeUpdateErr := h.UpdateStore.HasPending(probeUpdateCtx, runtimeID)
 	cancelProbeUpdate()
@@ -2452,6 +2457,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// changing task state, but Agent mutations do not stay locked through HTTP
 	// response assembly. Recheck the freshly loaded Agent here so a rebind or
 	// owner change that committed after the claim cannot reach the daemon.
+	if agent.SystemKey.String == "issue_review" {
+		var reviewContext struct {
+			Head string `json:"head_sha"`
+		}
+		if json.Unmarshal(task.Context, &reviewContext) == nil {
+			resp.ReviewCommit = reviewContext.Head
+		}
+	}
 	if agent.RuntimeID != task.RuntimeID {
 		slog.Warn("daemon claim: agent runtime changed before delivery; refusing dispatch",
 			"task_id", uuidToString(task.ID),
@@ -3376,8 +3389,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// Quick-create task: no issue / chat / autopilot link — workspace and
 	// prompt come from the task's context JSONB. Resolve workspace from
 	// there so the isolation check below has something to compare.
+	// 1. Session extraction is additional investigation, excluded for supervision itself.
+	if os.Getenv("MULTICA_SUPERVISION_TRACE_PREPARATION_SINCE") != "" {
+		_ = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM supervision_config WHERE workspace_id=$1 AND enabled AND investigation_enabled)`, runtimeWorkspaceID).Scan(&resp.CaptureExecutionEvidence)
+	}
 	var supervision service.SupervisionContext
 	if json.Unmarshal(task.Context, &supervision) == nil && supervision.Type == "quality_supervision" {
+		resp.CaptureExecutionEvidence = false
 		var owner string
 		var valid bool
 		err := h.DB.QueryRow(r.Context(), `SELECT c.owner_id::text,
@@ -4112,7 +4130,7 @@ func (h *Handler) ListPendingTasksByRuntime(w http.ResponseWriter, r *http.Reque
 
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+		resp[i] = taskToResponse(db.AgentTaskQueue(t), workspaceID)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -4343,6 +4361,7 @@ func sanitizeTaskFailRequest(req *TaskFailRequest) {
 // The whole value lands in a JSONB column, so an embedded NUL anywhere would
 // roll the terminal transaction back (GH #7098).
 func sanitizeCodeDiff(diff *codediff.Diff) {
+	codediff.RedactDiff(diff)
 	if diff == nil {
 		return
 	}
@@ -5935,7 +5954,7 @@ func (h *Handler) GetActiveTaskForIssue(w http.ResponseWriter, r *http.Request) 
 	workspaceID := uuidToString(issue.WorkspaceID)
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+		resp[i] = taskToResponse(db.AgentTaskQueue(t), workspaceID)
 	}
 	// Same issue-facing attribution surface as ListTasksByIssue — hydrate names.
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
@@ -6128,7 +6147,26 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	if activeOnly {
 		tasks, err = h.Queries.ListActiveTasksByIssue(r.Context(), issue.ID)
 	} else {
-		tasks, err = h.Queries.ListTasksByIssue(r.Context(), issue.ID)
+		// 显式 offset 使用摘要分页；旧 CLI 不传参数仍取得完整身份集合。
+		offset := int64(0)
+		rawOffset := r.URL.Query().Get("offset")
+		if rawOffset != "" {
+			offset, err = strconv.ParseInt(rawOffset, 10, 32)
+			if err != nil || offset < 0 {
+				writeError(w, http.StatusBadRequest, "invalid offset")
+				return
+			}
+		}
+		limit := int32(2147483647)
+		if rawOffset != "" {
+			limit = 50
+		}
+		var summaries []db.ListTaskSummariesByIssueRow
+		summaries, err = h.Queries.ListTaskSummariesByIssue(r.Context(), db.ListTaskSummariesByIssueParams{IssueID: issue.ID, Limit: limit, Offset: int32(offset)})
+		tasks = make([]db.AgentTaskQueue, len(summaries))
+		for i, row := range summaries {
+			tasks[i] = db.AgentTaskQueue(row)
+		}
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list tasks")
@@ -6137,7 +6175,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+		resp[i] = taskToResponse(db.AgentTaskQueue(t), workspaceID)
 	}
 	// Execution-log rows render the "on behalf of <member>" badge, so this
 	// issue-facing surface must resolve initiator/originator names (departed-safe,
@@ -6595,4 +6633,36 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 		"status":       task.Status,
 		"completed_at": task.CompletedAt.Time,
 	})
+}
+
+// GetIssueTaskRun 读取固定运行的完整结果，沿用议题访问权限。
+func (h *Handler) GetIssueTaskRun(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "taskId"), "task_id")
+	if !ok {
+		return
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), id)
+	if err != nil || task.IssueID != issue.ID {
+		writeError(w, 404, "task not found")
+		return
+	}
+	if r.URL.Query().Get("summary") == "true" {
+		var value map[string]json.RawMessage
+		_ = json.Unmarshal(task.Result, &value)
+		diff := value["code_diff"]
+		texts := value["text_changes"]
+		var captured codediff.Diff
+		_ = json.Unmarshal(diff, &captured)
+		changed := captured.Truncated || captured.Unavailable || len(captured.Files) > 0
+		for _, root := range captured.Roots {
+			changed = changed || len(root.Files) > 0 || len(root.Dirs) > 0 || root.Truncated || root.Unavailable
+		}
+		changed = changed || (len(texts) > 0 && string(texts) != "[]" && string(texts) != "null")
+		task.Result, _ = json.Marshal(map[string]any{"summary_only": true, "has_changes": changed, "task_id": uuidToString(task.ID), "issue_id": uuidToString(issue.ID)})
+	}
+	writeJSON(w, 200, taskToResponse(task, uuidToString(issue.WorkspaceID)))
 }

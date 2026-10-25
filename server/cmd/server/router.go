@@ -1725,6 +1725,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/quick-actions/{quickActionId}/run", h.RunQuickAction)
 					r.Post("/quick-actions/{quickActionId}/render", h.RenderQuickAction)
 					r.Get("/task-runs", h.ListTasksByIssue)
+					r.Get("/task-runs/{taskId}", h.GetIssueTaskRun)
 					r.Get("/trace", h.ListIssueTaskTraceEvents)
 					r.Get("/execution-tree", h.GetIssueExecutionTree)
 					r.Get("/usage", h.GetIssueUsage)
@@ -1758,6 +1759,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			r.Get("/api/test-agent-control", h.TestAgentControl)
+			r.Get("/api/test-agent-control/capability", h.TestAgentControlCapability)
 			r.Post("/api/test-agent-control", h.TestAgentControl)
 			r.Get("/api/delivery-queue/window", h.ReleaseWindow)
 			r.Post("/api/delivery-queue/window", h.ReleaseWindow)

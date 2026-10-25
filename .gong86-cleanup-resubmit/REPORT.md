@@ -1,0 +1,13 @@
+G86：639 cleanup 修复与 operations 固定源码
+
+业务候选：c261d7228750487861c014fda4f627f83b528875，任务分支 feature/ida-developer/gong-86，已推送。维护主线：4221eca13，已快进推送 origin/personal-studio-upstream；仅修改 worker 调度及其回归，不包含监督业务。
+
+639_test_agent_control_key 现登记于 concurrentIndexCleanups，使用既有 cleanupInvalidConcurrentIndexHook。新回归读取真实639 SQL，在新建隔离PostgreSQL中由阻塞事务与2秒statement_timeout造成INVALID索引，确认无hook重试报错，清理后成功重建并验证索引有效。TestEveryConcurrentUpBuildHasCleanup、down全量检查及映射检查全部执行通过。共8项目标测试通过，详见gong86-migration.log；测试自建容器已删除。未修改迁移SQL或生产台账。
+
+worker 40项、release 44项通过。移除了上一轮269d38dbc新增的已部署int retest API、对应CLI说明、测试及维护白名单扩展；当前正常submit已支持needs_changes后新交付，无需新增生产控制能力。原维护请求maintenance-269d38dbcee65e04440dd56af34412fce799798d实际failed（环境活动任务），本轮未恢复它，生产控制程序仍3f2abcb30。
+
+现场审计：安装前systemd int消费者为143a2c3ef7373776，缺少优先调度修复；prod为a88eaedbc33a852f。故int实际发生operations回退，prod未观察到回退。本轮从固定维护主线4221eca13提取全部19文件，在原worker/publisher锁下由既有完整包安装器安装int/prod。两消费者现均为0cfd5a849358f93b，systemd ExecStart实际入口、每文件SHA-256、业务候选源码、维护主线源码全量一致，mismatches=[]。详见gong86-operations-audit.json及安装回执。主工作区用户dirty文件未动。
+
+已恢复过期owner到generation17；提交前publication idle generation82，无并行活动交付。正常submit回执新delivery=01a17233-d659-739f-844b-49a19a416a94，waiting_int revision1；原delivery=01a171e2-116d-79e6-bf67-5cb4d087625b仍needs_changes revision8，原失败候选6fafcc7c8及verify87验收证据原样保留。提交沿用原已确认方案与五项必验清单，没有生产批准。
+
+下一阶段必须核对新候选真实部署，再复用未变化的verify87证据并补测受影响范围；仍需完成固定int五项监督测试、CodeBuddy同session续接与运行取消、页面刷新持久化及审查回归。当前未声称通过这些项目，任务保持in_progress，不标in_review或done。按现有队列规则在登记后交还外部publisher，不在本执行内轮询占用Agent槽。

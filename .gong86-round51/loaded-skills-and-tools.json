@@ -1,0 +1,94 @@
+[
+  {
+    "sample": "codebuddy",
+    "status": "completed",
+    "task": "01a17246-62ad-7b98-a187-25e7ce41b218",
+    "task_status": "completed",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "sample": "codex",
+    "status": "completed",
+    "task": "01a17248-ac8a-7411-9a93-d8eaaebe2ee5",
+    "task_status": "completed",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "sample": "codex",
+    "status": "completed",
+    "task": "01a17245-b2d1-743b-9b23-841cd7ed58c1",
+    "task_status": "completed",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "sample": "child",
+    "status": "completed",
+    "task": "01a17245-f32c-77fe-bbb5-e87d3322426e",
+    "task_status": "completed",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "sample": "cancel",
+    "status": "completed",
+    "task": "01a17246-2dd5-7f35-9c14-c32aff72ee18",
+    "task_status": "completed",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  },
+  {
+    "sample": "waste",
+    "status": "completed",
+    "task": "01a17248-e727-7911-8758-c8a7e17e1dae",
+    "task_status": "completed",
+    "skill_loaded": true,
+    "skill_sha256": "aa7e5011089ff451e065acd4a6b68ab17c2878264c67f052f129f5a1a7b56558",
+    "tools": [
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_material",
+      "supervision_validate"
+    ]
+  }
+]

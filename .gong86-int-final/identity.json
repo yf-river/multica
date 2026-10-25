@@ -1,0 +1,17 @@
+{
+  "commit": "6fafcc7c8bf1a8c885162617e4d67072ae55fa3b",
+  "candidate": "6fafcc7c8bf1a8c885162617e4d67072ae55fa3b-1792915913109610438",
+  "source_commit": "87e11863efd663bb220a0b073a9f914c697267a0",
+  "publication": {
+    "state": "active",
+    "expires_at": "2026-10-25T08:16:50.252974+00:00",
+    "generation": 82,
+    "delivery_id": "01a171e2-116d-79e6-bf67-5cb4d087625b"
+  },
+  "owner": {
+    "expires_at": "2026-10-25T08:16:37.885901+00:00",
+    "generation": 16,
+    "execution_id": "01a17219-6dcc-75f3-b0af-245b542b50e8"
+  },
+  "environment": "int"
+}

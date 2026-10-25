@@ -196,7 +196,7 @@ func (h *Handler) deliverDeliveryAuthorizationReview(r *http.Request, ws, issue,
 	}
 	content := fmt.Sprintf(deliveryReviewNotice, id, notice.CandidateID, notice.SourceCommit, notice.AuthorizationID, notice.AuthorizationComment)
 	payload, _ := json.Marshal(map[string]any{"id": notice.CommentID, "content": mention + content})
-	rr := r.Clone(r.Context())
+	rr := r.Clone(context.WithValue(r.Context(), systemCommentContextKey{}, true))
 	rr = rr.WithContext(context.WithValue(rr.Context(), commentIDContextKey{}, parseUUID(notice.CommentID)))
 	route := chi.NewRouteContext()
 	route.URLParams.Add("id", issue)

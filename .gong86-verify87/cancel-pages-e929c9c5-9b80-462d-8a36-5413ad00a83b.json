@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "trace_usage",
+    "id": "e929c9c5-9b80-462d-8a36-5413ad00a83b",
+    "run_id": "01a171f0-4d3c-769b-b07d-90d3c285515c",
+    "issue_id": "01a171f0-4d39-7d25-af1b-9d17e1ae0cf0",
+    "text": "{\"preparation_status\":\"not_applicable\",\"material_version\":1,\"local_session_evidence\":[{\"runtime\":\"codex\",\"session_id\":\"01a171f1-b49d-7530-84be-331a7675d90a\",\"source_sha256\":\"a87dfc9f6cd049ba92a8f60ff726b358fd98fb883c46973dd4f1dc636d72d428\",\"started_at\":\"2026-10-25T15:23:48.021367962+08:00\",\"ended_at\":\"2026-10-25T07:23:52.897375749Z\",\"requests\":[],\"events\":[{\"payload\":{\"thread_id\":\"01a171f1-b49d-7530-84be-331a7675d90a\",\"thread_settings\":{\"approval_policy\":\"on-request\",\"approvals_reviewer\":\"user\",\"collaboration_mode\":{\"mode\":\"default\",\"settings\":{\"developer_instructions\":null,\"model\":\"gpt-6.1-sol\",\"reasoning_effort\":\"low\"}},\"cwd\":\"/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-8-90d3c285515c/workdir\",\"disabled_plugin_ids\":[],\"model\":\"gpt-6.1-sol\",\"model_provider_id\":\"openai\",\"permission_profile\":{\"type\":\"disabled\"},\"reasoning_effort\":\"low\",\"runtime_workspace_roots\":[\"/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-8-90d3c285515c/workdir\"],\"service_tier\":\"default\"},\"type\":\"thread_settings_applied\"},\"timestamp\":\"2026-10-25T07:23:50.423Z\",\"type\":\"event_msg\"},{\"payload\":{\"collaboration_mode_kind\":\"default\",\"model_context_window\":475000,\"root_turn_id\":\"01a171f1-bd15-72b2-9a7f-0d6a98287b40\",\"started_at\":1792913030,\"turn_attribution\":{\"initiating_agent_path\":null,\"parent_turn_id\":null,\"root_turn_id\":\"01a171f1-bd15-72b2-9a7f-0d6a98287b40\",\"turn_id\":\"01a171f1-bd15-72b2-9a7f-0d6a98287b40\",\"turn_trigger\":null},\"turn_id\":\"01a171f1-bd15-72b2-9a7f-0d6a98287b40\",\"type\":\"task_started\"},\"timestamp\":\"2026-10-25T07:23:50.427Z\",\"type\":\"event_msg\"}],\"gaps\":[\"codex_token_events_are_run_level_not_proven_request_usage\"]}],\"request_comparisons\":null,\"run_id\":\"01a171f0-4d3c-769b-b07d-90d3c285515c\",\"runtime\":\"codex\",\"runtime_source\":\"task_trace_event.task.started.provider\",\"session_id\":\"01a171f1-b49d-7530-84be-331a7675d90a\",\"query_start\":\"2026-10-25T07:18:47.898761Z\",\"query_end\":\"2026-10-25T07:28:49.286141Z\",\"platform_usage\":[],\"references\":[],\"agentlens_traces\":null,\"gaps\":[\"codex_token_events_are_run_level_not_proven_request_usage\",\"AgentLens does not apply to this runtime; local session evidence and run-level usage are provided separately.\"],\"preparation_http_requests\":0,\"discovery_pending\":false,\"preparation_duration_ms\":2,\"queried_at\":\"2026-10-25T07:25:28.904151553Z\"}",
+    "offset": 0,
+    "end": 2345,
+    "length": 2345,
+    "deleted": false,
+    "snapshot": false,
+    "generation": 1,
+    "sha256": "6847b7340294f7198f55a170c4e7d7dccc9773626dbb36e8845f3e7ed431bb24"
+  }
+]

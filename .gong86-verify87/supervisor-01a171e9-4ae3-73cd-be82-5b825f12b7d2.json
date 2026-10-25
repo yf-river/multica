@@ -1,0 +1,54 @@
+{
+  "id": "01a171e9-4ae3-73cd-be82-5b825f12b7d2",
+  "agent_id": "473b0a6d-d40c-4118-b864-c2b47bc68bd6",
+  "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+  "issue_id": "",
+  "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+  "status": "completed",
+  "priority": 0,
+  "dispatched_at": "2026-10-25T15:14:36+08:00",
+  "started_at": "2026-10-25T15:14:36+08:00",
+  "completed_at": "2026-10-25T15:15:14+08:00",
+  "result": {
+    "code_diff": {
+      "after": "",
+      "before": "9bb9aac0ebf9",
+      "files": [],
+      "roots": [
+        {
+          "attribution": "task",
+          "files": [],
+          "kind": "workdir",
+          "label": "任务目录",
+          "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-5b825f12b7d2/workdir"
+        }
+      ],
+      "truncated": false,
+      "unavailable": false,
+      "version": 2
+    },
+    "output": "{\"summary\":\"本轮已核对范围内，执行效率与结果正确性未发现问题。原始调用与本地会话记录一致：仅执行一次平台要求的工单读取，随后回答“17 + 25 = 42”；未见修改文件、创建任务或调用其他 Agent，文件差异为空。两次模型请求的非缓存输入、缓存读取和输出汇总与平台口径相符，高输入量本身不能证明浪费。外部 AgentLens 取数失败，尚不能完成外部逐请求交叉核对；不据此认定执行违规。\",\"efficiency\":\"clear\",\"correctness\":\"clear\",\"gaps\":[\"trace_usage/23a1bd66-bfcd-42a9-a8c0-1f89ecbdb1a2 全文已补读；AgentLens 返回 provider_error_220002，matched_requests=0、discovery_pending=true，缺少外部逐请求对照，无法宣称外部轨迹已完整核验。\"],\"covered\":[{\"kind\":\"issue\",\"id\":\"01a171e8-bdda-77d2-b5c1-342c5f52e579\"},{\"kind\":\"comment\",\"id\":\"01a171e8-e9de-75af-ad79-bcd2216948a2\"},{\"kind\":\"task\",\"id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"message\",\"id\":\"01a171e8-db94-799e-a642-19da0df60db7\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"message\",\"id\":\"01a171e8-db94-7b64-91b9-c8db1246475f\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"message\",\"id\":\"01a171e8-db95-779f-8bf9-16af5d9169d3\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"message\",\"id\":\"01a171e8-e9b0-7c5b-8038-93f18793946c\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"message\",\"id\":\"01a171e8-e9be-7c9e-9e2f-303f1475fd3f\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"trace\",\"id\":\"67ea90c9-4f59-4c76-9393-32bb1f22b6b4\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"trace\",\"id\":\"0c3fd01c-d09c-445f-a46d-46bdd2ece541\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"trace\",\"id\":\"2df55822-6e6a-4dfb-8880-d0e8ed18285a\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"},{\"kind\":\"trace_usage\",\"id\":\"23a1bd66-bfcd-42a9-a8c0-1f89ecbdb1a2\",\"run_id\":\"01a171e8-bddf-7f08-a2e5-fe8b445ede4e\"}],\"findings\":[],\"resolutions\":[]}",
+    "pr_url": "",
+    "session_id": "01a171e9-4c31-7941-a94b-114ce6f7eece",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-5b825f12b7d2/workdir"
+  },
+  "error": null,
+  "attempt": 1,
+  "max_attempts": 2,
+  "created_at": "2026-10-25T15:14:36+08:00",
+  "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/task-5b825f12b7d2/workdir",
+  "relative_work_dir": "dev-20d05776e5a9/task-5b825f12b7d2/workdir",
+  "delivered_comment_ids": [],
+  "kind": "quick_create",
+  "attribution": {
+    "source": "trigger_owner",
+    "precise": true,
+    "initiator": {
+      "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed"
+    },
+    "evidence": {
+      "kind": "supervision_batch",
+      "ref_id": "01a171e9-4ade-79ab-96f6-13ee6f2a2950"
+    }
+  }
+}

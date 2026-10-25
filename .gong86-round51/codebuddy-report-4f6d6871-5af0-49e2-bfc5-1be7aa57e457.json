@@ -1,0 +1,1226 @@
+{
+  "preparation_status": "partial",
+  "material_version": 1,
+  "local_session_evidence": [
+    {
+      "runtime": "codebuddy",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+      "source_sha256": "40a5ec782aaa3c1704e1bc50cf1738419f29c1f75d9bb06f13bd7bc90a15e02d",
+      "started_at": "2026-10-25T16:54:16.131916954+08:00",
+      "ended_at": "2026-10-25T08:54:30.220751743Z",
+      "requests": [
+        {
+          "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+          "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+          "sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+          "message_id": "01a1724497b778ab9033a0f4094444f1",
+          "model": "deepseek-v4.1-flash-ioa",
+          "raw_usage": {
+            "prompt_tokens": 26350,
+            "completion_tokens": 91,
+            "total_tokens": 26441,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 2816
+            },
+            "prompt_cache_hit_tokens": 2816,
+            "prompt_cache_miss_tokens": 23534,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "prompt_cache_write_tokens": 0,
+            "completion_thinking_tokens": 0,
+            "credit": 0.33,
+            "cached_tokens": 0
+          }
+        },
+        {
+          "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+          "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+          "sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+          "message_id": "01a17244a47578cabac80768655704ba",
+          "model": "deepseek-v4.1-flash-ioa",
+          "raw_usage": {
+            "prompt_tokens": 26858,
+            "completion_tokens": 157,
+            "total_tokens": 27015,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 65,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 26240
+            },
+            "prompt_cache_hit_tokens": 26240,
+            "prompt_cache_miss_tokens": 618,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "prompt_cache_write_tokens": 0,
+            "completion_thinking_tokens": 65,
+            "credit": 0.02,
+            "cached_tokens": 0
+          }
+        },
+        {
+          "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+          "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+          "sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+          "message_id": "01a17244b0f27c57b76680dae57b5811",
+          "model": "deepseek-v4.1-flash-ioa",
+          "raw_usage": {
+            "prompt_tokens": 27047,
+            "completion_tokens": 229,
+            "total_tokens": 27276,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 221,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": 0,
+              "cached_tokens": 26880
+            },
+            "prompt_cache_hit_tokens": 26880,
+            "prompt_cache_miss_tokens": 167,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "prompt_cache_write_tokens": 0,
+            "completion_thinking_tokens": 221,
+            "credit": 0.02,
+            "cached_tokens": 0
+          }
+        }
+      ],
+      "events": [
+        {
+          "content": [
+            {
+              "text": "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: 01a17244-86dd-73c6-813e-dcf3b3824581\n\nStart by running `multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json` to understand your task, then complete it.\nIf comment context is missing or stale, scan the threads with `multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `--since` incremental polling, pagination, and folding, see `multica issue comment list --help`.\n",
+              "type": "input_text"
+            }
+          ],
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "",
+            "model": "",
+            "rawUsage": null,
+            "traceId": ""
+          },
+          "type": "message"
+        },
+        {
+          "content": [
+            {
+              "providerData": {
+                "annotations": []
+              },
+              "text": "I'll start by reading the issue.",
+              "type": "output_text"
+            }
+          ],
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a1724497b778ab9033a0f4094444f1",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "message"
+        },
+        {
+          "arguments": "{\"command\": \"multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json\", \"description\": \"Read assigned issue\"}",
+          "callId": "call_00_ET_9ZZKYRQxIvC3LVfJgKBP7761",
+          "message": {
+            "usage": {
+              "cache_read_input_tokens": 2816,
+              "input_tokens": 26350,
+              "output_tokens": 91,
+              "total_tokens": 26441
+            }
+          },
+          "name": "Bash",
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a1724497b778ab9033a0f4094444f1",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": {
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cached_tokens": 0,
+              "completion_thinking_tokens": 0,
+              "completion_tokens": 91,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "credit": 0.33,
+              "prompt_cache_hit_tokens": 2816,
+              "prompt_cache_miss_tokens": 23534,
+              "prompt_cache_write_tokens": 0,
+              "prompt_tokens": 26350,
+              "prompt_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 2816,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "total_tokens": 26441
+            },
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "function_call"
+        },
+        {
+          "callId": "call_00_ET_9ZZKYRQxIvC3LVfJgKBP7761",
+          "name": "Bash",
+          "output": {
+            "text": "Stdout: {\n  \"assignee_id\": \"695b5ac6-498e-41b5-999c-afbcbf3d7b9b\",\n  \"assignee_type\": \"agent\",\n  \"created_at\": \"2026-10-25T16:54:16+08:00\",\n  \"creator_id\": \"0641d4f0-04c6-4632-bcf3-7e5840e0c9ed\",\n  \"creator_type\": \"member\",\n  \"description\": \"隔离验收：只回答17+25结果。不要修改文件、创建任务或调用其他Agent。允许读取本工单。\",\n  \"due_date\": null,\n  \"id\": \"01a17244-86dd-73c6-813e-dcf3b3824581\",\n  \"identifier\": \"DEV-5\",\n  \"labels\": [],\n  \"last_activity_at\": \"2026-10-25T16:54:16.025926+08:00\",\n  \"metadata\": {},\n  \"number\": 5,\n  \"parent_issue_id\": null,\n  \"position\": -3,\n  \"priority\": \"not_important_not_urgent\",\n  \"project_id\": null,\n  \"properties\": {},\n  \"revision\": 1,\n  \"stage\": null,\n  \"start_date\": null,\n  \"status\": \"todo\",\n  \"status_category\": \"todo\",\n  \"status_name\": \"\",\n  \"title\": \"G86-51 codebuddy真实轨迹样本\",\n  \"updated_at\": \"2026-10-25T16:54:16+08:00\",\n  \"workspace_id\": \"c90d5776-cb29-4db3-8d3e-20d05776e5a9\"\n}\n\nStderr: (empty)\nExit Code: 0\nSignal: (none)",
+            "type": "text"
+          },
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a1724497b778ab9033a0f4094444f1",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "function_call_result"
+        },
+        {
+          "content": [],
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a17244a47578cabac80768655704ba",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "reasoning"
+        },
+        {
+          "arguments": "{\"command\": \"multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json\", \"description\": \"Check issue comments\"}",
+          "callId": "call_00_kqzJ2TGK1IR5Tx4CjYJx8822",
+          "message": {
+            "usage": {
+              "cache_read_input_tokens": 26240,
+              "input_tokens": 26858,
+              "output_tokens": 157,
+              "total_tokens": 27015
+            }
+          },
+          "name": "Bash",
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a17244a47578cabac80768655704ba",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": {
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cached_tokens": 0,
+              "completion_thinking_tokens": 65,
+              "completion_tokens": 157,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 65,
+                "rejected_prediction_tokens": 0
+              },
+              "credit": 0.02,
+              "prompt_cache_hit_tokens": 26240,
+              "prompt_cache_miss_tokens": 618,
+              "prompt_cache_write_tokens": 0,
+              "prompt_tokens": 26858,
+              "prompt_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 26240,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "total_tokens": 27015
+            },
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "function_call"
+        },
+        {
+          "callId": "call_00_kqzJ2TGK1IR5Tx4CjYJx8822",
+          "name": "Bash",
+          "output": {
+            "text": "Stdout: []\n\nStderr: (empty)\nExit Code: 0\nSignal: (none)",
+            "type": "text"
+          },
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a17244a47578cabac80768655704ba",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "function_call_result"
+        },
+        {
+          "content": [],
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a17244b0f27c57b76680dae57b5811",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": null,
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "reasoning"
+        },
+        {
+          "content": [
+            {
+              "providerData": {
+                "annotations": []
+              },
+              "text": "17 + 25 = 42",
+              "type": "output_text"
+            }
+          ],
+          "message": {
+            "usage": {
+              "cache_read_input_tokens": 26880,
+              "input_tokens": 27047,
+              "output_tokens": 229,
+              "total_tokens": 27276
+            }
+          },
+          "providerData": {
+            "conversationRequestId": "01a172448caf71e08ad432b2ef52972d",
+            "messageId": "01a17244b0f27c57b76680dae57b5811",
+            "model": "deepseek-v4.1-flash-ioa",
+            "rawUsage": {
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "cached_tokens": 0,
+              "completion_thinking_tokens": 221,
+              "completion_tokens": 229,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 221,
+                "rejected_prediction_tokens": 0
+              },
+              "credit": 0.02,
+              "prompt_cache_hit_tokens": 26880,
+              "prompt_cache_miss_tokens": 167,
+              "prompt_cache_write_tokens": 0,
+              "prompt_tokens": 27047,
+              "prompt_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "cached_tokens": 26880,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "total_tokens": 27276
+            },
+            "traceId": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          "type": "message"
+        }
+      ],
+      "gaps": []
+    }
+  ],
+  "request_comparisons": [
+    {
+      "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "response_id": "01a1724497b778ab9033a0f4094444f1",
+      "span_id": "01a1724497b778ab9033a0f4094444f1",
+      "external_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "local_sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+      "external_sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+      "sdk_matches": true,
+      "parent_sdk_matches": false,
+      "model": "deepseek-v4.1-flash-ioa",
+      "input_including_cache_comparison": "match",
+      "output_comparison": "match",
+      "cache_read_comparison": "match",
+      "raw_local_usage": {
+        "prompt_tokens": 26350,
+        "completion_tokens": 91,
+        "total_tokens": 26441,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 2816
+        },
+        "prompt_cache_hit_tokens": 2816,
+        "prompt_cache_miss_tokens": 23534,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 0,
+        "credit": 0.33,
+        "cached_tokens": 0
+      },
+      "verified_span": {
+        "attributes": [
+          {
+            "key": "message_id",
+            "type": "string",
+            "value": "01a172448caf71e08ad432b2ef52972d"
+          },
+          {
+            "key": "gen_ai.span.kind",
+            "type": "string",
+            "value": "LLM"
+          },
+          {
+            "key": "gen_ai.framework",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "gen_ai.framework.version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "gen_ai.session.id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "gen_ai.user.id",
+            "type": "string",
+            "value": "yunfeihu"
+          },
+          {
+            "key": "gen_ai.business.scenario",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "gen_ai.request.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash"
+          },
+          {
+            "key": "gen_ai.response.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash-ioa"
+          },
+          {
+            "key": "gen_ai.response.finish_reason",
+            "type": "string",
+            "value": "tool_calls"
+          },
+          {
+            "key": "gen_ai.response.id",
+            "type": "string",
+            "value": "01a1724497b778ab9033a0f4094444f1"
+          },
+          {
+            "key": "gen_ai.response.time_to_first_token",
+            "type": "int64",
+            "value": "1833000000"
+          },
+          {
+            "key": "gen_ai.usage.input_tokens",
+            "type": "int64",
+            "value": "26350"
+          },
+          {
+            "key": "gen_ai.usage.output_tokens",
+            "type": "int64",
+            "value": "91"
+          },
+          {
+            "key": "gen_ai.usage.total_tokens",
+            "type": "int64",
+            "value": "26441"
+          },
+          {
+            "key": "gen_ai.usage.cache_creation.input_tokens",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "gen_ai.usage.cache_read.input_tokens",
+            "type": "int64",
+            "value": "2816"
+          },
+          {
+            "key": "status_code",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "codebuddy.ide.type",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.agent",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "codebuddy.ide.agent_version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "codebuddy.scene",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "codebuddy.event_code",
+            "type": "string",
+            "value": "model_request"
+          },
+          {
+            "key": "codebuddy.conversation_id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "codebuddy.conversation_message_id",
+            "type": "string",
+            "value": "01a1724497b778ab9033a0f4094444f1"
+          },
+          {
+            "key": "codebuddy.conversation_request_id",
+            "type": "string",
+            "value": "01a172448caf71e08ad432b2ef52972d"
+          },
+          {
+            "key": "codebuddy.trace_id",
+            "type": "string",
+            "value": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          {
+            "key": "gen_ai.request.max_tokens",
+            "type": "int64",
+            "value": "128000"
+          },
+          {
+            "key": "gen_ai.request.is_stream",
+            "type": "bool",
+            "value": "true"
+          },
+          {
+            "key": "gen_ai.completions.0.finish_reason",
+            "type": "string",
+            "value": "tool_calls"
+          },
+          {
+            "key": "gen_ai.completions.0.role",
+            "type": "string",
+            "value": "assistant"
+          },
+          {
+            "key": "gen_ai.completions.0.content",
+            "type": "string",
+            "value": "I'll start by reading the issue."
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.id",
+            "type": "string",
+            "value": "call_00_ET_9ZZKYRQxIvC3LVfJgKBP7761"
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.name",
+            "type": "string",
+            "value": "Bash"
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.arguments",
+            "type": "string",
+            "value": "{\"command\": \"multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json\", \"description\": \"Read assigned issue\"}"
+          },
+          {
+            "key": "input.value",
+            "type": "string",
+            "value": "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: 01a17244-86dd-73c6-813e-dcf3b3824581\n\nStart by running `multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json` to understand your task, then complete it.\nIf comment context is missing or stale, scan the threads with `multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `"
+          },
+          {
+            "key": "output.value",
+            "type": "string",
+            "value": "I'll start by reading the issue."
+          },
+          {
+            "key": "tps.tenant.id",
+            "type": "string",
+            "value": "20477#apm-log-gabb94cb59f3b9ba#21523_196768___apm"
+          },
+          {
+            "key": "topic.id",
+            "type": "string",
+            "value": "apm-trace-e9a5g8c3c48e15c3"
+          },
+          {
+            "key": "service.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "service.instance",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "type": "string",
+            "value": "skywalking"
+          }
+        ],
+        "cacheHitRate": 0.10686907020872866,
+        "cacheReadTokens": 2816,
+        "duration": 2217000000,
+        "endTime": "1792918462217000000",
+        "events": [],
+        "inputTokens": 26350,
+        "llmSpanKind": "LLM",
+        "outputTokens": 91,
+        "parentSpanID": "",
+        "serviceInstance": "CodeBuddy",
+        "serviceName": "CLI",
+        "sessionID": "01a17244-8ce4-771b-8d19-304b197b5854",
+        "spanID": "01a1724497b778ab9033a0f4094444f1",
+        "spanKind": "SPAN_KIND_CLIENT",
+        "spanName": "model_request",
+        "startTime": "1792918460000000000",
+        "statusCode": 1,
+        "tokens": 26441,
+        "traceID": "01a172448caf71e08ad432b2ef52972d",
+        "userID": "yunfeihu"
+      }
+    },
+    {
+      "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "response_id": "01a17244a47578cabac80768655704ba",
+      "span_id": "01a17244a47578cabac80768655704ba",
+      "external_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "local_sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+      "external_sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+      "sdk_matches": true,
+      "parent_sdk_matches": false,
+      "model": "deepseek-v4.1-flash-ioa",
+      "input_including_cache_comparison": "match",
+      "output_comparison": "match",
+      "cache_read_comparison": "match",
+      "raw_local_usage": {
+        "prompt_tokens": 26858,
+        "completion_tokens": 157,
+        "total_tokens": 27015,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 65,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 26240
+        },
+        "prompt_cache_hit_tokens": 26240,
+        "prompt_cache_miss_tokens": 618,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 65,
+        "credit": 0.02,
+        "cached_tokens": 0
+      },
+      "verified_span": {
+        "attributes": [
+          {
+            "key": "message_id",
+            "type": "string",
+            "value": "01a172448caf71e08ad432b2ef52972d"
+          },
+          {
+            "key": "gen_ai.span.kind",
+            "type": "string",
+            "value": "LLM"
+          },
+          {
+            "key": "gen_ai.framework",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "gen_ai.framework.version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "gen_ai.session.id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "gen_ai.user.id",
+            "type": "string",
+            "value": "yunfeihu"
+          },
+          {
+            "key": "gen_ai.business.scenario",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "gen_ai.request.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash"
+          },
+          {
+            "key": "gen_ai.response.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash-ioa"
+          },
+          {
+            "key": "gen_ai.response.finish_reason",
+            "type": "string",
+            "value": "tool_calls"
+          },
+          {
+            "key": "gen_ai.response.id",
+            "type": "string",
+            "value": "01a17244a47578cabac80768655704ba"
+          },
+          {
+            "key": "gen_ai.response.time_to_first_token",
+            "type": "int64",
+            "value": "1564000000"
+          },
+          {
+            "key": "gen_ai.usage.input_tokens",
+            "type": "int64",
+            "value": "26858"
+          },
+          {
+            "key": "gen_ai.usage.output_tokens",
+            "type": "int64",
+            "value": "157"
+          },
+          {
+            "key": "gen_ai.usage.total_tokens",
+            "type": "int64",
+            "value": "27015"
+          },
+          {
+            "key": "gen_ai.usage.cache_creation.input_tokens",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "gen_ai.usage.cache_read.input_tokens",
+            "type": "int64",
+            "value": "26240"
+          },
+          {
+            "key": "status_code",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "codebuddy.ide.type",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.agent",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "codebuddy.ide.agent_version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "codebuddy.scene",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "codebuddy.event_code",
+            "type": "string",
+            "value": "model_request"
+          },
+          {
+            "key": "codebuddy.conversation_id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "codebuddy.conversation_message_id",
+            "type": "string",
+            "value": "01a17244a47578cabac80768655704ba"
+          },
+          {
+            "key": "codebuddy.conversation_request_id",
+            "type": "string",
+            "value": "01a172448caf71e08ad432b2ef52972d"
+          },
+          {
+            "key": "codebuddy.trace_id",
+            "type": "string",
+            "value": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          {
+            "key": "gen_ai.request.max_tokens",
+            "type": "int64",
+            "value": "128000"
+          },
+          {
+            "key": "gen_ai.request.is_stream",
+            "type": "bool",
+            "value": "true"
+          },
+          {
+            "key": "gen_ai.completions.0.finish_reason",
+            "type": "string",
+            "value": "tool_calls"
+          },
+          {
+            "key": "gen_ai.completions.0.role",
+            "type": "string",
+            "value": "assistant"
+          },
+          {
+            "key": "gen_ai.completions.0.reasoning_content",
+            "type": "string",
+            "value": "The task: \"隔离验收：只回答17+25结果。不要修改文件、创建任务或调用其他Agent。允许读取本工单。\"\n\nSo only answer 17+25 = 42. This is a verification sample task. Answer 42.\n\nLet me check comments to see if there's more context."
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.id",
+            "type": "string",
+            "value": "call_00_kqzJ2TGK1IR5Tx4CjYJx8822"
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.name",
+            "type": "string",
+            "value": "Bash"
+          },
+          {
+            "key": "gen_ai.completions.0.tool_calls.0.arguments",
+            "type": "string",
+            "value": "{\"command\": \"multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json\", \"description\": \"Check issue comments\"}"
+          },
+          {
+            "key": "input.value",
+            "type": "string",
+            "value": "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: 01a17244-86dd-73c6-813e-dcf3b3824581\n\nStart by running `multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json` to understand your task, then complete it.\nIf comment context is missing or stale, scan the threads with `multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `"
+          },
+          {
+            "key": "tps.tenant.id",
+            "type": "string",
+            "value": "20477#apm-log-gabb94cb59f3b9ba#21523_196768___apm"
+          },
+          {
+            "key": "topic.id",
+            "type": "string",
+            "value": "apm-trace-e9a5g8c3c48e15c3"
+          },
+          {
+            "key": "service.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "service.instance",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "type": "string",
+            "value": "skywalking"
+          }
+        ],
+        "cacheHitRate": 0.976990096060764,
+        "cacheReadTokens": 26240,
+        "duration": 2339000000,
+        "endTime": "1792918466339000000",
+        "events": [],
+        "inputTokens": 26858,
+        "llmSpanKind": "LLM",
+        "outputTokens": 157,
+        "parentSpanID": "",
+        "serviceInstance": "CodeBuddy",
+        "serviceName": "CLI",
+        "sessionID": "01a17244-8ce4-771b-8d19-304b197b5854",
+        "spanID": "01a17244a47578cabac80768655704ba",
+        "spanKind": "SPAN_KIND_CLIENT",
+        "spanName": "model_request",
+        "startTime": "1792918464000000000",
+        "statusCode": 1,
+        "tokens": 27015,
+        "traceID": "01a172448caf71e08ad432b2ef52972d",
+        "userID": "yunfeihu"
+      }
+    },
+    {
+      "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "response_id": "01a17244b0f27c57b76680dae57b5811",
+      "span_id": "01a17244b0f27c57b76680dae57b5811",
+      "external_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "local_sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+      "external_sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+      "sdk_matches": true,
+      "parent_sdk_matches": false,
+      "model": "deepseek-v4.1-flash-ioa",
+      "input_including_cache_comparison": "match",
+      "output_comparison": "match",
+      "cache_read_comparison": "match",
+      "raw_local_usage": {
+        "prompt_tokens": 27047,
+        "completion_tokens": 229,
+        "total_tokens": 27276,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 221,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 0
+        },
+        "prompt_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0,
+          "cached_tokens": 26880
+        },
+        "prompt_cache_hit_tokens": 26880,
+        "prompt_cache_miss_tokens": 167,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "prompt_cache_write_tokens": 0,
+        "completion_thinking_tokens": 221,
+        "credit": 0.02,
+        "cached_tokens": 0
+      },
+      "verified_span": {
+        "attributes": [
+          {
+            "key": "message_id",
+            "type": "string",
+            "value": "01a172448caf71e08ad432b2ef52972d"
+          },
+          {
+            "key": "gen_ai.span.kind",
+            "type": "string",
+            "value": "LLM"
+          },
+          {
+            "key": "gen_ai.framework",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "gen_ai.framework.version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "gen_ai.session.id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "gen_ai.user.id",
+            "type": "string",
+            "value": "yunfeihu"
+          },
+          {
+            "key": "gen_ai.business.scenario",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "gen_ai.request.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash"
+          },
+          {
+            "key": "gen_ai.response.model",
+            "type": "string",
+            "value": "deepseek-v4.1-flash-ioa"
+          },
+          {
+            "key": "gen_ai.response.finish_reason",
+            "type": "string",
+            "value": "stop"
+          },
+          {
+            "key": "gen_ai.response.id",
+            "type": "string",
+            "value": "01a17244b0f27c57b76680dae57b5811"
+          },
+          {
+            "key": "gen_ai.response.time_to_first_token",
+            "type": "int64",
+            "value": "1165000000"
+          },
+          {
+            "key": "gen_ai.usage.input_tokens",
+            "type": "int64",
+            "value": "27047"
+          },
+          {
+            "key": "gen_ai.usage.output_tokens",
+            "type": "int64",
+            "value": "229"
+          },
+          {
+            "key": "gen_ai.usage.total_tokens",
+            "type": "int64",
+            "value": "27276"
+          },
+          {
+            "key": "gen_ai.usage.cache_creation.input_tokens",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "gen_ai.usage.cache_read.input_tokens",
+            "type": "int64",
+            "value": "26880"
+          },
+          {
+            "key": "status_code",
+            "type": "int64",
+            "value": "0"
+          },
+          {
+            "key": "codebuddy.ide.type",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "codebuddy.ide.agent",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "codebuddy.ide.agent_version",
+            "type": "string",
+            "value": "2.174.0"
+          },
+          {
+            "key": "codebuddy.scene",
+            "type": "string",
+            "value": "craft"
+          },
+          {
+            "key": "codebuddy.event_code",
+            "type": "string",
+            "value": "model_request"
+          },
+          {
+            "key": "codebuddy.conversation_id",
+            "type": "string",
+            "value": "01a17244-8ce4-771b-8d19-304b197b5854"
+          },
+          {
+            "key": "codebuddy.conversation_message_id",
+            "type": "string",
+            "value": "01a17244b0f27c57b76680dae57b5811"
+          },
+          {
+            "key": "codebuddy.conversation_request_id",
+            "type": "string",
+            "value": "01a172448caf71e08ad432b2ef52972d"
+          },
+          {
+            "key": "codebuddy.trace_id",
+            "type": "string",
+            "value": "8a313c9cd78cad0b1f9ccc4fc46eab3d"
+          },
+          {
+            "key": "gen_ai.request.max_tokens",
+            "type": "int64",
+            "value": "128000"
+          },
+          {
+            "key": "gen_ai.request.is_stream",
+            "type": "bool",
+            "value": "true"
+          },
+          {
+            "key": "gen_ai.completions.0.finish_reason",
+            "type": "string",
+            "value": "stop"
+          },
+          {
+            "key": "gen_ai.completions.0.role",
+            "type": "string",
+            "value": "assistant"
+          },
+          {
+            "key": "gen_ai.completions.0.content",
+            "type": "string",
+            "value": "17 + 25 = 42"
+          },
+          {
+            "key": "gen_ai.completions.0.reasoning_content",
+            "type": "string",
+            "value": "No comments. Task: only answer 17+25 result. Don't modify files, create tasks, or call other agents. Allowed to read this issue.\n\nSo the deliverable is just \"42\". Status? The Agent Identity says \"隔离验收，仅执行当前任务，不修改代码、不创建其他任务。\" The workflow says set in_progress first if output is part of the issue's ask. But this is a trivial read-only answer task. The identity says only execute current task. \"隔离验收\" — isolated acceptance. Hmm, status writes: the ask is \"只回答17+25结果\" — the deliverable is the answer. Whether to set status... The identity doesn't forbid status writes; it forbids modifying code, creating other tasks. But an isolated acceptance test likely intentionally wants minimal side effects. The rule says write state when it changes. This is a question-answer type task; the workflow says \"you answered a question ... write nothing\". That fits: answering a question doesn't touch status.\n\nSo just answer: 42.\n\nKeep concise."
+          },
+          {
+            "key": "input.value",
+            "type": "string",
+            "value": "You are running as a local coding agent for a Multica workspace.\n\nYour assigned issue ID is: 01a17244-86dd-73c6-813e-dcf3b3824581\n\nStart by running `multica issue get 01a17244-86dd-73c6-813e-dcf3b3824581 --output json` to understand your task, then complete it.\nIf comment context is missing or stale, scan the threads with `multica issue comment list 01a17244-86dd-73c6-813e-dcf3b3824581 --roots-only --summary --compact --output json`, then expand only what matters with `--thread <thread-id> --tail 30`. For `"
+          },
+          {
+            "key": "output.value",
+            "type": "string",
+            "value": "<thinking>No comments. Task: only answer 17+25 result. Don't modify files, create tasks, or call other agents. Allowed to read this issue.\n\nSo the deliverable is just \"42\". Status? The Agent Identity says \"隔离验收，仅执行当前任务，不修改代码、不创建其他任务。\" The workflow says set in_progress first if output is part of the issue's ask. But this is a trivial read-only answer task. The identity says only execute current task. \"隔离验收\" — isolated acceptance. Hmm, status writes: the ask is \"只回答17+25结果\" — the deliverable is the answer. Wh"
+          },
+          {
+            "key": "tps.tenant.id",
+            "type": "string",
+            "value": "20477#apm-log-gabb94cb59f3b9ba#21523_196768___apm"
+          },
+          {
+            "key": "topic.id",
+            "type": "string",
+            "value": "apm-trace-e9a5g8c3c48e15c3"
+          },
+          {
+            "key": "service.name",
+            "type": "string",
+            "value": "CLI"
+          },
+          {
+            "key": "service.instance",
+            "type": "string",
+            "value": "CodeBuddy"
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "type": "string",
+            "value": "skywalking"
+          }
+        ],
+        "cacheHitRate": 0.9938255629090103,
+        "cacheReadTokens": 26880,
+        "duration": 2422000000,
+        "endTime": "1792918469422000000",
+        "events": [],
+        "inputTokens": 27047,
+        "llmSpanKind": "LLM",
+        "outputTokens": 229,
+        "parentSpanID": "",
+        "serviceInstance": "CodeBuddy",
+        "serviceName": "CLI",
+        "sessionID": "01a17244-8ce4-771b-8d19-304b197b5854",
+        "spanID": "01a17244b0f27c57b76680dae57b5811",
+        "spanKind": "SPAN_KIND_CLIENT",
+        "spanName": "model_request",
+        "startTime": "1792918467000000000",
+        "statusCode": 1,
+        "tokens": 27276,
+        "traceID": "01a172448caf71e08ad432b2ef52972d",
+        "userID": "yunfeihu"
+      }
+    }
+  ],
+  "run_id": "01a17244-86e3-7cf2-8508-399b39286acc",
+  "runtime": "codebuddy",
+  "runtime_source": "task_trace_event.task.started.provider",
+  "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+  "query_start": "2026-10-25T08:49:16.119771Z",
+  "query_end": "2026-10-25T08:59:30.263656Z",
+  "platform_usage": [
+    {
+      "model": "deepseek-v4.1-flash-ioa",
+      "provider": "codebuddy",
+      "input_tokens": 24319,
+      "output_tokens": 477,
+      "cache_read_tokens": 55936,
+      "cache_write_tokens": 0
+    }
+  ],
+  "references": [
+    {
+      "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "correlation": "exact",
+      "source": "local_session_jsonl",
+      "metadata": {
+        "sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+        "sdk_trace_source_path": "providerData.traceId",
+        "sdk_trace_source_sha256": "40a5ec782aaa3c1704e1bc50cf1738419f29c1f75d9bb06f13bd7bc90a15e02d"
+      }
+    }
+  ],
+  "agentlens_traces": null,
+  "gaps": [
+    "trace_pagination_unverified_pending_recheck",
+    "trace_discovery_incomplete_pending_recheck"
+  ],
+  "preparation_http_requests": 2,
+  "discovery_pending": true,
+  "preparation_duration_ms": 1500,
+  "queried_at": "2026-10-25T08:55:17.790134846Z"
+}

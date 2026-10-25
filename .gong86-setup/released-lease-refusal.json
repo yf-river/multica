@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "message": "GET /api/delivery-queue/slots?delivery_id=01a171a9-2ea1-7838-883c-e692cada161e: HTTP 404",
+  "configuration_unchanged": true,
+  "sha256": {
+    "/data/ida/multica/.run/env/verify-1-services.json": "7a81602202796386026de06f2f17ffa70dd387ef4ae6c1d78f593cf7b5d0fec8",
+    "/data/ida/multica/.run/env/prod-services.json": "65e7798cb67fe987d3086ea205c75d37d108692d94b19c1d70d1ecc1f0da92b6",
+    "/data/ida/multica/.run/deployments/goal-test-verify-1.json": "f486709cbd8ac3d63877919566829553c90692e6b71e2a3317026aef398f15a3"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "no_cookie_unauthenticated": 401,
+  "foreign_workspace": 404,
+  "missing_evidence": {
+    "status": 200,
+    "deleted": true
+  },
+  "browser_unauthenticated_probe_note": "browser request inherited login cookies; its missing workspace 400 is not an unauthenticated test"
+}

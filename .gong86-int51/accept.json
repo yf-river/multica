@@ -1,0 +1,11 @@
+{
+  "revision": 8,
+  "candidate_id": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1-1792919060746019202",
+  "evidence": [
+    {
+      "name": "固定int监督页面刷新持久化与审查回归",
+      "status": "failed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-8c905d4085ae/worktree/.gong86-int51/REPORT.md；页面刷新、真实审查回归通过，但固定int五项4通过1失败，CodeBuddy受控入口不兼容当前阶段，full范围未完成。"
+    }
+  ]
+}

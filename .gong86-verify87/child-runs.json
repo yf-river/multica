@@ -1,0 +1,95 @@
+[
+  {
+    "id": "01a171f0-e08f-70a2-9095-7ed55a106bb3",
+    "agent_id": "dd55deb4-d53b-4689-bdf9-093322da2400",
+    "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+    "issue_id": "01a171f0-e08b-70be-9d73-e8ee6b60b7b2",
+    "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+    "status": "completed",
+    "priority": 1,
+    "dispatched_at": "2026-10-25T15:23:52+08:00",
+    "started_at": "2026-10-25T15:23:52+08:00",
+    "completed_at": "2026-10-25T15:24:16+08:00",
+    "result": {
+      "code_diff": {
+        "after": "",
+        "before": "d8a3f821ab95",
+        "files": [],
+        "roots": [
+          {
+            "attribution": "task",
+            "files": [],
+            "kind": "workdir",
+            "label": "任务目录",
+            "path": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-9-7ed55a106bb3/workdir"
+          }
+        ],
+        "truncated": false,
+        "unavailable": false,
+        "version": 2
+      },
+      "output": "已完成。\n\n- 读取工单 DEV-9：要求用一次内置子代理做只读计算 17+25。\n- 已委派一次 CodeBuddy 内置 `Explore` 子代理（只读），返回 **42**。\n- 未调用任何 multica 平台 Agent/工单创建接口，未修改任何文件。\n- 状态：in_progress → in_review。",
+      "pr_url": "",
+      "session_id": "01a171f1-cc98-77cf-83c4-e093c0d59be3",
+      "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-9-7ed55a106bb3/workdir"
+    },
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-10-25T15:22:53+08:00",
+    "work_dir": "/data/cbs/multica-verification/verify-1/agent/workspaces/dev-20d05776e5a9/dev-9-7ed55a106bb3/workdir",
+    "relative_work_dir": "dev-20d05776e5a9/dev-9-7ed55a106bb3/workdir",
+    "delivered_comment_ids": [],
+    "kind": "direct",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "originator": {
+        "id": "0641d4f0-04c6-4632-bcf3-7e5840e0c9ed",
+        "name": "verification",
+        "email": "verification"
+      },
+      "evidence": {
+        "kind": "issue_assignment",
+        "ref_id": "01a171f0-e08b-70be-9d73-e8ee6b60b7b2"
+      }
+    },
+    "usage": [
+      {
+        "provider": "codebuddy",
+        "model": "deepseek-v4.1-flash-ioa",
+        "input_tokens": 42711,
+        "output_tokens": 954,
+        "cache_read_tokens": 111488,
+        "cache_write_tokens": 0
+      }
+    ],
+    "traces": [
+      {
+        "provider": "codebuddy",
+        "session_id": "01a171f1-cc98-77cf-83c4-e093c0d59be3",
+        "provider_trace_id": "01a171f1cc6b767f952d6ce8c5648536",
+        "correlation": "exact",
+        "source": "local_session_jsonl",
+        "sdk_trace_id": "e30087da132d229c1ac99b4673e04be9",
+        "sdk_trace_source_sha256": "239a068e90818f018011c21a3fb6eb49c83058e2874cdebdd9cf1fd2f3bdcecc",
+        "sdk_trace_source_path": "providerData.traceId"
+      },
+      {
+        "provider": "codebuddy",
+        "session_id": "01a171f1-fe4c-72bd-a4b5-bf8e8312977c",
+        "provider_trace_id": "37d4a06eb40849e29a0d3461a606f8d0",
+        "correlation": "exact",
+        "source": "local_session_jsonl",
+        "sdk_trace_id": "c8099b8636734f231c6cb292780d7c9a",
+        "sdk_trace_source_sha256": "a391b64e7aa3589090786cd626bbcf619f66275624e68f3d40832ec87af41b80",
+        "sdk_trace_source_path": "providerData.traceId"
+      }
+    ]
+  }
+]

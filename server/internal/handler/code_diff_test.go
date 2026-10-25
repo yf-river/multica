@@ -25,3 +25,16 @@ func TestCompletionSanitizesAndPersistsCodeDiff(t *testing.T) {
 		t.Fatalf("snapshot lost: %s", data)
 	}
 }
+
+func TestGong78TerminalRedactsQuotedSecretsFromOldDaemon(t *testing.T) {
+	fake := "SYNTHETIC_NOT_A_REAL_TOKEN_01234567890123456789"
+	req := TaskCompleteRequest{CodeDiff: &codediff.Diff{Version: 2, Roots: []codediff.Root{{Files: []codediff.File{{Path: "config.json", Patch: `+{"token":"` + fake + `"}`}}}}}}
+	sanitizeTaskCompleteRequest(&req)
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), fake) {
+		t.Fatal("caller supplied secret persisted")
+	}
+}

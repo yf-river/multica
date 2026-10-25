@@ -449,8 +449,8 @@ describe("IssueUsageTotal pricing", () => {
       <IssueUsageTotal tasks={[task]} alone onOpen={() => {}} />,
     );
 
-    // No rate on file for this model yet.
-    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    // 未定价时不把未知费用显示为零。
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
 
     act(() => {
       useCustomPricingStore.getState().setCustomPricing("acme/totally-made-up-model", {

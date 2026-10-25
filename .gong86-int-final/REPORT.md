@@ -1,0 +1,23 @@
+G86 固定 int 续接：真实阻塞与控制修复
+
+原交付 01a171e2-116d-79e6-bf67-5cb4d087625b，未新建任务或交付。原 verify87 证据完整保留：/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md。该证据不包含 CodeBuddy 同session跨run续接或运行中取消：原取消是Codex，混合任务是切runtime的新run。AgentLens普通2请求、浪费4请求及子请求1项局部匹配仍保持各自边界，partial不提升为完整。
+
+已核对生产控制维护3f2abcb3066ba136168a07f4cdf3c3468a3f14d4生效。正式队列真实返回integration_pending=true；发布器之前先处理历史published/needs_changes通知便返回，G86一直排不到。修复worker将可运行交付放在历史结果通知前，40项测试通过，并按完整operations清单安装独立指纹包。原交付随后正式claim-integration，revision6 preparing_release，publication generation82。
+
+实际int部署准确候选6fafcc7c8bf1a8c885162617e4d67072ae55fa3b-1792915913109610438；实际release_id=6fafcc7c8bf1a8c885162617e4d67072ae55fa3b-1792916114194333750；源码已整合控制主线3f2abcb。1385项制品校验、真实浏览器登录/刷新/WebSocket/CSRF/390px及服务致命日志检查通过。平台随后自动运行迁移回归，TestEveryConcurrentUpBuildHasCleanup发现639_test_agent_control_key缺少up cleanup登记。原失败日志：/data/ida/multica/.run/delivery-evidence/6fafcc7c8bf1a8c885162617e4d67072ae55fa3b-1792915913109610438-run-text-migration.log。正式交付进入needs_changes revision8，租约释放；不能把基础检查当业务验收通过。
+
+现行retest只支持未部署的verify失败；拒绝已部署int失败，不允许手改phase。已在maintenance-only分支修复：登记控制索引重试清理；正式retest要求准确失败候选、有效负责人归属、修复检查、无活动publication、无生产批准、未完成integration，并读取历史不可变verification证据；归档失败候选/原因/执行/恢复检查，回正式integration_pending队列。未改任何迁移SQL、监督业务实现或生产批准。控制修复固定提交269d38dbc；业务任务分支已合并同一修复，保留AGENTS.md原改动。
+
+独立新建PostgreSQL夹具库：交付与租约49项通过；迁移42项通过、2项跳过（真实pg_bigm要求及retired-builtins需显式环境），跳过不当通过。worker40、维护4、发布42项通过。测试夹具容器已沿自身句柄清理。详细日志在本目录；首次测试编译/夹具/历史候选校验失败保留，不冒充通过。
+
+剩余目标未完成：固定int原5项监督测试、CodeBuddy同session续接及已启动取消、真实监督页面刷新持久化与审查回归、正式int accept及in_review。未执行的新样本没有报告成通过；本轮临时测试配置尚未写入后端，未创建新业务样本Agent。继续前必须先让控制恢复API上线，再用原交付retest，不重复submit。无G86业务生产授权，不发布监督业务，不标done。
+
+业务任务分支合并修复提交efc250c3a；合并冲突只涉及迁移重试map，已保留G86的641/642/644/647/648并加入639。该业务源码真实执行并通过TestEveryConcurrentUpBuildHasCleanup与TestEveryConcurrentDownBuildHasCleanup，日志business-migration-registration.log。
+
+维护候选maintenance-269d38dbcee65e04440dd56af34412fce799798d已实际部署固定int；release_id=269d38dbcee65e04440dd56af34412fce799798d-1792916969653708374。真实控制接口11项通过，包括已部署失败候选正式retest、错误候选拒绝、失败历史保留及再次claim-integration；夹具已删除。真实浏览器刷新、认证、WebSocket、CSRF通过，page_errors=0、failed_requests=0。详见live-int-api.json、maintenance-browser.json。生产控制维护发布器按仓库规则必须等本来源执行结束再更新prod；这与“本轮运行内完成依赖新控制API的业务int验收”存在真实顺序依赖，不能靠直接改phase或虚构批准绕过。
+
+既有完整verify87报告：[已上传报告](http://9.134.129.162:13680/api/attachments/01a171f8-f058-7e26-b555-deb2898de0b1/download)，[已上传证据包](http://9.134.129.162:13680/api/attachments/01a171f8-f066-7bfc-868a-a86dc9fec155/download)。本次不重复覆盖旧证据。
+
+恢复模板retest-template.json尚未提交，必须在控制维护真实生产生效后回读最新候选与revision。正式命令：multica issue delivery retest 01a17118-80ef-717e-b9d0-9059a78db295 --delivery 01a171e2-116d-79e6-bf67-5cb4d087625b --file <核对后的retest.json>。之后仍须在原交付准确业务候选上完成全部未验收范围，不能用本次控制API夹具顶替。
+
+最终回执：新的控制维护请求已正式登记（request.log），状态queued，unit=multica-publish-maintenance-269d38dbcee65e04440dd56af34412fce799798d。生产仍为3f2abcb3066ba136168a07f4cdf3c3468a3f14d4，没有声称新维护已上线。原业务交付保持needs_changes revision8，原publication为idle，无生产批准。固定int当前为本次控制维护候选，业务验收尚未完成，不能标in_review或done。

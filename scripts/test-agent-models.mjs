@@ -52,7 +52,7 @@ try {
  await client.query("SET LOCAL statement_timeout='15s'");
  // 阻止新的 Agent 变更与任务入队越过空闲检查；运行中的任务不被取消或更新。
  if (mode === 'apply') await client.query('LOCK TABLE agent_task_queue, agent IN SHARE ROW EXCLUSIVE MODE');
- const busy = Number((await client.query("SELECT count(*) FROM agent_task_queue WHERE status IN ('queued','dispatched','running')")).rows[0].count);
+ const busy = Number((await client.query("SELECT count(*) FROM agent_task_queue WHERE status NOT IN ('completed','failed','cancelled')")).rows[0].count);
  if (mode === 'apply' && busy) throw Error('测试环境仍有待执行任务，保留现场，空闲后再维护');
  const before = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at,name,custom_args FROM agent ORDER BY id')).rows;
  const runtimes = (await client.query("SELECT id,workspace_id,provider,runtime_mode FROM agent_runtime WHERE provider IN ('codebuddy','codex') AND status='online' AND daemon_id=$1 AND profile_id IS NULL",[health.daemon_id])).rows;

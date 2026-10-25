@@ -1,0 +1,34 @@
+{
+  "can_manage": true,
+  "config": {
+    "error": "",
+    "model": "gpt-6.1-sol",
+    "enabled": false,
+    "agent_id": "d15b9082-b3cc-4470-948f-fd1821d995b3",
+    "runtime_id": "b6ea8b7e-0dce-4aa3-bcb9-2a9ce9932a5e",
+    "concurrency": 3,
+    "instructions": "",
+    "last_scan_at": "2026-10-25T09:13:22.722727+00:00",
+    "thinking_level": "low",
+    "last_success_at": "2026-10-25T09:12:22.719427+00:00",
+    "interval_seconds": 300,
+    "inventory_complete": true,
+    "instructions_version": "default-31c7db8b",
+    "investigation_enabled": true,
+    "instructions_customized": false
+  },
+  "summary": {
+    "total": 15,
+    "failed": 0,
+    "covered": 3,
+    "no_runs": 0,
+    "pending": 0,
+    "running": 2,
+    "waiting": 10,
+    "retrying": 0,
+    "incomplete": 3,
+    "open_findings": 1,
+    "oldest_pending_at": null,
+    "issues_with_findings": 1
+  }
+}

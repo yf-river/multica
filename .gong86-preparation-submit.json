@@ -1,0 +1,45 @@
+{
+  "operation_id": "43d36054-adee-421b-ae11-a92b68df8144",
+  "source_commit": "51cb16cab2dd68547ecc3d93ef9fc5bd707364b1",
+  "source_branch": "feature/ida-developer/gong-86",
+  "base_commit": "4221eca13ef6758eb3f34de652db3ca522eeffe4",
+  "evidence": [
+    {
+      "name": "受控准备及凭据解析8项回归",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/preparation-recovery/preparation-tests.log；认证Skill文件真实读取和字面值解析通过，未输出原文。"
+    },
+    {
+      "name": "准备流程worker40项及release44项回归",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/preparation-recovery/worker-tests.log；release-tests.log。业务实测不计入这些本地回归。"
+    },
+    {
+      "name": "串行恢复及旧证据边界核对",
+      "status": "passed",
+      "evidence": "原交付01a17233-d659-739f-844b-49a19a416a94 needs_changes revision4，原执行已结束，未对旧lease写配置；新候选先按quality-agents.md受控准备，再真实小样及完整verify/int矩阵；verify87仅保留为配方和历史范围。"
+    }
+  ],
+  "required_checks": [
+    {
+      "name": "固定int监督页面刷新持久化与审查回归",
+      "stage": "integration"
+    },
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "stage": "verification"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "stage": "verification"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "stage": "verification"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "stage": "verification"
+    }
+  ]
+}

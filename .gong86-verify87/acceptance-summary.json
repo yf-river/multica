@@ -1,0 +1,365 @@
+{
+  "codebuddy": {
+    "issue_id": "01a171e8-bdda-77d2-b5c1-342c5f52e579",
+    "coverage": {
+      "runs": 2,
+      "covered": 24,
+      "current": null,
+      "partial": 0,
+      "pending": 1,
+      "materials": 25,
+      "round_covered": 24,
+      "round_pending": 0,
+      "round_materials": 24
+    },
+    "subject": {
+      "gaps": [
+        "CodeBuddy用量材料ef31fa92-47e9-48c2-b2e0-d6c867759fe1明确标记trace_pagination_unverified_pending_recheck、trace_discovery_incomplete_pending_recheck及discovery_pending=true，尚不能确认外部轨迹已完整发现和分页。",
+        "Codex用量材料8f7f67de-78d9-4106-bbf0-aac07db03377仅提供运行级token事件，requests为空；三处可见输入事件为截断前缀，无法核清完整输入或将用量可靠分配到请求，AgentLens不适用于该runtime。"
+      ],
+      "error": "",
+      "stopped": false,
+      "summary": "本轮已核对范围内，执行过程与回答未发现问题：两次运行均读取工单后回答42，未见修改文件、创建任务或调用其他Agent。CodeBuddy两次请求与外部span的输入、缓存和输出一致；Codex运行汇总与平台一致。效率整体仍受轨迹完整性及请求归属限制，不能确认全部成本或据高用量认定浪费。本轮为手动检查，不以todo状态判断任务未交付。",
+      "failures": 0,
+      "issue_id": "01a171e8-bdda-77d2-b5c1-342c5f52e579",
+      "changed_at": "2026-10-25T07:20:38.833232+00:00",
+      "efficiency": "uncertain",
+      "correctness": "clear",
+      "force_review": false,
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "desired_version": 40,
+      "last_checked_at": "2026-10-25T07:19:43.883334+00:00",
+      "next_attempt_at": "2026-10-25T07:19:43.883334+00:00",
+      "reviewed_version": 38
+    },
+    "supervisor_usage": [
+      {
+        "model": "gpt-6.1-sol",
+        "provider": "codex",
+        "input_tokens": 102197,
+        "output_tokens": 6222,
+        "cache_read_tokens": 600704,
+        "cache_write_tokens": 0
+      }
+    ],
+    "trace_materials": [
+      {
+        "id": "ef31fa92-47e9-48c2-b2e0-d6c867759fe1",
+        "gaps": [
+          "trace_pagination_unverified_pending_recheck",
+          "trace_discovery_incomplete_pending_recheck"
+        ],
+        "run_id": "01a171e8-bddf-7f08-a2e5-fe8b445ede4e",
+        "status": "partial",
+        "runtime": "codebuddy",
+        "queried_at": "2026-10-25T07:18:43.898513+00:00",
+        "differences": 0,
+        "local_snapshots": 1,
+        "matched_requests": 2,
+        "material_version": 1,
+        "preparation_duration_ms": 1566,
+        "preparation_http_requests": 2
+      },
+      {
+        "id": "8f7f67de-78d9-4106-bbf0-aac07db03377",
+        "gaps": [
+          "codex_token_events_are_run_level_not_proven_request_usage",
+          "visible_event_truncated",
+          "visible_event_truncated",
+          "visible_event_truncated",
+          "AgentLens does not apply to this runtime; local session evidence and run-level usage are provided separately."
+        ],
+        "run_id": "01a171ea-5ccc-7dff-bc6d-ea3d68cd3456",
+        "status": "not_applicable",
+        "runtime": "codex",
+        "queried_at": "2026-10-25T07:18:21.726636+00:00",
+        "differences": 0,
+        "local_snapshots": 1,
+        "matched_requests": 0,
+        "material_version": 1,
+        "preparation_duration_ms": 2,
+        "preparation_http_requests": 0
+      }
+    ]
+  },
+  "codex": {
+    "issue_id": "01a171e8-bdec-7435-a06c-83ca391b73fe",
+    "coverage": {
+      "runs": 1,
+      "covered": 12,
+      "current": null,
+      "partial": 0,
+      "pending": 1,
+      "materials": 13,
+      "round_covered": 0,
+      "round_pending": 0,
+      "round_materials": 0
+    },
+    "subject": {
+      "gaps": [
+        "trace_usage/41c04c35-8f51-446d-8c6e-41b9c9553130 本轮连续核对16000–59345字符；0–16000未在本轮重读，且原文标记三处visible_event_truncated，无法恢复完整提示事件。",
+        "trace_usage/c99cfd74-e04c-4869-bcbf-6f3f9da9a9d0 仅有索引入口，0–59345字符正文未读；相同长度及汇总不能证明其与另一份材料完全相同。",
+        "本地Codex用量明确为运行级而非已证实的请求级记录，matched_requests=0；无法核验逐请求归属、精确成本及提示词各部分token开销。"
+      ],
+      "error": "",
+      "stopped": false,
+      "summary": "本轮已核对轨迹中后段：实际调用为获准的读取工单，随后最终答复42，符合17+25的要求，未见文件修改、建任务或调用其他Agent的执行证据。正确性在该范围内清晰；效率因事件截断及另一份轨迹原文未读，保留不确定。平台用量与本地运行级计数可对应，但不能据此认定逐请求成本或精确提示词开销。当前为手动检查，不以工单todo状态判断交付缺陷。",
+      "failures": 0,
+      "issue_id": "01a171e8-bdec-7435-a06c-83ca391b73fe",
+      "changed_at": "2026-10-25T07:14:27.174502+00:00",
+      "efficiency": "uncertain",
+      "correctness": "clear",
+      "force_review": false,
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "desired_version": 19,
+      "last_checked_at": "2026-10-25T07:20:43.883787+00:00",
+      "next_attempt_at": "2026-10-25T07:20:43.883787+00:00",
+      "reviewed_version": 0
+    },
+    "supervisor_usage": [
+      {
+        "model": "gpt-6.1-sol",
+        "provider": "codex",
+        "input_tokens": 54470,
+        "output_tokens": 3591,
+        "cache_read_tokens": 412800,
+        "cache_write_tokens": 0
+      }
+    ],
+    "trace_materials": [
+      {
+        "id": "c99cfd74-e04c-4869-bcbf-6f3f9da9a9d0",
+        "gaps": [
+          "codex_token_events_are_run_level_not_proven_request_usage",
+          "visible_event_truncated",
+          "visible_event_truncated",
+          "visible_event_truncated",
+          "AgentLens does not apply to this runtime; local session evidence and run-level usage are provided separately."
+        ],
+        "run_id": "01a171e8-bdf2-72cd-8a22-38d6e8446fba",
+        "status": "not_applicable",
+        "runtime": "codex",
+        "queried_at": "2026-10-25T07:18:58.901659+00:00",
+        "differences": 0,
+        "local_snapshots": 1,
+        "matched_requests": 0,
+        "material_version": 1,
+        "preparation_duration_ms": 3,
+        "preparation_http_requests": 0
+      }
+    ]
+  },
+  "waste": {
+    "issue_id": "01a171ef-b69d-7cfb-8747-23baadae1635",
+    "coverage": {
+      "runs": 1,
+      "covered": 16,
+      "current": null,
+      "partial": 0,
+      "pending": 0,
+      "materials": 16,
+      "round_covered": 0,
+      "round_pending": 0,
+      "round_materials": 0
+    },
+    "subject": {
+      "gaps": [
+        "trace_usage 已连续读完39752字符，但明确标记 trace_pagination_unverified_pending_recheck 和 trace_discovery_incomplete_pending_recheck，不能确认外部轨迹全量覆盖。",
+        "外部请求输出提及身份规则要求固定三读，但本轮未提供该规则原文，不能确认配置根因及其授权来源。"
+      ],
+      "error": "",
+      "stopped": false,
+      "summary": "本轮结果正确，执行存在两次无业务收益的重复读取。首次完整取得任务后，同一命令又成功返回两次相同内容；本地会话与外部请求标识、用量均匹配，支持实际发生而非仅重复文字。最终回答42符合要求。轨迹提及身份规则强制三读，规则原文尚未取得；完整轨迹发现仍有缺口，不据此推算总成本或节省比例。",
+      "failures": 0,
+      "issue_id": "01a171ef-b69d-7cfb-8747-23baadae1635",
+      "changed_at": "2026-10-25T07:21:56.232545+00:00",
+      "efficiency": "problem",
+      "correctness": "clear",
+      "force_review": false,
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "desired_version": 21,
+      "last_checked_at": "2026-10-25T07:23:58.884659+00:00",
+      "next_attempt_at": "2026-10-25T07:23:58.884659+00:00",
+      "reviewed_version": 21
+    },
+    "supervisor_usage": [
+      {
+        "model": "gpt-6.1-sol",
+        "provider": "codex",
+        "input_tokens": 39899,
+        "output_tokens": 3056,
+        "cache_read_tokens": 291584,
+        "cache_write_tokens": 0
+      }
+    ],
+    "trace_materials": [
+      {
+        "id": "23432fd9-6d70-4486-a4e7-7c0ad81e3af6",
+        "gaps": [
+          "trace_pagination_unverified_pending_recheck",
+          "trace_discovery_incomplete_pending_recheck"
+        ],
+        "run_id": "01a171ef-b6a2-7390-ad33-02c571bd137d",
+        "status": "partial",
+        "runtime": "codebuddy",
+        "queried_at": "2026-10-25T07:22:13.890562+00:00",
+        "differences": 0,
+        "local_snapshots": 1,
+        "matched_requests": 4,
+        "material_version": 1,
+        "preparation_duration_ms": 2061,
+        "preparation_http_requests": 2
+      }
+    ]
+  },
+  "child": {
+    "issue_id": "01a171f0-e08b-70be-9d73-e8ee6b60b7b2",
+    "coverage": {
+      "runs": 1,
+      "covered": 19,
+      "current": null,
+      "partial": 0,
+      "pending": 0,
+      "materials": 19,
+      "round_covered": 0,
+      "round_pending": 0,
+      "round_materials": 0
+    },
+    "subject": {
+      "gaps": [
+        "trace_usage/915128f5-2cda-45e1-9670-b1ebe55d36bb 已连续读完25303字符，但准备状态为partial，明确保留 trace_pagination_unverified_pending_recheck 与 trace_discovery_incomplete_pending_recheck；仅有一个子请求的外部对照，不能确认全部外部轨迹覆盖或完整成本。"
+      ],
+      "error": "",
+      "stopped": false,
+      "summary": "本轮已核对范围内，执行效率与结果正确性未发现问题。执行者先读取当前工单，仅调用一次内置 Explore 子代理，得到并汇总正确答案42；主、子会话原文未见文件写入或其他平台 Agent 调用，任务差异记录为空。原生子请求与外部 span 的响应、会话和用量对应，外部记录使用父 SDK trace 标识。未见重复调查或无进展重试。外部 trace 发现与分页仍待核实，因此不宣称已覆盖全部外部轨迹或精确成本。",
+      "failures": 0,
+      "issue_id": "01a171f0-e08b-70be-9d73-e8ee6b60b7b2",
+      "changed_at": "2026-10-25T07:24:16.07865+00:00",
+      "efficiency": "clear",
+      "correctness": "clear",
+      "force_review": false,
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "desired_version": 26,
+      "last_checked_at": "2026-10-25T07:26:13.883974+00:00",
+      "next_attempt_at": "2026-10-25T07:26:13.883974+00:00",
+      "reviewed_version": 26
+    },
+    "supervisor_usage": [
+      {
+        "model": "gpt-6.1-sol",
+        "provider": "codex",
+        "input_tokens": 32603,
+        "output_tokens": 2553,
+        "cache_read_tokens": 235648,
+        "cache_write_tokens": 0
+      }
+    ],
+    "trace_materials": [
+      {
+        "id": "915128f5-2cda-45e1-9670-b1ebe55d36bb",
+        "gaps": [
+          "trace_pagination_unverified_pending_recheck",
+          "trace_discovery_incomplete_pending_recheck"
+        ],
+        "run_id": "01a171f0-e08f-70a2-9095-7ed55a106bb3",
+        "status": "partial",
+        "runtime": "codebuddy",
+        "queried_at": "2026-10-25T07:24:58.89136+00:00",
+        "differences": 0,
+        "local_snapshots": 1,
+        "matched_requests": 1,
+        "material_version": 1,
+        "preparation_duration_ms": 2074,
+        "preparation_http_requests": 2
+      }
+    ]
+  },
+  "cancel": {
+    "issue_id": "01a171f0-4d39-7d25-af1b-9d17e1ae0cf0",
+    "coverage": {
+      "runs": 2,
+      "covered": 19,
+      "current": {
+        "id": "9ca74c06-02e1-4565-b08f-5008fb5fb6e7",
+        "kind": "trace_usage",
+        "length": 55291,
+        "offset": 8000
+      },
+      "partial": 1,
+      "pending": 0,
+      "materials": 20,
+      "round_covered": 0,
+      "round_pending": 0,
+      "round_materials": 0
+    },
+    "subject": {
+      "gaps": [
+        "重试运行 trace_usage/9ca74c06-02e1-4565-b08f-5008fb5fb6e7 长55291字符，目前仅补读0—8000，余下事件与用量尚未核对，不能评价完整执行效率及精确成本。",
+        "首次取消运行的本地记录仅含设置与启动事件，无取消清理回执或sleep调用，不能验证是否取消了正在等待的进程；状态记录只证明平台标记取消。"
+      ],
+      "error": "",
+      "stopped": false,
+      "summary": "本轮可见执行未发现重复调用或忽略报错；效率全貌仍待补读。重试记录显示执行一次 sleep 15，约15秒后返回，最终输出与评论均为42，变更记录为空。首次运行被取消，不能把取消视为执行失败或浪费。本轮为手动检查，任务状态仍为todo；取消清理及完整用量归属尚不能确认。",
+      "failures": 0,
+      "issue_id": "01a171f0-4d39-7d25-af1b-9d17e1ae0cf0",
+      "changed_at": "2026-10-25T07:24:44.352822+00:00",
+      "efficiency": "uncertain",
+      "correctness": "clear",
+      "force_review": false,
+      "workspace_id": "c90d5776-cb29-4db3-8d3e-20d05776e5a9",
+      "desired_version": 28,
+      "last_checked_at": "2026-10-25T07:27:13.883971+00:00",
+      "next_attempt_at": "2026-10-25T07:27:13.883971+00:00",
+      "reviewed_version": 0
+    },
+    "supervisor_usage": [
+      {
+        "model": "gpt-6.1-sol",
+        "provider": "codex",
+        "input_tokens": 24602,
+        "output_tokens": 2422,
+        "cache_read_tokens": 107648,
+        "cache_write_tokens": 0
+      }
+    ],
+    "trace_materials": [
+      {
+        "id": "e929c9c5-9b80-462d-8a36-5413ad00a83b",
+        "gaps": [
+          "codex_token_events_are_run_level_not_proven_request_usage",
+          "AgentLens does not apply to this runtime; local session evidence and run-level usage are provided separately."
+        ],
+        "run_id": "01a171f0-4d3c-769b-b07d-90d3c285515c",
+        "status": "not_applicable",
+        "runtime": "codex",
+        "queried_at": "2026-10-25T07:25:28.904151+00:00",
+        "differences": 0,
+        "local_snapshots": 1,
+        "matched_requests": 0,
+        "material_version": 1,
+        "preparation_duration_ms": 2,
+        "preparation_http_requests": 0
+      },
+      {
+        "id": "9ca74c06-02e1-4565-b08f-5008fb5fb6e7",
+        "gaps": [
+          "codex_token_events_are_run_level_not_proven_request_usage",
+          "visible_event_truncated",
+          "visible_event_truncated",
+          "visible_event_truncated",
+          "AgentLens does not apply to this runtime; local session evidence and run-level usage are provided separately."
+        ],
+        "run_id": "01a171f1-b8ba-766f-8e57-5bb611037050",
+        "status": "not_applicable",
+        "runtime": "codex",
+        "queried_at": "2026-10-25T07:25:13.890788+00:00",
+        "differences": 0,
+        "local_snapshots": 1,
+        "matched_requests": 0,
+        "material_version": 1,
+        "preparation_duration_ms": 1,
+        "preparation_http_requests": 0
+      }
+    ]
+  }
+}

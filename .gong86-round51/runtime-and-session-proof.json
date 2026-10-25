@@ -1,0 +1,226 @@
+{
+  "codebuddy": [
+    {
+      "id": "01a17246-9ec1-73ef-8698-f1ba2673cb8e",
+      "status": "completed",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "session_id": "01a17247-9cd6-7610-95ca-96eb08faf5a5",
+      "usage": [
+        {
+          "provider": "codex",
+          "model": "gpt-6.1-sol",
+          "input_tokens": 8649,
+          "output_tokens": 82,
+          "cache_read_tokens": 32512,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": null
+    },
+    {
+      "id": "01a17244-ebe1-747d-92d0-118a5769dc59",
+      "status": "completed",
+      "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "usage": [
+        {
+          "provider": "codebuddy",
+          "model": "deepseek-v4.1-flash-ioa",
+          "input_tokens": 893,
+          "output_tokens": 270,
+          "cache_read_tokens": 54784,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": [
+        {
+          "provider": "codebuddy",
+          "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+          "provider_trace_id": "01a17244f2227d9b9050f53cd53bedf3",
+          "correlation": "exact",
+          "source": "local_session_jsonl",
+          "sdk_trace_id": "3612c346248383808c06aae9271292df",
+          "sdk_trace_source_sha256": "6da2d18a4aa35988b9c461a38b90b78fe3d7542aaaec5b1b439e6b505ab2acf8",
+          "sdk_trace_source_path": "providerData.traceId"
+        }
+      ]
+    },
+    {
+      "id": "01a17244-86e3-7cf2-8508-399b39286acc",
+      "status": "completed",
+      "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+      "usage": [
+        {
+          "provider": "codebuddy",
+          "model": "deepseek-v4.1-flash-ioa",
+          "input_tokens": 24319,
+          "output_tokens": 477,
+          "cache_read_tokens": 55936,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": [
+        {
+          "provider": "codebuddy",
+          "session_id": "01a17244-8ce4-771b-8d19-304b197b5854",
+          "provider_trace_id": "01a172448caf71e08ad432b2ef52972d",
+          "correlation": "exact",
+          "source": "local_session_jsonl",
+          "sdk_trace_id": "8a313c9cd78cad0b1f9ccc4fc46eab3d",
+          "sdk_trace_source_sha256": "40a5ec782aaa3c1704e1bc50cf1738419f29c1f75d9bb06f13bd7bc90a15e02d",
+          "sdk_trace_source_path": "providerData.traceId"
+        }
+      ]
+    }
+  ],
+  "codex": [
+    {
+      "id": "01a17244-86f5-76fc-a903-bd0a41d60ff3",
+      "status": "completed",
+      "runtime_id": "4f8f9494-b626-4542-951d-8c0217e18a10",
+      "session_id": "01a17244-c04d-7313-a68a-977b522bec7d",
+      "usage": [
+        {
+          "provider": "codex",
+          "model": "gpt-6.1-sol",
+          "input_tokens": 8679,
+          "output_tokens": 83,
+          "cache_read_tokens": 32512,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": null
+    }
+  ],
+  "child": [
+    {
+      "id": "01a17244-ebf2-70ef-9ec3-998fc02c58ab",
+      "status": "completed",
+      "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "session_id": "01a17245-1234-728c-a857-ae52a2ac2ad6",
+      "usage": [
+        {
+          "provider": "codebuddy",
+          "model": "deepseek-v4.1-flash-ioa",
+          "input_tokens": 42963,
+          "output_tokens": 1103,
+          "cache_read_tokens": 138752,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": [
+        {
+          "provider": "codebuddy",
+          "session_id": "01a17245-1234-728c-a857-ae52a2ac2ad6",
+          "provider_trace_id": "01a17245120c7cc7bef4087b154657e4",
+          "correlation": "exact",
+          "source": "local_session_jsonl",
+          "sdk_trace_id": "db6fc1a00a926bac3e84d7965c721527",
+          "sdk_trace_source_sha256": "13494749ddd10122377a9c93bdedc0204e0fc4d60d385447e219385ca59641dc",
+          "sdk_trace_source_path": "providerData.traceId"
+        },
+        {
+          "provider": "codebuddy",
+          "session_id": "01a17245-4e05-7425-bded-c7c5f456ec8c",
+          "provider_trace_id": "3fa690c852aa40718e16d1e1285c5ff4",
+          "correlation": "exact",
+          "source": "local_session_jsonl",
+          "sdk_trace_id": "2fb1e4e1baf721fafb195af03c27bbc8",
+          "sdk_trace_source_sha256": "a6e6b278a8ac5bb6cbd5cfe431b08fc7f7a1db9152dcf084f6d9a5169b07fbe2",
+          "sdk_trace_source_path": "providerData.traceId"
+        }
+      ]
+    }
+  ],
+  "cancel": [
+    {
+      "id": "01a17245-bf75-78c2-8824-bbc0501be37d",
+      "status": "completed",
+      "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "session_id": "01a17245-74a9-75b7-95e0-9a155e085bb1",
+      "usage": [
+        {
+          "provider": "codebuddy",
+          "model": "deepseek-v4.1-flash-ioa",
+          "input_tokens": 250,
+          "output_tokens": 351,
+          "cache_read_tokens": 27264,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": [
+        {
+          "provider": "codebuddy",
+          "session_id": "01a17245-74a9-75b7-95e0-9a155e085bb1",
+          "provider_trace_id": "01a1724653a87f25a0fee07e43dc86ea",
+          "correlation": "exact",
+          "source": "local_session_jsonl",
+          "sdk_trace_id": "189063a7e195f407b6207de1d6a7d972",
+          "sdk_trace_source_sha256": "8fc5b1471f04b2069b9109c5c6492b600174211feff42834217d9b240e9e6f4b",
+          "sdk_trace_source_path": "providerData.traceId"
+        }
+      ]
+    },
+    {
+      "id": "01a17244-ebfa-7c10-91c0-898496e4f161",
+      "status": "cancelled",
+      "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "session_id": null,
+      "usage": [
+        {
+          "provider": "codebuddy",
+          "model": "deepseek-v4.1-flash-ioa",
+          "input_tokens": 24378,
+          "output_tokens": 501,
+          "cache_read_tokens": 56064,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": [
+        {
+          "provider": "codebuddy",
+          "session_id": "01a17245-74a9-75b7-95e0-9a155e085bb1",
+          "provider_trace_id": "01a17245748377678afa770766c316aa",
+          "correlation": "exact",
+          "source": "local_session_jsonl",
+          "sdk_trace_id": "f757e6ad45dc133fa24a75f0faf3231a",
+          "sdk_trace_source_sha256": "cd7b13a6ffaf675faf8ed41967ae8ed70890524f6a9059875fd4340699f36bcb",
+          "sdk_trace_source_path": "providerData.traceId"
+        }
+      ]
+    }
+  ],
+  "waste": [
+    {
+      "id": "01a17246-7736-77cf-bc57-8e00495e1831",
+      "status": "completed",
+      "runtime_id": "ceb1f316-b39c-4b0e-ba86-8986b3c79b46",
+      "session_id": "01a17247-6283-7c97-ab4f-43fa832969f6",
+      "usage": [
+        {
+          "provider": "codebuddy",
+          "model": "deepseek-v4.1-flash-ioa",
+          "input_tokens": 25174,
+          "output_tokens": 695,
+          "cache_read_tokens": 84352,
+          "cache_write_tokens": 0
+        }
+      ],
+      "traces": [
+        {
+          "provider": "codebuddy",
+          "session_id": "01a17247-6283-7c97-ab4f-43fa832969f6",
+          "provider_trace_id": "01a17247625671958cc8dd7dc5d0f2de",
+          "correlation": "exact",
+          "source": "local_session_jsonl",
+          "sdk_trace_id": "b3e27f919c15595ab10b157cc81731fd",
+          "sdk_trace_source_sha256": "91b22090861f1f2edf36de2495c2a01ba2bead42426940a4d86521f017b04063",
+          "sdk_trace_source_path": "providerData.traceId"
+        }
+      ]
+    }
+  ],
+  "same_session_resume": true,
+  "cancelled_during_sleep": true
+}

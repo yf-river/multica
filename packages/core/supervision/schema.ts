@@ -30,6 +30,13 @@ export const supervisionFindingSchema = z.object({
   first_seen_at: z.string(), last_seen_at: z.string(), snoozed_until: time,
 }).loose();
 export const supervisionDetailSchema = z.object({
+  supervisor_usage: z.array(z.object({ provider: z.string(), model: z.string(), input_tokens: z.number().nonnegative(), output_tokens: z.number().nonnegative(), cache_read_tokens: z.number().nonnegative(), cache_write_tokens: z.number().nonnegative() })).default([]),
+  // 1. Older backends omit preparation summaries; malformed counters remain detectable at the boundary.
+  trace_materials: z.array(z.object({
+    id: z.string(), run_id: z.string(), runtime: z.string(), status: z.string(), material_version: z.number().int(), queried_at: time,
+    gaps: z.array(z.string()).default([]), matched_requests: z.number().int().nonnegative(), local_snapshots: z.number().int().nonnegative(),
+    preparation_http_requests: z.number().int().nonnegative(), preparation_duration_ms: z.number().nonnegative(), differences: z.number().int().nonnegative(),
+  }).loose()).default([]),
   subject: z.object({ summary: z.string(), efficiency: z.string(), correctness: z.string(), gaps: z.array(z.string()),
     desired_version: z.number(), reviewed_version: z.number(), last_checked_at: time, failures: z.number(), next_attempt_at:time.optional(), stopped: z.boolean().default(false), error: z.string() }).loose(),
   title: z.string(), description: z.string(), findings: z.array(supervisionFindingSchema),

@@ -839,7 +839,7 @@ export function useRealtimeSync(
       // 按议题的任务列表（议题详情"执行日志"）。跨所有议题做前缀匹配——维持
       // "任何 task: 事件都让所有任务列表查询过期"的契约，即使相关组件当前没挂载
       // 缓存也保持新鲜。
-      qc.invalidateQueries({ queryKey: ["issues", "tasks"] });
+
       // 按议题的 token 用量卡片（议题详情右侧栏）。与上面 tasks 失效同构——任何
       // 任务生命周期事件都会移动聚合用量数字。
       qc.invalidateQueries({ queryKey: ["issues", "usage"] });
@@ -896,6 +896,11 @@ export function useRealtimeSync(
 
   const unsubAny = ws.onAny((msg) => {
     if (specificEvents.has(msg.type)) return;
+    if (msg.type.startsWith("task:")) {
+      const payload = msg.payload as {issue_id?:string;task?:{issue_id?:string}};
+      const issueId = payload?.issue_id ?? payload?.task?.issue_id;
+      if (issueId) { qc.invalidateQueries({queryKey:issueKeys.tasks(issueId)}); qc.invalidateQueries({queryKey:["run-diff",issueId]}); }
+    }
     const prefix = msg.type.split(":")[0] ?? "";
     const refresh = refreshMap[prefix];
     if (refresh) debouncedRefresh(prefix, refresh);

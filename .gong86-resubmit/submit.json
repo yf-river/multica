@@ -1,0 +1,80 @@
+{
+  "operation_id": "1fcfb32d-52a4-46be-b721-6cf666a11b98",
+  "source_commit": "0e85290a0e05225ad73725162893296a2a8224fe",
+  "source_branch": "feature/ida-developer/gong-86",
+  "base_commit": "aad3ee2b85de2a3802bafca1b39d9986334d7b13",
+  "evidence": [
+    {
+      "name": "固定候选Go针对性检查",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/pinned-tests.log"
+    },
+    {
+      "name": "会话及准备生命周期race检查",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/final-race.log"
+    },
+    {
+      "name": "TS材料摘要schema四项",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/core-final.log"
+    },
+    {
+      "name": "监督页面十项交互检查",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/ui-final.log"
+    },
+    {
+      "name": "受影响页面ESLint",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/eslint.log"
+    },
+    {
+      "name": "相关Go包vet",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/vet-focused.log"
+    },
+    {
+      "name": "隔离PostgreSQL迁移至650",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/migrations.log"
+    },
+    {
+      "name": "原文索引不虚报覆盖",
+      "status": "passed",
+      "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/index-final.log"
+    },
+    {
+      "name": "当前候选38项worker协议回归",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-e6b66f9106f9/worktree/.gong86-resubmit/worker-tests.log"
+    },
+    {
+      "name": "当前候选release回归",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-e6b66f9106f9/worktree/.gong86-resubmit/release-tests.log"
+    }
+  ],
+  "required_checks": [
+    {
+      "name": "CodeBuddy真实强关联及逐请求对账",
+      "stage": "verification"
+    },
+    {
+      "name": "Codex所属Daemon及混合runtime材料",
+      "stage": "verification"
+    },
+    {
+      "name": "材料权限分页与生命周期恢复",
+      "stage": "verification"
+    },
+    {
+      "name": "真实监督模型加载与效率建议判定",
+      "stage": "verification"
+    },
+    {
+      "name": "固定int监督页面刷新持久化与审查回归",
+      "stage": "integration"
+    }
+  ]
+}
