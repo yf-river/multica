@@ -19,14 +19,15 @@ import (
 // MinVersions 定义每种 agent 类型要求的最低 CLI 版本。低于这些的版本会在 daemon
 // 注册阶段被拒。
 var MinVersions = map[string]string{
-	"claude":   "2.0.0",
-	"codex":    "0.100.0", // 0.100.0 起才有 app-server --listen stdio://
-	"copilot":  "1.0.0",   // --output-format json 的外壳从 1.0.x 起稳定
-	"grok":     "0.2.89",  // ACP + authenticate/session-load/set_model/MCP 与 --effort 思考旗标
-	"qwen":     "0.20.0",  // stream-json 协议是按 Qwen Code 0.20.0 抓包并核实的
-	"dim":      "0.3.10",  // 跨运行的 session/load：按进程加锁、优雅退出时释放
-	"mcode":    "0.1.2",   // ACP v1 session/new、prompt、MCP 能力转发
-	"zeroclaw": "0.8.0",   // 0.8.0 起才有持久化 ACP 会话与 session/resume
+	"antigravity": "1.1.10", // 结构化用量与 headless 模型选择
+	"claude":      "2.0.0",
+	"codex":       "0.100.0", // 0.100.0 起才有 app-server --listen stdio://
+	"copilot":     "1.0.0",   // --output-format json 的外壳从 1.0.x 起稳定
+	"grok":        "0.2.89",  // ACP + authenticate/session-load/set_model/MCP 与 --effort 思考旗标
+	"qwen":        "0.20.0",  // stream-json 协议是按 Qwen Code 0.20.0 抓包并核实的
+	"dim":         "0.3.10",  // 跨运行的 session/load：按进程加锁、优雅退出时释放
+	"mcode":       "0.1.2",   // ACP v1 session/new、prompt、MCP 能力转发
+	"zeroclaw":    "0.8.0",   // 0.8.0 起才有持久化 ACP 会话与 session/resume
 }
 
 // MinQuickCreateCLIVersion 用 daemon 注册时上报的 multica CLI 版本给

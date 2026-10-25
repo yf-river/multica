@@ -266,3 +266,11 @@ Handler 领取/启动/执行查询独立库回归通过，Daemon 终态重放/�
 - 评论编辑帮助写明修订冲突后合并正文重试，避免用新 revision 强行覆盖他人编辑。
 - 不移植删除 handoff_note、issue_context.md、metadata 或 --no-start 的方案：本站现有交付/监督/兼容链仍有消费者；不为提示精简增加 issue_snapshot 新表列和通用评论 delta 协议。旧 builtin skill 路径不存在，不从上游重建重复指令源。
 - Daemon、Execenv、Handler、CLI 的提示/领取/修订帮助专项通过，生成回复 shell 行为检查通过。
+
+### 128：用量归一化最终核对
+
+- 此前已实现的任务历史用量、缺报覆盖率、消息时间、取消执行用量、CodeBuddy/Claude 去重、Codex 推理 token 口径、Qwen 缓存与续接、仅成本记账和历史分页继续沿用；本站 GONG-51 的执行/外部 trace 关联与明细汇总不被替换。
+- 补上已有 OpenCode 内置运行时的版本化协议：1.3.16 起 output 不含 reasoning，归一化时只在该已知协议下相加；旧版本、自定义命令及未知版本沿用原计数，total 不重复相加。版本来自 Daemon 已解析的实际二进制，不额外启动探针。
+- 已有 Antigravity 适配器采集结构化 stream-json 的完成步骤用量并按 step 去重，续接不重复计入旧会话；终态仅成本/异常与最终回答兼容。该协议要求 agy >=1.1.10，版本拒绝早于此版本，不猜测空用量。没有安装新提供方、修改账号或调用付费模型。
+- OpenCode/Antigravity Fake CLI、协议计数和最低版本专项通过。opt-in 真实 Antigravity 验证未执行，不作为线上覆盖证明。
+- 不引入 e6031902 的新成本图表/全量运行面板替换；本站已有执行树，批准范围是修正数据口径。18 个上游提交已逐项核对，剩余图表呈现属于范围外。

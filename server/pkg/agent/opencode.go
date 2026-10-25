@@ -62,12 +62,24 @@ type opencodeBackend struct {
 	cfg Config
 }
 
-// Execute 把一次任务 prompt 交给 OpenCode 子进程执行并流式转发作答。
-//
-// 流程：定位可执行文件（Windows 下优先绕开 .cmd shim、直取 npm 包内原生 exe）→ 组装
-// `run --format json` 参数 → 以独立进程组拉起（便于取消时整树回收）→ 后台 goroutine 写
-// stdin、取消 goroutine 负责优雅终止 → 主 goroutine 逐行解析 stdout 事件并累加状态 → 进程
-// 退出后综合退出码、事件状态与超时/取消情况，把 scanResult 加工成最终 Result。
+// opencodeSeparatesReasoning recognizes the released OpenCode 1.x wire contract.
+// v1.3.15 included reasoning in output; v1.3.16 separated it in upstream #21047:
+// https://github.com/anomalyco/opencode/pull/21047
+// Use the daemon's already-resolved version, never an extra per-run probe.
+// Unknown/dev versions and custom commands keep the existing output count:
+// their version string does not establish which usage convention they speak.
+func opencodeSeparatesReasoning(cfg Config) bool {
+	if !cfg.BuiltinRuntime {
+		return false
+	}
+	raw := strings.TrimSpace(cfg.CLIVersion)
+	if raw == "" || versionRe.FindString(raw) != raw {
+		return false
+	}
+	version, err := parseSemver(raw)
+	return err == nil && version.Major == 1 && !version.lessThan(semver{Major: 1, Minor: 3, Patch: 16})
+}
+
 func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
@@ -332,6 +344,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	var output strings.Builder
 	var sessionID string
 	var usage TokenUsage
+	separateReasoning := opencodeSeparatesReasoning(b.cfg)
 	finalStatus := "completed"
 	var finalError string
 
@@ -416,6 +429,9 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			if t := event.Part.Tokens; t != nil {
 				usage.InputTokens += t.Input
 				usage.OutputTokens += t.Output
+				if separateReasoning && t.Reasoning > 0 {
+					usage.OutputTokens += t.Reasoning
+				}
 				if t.Cache != nil {
 					usage.CacheReadTokens += t.Cache.Read
 					usage.CacheWriteTokens += t.Cache.Write

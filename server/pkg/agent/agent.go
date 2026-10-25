@@ -252,7 +252,7 @@ type Result struct {
 // Config 配置一个 Backend 实例。
 type Config struct {
 	ExecutablePath string            // CLI 可执行文件路径
-	CLIVersion     string            // 与 ExecutablePath 配套检测到的版本；仅作观测用途，绝不用于决定行为
+	CLIVersion     string            // 与 ExecutablePath 配套检测到的版本；内置提供方按已发布协议归一化用量
 	Env            map[string]string // 额外的环境变量
 	Logger         *slog.Logger
 	TaskID         string
