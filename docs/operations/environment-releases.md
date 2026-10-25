@@ -312,3 +312,19 @@ quarantined、旧租约过期且原种子仍已验证时，负责人提交：
 失败维护请求显式恢复时，`maintenance-int --source ... --evidence ...` 的授权证据可携带原 `retry_request_id`；入口核对同一任务、原基线、failed 状态与无活动发布器，沿用原请求编号准备新的固定候选。新候选重新验收和 accept 后执行 `retry-request <原编号>`。普通 request 不自动恢复失败；同编号 queued/publishing/succeeded 重放不会再启动发布器。历史失败尝试保存在 previous_attempts，归档按提交隔离，不覆盖旧验收产物。恢复不得绕过新用户评论复核、维护文件边界或迁移身份检查。
 
 请求记录保存 failure_stage、脱敏 error、log_path 和 journal_unit。子进程输出进入同一脱敏请求日志；原始 journal 可用 `journalctl -u <journal_unit>` 定位，仅由受控运维读取，不上传认证文件。发布器未运行时不启动第二套常驻 worker，显式恢复仍使用原单请求 systemd 执行入口。
+
+### 无生产授权的固定 int 验收
+
+未批准交付在 verification 已提交且声明 integration 必验项时，控制端队列返回
+`integration_pending=true`。既有外部 worker 用当前 revision 调用 `claim-integration`，
+服务端锁定交付并复核方案和 verification 证据，再进入 `preparing_release`，在原快照
+标记 `integration_only`。此动作不写生产批准。原 verify 证据保留在 delivery_evidence，
+清空当前候选与 acceptance_submitted；新 int 候选经既有 int-prod 租约、固定基线整合、
+构建、prepared 和通知流程准备。环境池继续服务其他任务。
+
+负责人仍使用 `delivery accept` 提交当前准确 int 候选的 integration 业务证据。
+worker 的 `integrated` 动作校验候选、revision、worker token、publication generation
+与有效租约，成功后记录 integration_complete、进入 awaiting_review 和 in_review，
+释放 int 候选及占用。重复领取或过期回调被拒绝；中断沿原 publication 恢复路径续接，
+失败保留 needs_changes，不算完成。生产 validated/publishing 仍独立检查发布授权，
+仅集成验收不能更新生产。后续获批准仍由原发布路径准备并复核准确候选。

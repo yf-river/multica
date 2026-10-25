@@ -9,6 +9,11 @@ import urllib.request
 
 # 1. Maintenance is confined to control-plane recovery; application migrations and supervision implementation are excluded.
 ALLOWED={
+ # Existing installed target-Agent maintenance and bounded repair protocol are preserved byte-for-byte.
+ 'scripts/test-agent-models.py','scripts/test-agent-models.mjs','scripts/test-agent-models.test.py','scripts/test-agent-models.test.mjs',
+ # Modification 1. Integration scheduling is control-plane maintenance, with no supervision or migration changes.
+ 'server/internal/handler/delivery_authorization_review_test.go','server/internal/handler/issue_review_sweeper_test.go',
+ 'server/internal/handler/issue_delivery_worker.go','server/internal/handler/issue_delivery_checks_test.go',
  'scripts/release-controller-maintenance.py','scripts/release-controller-maintenance.test.py',
  'scripts/delivery-operations.json','scripts/release-environments.py','scripts/release-environments.test.py',
  'scripts/issue-delivery-worker.py','scripts/issue-delivery-worker.test.py',

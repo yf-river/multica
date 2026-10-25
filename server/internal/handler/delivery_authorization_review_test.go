@@ -50,7 +50,7 @@ func deliveryReviewFixture(t *testing.T, withAuthorization bool) (issue, deliver
 		authorization = dbfx.Insert(t, "issue_delivery_authorization", testutil.Cols{"id": dbid.NewV7(), "workspace_id": testWorkspaceID, "issue_id": issue, "plan_id": plan, "kind": "release", "comment_id": comment, "comment_revision": 1, "comment_snapshot": testutil.Raw(`jsonb_build_object('author_id','` + testUserID + `')`), "scope": "本次改动 int 验收通过后发布生产", "registered_by_type": "member", "registered_by": testUserID})
 	}
 	delivery, token = coordinationDelivery(t, issue, plan, "testing")
-	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot='{"required_checks":[{"name":"真实功能","stage":"verification"},{"name":"集成业务","stage":"integration"}]}'::jsonb,evidence='[{"name":"真实功能","status":"passed","evidence":"受控业务验收"}]'::jsonb WHERE id=$1`, delivery)
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot='{"integration_complete":true,"required_checks":[{"name":"真实功能","stage":"verification"},{"name":"集成业务","stage":"integration"}]}'::jsonb,evidence='[{"name":"真实功能","status":"passed","evidence":"受控业务验收"}]'::jsonb WHERE id=$1`, delivery)
 	dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='candidate-1',candidate_url='http://int.example',acceptance_submitted=true WHERE id=$1`, delivery)
 	dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE issue_id=$1`, issue)
 	dbfx.Cleanup(t, `DELETE FROM comment WHERE issue_id=$1`, issue)

@@ -223,3 +223,44 @@ func TestRequiredBusinessChecksNewSubmissionNeedsExplicitBusinessList(t *testing
 	delete(body, "required_checks")
 	testutil.Call(t, testHandler.SubmitIssueDelivery, deliveryRequest(issue, body, owner)).Want(200)
 }
+
+// 1. Verification evidence cannot complete int, and an int-only lease never grants release authority.
+func TestIntegrationOnlyDeliveryPreservesVerificationAndRequiresInt(t *testing.T) {
+	issue, plan, delivery, token, owner := businessFixture(t)
+	businessAction(t, issue, delivery, owner, map[string]any{"action": "bind-checks", "plan_id": plan, "required_checks": businessChecks()}).Want(200)
+	businessAction(t, issue, delivery, owner, map[string]any{"action": "accept", "candidate_id": "fixed-candidate", "evidence": []deliveryCheck{{Name: "真实业务", Status: "passed", Evidence: "verify fixture"}}}).Want(200)
+	advance := func(action, worker, candidate string, generation int64) *testutil.Response {
+		return testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": action, "worker_token": worker, "candidate_id": candidate, "publication_generation": generation}))
+	}
+	advance("accepted", token, "", 0).Want(200)
+	var receipt struct {
+		Token string `json:"worker_token"`
+	}
+	advance("claim-integration", token, "", 0).Want(200).JSON(&receipt)
+	advance("claim-integration", token, "", 0).Want(409)
+	dbfx.Cleanup(t, `DELETE FROM delivery_publication WHERE delivery_id=$1`, delivery)
+	var lease struct {
+		Generation int64 `json:"generation"`
+	}
+	testutil.Call(t, testHandler.PublicationLease, newRequest("POST", "/api/delivery-queue/publication", map[string]any{"action": "claim", "delivery_id": delivery, "worker_token": receipt.Token})).Want(200).JSON(&lease)
+	advance("integrated", receipt.Token, "int-candidate", lease.Generation).Want(409)
+	// The fixture stands in for the external publisher's newly prepared, distinct int candidate.
+	dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='int-candidate',acceptance_submitted=false WHERE id=$1`, delivery)
+	businessAction(t, issue, delivery, owner, map[string]any{"action": "accept", "candidate_id": "int-candidate", "evidence": []deliveryCheck{{Name: "真实业务", Status: "passed", Evidence: "verify fixture"}}}).Want(409)
+	businessAction(t, issue, delivery, owner, map[string]any{"action": "accept", "candidate_id": "int-candidate", "evidence": []deliveryCheck{{Name: "组合业务", Status: "passed", Evidence: "int fixture"}}}).Want(200)
+	advance("integrated", receipt.Token, "wrong", lease.Generation).Want(409)
+	advance("integrated", receipt.Token, "int-candidate", lease.Generation-1).Want(409)
+	advance("integrated", receipt.Token, "int-candidate", lease.Generation).Want(200)
+	advance("claim-integration", receipt.Token, "", 0).Want(409)
+	advance("publishing", receipt.Token, "int-candidate", lease.Generation).Want(409)
+	var count int
+	dbfx.QueryRow(t, `SELECT count(*) FROM delivery_evidence WHERE delivery_id=$1`, delivery).Scan(&count)
+	if count != 2 {
+		t.Fatalf("verification and int histories: got %d", count)
+	}
+	var unapproved bool
+	dbfx.QueryRow(t, `SELECT approved_by IS NULL AND NOT release_validated FROM issue_delivery WHERE id=$1`, delivery).Scan(&unapproved)
+	if !unapproved || deliveryPhase(t, delivery) != "awaiting_review" {
+		t.Fatal("integration changed production authorization")
+	}
+}

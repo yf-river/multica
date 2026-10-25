@@ -5,6 +5,30 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    # Modification 1. The int-only consumer finalizes review and releases its lease without publishing.
+    def test_int_only_accept_does_not_validate_or_publish(self):
+        worker=object.__new__(w.Worker)
+        d=dict(id='delivery',candidate_id='int',plan_snapshot=dict(integration_only=True),approved_by=None)
+        with patch.object(worker,'own_candidate',return_value=dict(id='int',status='accepted')),patch.object(worker,'advance') as advance,patch.object(r,'release_candidate') as release,patch.object(worker,'finish_publication') as finish,patch.object(worker,'publish') as publish:
+            worker.accept(d,release=True)
+            advance.assert_called_once_with(d,'integrated',candidate_id='int')
+            release.assert_called_once_with('int');finish.assert_called_once_with(d);publish.assert_not_called()
+
+
+
+    # Modification 1. Real inventory scale and long evidence must stay below the actual slot API's 8KB contract.
+    def test_large_repair_inventory_is_bounded_and_canonical(self):
+        import hashlib
+        files={('apps/web/chunks/'+str(i)+'x'*80):'a'*64 for i in range(6147)}
+        with tempfile.TemporaryDirectory() as folder:
+            artifact=Path(folder)/'artifact';artifact.mkdir()
+            detail=json.loads(w.repair_detail(artifact,dict(id='candidate',source_commit='a'*40,files=files),'old','report'*20000))
+            self.assertEqual(detail['files_count'],6147)
+            self.assertEqual(detail['files_sha256'],hashlib.sha256(json.dumps(files,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest())
+            self.assertLess(len(json.dumps(dict(detail=json.dumps(detail))).encode()),7000)
+            self.assertEqual(Path(detail['compatibility']['ref']).read_text(),'report'*20000)
+            self.assertNotIn('files',detail)
+
     # 1. A failed migration gate must leave the original quarantine and running candidate untouched.
     def test_repair_validates_before_recovering_original_lease(self):
         from unittest.mock import Mock
@@ -14,7 +38,7 @@ class DeliveryTests(unittest.TestCase):
         d=dict(id='delivery',source_commit='new',worker_token='new-token',plan_snapshot=dict(verification_repair=dict(request=repair)))
         metadata=dict(release_dir='/old',release_id='old-release')
         manifest=dict(source_commit='new',files={'server':'exact-sha'})
-        with patch.object(r,'read',side_effect=lambda path:manifest if str(path).endswith('release.json') else metadata),patch.object(r,'check_process_ownership'),patch.object(worker,'seed_matches',return_value=True),patch.object(worker,'source',return_value=Path('/source')),patch.object(r,'build_verification',return_value=Path('/artifact')),patch.object(r,'checksums',return_value=manifest['files']),patch.object(r,'validate_pending_migrations') as gate,patch.object(r,'candidate_path') as candidate_path,patch.object(worker,'api',return_value=dict(old,generation=30)) as api:
+        with patch.object(w,'repair_detail',return_value='validated fixture audit'),patch.object(r,'read',side_effect=lambda path:manifest if str(path).endswith('release.json') else metadata),patch.object(r,'check_process_ownership'),patch.object(worker,'seed_matches',return_value=True),patch.object(worker,'source',return_value=Path('/source')),patch.object(r,'build_verification',return_value=Path('/artifact')),patch.object(r,'checksums',return_value=manifest['files']),patch.object(r,'validate_pending_migrations') as gate,patch.object(r,'candidate_path') as candidate_path,patch.object(worker,'api',return_value=dict(old,generation=30)) as api:
             candidate_path.return_value.exists.return_value=False
             gate.side_effect=RuntimeError('changed migration')
             with self.assertRaisesRegex(RuntimeError,'changed migration'):worker.prepare_repair(d,dict(lease=old),Mock())
@@ -182,15 +206,21 @@ class DeliveryTests(unittest.TestCase):
         class Response(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 received.append((self.path,json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
-                self.send_response(409);self.end_headers();self.wfile.write(b'{"error":"verification run is not current"}')
+                self.send_response(409);self.end_headers();self.wfile.write(b'{"error":"verification run is not current; token=test-token"}')
             def log_message(self,*args):pass
-        with http.server.HTTPServer(('127.0.0.1',0),Response) as server:
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),http.server.HTTPServer(('127.0.0.1',0),Response) as server:
             thread=threading.Thread(target=server.handle_request);thread.start()
-            worker=object.__new__(w.Worker);worker.meta=dict(backend_url='http://127.0.0.1:'+str(server.server_port));worker.profile=dict(token='test-token',workspace_id='test-workspace')
+            worker=object.__new__(w.Worker);worker.env='int';worker.meta=dict(backend_url='http://127.0.0.1:'+str(server.server_port));worker.profile=dict(token='test-token',workspace_id='test-workspace')
             try:
                 with self.assertRaises(w.urllib.error.HTTPError) as error:
                     worker.advance(dict(id='delivery',revision=4,source_commit='a'*40),'fail',verification_run_id='old-native')
                 self.assertEqual(error.exception.code,409)
+                diagnostic=json.loads(next((Path(folder)/'publisher').glob('http-failure-*.json')).read_text())
+                self.assertNotIn('test-token',json.dumps(diagnostic))
+                self.assertNotIn('test-token',str(error.exception))
+                self.assertEqual(diagnostic['status'],409)
+                self.assertEqual(diagnostic['failure_stage'],'api')
+                self.assertIn(b'verification run',error.exception.read())
                 self.assertEqual(received[0][0],'/api/delivery-queue/advance');self.assertEqual(received[0][1]['verification_run_id'],'old-native')
             finally:thread.join(timeout=2)
 

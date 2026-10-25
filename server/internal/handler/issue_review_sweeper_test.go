@@ -53,15 +53,23 @@ func TestDeliveryAcceptanceDispatchesReview(t *testing.T) {
 	reviewer := enableReviewSettings(t, "")
 	issue, plan := coordinationFixture(t)
 	delivery, token := coordinationDelivery(t, issue, plan, "testing")
-	dbfx.Exec(t, `UPDATE issue_delivery SET acceptance_submitted=true WHERE id=$1`, delivery)
+	// Modification 1. Review starts only after a distinct int candidate passes integration.
+	dbfx.Exec(t, `UPDATE issue_delivery SET phase='preparing_release',candidate_id='review-int',acceptance_submitted=true,plan_snapshot='{"integration_only":true,"required_checks":[{"name":"verify","stage":"verification"},{"name":"int","stage":"integration"}]}'::jsonb,evidence='[{"name":"int","status":"passed","evidence":"int fixture"}]'::jsonb WHERE id=$1`, delivery)
+	dbfx.Cleanup(t, `DELETE FROM delivery_publication WHERE delivery_id=$1`, delivery)
+	var lease struct {
+		Generation int64 `json:"generation"`
+	}
+	testutil.Call(t, testHandler.PublicationLease, newRequest("POST", "/publication", map[string]any{"action": "claim", "delivery_id": delivery, "worker_token": token})).Want(200).JSON(&lease)
 	dbfx.Exec(t, `UPDATE issue SET status='in_progress', metadata='{"review_passed":true}'::jsonb WHERE id=$1`, issue)
 	cleanupIssueTasks(t, issue)
 
 	req := newRequest("POST", "/api/delivery-queue/advance", map[string]any{
-		"id":           delivery,
-		"revision":     deliveryRevision(t, delivery),
-		"action":       "accepted",
-		"worker_token": token,
+		"id":                     delivery,
+		"revision":               deliveryRevision(t, delivery),
+		"action":                 "integrated",
+		"candidate_id":           "review-int",
+		"publication_generation": lease.Generation,
+		"worker_token":           token,
 	})
 	req = withChatTestWorkspaceCtx(t, req)
 	testutil.Call(t, testHandler.AdvanceDelivery, req).Want(http.StatusOK)
