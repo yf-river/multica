@@ -949,7 +949,10 @@ class Worker:
             # 长时间未接续时返回该行，是否补发与次数上限由服务端判定，这里只负责触发一次检查。
             active=[d for d in rows if d['phase'] in ('testing','preparing_release','publishing','published','needs_changes','awaiting_review')]
             queued=[d for d in rows if d['phase'] in ('waiting_int','approved')]
-            for d in active+queued:
+            # 修改 1. 优先推进可运行交付，避免历史结果通知重试阻塞固定 int。
+            runnable=[d for d in active if d['phase'] not in ('published','needs_changes')]
+            notices=[d for d in active if d['phase'] in ('published','needs_changes')]
+            for d in runnable+queued+notices:
                 try:
                     phase=d['phase']
                     if phase in ('published','needs_changes'):
