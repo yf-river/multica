@@ -178,7 +178,11 @@ function RuntimeRow({
     ? "online"
     : runtime
       ? deriveRuntimeHealth(runtime, Date.now())
-      : "offline";
+      : agent.runtime_availability === "online"
+        ? "online"
+        : agent.runtime_availability === "unstable"
+          ? "recently_lost"
+          : "offline";
   const label = runtime
     ? runtimeDisplayLabel(runtime)
     : isCloud

@@ -567,10 +567,13 @@
     },
     "posted_partial_trigger_one": "Comment posted, but {{count}} mention wasn't triggered",
     "reply_count_one": "{{count}} reply",
-    "trigger_will_start_count_one": "{{count}} agent will start when sent"
+    "trigger_will_start_count_one": "{{count}} agent will start when sent",
+    "trigger_blocked_runtime_access_denied": "This target's agent can't run on its private runtime — make the runtime public, or rebind/copy the agent to one its owner can use",
+    "trigger_blocked_short_runtime_access_denied": "No runtime access"
   },
   "reply": {
-    "placeholder": "Leave a reply..."
+    "placeholder": "Leave a reply...",
+    "annotations": {}
   },
   "agent_activity": {
     "hover_header_other": "{{count}} agents working",
@@ -985,5 +988,7 @@
     "cancel": "Cancel",
     "review_passed": "Review passed",
     "review_passed_hint": "The reviewer approved; the task is still in review for your confirmation."
-  }
+  },
+  "inline_run": {},
+  "status_category": {}
 }

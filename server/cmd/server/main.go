@@ -684,6 +684,8 @@ func main() {
 		LLMMaxRetries:       llmMaxRetries,
 	})
 
+	// 在开始接受心跳前装配离线恢复通知。
+	heartbeatScheduler.RecoveryNotifier = h
 	srv := newMainHTTPServer(":"+port, r)
 	profilingServer := profiling.NewServer()
 	// 同机运行多个环境时分别指定诊断端口；监听地址始终限制在本机。

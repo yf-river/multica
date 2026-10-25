@@ -465,10 +465,24 @@ describe("ChatMessageList failure copy (MUL-5370 regression)", () => {
 
   const FALLBACK = enChat.message_list.failure.fallback;
 
+  it("explains revoked access with a rebind action rather than a generic retry", async () => {
+    renderFailure("runtime_access_revoked");
+    expect(await screen.findByText(enChat.message_list.failure.runtime_access_revoked)).toBeInTheDocument();
+    expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+  });
+
   it("renders dedicated copy for a stalled skill bundle download", async () => {
     renderFailure("skill_bundle_unavailable");
     expect(
       await screen.findByText(enChat.message_list.failure.skill_bundle_unavailable),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+  });
+
+  it("renders dedicated recovery copy for persisted runtime access denial", async () => {
+    renderFailure("runtime_access_denied");
+    expect(
+      await screen.findByText(enChat.message_list.failure.runtime_access_denied),
     ).toBeInTheDocument();
     expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
   });

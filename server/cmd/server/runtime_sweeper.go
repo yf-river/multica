@@ -172,6 +172,7 @@ type runtimeGCTxStarter interface {
 type runtimeGCEventPublisher interface {
 	PublishRuntimeTeardown(context.Context, service.RuntimeTeardownResult, string, string, string, string, bool)
 	PublishRuntimeRefresh(string, string, string, string)
+	NotifyRuntimeGone(string)
 }
 
 // runtimeSweepStageStats 是一次巡检阶段的观测数据：扫到多少候选、实际改变了
@@ -511,6 +512,7 @@ func gcRuntimesWithBudget(ctx context.Context, txStarter runtimeGCTxStarter, que
 		metrics.RecordRuntimeGCDeleted()
 		gcWorkspaces[result.workspaceID] = true
 		if publisher != nil {
+			publisher.NotifyRuntimeGone(util.UUIDToString(runtimeID))
 			publisher.PublishRuntimeTeardown(gcCtx, result.teardown, result.workspaceID, "system", "", "runtime_gc", false)
 		}
 	}

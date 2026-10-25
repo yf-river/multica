@@ -41,8 +41,8 @@ func TestClaimTaskByRuntime_OwnerlessAgentOnPrivateRuntimeFailsExplicitly(t *tes
 	if !strings.Contains(errorMessage, "agent has no owner") {
 		t.Fatalf("task error = %q, want actionable missing-owner error", errorMessage)
 	}
-	if failureReason != taskfailure.ReasonInvalidTaskIdentity.String() {
-		t.Fatalf("failure_reason = %q, want %q", failureReason, taskfailure.ReasonInvalidTaskIdentity)
+	if failureReason != taskfailure.ReasonRuntimeAccessDenied.String() {
+		t.Fatalf("failure_reason = %q, want %q", failureReason, taskfailure.ReasonRuntimeAccessDenied)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestBuildClaimedTaskResponseRejectsAgentOwnerChangedAfterClaim(t *testing.T
 	if strings.Contains(errorMessage, "agent has no owner") {
 		t.Fatalf("task error = %q, must not describe a non-null owner as missing", errorMessage)
 	}
-	if failureReason != taskfailure.ReasonInvalidTaskIdentity.String() {
-		t.Fatalf("failure_reason = %q, want %q", failureReason, taskfailure.ReasonInvalidTaskIdentity)
+	if failureReason != taskfailure.ReasonRuntimeAccessDenied.String() {
+		t.Fatalf("failure_reason = %q, want %q", failureReason, taskfailure.ReasonRuntimeAccessDenied)
 	}
 }
 

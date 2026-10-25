@@ -19,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
-	"github.com/multica-ai/multica/server/internal/dispatch"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issueguard"
@@ -862,7 +861,7 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 		return pgtype.UUID{}
 	}
 	verdict, admitted := agentAssigneeVerdict(ctx, s.runtimeLookup(s.Queries), issue)
-	if !admitted && verdict.Reason == dispatch.ReasonRuntimeUnusable {
+	if !admitted && RuntimeBlockedNeedsNotice(verdict.Reason) {
 		// 指派没有一条「指派人会读」的响应来表达这个结果，所以拒绝在 issue 上自解释，而不是凭空
 		// 消失（MUL-6164）。只在这里做、不在上面的 create-with-assignee 路径里做：那条路径跑在 issue
 		// 事务内，一条关于某台机器的说明，无权决定 issue 本身是否提交。

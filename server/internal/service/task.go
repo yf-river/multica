@@ -3209,6 +3209,7 @@ func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID 
 				Content:       "Stopped.",
 				TaskID:        claimed.ID,
 				ElapsedMs:     computeChatElapsedMs(claimed),
+				FailureReason: claimed.FailureReason,
 			})
 			if err != nil {
 				return fmt.Errorf("create cancelled chat message: %w", err)
@@ -3599,6 +3600,28 @@ func (s *TaskService) FinalizeTaskClaim(
 	}
 	receipt := task.DeliveredCommentIds
 	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		// 令牌写入与运行时/Agent 的最终授权共用事务和行锁。
+		if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, token.WorkspaceID); err != nil {
+			return fmt.Errorf("lock workspace for claim delivery: %w", err)
+		}
+		runtime, err := qtx.LockAgentRuntime(ctx, task.RuntimeID)
+		if err != nil {
+			return fmt.Errorf("lock runtime for claim delivery: %w", err)
+		}
+		if !runtime.OwnerID.Valid || runtime.OwnerID != token.UserID || runtime.WorkspaceID != token.WorkspaceID {
+			return fmt.Errorf("runtime ownership changed before claim delivery")
+		}
+		agent, err := qtx.GetAgentForUpdate(ctx, task.AgentID)
+		if err != nil {
+			return fmt.Errorf("lock agent for claim delivery: %w", err)
+		}
+		if agent.RuntimeID != task.RuntimeID || agent.WorkspaceID != runtime.WorkspaceID || agent.ArchivedAt.Valid {
+			return fmt.Errorf("agent binding changed before claim delivery")
+		}
+		if runtime.Visibility == "private" && (!agent.OwnerID.Valid || agent.OwnerID != runtime.OwnerID) {
+			return fmt.Errorf("private runtime access denied before claim delivery")
+		}
+
 		if _, err := qtx.CreateTaskToken(ctx, token); err != nil {
 			return fmt.Errorf("create task token: %w", err)
 		}
@@ -3608,7 +3631,7 @@ func (s *TaskService) FinalizeTaskClaim(
 				return fmt.Errorf("delete expired daemon tokens: %w", err)
 			}
 			// Bind the credential to the same owner the task token was just
-			// minted for (the locked runtime owner, set by authorize), so it
+			// minted for (the locked runtime owner), so it
 			// can never reach a runtime another member later registers under
 			// this daemon_id (MUL-8154).
 			daemonToken := daemonTokens[0]

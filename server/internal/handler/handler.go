@@ -179,9 +179,15 @@ type DaemonPendingWorkNotifier interface {
 	NotifyPendingWork(runtimeID, kind string)
 }
 
-// Handler 是所有 HTTP 处理器共享的结构体：把路由层需要的依赖（数据库、
-// 事件总线、实时推送、daemon 连接、各类服务与缓存、限流器、外部集成等）
-// 聚合到一处，各资源 handler 以它的方法形式组织在各自文件里。
+// RuntimeGoneNotifier invalidates a runtime that was deleted while its daemon
+// still has an authenticated WebSocket connection.
+// RuntimeRecoveryNotifier 只在实际离线恢复时刷新工作区在线状态。
+type RuntimeRecoveryNotifier interface{ NotifyRuntimeRecovered(context.Context, string) }
+
+type RuntimeGoneNotifier interface {
+	NotifyRuntimeGone(runtimeID string)
+}
+
 type Handler struct {
 	Supervision            *supervision.Service
 	Upstream               *upstream.Service
@@ -192,6 +198,7 @@ type Handler struct {
 	DaemonHub              *daemonws.Hub
 	DaemonProfileRefresh   RuntimeProfileRefreshNotifier
 	DaemonWorkspaceRefresh WorkspaceSetRefreshNotifier
+	DaemonRuntimeGone      RuntimeGoneNotifier
 	Bus                    *events.Bus
 	TaskService            *service.TaskService
 	PluginService          *service.PluginService
@@ -389,9 +396,11 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	var daemonProfileRefresh RuntimeProfileRefreshNotifier
 	var daemonWorkspaceRefresh WorkspaceSetRefreshNotifier
+	var daemonRuntimeGone RuntimeGoneNotifier
 	if daemonHub != nil {
 		daemonProfileRefresh = daemonHub
 		daemonWorkspaceRefresh = daemonHub
+		daemonRuntimeGone = daemonHub
 	}
 
 	llmClient := llm.New(llm.Config{
@@ -426,6 +435,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		DaemonHub:                    daemonHub,
 		DaemonProfileRefresh:         daemonProfileRefresh,
 		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
+		DaemonRuntimeGone:            daemonRuntimeGone,
 		Bus:                          bus,
 		TaskService:                  taskSvc,
 		PluginService:                service.NewPluginService(queries, txStarter),
@@ -454,6 +464,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	if scheduler, ok := h.HeartbeatScheduler.(*PassthroughHeartbeatScheduler); ok {
+		scheduler.RecoveryNotifier = h
+	}
 
 	// PR 卡片用的 GitHub API 快照管线（MUL-5265）。无条件构建，但 App 私钥
 	// 未配置时惰性运行（每个触发都是 no-op），特性干净降级。main.go 调用
@@ -706,8 +719,17 @@ func (h *Handler) notifyDaemonWorkspacesChanged(userIDs ...string) {
 	}
 }
 
-// publishTask 是 publish() 再带一个 TaskID 提示，让实时层把事件路由到
-// 单任务作用域而非整个 workspace。
+// NotifyRuntimeGone emits the post-commit runtime invalidation signal. It is
+// exported so the runtime GC can use the same publisher as request handlers.
+func (h *Handler) NotifyRuntimeGone(runtimeID string) {
+	if h == nil || h.DaemonRuntimeGone == nil || runtimeID == "" {
+		return
+	}
+	h.DaemonRuntimeGone.NotifyRuntimeGone(runtimeID)
+}
+
+// publishTask is publish() plus a TaskID hint so the realtime layer can route
+// the event to the per-task scope rather than the whole workspace.
 func (h *Handler) publishTask(eventType, workspaceID, actorType, actorID, taskID string, payload any) {
 	h.Bus.Publish(events.Event{
 		Type:        eventType,
@@ -1180,4 +1202,11 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 		return db.InboxItem{}, false
 	}
 	return item, true
+}
+
+// NotifyRuntimeRecovered 刷新 Agent 的粗粒度在线状态，不包含私有运行时配置。
+func (h *Handler) NotifyRuntimeRecovered(_ context.Context, workspaceID string) {
+	if h != nil && workspaceID != "" {
+		h.PublishRuntimeRefresh(workspaceID, "system", "", "heartbeat_recovery")
+	}
 }

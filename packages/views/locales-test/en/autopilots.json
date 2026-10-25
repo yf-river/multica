@@ -109,7 +109,8 @@
       "cancel": "Cancel",
       "confirm": "Delete",
       "deleting": "Deleting..."
-    }
+    },
+    "run_blocked_runtime_access_denied": "Not triggered — the agent can't run on its private runtime; make it public or rebind/copy the agent"
   },
   "access": {
     "title": "Manage access",

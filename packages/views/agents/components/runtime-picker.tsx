@@ -49,6 +49,7 @@ export function RuntimePicker({
   selectedRuntimeId,
   onSelect,
   disabled = false,
+  autoSelect = true,
 }: {
   runtimes: RuntimeDevice[];
   runtimesLoading?: boolean;
@@ -58,6 +59,8 @@ export function RuntimePicker({
   onSelect: (id: string) => void;
   /** 选中动作暂不可兑现（如有 builder 回复或运行环境重绑在途）时，禁止打开选择器。 */
   disabled?: boolean;
+  /** False when selecting also changes a live session's server-side binding. */
+  autoSelect?: boolean;
 }) {
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
@@ -96,18 +99,19 @@ export function RuntimePicker({
   // 才到达、或切换筛选后集合里没有可用项，都走这里。只在 `selectedRuntimeId === ""`
   // 时触发，保证“复制模式”预填的模板运行环境绝不会被悄悄覆盖。
   useEffect(() => {
-    if (selectedRuntimeId !== "") return;
+    if (!autoSelect || selectedRuntimeId !== "") return;
     const firstUsable = filteredRuntimes.find((r) =>
       isRuntimeUsableForUser(r, currentUserId),
     );
     if (firstUsable) onSelect(firstUsable.id);
-  }, [filteredRuntimes, selectedRuntimeId, currentUserId, onSelect]);
+  }, [autoSelect, filteredRuntimes, selectedRuntimeId, currentUserId, onSelect]);
 
   // 切换“我的/全部”时，把选择重算到新集合里的第一个可用项。无匹配就置成 `""`，
   // 此时上面的播种 effect 是空操作（正确：没有可用项可选）。
   const handleFilterChange = (next: RuntimeFilter) => {
     if (next === filter) return;
     setFilter(next);
+    if (!autoSelect) return;
     const nextList = computeFilteredRuntimes(runtimes, next, currentUserId);
     const firstUsable = nextList.find((r) =>
       isRuntimeUsableForUser(r, currentUserId),
@@ -181,7 +185,9 @@ export function RuntimePicker({
                   ? t(($) => $.create_dialog.runtime_loading)
                   : selectedRuntime
                     ? runtimeDisplayName(selectedRuntime)
-                    : t(($) => $.create_dialog.runtime_none)}
+                    : !autoSelect && runtimes.length > 0
+                      ? t(($) => $.model_dropdown.select_runtime_first)
+                      : t(($) => $.create_dialog.runtime_none)}
               </span>
               {selectedRuntime?.runtime_mode === "cloud" && (
                 <span className="shrink-0 rounded bg-info/10 px-1.5 py-0.5 text-caption font-medium text-info">

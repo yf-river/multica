@@ -58,9 +58,13 @@ const (
 	// 由 FailTasksForOfflineRuntimes 写入。
 	ReasonRuntimeOffline Reason = "runtime_offline"
 
-	// ReasonRuntimeReconnectTimeout：为等待离线 runtime 而延迟的重试，
-	// 在整个重连宽限期后仍未完成。不可重试：runtime 必须先回来，
-	// 用户才能发起下一次尝试。由 FailExpiredRuntimeReconnectRetries 写入。
+	// 运行时所有者撤回工作区访问权限；属于取消，不触发自动重试。
+	ReasonRuntimeAccessRevoked Reason = "runtime_access_revoked"
+
+	// ReasonRuntimeReconnectTimeout: a retry waiting for an offline runtime
+	// remained deferred for the full reconnect grace. Non-retryable: the
+	// runtime must return before a user starts another attempt. Written by
+	// FailExpiredRuntimeReconnectRetries.
 	ReasonRuntimeReconnectTimeout Reason = "runtime_reconnect_timeout"
 
 	// ReasonRuntimeRecovery：任务在途时 daemon 重启了，之前的会话不可恢复。
@@ -104,9 +108,14 @@ const (
 	// 刻意不可重试：重试同一个自相矛盾的认领只会重复一次隔离失败。
 	ReasonInvalidTaskIdentity Reason = "invalid_task_identity"
 
-	// Agent 进程侧：由 agent CLI / SDK 以错误字符串形式浮现的失败。
-	// Classify(rawError) 负责从字符串里挑出正确的子原因。IsAgentError 对
-	// 这些一律返回 true。
+	// 私有运行时拒绝该 Agent，进程尚未启动。需要调整访问权限或重新绑定，
+	// 重试同一绑定无法恢复；与调度阻塞原因使用相同值。
+	ReasonRuntimeAccessDenied Reason = "runtime_access_denied"
+
+	// Agent process side: failure surfaced by the agent CLI / SDK as
+	// an error string. Classify(rawError) is responsible for picking
+	// the right sub-reason from the string. IsAgentError returns true
+	// for all of these.
 
 	// ReasonAgentProviderAuthOrAccess：401 / 403、"Not logged in"、API key 无效、
 	// 无该模型访问权限。不可重试；用户必须重新授权。
@@ -176,6 +185,7 @@ var allReasons = []Reason{
 	// 平台 / 调度器侧。
 	ReasonQueuedExpired,
 	ReasonRuntimeOffline,
+	ReasonRuntimeAccessRevoked,
 	ReasonRuntimeReconnectTimeout,
 	ReasonRuntimeRecovery,
 	ReasonTimeout,
@@ -185,6 +195,7 @@ var allReasons = []Reason{
 	ReasonSkillBundleUnavailable,
 	ReasonRuntimeCLITimeout,
 	ReasonInvalidTaskIdentity,
+	ReasonRuntimeAccessDenied,
 
 	// Agent 进程侧：provider 错误。
 	ReasonAgentProviderAuthOrAccess,

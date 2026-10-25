@@ -1141,6 +1141,7 @@ func (h *Handler) mergeLegacyRuntime(ctx context.Context, newRuntimeID, oldRunti
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit merge: %w", err)
 	}
+	h.NotifyRuntimeGone(uuidToString(oldRuntimeID))
 
 	slog.Info("legacy runtime merged",
 		"legacy_daemon_id", legacyID,
@@ -2480,7 +2481,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
 			r.Context(), task,
 			userMessage,
-			taskfailure.ReasonInvalidTaskIdentity,
+			taskfailure.ReasonRuntimeAccessDenied,
 			"error_runtime_access_denied", http.StatusForbidden, "private runtime does not permit task agent",
 		)
 	}

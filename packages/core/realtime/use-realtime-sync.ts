@@ -766,8 +766,13 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
-          // runtime 在线/离线转换会移动托管在这台 runtime 上每个 Agent 的派生状态，
-          // 从而改变 squad 页上的 working/idle/offline 药丸。
+          // Shared agents may carry a redacted runtime liveness projection;
+          // refetch it when a daemon changes state even if its private runtime
+          // is absent from this member's runtime list.
+          qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          // Runtime online/offline transitions move the derived status
+          // for every agent that hosts on this runtime, which shifts the
+          // working/idle/offline pill on the squad page.
           invalidateSquadMemberStatusQueries(qc, wsId);
         }
       },

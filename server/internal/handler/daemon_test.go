@@ -116,7 +116,7 @@ func newDaemonTokenRequest(method, path string, body any, workspaceID, daemonID 
 	req.Header.Set("Content-Type", "application/json")
 	// No X-User-ID — daemon tokens don't set it.
 	ctx := middleware.WithDaemonContext(req.Context(), workspaceID, daemonID)
- ctx = middleware.WithDaemonTokenOwnerID(ctx, testUserID)
+	ctx = middleware.WithDaemonTokenOwnerID(ctx, testUserID)
 	return req.WithContext(ctx)
 }
 
@@ -730,7 +730,7 @@ func TestClaimTaskByRuntime_WorkspaceContextEmptyWhenUnset(t *testing.T) {
 	}
 }
 
-func TestClaimTaskByRuntime_MissingRuntimeOwnerCancelsAndRejects(t *testing.T) {
+func TestClaimTaskByRuntime_MissingRuntimeOwnerRejectsBeforeClaim(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -754,15 +754,15 @@ func TestClaimTaskByRuntime_MissingRuntimeOwnerCancelsAndRejects(t *testing.T) {
 
 	req := newOwnerDaemonRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil)
 	req = withURLParam(req, "runtimeId", runtimeID)
-	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusInternalServerError)
-	if !strings.Contains(w.Body.String(), "runtime owner required to mint task token") {
-		t.Fatalf("ClaimTaskByRuntime body = %q, want runtime owner error", w.Body.String())
+	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusNotFound)
+	if !strings.Contains(w.Body.String(), "runtime not found") {
+		t.Fatalf("ClaimTaskByRuntime body = %q, want authorization denial", w.Body.String())
 	}
 
 	var status string
 	dbfx.QueryRow(t, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status)
-	if status != "cancelled" {
-		t.Fatalf("task status = %q, want cancelled", status)
+	if status != "dispatched" {
+		t.Fatalf("task status = %q, want dispatched (unauthorized request must not mutate task)", status)
 	}
 }
 
@@ -961,7 +961,7 @@ func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
 	})
 
 	ack, err := testHandler.HandleDaemonWSHeartbeat(ctx,
-		daemonws.ClientIdentity{WorkspaceIDs: []string{testWorkspaceID, workspaceID}},
+		daemonws.ClientIdentity{WorkspaceIDs: []string{testWorkspaceID, workspaceID}, UserID: testUserID},
 		runtimeID, false)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)
@@ -1001,6 +1001,8 @@ func TestDaemonHeartbeat_SlowProbeDoesNotWedge(t *testing.T) {
 	}
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	var daemonID string
+	dbfx.QueryRow(t, `SELECT daemon_id FROM agent_runtime WHERE id=$1`, runtimeID).Scan(&daemonID)
 
 	origList := testHandler.LocalSkillListStore
 	origImport := testHandler.LocalSkillImportStore
@@ -1014,7 +1016,7 @@ func TestDaemonHeartbeat_SlowProbeDoesNotWedge(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id": runtimeID,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
+	}, testWorkspaceID, daemonID)
 
 	start := time.Now()
 	testHandler.DaemonHeartbeat(w, req)
@@ -1039,6 +1041,8 @@ func TestDaemonHeartbeat_EmptyQueueSkipsPopPending(t *testing.T) {
 	}
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	var daemonID string
+	dbfx.QueryRow(t, `SELECT daemon_id FROM agent_runtime WHERE id=$1`, runtimeID).Scan(&daemonID)
 
 	origList := testHandler.LocalSkillListStore
 	origImport := testHandler.LocalSkillImportStore
@@ -1053,7 +1057,7 @@ func TestDaemonHeartbeat_EmptyQueueSkipsPopPending(t *testing.T) {
 
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id": runtimeID,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
+	}, testWorkspaceID, daemonID)
 	testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 	if listSpy.popCalls != 0 {
 		t.Fatalf("expected 0 PopPending calls on empty list queue, got %d", listSpy.popCalls)

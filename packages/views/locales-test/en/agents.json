@@ -725,7 +725,8 @@
       "queued_prefix": "Queued {{when}}",
       "subtitle_active_one": "{{count}} active task",
       "runs_one": "run"
-    }
+    },
+    "runtime_config": {}
   },
   "char_counter": {
     "over_limit": " · {{count}} over limit"
@@ -914,7 +915,9 @@
       "agent_error": "Agent execution error",
       "codex_semantic_inactivity": "Codex semantic inactivity timeout",
       "manual": "Cancelled by user",
-      "user_cancelled": "Cancelled by user"
+      "user_cancelled": "Cancelled by user",
+      "runtime_access_revoked": "Runtime access revoked",
+      "runtime_access_denied": "This agent can't run on its private runtime, so it couldn't reply. Make the runtime public, or rebind/copy the agent to a runtime its owner can use."
     }
   },
   "last_active": {

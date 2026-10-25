@@ -247,6 +247,7 @@ export type TaskFailureReason =
   | "agent_error" // agent 本身跑出错
   | "timeout" // 整体超时
   | "codex_semantic_inactivity" // codex 长时间无实质进展被判挂起
+  | "runtime_access_revoked" // 运行时所有者撤销访问
   | "runtime_offline" // 运行时掉线
   | "runtime_reconnect_timeout" // 断线后重连超时
   | "runtime_recovery" // 运行时恢复过程失败
@@ -570,7 +571,8 @@ export interface Agent {
   runtime_id: string;
   /** 恰在 agent 没有 runtime 时为 false。老后端缺省该字段。 */
   runtime_bound?: boolean;
-  /** 展示名。 */
+  /** Privacy-safe coarse liveness for a runtime hidden from the runtime list. */
+  runtime_availability?: "online" | "unstable" | "offline";
   name: string;
   /** 一句话描述。 */
   description: string;

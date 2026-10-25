@@ -3953,7 +3953,7 @@ func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool
 	// 分配这条动作没有给分配者阅读的结果面，所以需要人工修复的拒绝会把原因留在 issue 上
 	//（MUL-6164）。未绑定的 agent 保持沉默跳过：agent 列表已经展示它没有 runtime，这里
 	// 没有新信息。
-	if verdict.Reason == ReasonRuntimeUnusable {
+	if service.RuntimeBlockedNeedsNotice(verdict.Reason) {
 		h.noteRuntimeUnusable(ctx, issue, agent, verdict)
 	}
 	return false

@@ -1994,10 +1994,26 @@ export class ApiClient {
     });
   }
 
-  // ---------------------------------------------------------------------
-  // 自定义 runtime 配置档（MUL-3284）。全部按 workspace 隔离：调用方传
-  // workspace id 的方式与 runtimes 列表解析方式一致。
-  // ---------------------------------------------------------------------
+  // Confirmed counterpart to a public→private visibility PATCH. The PATCH
+  // returns a structured 409 when teammates still have bound agents or active
+  // tasks on the runtime; callers present that plan, then submit its exact
+  // agent/task ID sets here. The server rechecks both sets in one transaction.
+  async revokeRuntimeWorkspaceAccess(
+    runtimeId: string,
+    expectedNonownerAgentIds: string[],
+    expectedTaskIds: string[],
+  ): Promise<void> {
+    await this.fetch(`/api/runtimes/${runtimeId}/revoke-workspace-access`, {
+      method: "POST",
+      body: JSON.stringify({
+        expected_nonowner_agent_ids: expectedNonownerAgentIds,
+        expected_task_ids: expectedTaskIds,
+      }),
+    });
+  }
+
+  // Custom runtime profiles (MUL-3284). All workspace-scoped: the caller
+  // passes the workspace id the same way the runtimes list resolves it.
 
   /** 列出某 workspace 的 runtime 配置档。 */
   async listRuntimeProfiles(workspaceId: string): Promise<RuntimeProfile[]> {

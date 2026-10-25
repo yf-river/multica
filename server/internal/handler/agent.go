@@ -22,9 +22,11 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -71,13 +73,21 @@ type AgentResponse struct {
 	// agent 的配置与历史得以保留，但需绑定新 runtime 才能再次运行（MUL-5559）。
 	// 线格式仍保持 string 以兼容已安装客户端；真正的信号是 RuntimeBound。
 	RuntimeID string `json:"runtime_id"`
-	// RuntimeBound 恰好只在 agent 没有 runtime 时为 false。UI 应以此字段而非
-	// RuntimeID 是否为空来判断，且不能与「已绑定但离线」（另一回事：重连机器
-	// vs 换一台新机器）混淆。
-	RuntimeBound bool   `json:"runtime_bound"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	// Instructions 是 Agent 的完整可编辑提示词。
+	// RuntimeBound is false exactly when the agent has no runtime. UI should
+	// branch on this rather than on RuntimeID being falsy, and must not confuse
+	// it with a bound-but-offline runtime (a different user story: reconnect the
+	// machine vs. pick a new one).
+	RuntimeBound bool `json:"runtime_bound"`
+	// RuntimeAvailability is the coarse liveness projection for a runtime that
+	// may be hidden from the caller's runtime list. It deliberately carries no
+	// timestamp, device, owner, configuration, or credential fields; clients
+	// use it only when the full runtime row is unavailable.
+	RuntimeAvailability string `json:"runtime_availability,omitempty"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	// Instructions is what this agent's owner wrote. For a system agent it
+	// holds only the workspace's own notes — the product half lives in
+	// SystemInstructions and is never stored on the row.
 	Instructions string `json:"instructions"`
 	// ConversationStarters 是可选的、agent 专属的第一轮建议。空列表表示
 	// 让客户端渲染本地化的兜底开场白。
@@ -993,10 +1003,58 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 	return "direct"
 }
 
-// ListAgents 处理 GET /api/agents（默认不含已归档）。任何工作区成员都可调用，
-// 但 private agent 仅所有者或工作区 owner/admin 可见，public_to agent 仅白名单
-// 成员可见；agent actor 走 A2A 协作放行。响应会按角色对 mcp_config 与 composio
-// 白名单脱敏。?include_archived=true 时含已归档。
+// loadAgentRuntimeAvailability returns only a coarse liveness bucket for
+// agent presence. Runtime rows are loaded internally even when the caller is
+// not allowed to list or inspect the private runtime; no runtime fields are
+// copied onto an agent response. The existing runtime-list visibility contract
+// is mirrored so the bucket is only copied when the full row is hidden.
+func (h *Handler) loadAgentRuntimeAvailability(ctx context.Context, agents []db.Agent, workspaceID, viewerID, viewerRole string, now time.Time) (map[string]string, error) {
+	// Owner/admin runtime lists already contain every row, so their normal
+	// client-side derivation is authoritative and no projection query is needed.
+	if roleAllowed(viewerRole, "owner", "admin") {
+		return map[string]string{}, nil
+	}
+
+	runtimeIDs := make([]pgtype.UUID, 0, len(agents))
+	for _, agent := range agents {
+		// Archived presence always resolves to "archived", so its runtime state
+		// is neither user-visible nor a reason for clients to keep polling.
+		if !agent.ArchivedAt.Valid && agent.RuntimeID.Valid {
+			runtimeIDs = append(runtimeIDs, agent.RuntimeID)
+		}
+	}
+	result := make(map[string]string, len(runtimeIDs))
+	if len(runtimeIDs) == 0 {
+		return result, nil
+	}
+
+	runtimes, err := h.Queries.GetAgentRuntimes(ctx, runtimeIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, runtime := range runtimes {
+		// Agent/runtime workspace consistency is normally enforced at bind time;
+		// keep the projection fail-closed if a legacy row violates it.
+		if uuidToString(runtime.WorkspaceID) != workspaceID {
+			continue
+		}
+		// ListAgentRuntimes exposes every row to workspace owner/admin and only
+		// owner/public rows to regular members. Keep the coarse bridge for the
+		// rows that the viewer's runtime list cannot carry.
+		if runtime.Visibility == "public" ||
+			(runtime.OwnerID.Valid && uuidToString(runtime.OwnerID) == viewerID) {
+			continue
+		}
+		result[uuidToString(runtime.ID)] = deriveAgentRuntimeAvailability(runtime, now)
+	}
+	return result, nil
+}
+
+func deriveAgentRuntimeAvailability(runtime db.AgentRuntime, now time.Time) string {
+	status := pgtype.Text{String: runtime.Status, Valid: runtime.Status != ""}
+	return deriveRuntimeAvailability(status, runtime.LastSeenAt, now)
+}
+
 func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -1014,6 +1072,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agents")
+		return
+	}
+	runtimeAvailabilityByID, err := h.loadAgentRuntimeAvailability(r.Context(), agents, workspaceID, userID, member.Role, time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent runtime availability")
 		return
 	}
 
@@ -1073,6 +1136,12 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp := h.agentToResponse(a)
+		// The map is keyed by runtime, and active + archived agents may share one.
+		// Keep the archived guard here as well as in the loader so an active sibling
+		// cannot leak its projection onto an archived response.
+		if availability, ok := runtimeAvailabilityByID[resp.RuntimeID]; ok && !a.ArchivedAt.Valid {
+			resp.RuntimeAvailability = availability
+		}
 		applyInvocationTargetsToResponse(&resp, targets)
 		if skills, ok := skillMap[resp.ID]; ok {
 			resp.Skills = skills
@@ -1114,12 +1183,25 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// private agent。403 让前端渲染显式「无权访问」占位而不是 404——见
 	// agent-detail-page.tsx。
 	workspaceID := uuidToString(agent.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	userID := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
 	resp := h.agentToResponse(agent)
+	viewerRole := ""
+	if member, ok := ctxMember(r.Context()); ok {
+		viewerRole = member.Role
+	}
+	runtimeAvailability, err := h.loadAgentRuntimeAvailability(r.Context(), []db.Agent{agent}, workspaceID, userID, viewerRole, time.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent runtime availability")
+		return
+	}
+	if availability, ok := runtimeAvailability[resp.RuntimeID]; ok {
+		resp.RuntimeAvailability = availability
+	}
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
 		return
 	}
@@ -1130,9 +1212,8 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// mcp_config 脱敏（MUL-2600 已把 custom_env 移出该响应形状；密钥如今经
-	// GET /api/agents/{id}/env 拉取）。
-	userID := requestUserID(r)
+	// mcp_config redaction (custom_env was removed from this response shape
+	// in MUL-2600; secrets are now fetched via GET /api/agents/{id}/env).
 	ws, err := h.Queries.GetWorkspace(r.Context(), agent.WorkspaceID)
 	if err != nil {
 		slog.Warn("GetWorkspace failed for redact check", "workspace_id", uuidToString(agent.WorkspaceID), "error", err)
@@ -1425,6 +1506,27 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+
+	// The preflight runtime can become private while validation is in flight.
+	// Serialize with revocation and keep the authorization lock through INSERT.
+	// Workspace teardown takes workspace -> runtime/agent locks in that order.
+	if _, err := qtx.LockWorkspaceForChatSessionCreate(r.Context(), wsUUID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "workspace not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+		}
+		return
+	}
+	runtime, err = qtx.LockAgentRuntimeForAccessChange(r.Context(), runtimeUUID)
+	if err != nil || runtime.WorkspaceID != wsUUID {
+		writeError(w, http.StatusBadRequest, "invalid runtime_id")
+		return
+	}
+	if !canUseRuntimeForAgent(member, runtime) {
+		writeError(w, http.StatusForbidden, "this runtime is private; only its owner can create agents on it")
+		return
+	}
 
 	created, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:              wsUUID,
@@ -1856,6 +1958,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "this runtime is private; only its owner can move agents onto it")
 			return
 		}
+		// Task delivery authorizes private runtimes against the agent owner,
+		// not the member making this update. Admin management permission must
+		// not save a binding that the existing delivery gate will reject.
+		if runtime.Visibility == "private" && runtime.OwnerID != existing.OwnerID {
+			writeError(w, http.StatusForbidden, "this runtime is private; its owner must match the agent owner")
+			return
+		}
 		params.RuntimeID = runtime.ID
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		targetRuntimeID = runtime.ID
@@ -2093,6 +2202,31 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+
+	if req.RuntimeID != nil {
+		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		if !ok {
+			return
+		}
+		if _, err := qtx.LockWorkspaceForChatSessionCreate(r.Context(), existing.WorkspaceID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "workspace not found")
+			} else {
+				writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+			}
+			return
+		}
+		runtime, err := qtx.LockAgentRuntimeForAccessChange(r.Context(), params.RuntimeID)
+		if err != nil || runtime.WorkspaceID != existing.WorkspaceID {
+			writeError(w, http.StatusBadRequest, "invalid runtime_id")
+			return
+		}
+		if !canUseRuntimeForAgent(member, runtime) {
+			writeError(w, http.StatusForbidden, "this runtime is private; only its owner can move agents onto it")
+			return
+		}
+		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
+	}
 
 	updated, err := qtx.UpdateAgent(r.Context(), params)
 	if err != nil {

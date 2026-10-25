@@ -9,8 +9,10 @@ const FIVE_MINUTES_MS = 5 * 60 * 1000;
 // 长期离线是按"观测到的可达性"定的展示状态，不承诺服务端清理何时/是否会发生。
 const LONG_OFFLINE_THRESHOLD_MS = 6 * 24 * 3600 * 1000; // 6 天
 
-/** 由 runtime 状态 + 最近心跳时间推导四态健康值（online/recently_lost/offline/long_offline）。 */
-export function deriveRuntimeHealth(runtime: AgentRuntime, now: number): RuntimeHealth {
+export function deriveRuntimeHealth(
+  runtime: Pick<AgentRuntime, "status" | "last_seen_at">,
+  now: number,
+): RuntimeHealth {
   if (runtime.status === "online") return "online";
 
   // 从未记录过 last_seen 时间戳——按长期离线处理。这是少见的边角情况

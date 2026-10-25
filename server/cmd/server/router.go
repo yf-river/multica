@@ -449,6 +449,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		if notifier, ok := opts.DaemonWakeup.(handler.DaemonPendingWorkNotifier); ok {
 			h.DaemonPendingWork = notifier
 		}
+		if notifier, ok := opts.DaemonWakeup.(handler.RuntimeGoneNotifier); ok {
+			h.DaemonRuntimeGone = notifier
+		}
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
@@ -2062,8 +2065,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// 删除 runtime——全部在一个事务里。DeleteRuntimeDialog 在严格 DELETE
 					// 以 `runtime_has_active_agents` 拒绝、用户确认后使用它。
 					r.Post("/unbind-agents-and-delete", h.UnbindAgentsAndDeleteRuntime)
-					// 为按 archive-and-delete 契约构建的已安装客户端保留的旧路径
-					// （MUL-5559 改的是行为名，不只是路由）。同一 handler。
+					// Confirmed public-to-private transition. The normal PATCH
+					// returns a structured plan when teammates still have agents
+					// or active work on the runtime; this route applies that plan
+					// atomically after the owner reviews it.
+					r.Post("/revoke-workspace-access", h.RevokeRuntimeWorkspaceAccess)
+					// Legacy path for installed clients built against the
+					// archive-and-delete contract (MUL-5559 renamed the
+					// behaviour, not just the route). Same handler.
 					r.Post("/archive-agents-and-delete", h.UnbindAgentsAndDeleteRuntime)
 				})
 			})

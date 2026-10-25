@@ -101,6 +101,9 @@ func AgentReadiness(ctx context.Context, lookup RuntimeLookup, agent db.Agent) (
 	if err != nil {
 		return AgentVerdict{}, err
 	}
+	if rt.Visibility == "private" && (!rt.OwnerID.Valid || !agent.OwnerID.Valid || rt.OwnerID != agent.OwnerID) {
+		return AgentVerdict{Availability: AgentBlocked, Reason: dispatch.ReasonRuntimeAccessDenied, Detail: "agent owner does not match private runtime owner"}, nil
+	}
 	return runtimeVerdict(rt), nil
 }
 
@@ -150,6 +153,9 @@ func RuntimeUnusableNotice(agentName string, verdict AgentVerdict) string {
 	if name == "" {
 		name = "The assigned agent"
 	}
+	if verdict.Reason == dispatch.ReasonRuntimeAccessDenied {
+		return fmt.Sprintf("%s cannot use this private runtime. Rebind the agent to a runtime its owner can use.", name)
+	}
 	if verdict.Repair != nil && verdict.Repair.Command != "" {
 		return fmt.Sprintf(
 			"%s could not start: its CLI is installed but cannot be executed on that machine, so this trigger was not queued.\n\n"+
@@ -173,4 +179,9 @@ func repairFenceLanguage(shell string) string {
 		return "powershell"
 	}
 	return "bash"
+}
+
+// RuntimeBlockedNeedsNotice 让无法自动恢复的准入拒绝留下可操作的说明。
+func RuntimeBlockedNeedsNotice(code dispatch.ReasonCode) bool {
+	return code == dispatch.ReasonRuntimeUnusable || code == dispatch.ReasonRuntimeAccessDenied
 }
