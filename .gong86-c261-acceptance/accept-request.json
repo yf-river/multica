@@ -1,0 +1,11 @@
+{
+  "revision": 3,
+  "candidate_id": "c261d7228750487861c014fda4f627f83b528875-1792917641016238190",
+  "evidence": [
+    {
+      "name": "指定verify-1浏览器登录刷新与有限权限边界",
+      "status": "passed",
+      "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-3636ef3f6e30/worktree/.gong86-c261-acceptance/REPORT.md；probe.json、supervision.png、supervision-mobile.png。四项verification业务验收因配置前置条件不满足未完成，不申请通过。"
+    }
+  ]
+}

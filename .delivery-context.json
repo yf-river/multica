@@ -1,0 +1,944 @@
+{
+  "plan": {
+    "id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+    "body": "本次沿用任务描述中已确认的方案，不重复索取确认。行动摘要：\n\n1. 核实既有 G51/G47/G67 数据链与权限，复用当前任务分支。\n2. 实现后台材料准备、历史 runtime 分流、AgentLens/本地记录取数、不可变证据及分页。\n3. 更新监督方法和现有页面，执行针对性检查及正式 verify/int 验收。\n4. 提交推送任务分支；验收通过后进入 in_review，生产发布另行授权。\n\n以下保存已确认方案全文：\n\n# 已确认方案：质量监督增强——轨迹对照与 token 优化\n\n用户在当前 Codex 会话已确认完整方案并明确要求「Implement the plan.」。请直接实施，不重复请求方案确认。授权包括独立任务分支开发、针对性验证、commit、push、固定 int 真实验收和进入 in_review；没有本次生产发布授权，不合主分支、不部署生产、不借用 GONG-51/47/67 旧授权。\n\n## 目标与边界\n平台准备轨迹和用量材料，delivery-supervision Skill 指导分析，已有 supervision_material MCP 分页读取。不要新增 AgentLens/usage MCP，也不开放监督员 shell、任意网络或凭据访问。审查员生产已有职责调整，保留当前提示词及 delivery-review，仅只读核对加载。质量监督仍检查需求、正确性、授权、潜在缺陷与过程效率，不变成只查 token；不自动改代码、状态、提示词或派发开发。blocking/quality 均阻塞审查，nit 不阻塞。自动 done 范围、完成快照、手动监督规则沿用 G67。\n\n## 必须先核实\n主工作区 /data/ida/multica 的 AGENTS.md、CLAUDE.md、environment-releases.md 有用户未提交修改，禁止覆盖。当前 checkout 落后于 origin/personal-studio-upstream，必须 fetch 后从最新交付基线建独立分支。读适用规则、quality-agents.md、usage-metrics.md、当前数据流和运行记录。G51 已完成，复用其强关联、Codex解析和CodeBuddy缓存口径，不重开。G47 已有监督技能内联及角色边界，保留。G51证据 /data/ida/artifacts/gong51-plan-execution-20261024/FINAL-REPORT.md 和 prod-external-three-run-proof.json；旧 agentlens-api-recovered.md 的临时iptables命令已过时，不能执行，正式精确HTTP80出口已授权存在。\n\n## 实现\n1. 以目标执行的历史 runtime 分流，不以监督员 runtime 或 Agent当前配置分流。混合任务逐run处理。CodeBuddy CLI 必须尝试 AgentLens；Codex和其他runtime不查AgentLens；DSH不因底层网关而冒充CLI。\n2. 平台后台准备材料，不在事务/完成接口等待HTTP。复用调度/附件存储，增加必要持久准备记录：工作区、任务、完成轮次、固定run集合、材料版本、状态(待处理/处理中/完整/部分/失败)、进度游标、重试、产物引用。相同范围幂等，重启恢复；重开停止旧轮次派发；批次固定不可变材料版本，迟到数据新版本。不要另建重复usage/trace数据库，不回填历史业务usage。迁移无外键、索引独立CONCURRENTLY文件。\n3. 输出执行/runtime索引、真实模型/session/请求标识及来源、用量缓存汇总、逐请求对照、脱敏可见请求响应/工具压缩事件、查询时间/覆盖与缺口。扩展现有材料类型、索引读取、连续分页覆盖和证据校验，既有结果JSON和MCP名称保留。入口仅简短索引汇总，不全量塞prompt。\n4. CodeBuddy复用G51 SDK/provider强标识查AgentLens trace/span，逐请求对照模型、次数、input/output/cache、耗时错误与本地工具。首次/续接/取消/失败/重试/子Agent/多trace正确归属。时间邻近仅线索；本地/trace汇总/span不得重复相加。保留原始值与缓存口径转换；未知格式标未知。不把可见轨迹称完整内部思维，不编造系统提示token精确拆分。\n5. Codex复用现有解析，平台usage+所属Daemon按确定run/session读取持久记录，抽取脱敏材料上传；不扫描整个用户目录或其他session。累计与本轮增量、缓存、可得推理用量、压缩/续接/重试/子执行正确；请求级不可靠时只报run级。\n6. 凭据来自受控配置，实施时核实长期来源与刷新，不输出/提交/放入Skill和模型；没有稳定凭据则明确阻塞该部分，但继续不受影响的实现。工作区权限+run归属+凭据可见范围均校验，不接受任意URL/账号/空间。现有investigation_enabled控制额外调查，不绕过关闭。既有正式精确HTTP80路径，不改网络/SSH/Codex出口。\n7. 外部不可用继续本地监督、明确gap，不打回开发。每HTTP请求15秒，临时错最多重试2次，鉴权/权限/参数错误不重试；每轮准备最多40次外部请求(含重试)，120秒上限。预算不足保存游标部分覆盖；上报延迟最多自动补查1次，余下显式复查，不无限唤醒。相同授权内复用材料，不跨工作区共享正文。平台取数与模型调查分别计预算，现有调查调用/字符上限保留。\n8. Skill分析重复读搜/无效复验、过大无关工具返回、可证实的prompt规则技能重复、错误参数机械重试、上下文膨胀与压缩遗忘、子Agent重复劳动/辅助调用、过早结束与沟通成本。高token/长思考/低cache本身不是浪费，不削必要验证和授权。建议必须具体run/request/tool证据、无收益原因、可实施调整、应修改层、观测成本/未知、验证方法；区分confirmed浪费/待验证机会/gap，不虚构比例/扣额。普通优化不自动成为交付阻塞。\n9. 默认prompt只职责分流证据；delivery-supervision技能存方法；操作文档存接口配置错误恢复。只在int同步配置测试，生产工作区配置更新属生产生效，待本次发布授权；保留用户有效自定义、绑定与所有开关/runtime/model/并发。新运行校验实际加载版本，已有运行自然结束。\n10. 现有监督页面展示AgentLens完整/部分/失败/不适用/未启用、覆盖数、差异、效率建议与缺口，首页简短展开证据。未知不当零或无问题。取数与监督自身成本单列，不混目标任务，不自我循环。\n\n## 验证和交付\n固定材料测试解析/权限/分页去重/生命周期，再在固定verify/int真实CodeBuddy、Codex执行及真实监督模型和浏览器验收。覆盖混合runtime、首次续接取消重试子调用多trace、累计增量缓存压缩、跨任务跨工作区拒绝、无效身份、重开/重启/迟到/重复回调、超时限流凭据失效部分覆盖、提示注入、真实浪费/必要复验不误报、材料加载和刷新持久化、审查回归。保留失败样本及监督实际成本；不把mock、API200、buildPASS当真实验收。生产数据不做破坏性测试，int凭据与样本按规则使用；模型服务可用性先探小样避免批量空流。\n\n文档在现有质量Agent/用量体系，附配置凭据维护/错误恢复/材料权限/回滚和证据索引；产物证据可引用 /data/ida/artifacts/quality-token-supervision-20261025。回滚可关闭新准备能力、恢复prompt/skill，不删历史证据。不要批量重审历史任务，不自动优化代码或切runtime。\n\n停止条件：准确候选完成固定int真实验收与审查，任务in_review，提交分支和测试证据/限制，释放自己的环境资源。不得因新任务已创建或脚本PASS称完成；只到int不标done。本轮无生产授权，需要发布时交付具体可审候选和证据。\n\n请持续推进全部不受阻塞工作，在原任务记录计划、里程碑、证据和下一触发。需要环境准备时走现有交付队列并结束登记运行让publisher推进，不创建重复任务、重复mention或自建发布轮询。遇关键架构范围变化或无法取得授权凭据，记录准确阻塞及仍可推进部分，不临时绕过。\n\n\n\u003c!-- multica-task-runner:ab2efe52-41f0-41c7-8d6d-1afc35f04313 --\u003e",
+    "stale": false,
+    "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+    "comment_id": "01a17126-3f74-752c-a953-c7988ca0f127",
+    "updated_at": "2026-10-25T04:01:50.318297+00:00",
+    "confirmed_at": "2026-10-25T04:01:50.318297+00:00",
+    "confirmed_by": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+    "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+    "confirmation_id": "01a17138-793c-7eed-92bb-d8f6312d70a6",
+    "comment_revision": 1
+  },
+  "owner": {
+    "expires_at": "2026-10-25T08:37:02.261691+00:00",
+    "generation": 17,
+    "execution_id": "01a17223-d557-70e7-9fb4-3e1e28ad7128"
+  },
+  "deliveries": [
+    {
+      "id": "01a17233-d659-739f-844b-49a19a416a94",
+      "error": "",
+      "phase": "testing",
+      "evidence": [
+        {
+          "name": "639真实中断重试与全量并发索引注册回归",
+          "status": "passed",
+          "evidence": "本次隔离PostgreSQL真实执行；gong86-migration.log，含TestEveryConcurrentUpBuildHasCleanup、TestEveryConcurrentDownBuildHasCleanup及639中断重试，不跳过门禁。"
+        },
+        {
+          "name": "完整operations维护主线与消费者一致性",
+          "status": "passed",
+          "evidence": "维护主线4221eca13，业务候选已合并；int/prod实际systemd入口完整19文件逐个SHA-256均与维护主线和业务源码相同，指纹0cfd5a849358f93b。gong86-operations-audit.json；worker40项、release44项通过。"
+        },
+        {
+          "name": "原失败与verify87证据保留及串行提交核对",
+          "status": "passed",
+          "evidence": "原交付01a171e2-116d-79e6-bf67-5cb4d087625b needs_changes revision8，publication idle generation82；verify87历史验收与原失败日志保留，不作为新int通过。原授权与检查清单沿用，新增部署后retest接口已撤回；维护269失败未上线且不重试。"
+        }
+      ],
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "revision": 3,
+      "execution": {
+        "at": "2026-10-25T08:41:40.261979+00:00",
+        "stage": "heartbeat",
+        "detail": "",
+        "generation": 35,
+        "environment": "verify-1",
+        "candidate_id": "c261d7228750487861c014fda4f627f83b528875-1792917641016238190"
+      },
+      "created_at": "2026-10-25T08:36:02.261691+00:00",
+      "updated_at": "2026-10-25T08:41:19.406062+00:00",
+      "approved_at": null,
+      "approved_by": null,
+      "base_commit": "4221eca13ef6758eb3f34de652db3ca522eeffe4",
+      "queue_ahead": 0,
+      "candidate_id": "c261d7228750487861c014fda4f627f83b528875-1792917641016238190",
+      "candidate_url": "http://9.134.129.162:33653",
+      "plan_snapshot": {
+        "body": "本次沿用任务描述中已确认的方案，不重复索取确认。行动摘要：\n\n1. 核实既有 G51/G47/G67 数据链与权限，复用当前任务分支。\n2. 实现后台材料准备、历史 runtime 分流、AgentLens/本地记录取数、不可变证据及分页。\n3. 更新监督方法和现有页面，执行针对性检查及正式 verify/int 验收。\n4. 提交推送任务分支；验收通过后进入 in_review，生产发布另行授权。\n\n以下保存已确认方案全文：\n\n# 已确认方案：质量监督增强——轨迹对照与 token 优化\n\n用户在当前 Codex 会话已确认完整方案并明确要求「Implement the plan.」。请直接实施，不重复请求方案确认。授权包括独立任务分支开发、针对性验证、commit、push、固定 int 真实验收和进入 in_review；没有本次生产发布授权，不合主分支、不部署生产、不借用 GONG-51/47/67 旧授权。\n\n## 目标与边界\n平台准备轨迹和用量材料，delivery-supervision Skill 指导分析，已有 supervision_material MCP 分页读取。不要新增 AgentLens/usage MCP，也不开放监督员 shell、任意网络或凭据访问。审查员生产已有职责调整，保留当前提示词及 delivery-review，仅只读核对加载。质量监督仍检查需求、正确性、授权、潜在缺陷与过程效率，不变成只查 token；不自动改代码、状态、提示词或派发开发。blocking/quality 均阻塞审查，nit 不阻塞。自动 done 范围、完成快照、手动监督规则沿用 G67。\n\n## 必须先核实\n主工作区 /data/ida/multica 的 AGENTS.md、CLAUDE.md、environment-releases.md 有用户未提交修改，禁止覆盖。当前 checkout 落后于 origin/personal-studio-upstream，必须 fetch 后从最新交付基线建独立分支。读适用规则、quality-agents.md、usage-metrics.md、当前数据流和运行记录。G51 已完成，复用其强关联、Codex解析和CodeBuddy缓存口径，不重开。G47 已有监督技能内联及角色边界，保留。G51证据 /data/ida/artifacts/gong51-plan-execution-20261024/FINAL-REPORT.md 和 prod-external-three-run-proof.json；旧 agentlens-api-recovered.md 的临时iptables命令已过时，不能执行，正式精确HTTP80出口已授权存在。\n\n## 实现\n1. 以目标执行的历史 runtime 分流，不以监督员 runtime 或 Agent当前配置分流。混合任务逐run处理。CodeBuddy CLI 必须尝试 AgentLens；Codex和其他runtime不查AgentLens；DSH不因底层网关而冒充CLI。\n2. 平台后台准备材料，不在事务/完成接口等待HTTP。复用调度/附件存储，增加必要持久准备记录：工作区、任务、完成轮次、固定run集合、材料版本、状态(待处理/处理中/完整/部分/失败)、进度游标、重试、产物引用。相同范围幂等，重启恢复；重开停止旧轮次派发；批次固定不可变材料版本，迟到数据新版本。不要另建重复usage/trace数据库，不回填历史业务usage。迁移无外键、索引独立CONCURRENTLY文件。\n3. 输出执行/runtime索引、真实模型/session/请求标识及来源、用量缓存汇总、逐请求对照、脱敏可见请求响应/工具压缩事件、查询时间/覆盖与缺口。扩展现有材料类型、索引读取、连续分页覆盖和证据校验，既有结果JSON和MCP名称保留。入口仅简短索引汇总，不全量塞prompt。\n4. CodeBuddy复用G51 SDK/provider强标识查AgentLens trace/span，逐请求对照模型、次数、input/output/cache、耗时错误与本地工具。首次/续接/取消/失败/重试/子Agent/多trace正确归属。时间邻近仅线索；本地/trace汇总/span不得重复相加。保留原始值与缓存口径转换；未知格式标未知。不把可见轨迹称完整内部思维，不编造系统提示token精确拆分。\n5. Codex复用现有解析，平台usage+所属Daemon按确定run/session读取持久记录，抽取脱敏材料上传；不扫描整个用户目录或其他session。累计与本轮增量、缓存、可得推理用量、压缩/续接/重试/子执行正确；请求级不可靠时只报run级。\n6. 凭据来自受控配置，实施时核实长期来源与刷新，不输出/提交/放入Skill和模型；没有稳定凭据则明确阻塞该部分，但继续不受影响的实现。工作区权限+run归属+凭据可见范围均校验，不接受任意URL/账号/空间。现有investigation_enabled控制额外调查，不绕过关闭。既有正式精确HTTP80路径，不改网络/SSH/Codex出口。\n7. 外部不可用继续本地监督、明确gap，不打回开发。每HTTP请求15秒，临时错最多重试2次，鉴权/权限/参数错误不重试；每轮准备最多40次外部请求(含重试)，120秒上限。预算不足保存游标部分覆盖；上报延迟最多自动补查1次，余下显式复查，不无限唤醒。相同授权内复用材料，不跨工作区共享正文。平台取数与模型调查分别计预算，现有调查调用/字符上限保留。\n8. Skill分析重复读搜/无效复验、过大无关工具返回、可证实的prompt规则技能重复、错误参数机械重试、上下文膨胀与压缩遗忘、子Agent重复劳动/辅助调用、过早结束与沟通成本。高token/长思考/低cache本身不是浪费，不削必要验证和授权。建议必须具体run/request/tool证据、无收益原因、可实施调整、应修改层、观测成本/未知、验证方法；区分confirmed浪费/待验证机会/gap，不虚构比例/扣额。普通优化不自动成为交付阻塞。\n9. 默认prompt只职责分流证据；delivery-supervision技能存方法；操作文档存接口配置错误恢复。只在int同步配置测试，生产工作区配置更新属生产生效，待本次发布授权；保留用户有效自定义、绑定与所有开关/runtime/model/并发。新运行校验实际加载版本，已有运行自然结束。\n10. 现有监督页面展示AgentLens完整/部分/失败/不适用/未启用、覆盖数、差异、效率建议与缺口，首页简短展开证据。未知不当零或无问题。取数与监督自身成本单列，不混目标任务，不自我循环。\n\n## 验证和交付\n固定材料测试解析/权限/分页去重/生命周期，再在固定verify/int真实CodeBuddy、Codex执行及真实监督模型和浏览器验收。覆盖混合runtime、首次续接取消重试子调用多trace、累计增量缓存压缩、跨任务跨工作区拒绝、无效身份、重开/重启/迟到/重复回调、超时限流凭据失效部分覆盖、提示注入、真实浪费/必要复验不误报、材料加载和刷新持久化、审查回归。保留失败样本及监督实际成本；不把mock、API200、buildPASS当真实验收。生产数据不做破坏性测试，int凭据与样本按规则使用；模型服务可用性先探小样避免批量空流。\n\n文档在现有质量Agent/用量体系，附配置凭据维护/错误恢复/材料权限/回滚和证据索引；产物证据可引用 /data/ida/artifacts/quality-token-supervision-20261025。回滚可关闭新准备能力、恢复prompt/skill，不删历史证据。不要批量重审历史任务，不自动优化代码或切runtime。\n\n停止条件：准确候选完成固定int真实验收与审查，任务in_review，提交分支和测试证据/限制，释放自己的环境资源。不得因新任务已创建或脚本PASS称完成；只到int不标done。本轮无生产授权，需要发布时交付具体可审候选和证据。\n\n请持续推进全部不受阻塞工作，在原任务记录计划、里程碑、证据和下一触发。需要环境准备时走现有交付队列并结束登记运行让publisher推进，不创建重复任务、重复mention或自建发布轮询。遇关键架构范围变化或无法取得授权凭据，记录准确阻塞及仍可推进部分，不临时绕过。\n\n\n\u003c!-- multica-task-runner:ab2efe52-41f0-41c7-8d6d-1afc35f04313 --\u003e",
+        "revision": 1,
+        "comment_id": "01a17126-3f74-752c-a953-c7988ca0f127",
+        "confirmed_at": "2026-10-25T04:01:50.318297+00:00",
+        "confirmed_by": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+        "required_checks": [
+          {
+            "name": "固定int监督页面刷新持久化与审查回归",
+            "stage": "integration"
+          },
+          {
+            "name": "CodeBuddy真实强关联及逐请求对账",
+            "stage": "verification"
+          },
+          {
+            "name": "Codex所属Daemon及混合runtime材料",
+            "stage": "verification"
+          },
+          {
+            "name": "材料权限分页与生命周期恢复",
+            "stage": "verification"
+          },
+          {
+            "name": "真实监督模型加载与效率建议判定",
+            "stage": "verification"
+          }
+        ],
+        "candidate_commit": "c261d7228750487861c014fda4f627f83b528875",
+        "candidate_identity": {
+          "seed": "seed-20261025-agent-control-v4",
+          "suite": "246c144190f27a60aff2c9e2fb63bf40cbf45aa151597b68fd5408dafbbbd7fb",
+          "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+          "environment": "verify-1",
+          "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+          "configuration": "7a81602202796386026de06f2f17ffa70dd387ef4ae6c1d78f593cf7b5d0fec8",
+          "runtime_inputs": "0555a0329cb81edca39c3708c16f37995f27c4fb66fd58abdd75111ad0da1c42"
+        },
+        "execute_authorizations": [
+          {
+            "id": "01a17138-ccf0-7293-8034-3e575c9c7600",
+            "kind": "execute",
+            "scope": "用户在已确认方案基础上逐项反馈并明确要求继续原分支实现及准确候选验证；沿用任务描述已批准的开发、针对性验证、commit、push、固定verify/int验收范围。该评论明确不新增生产发布授权，本登记仅为执行授权。",
+            "plan_id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+            "revoked": false,
+            "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+            "comment_id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+            "created_at": "2026-10-25T04:01:50.318297+00:00",
+            "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+            "registered_by": "4e920ee7-d180-4cfa-80a3-2d8925f178a8",
+            "comment_revision": 1,
+            "comment_snapshot": {
+              "id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+              "content": "直接监督首轮反馈（依据后继执行01a17122…的seq52/62草稿，非最终候选结论）：\n1. agentlens preparation 草稿把 task_provider_trace.provider_trace_id 原样传 traceDetail.trace_id，并用返回根ID相等判断归属。G51已验证 conversationRequestId/provider_trace_id 与 SDK providerData.traceId 是不同标识，不能混用。请复用G51实际映射链，从metadata sdk_trace_id/明确请求span标识查询与验证，核对response/session/child归属；真实样本必须覆盖两个ID不相等。否则现有exact关联也会查错或误判缺口。\n2. prepareTraceMaterials 目前只有自动open round路径且非codebuddy直接not_applicable，尚未落实手动监督、Codex所属Daemon记录/压缩工具事件、逐请求归一对账。请完整按原方案继续，不能将这些明确要求降成仅平台usage或文档gap后交付。\n3. 当前lease UPDATE无claim generation/token校验，旧worker超150秒返回时可覆盖新worker processing。应以实际claim标识校验最终保存；HTTP40次/120秒目前每run新建budget，原方案是每完成轮次累计预算，恢复/多run也不能重置。请添加必要竞态/多run验证。\n4. 旧run seq109的643 down草稿含DELETE FROM supervision_material WHERE kind='trace_usage'。请核对当前版本并移除默认删除证据的恢复动作，日常回滚关闭新能力并保留材料；勿把写了down当成获准执行。\n5. agentlens重试目前100/200ms固定等待未处理Retry-After。限流需尊重服务端退避且仍受整轮上限约束。\n以上是当前草稿的具体风险，允许你正在实现中的正常补全；不要求重做已正确部分、不改变范围，也不新增发布授权。继续原分支实现并在准确候选验证后报告。\n\n\n[@任务负责人](mention://agent/4e920ee7-d180-4cfa-80a3-2d8925f178a8)\n\u003c!-- multica-task-runner-reply:acf9ca9f-11e0-4b8b-8963-813729620605 --\u003e",
+              "revision": 1,
+              "author_id": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+              "created_at": "2026-10-25T03:41:21.985635+00:00"
+            },
+            "registered_by_type": "agent"
+          }
+        ]
+      },
+      "source_branch": "feature/ida-developer/gong-86",
+      "source_commit": "c261d7228750487861c014fda4f627f83b528875",
+      "authorization_state": ""
+    },
+    {
+      "id": "01a171e2-116d-79e6-bf67-5cb4d087625b",
+      "error": "验收程序失败：run-text-migration；日志 /data/ida/multica/.run/delivery-evidence/6fafcc7c8bf1a8c885162617e4d67072ae55fa3b-1792915913109610438-run-text-migration.log",
+      "phase": "needs_changes",
+      "evidence": [
+        {
+          "name": "CodeBuddy真实强关联及逐请求对账",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第1项；普通样本2请求输入/输出/缓存match，原生子调用parent_sdk匹配1请求；外部不完整保留partial，详见各codebuddy/child report与pages。"
+        },
+        {
+          "name": "Codex所属Daemon及混合runtime材料",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第2项、started-runtime-proof.json、mixed-runs.json、cancel-runs.json；真实Codex、同任务混合runtime、运行取消与重试材料分别归属，AgentLens请求0；execution-evidence-tests.log 13项通过。"
+        },
+        {
+          "name": "材料权限分页与生命周期恢复",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第3项、boundaries.json、restart.json、immutable-after-restart.json、reopen-lifecycle.json；真实分页/跨任务拒绝/重启恢复/重开保留；隔离候选PostgreSQL supervision 34项通过，5项固定int测试明确跳过待下一阶段。"
+        },
+        {
+          "name": "真实监督模型加载与效率建议判定",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第4项、loaded-skills-and-tools.json、waste-subject.json、detail.png；8真实批次completed，准确技能加载/MCP读取及validate；必要读取不误报、受控重复读取指出2次额外调用并给提示词层调整及验证办法，不虚构节省比例；费用与缺口分列。"
+        }
+      ],
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "revision": 8,
+      "execution": {
+        "at": "2026-10-25T07:31:02.974799+00:00",
+        "stage": "release",
+        "detail": "",
+        "generation": 34,
+        "environment": "verify-1",
+        "candidate_id": "87e11863efd663bb220a0b073a9f914c697267a0-1792912266420670525"
+      },
+      "created_at": "2026-10-25T07:06:43.434143+00:00",
+      "updated_at": "2026-10-25T08:16:17.579139+00:00",
+      "approved_at": null,
+      "approved_by": null,
+      "base_commit": "5565a4155804d852168c1ead8a2b3ea6858eb9da",
+      "queue_ahead": 0,
+      "candidate_id": "6fafcc7c8bf1a8c885162617e4d67072ae55fa3b-1792915913109610438",
+      "candidate_url": "http://9.134.129.162:13682",
+      "plan_snapshot": {
+        "body": "本次沿用任务描述中已确认的方案，不重复索取确认。行动摘要：\n\n1. 核实既有 G51/G47/G67 数据链与权限，复用当前任务分支。\n2. 实现后台材料准备、历史 runtime 分流、AgentLens/本地记录取数、不可变证据及分页。\n3. 更新监督方法和现有页面，执行针对性检查及正式 verify/int 验收。\n4. 提交推送任务分支；验收通过后进入 in_review，生产发布另行授权。\n\n以下保存已确认方案全文：\n\n# 已确认方案：质量监督增强——轨迹对照与 token 优化\n\n用户在当前 Codex 会话已确认完整方案并明确要求「Implement the plan.」。请直接实施，不重复请求方案确认。授权包括独立任务分支开发、针对性验证、commit、push、固定 int 真实验收和进入 in_review；没有本次生产发布授权，不合主分支、不部署生产、不借用 GONG-51/47/67 旧授权。\n\n## 目标与边界\n平台准备轨迹和用量材料，delivery-supervision Skill 指导分析，已有 supervision_material MCP 分页读取。不要新增 AgentLens/usage MCP，也不开放监督员 shell、任意网络或凭据访问。审查员生产已有职责调整，保留当前提示词及 delivery-review，仅只读核对加载。质量监督仍检查需求、正确性、授权、潜在缺陷与过程效率，不变成只查 token；不自动改代码、状态、提示词或派发开发。blocking/quality 均阻塞审查，nit 不阻塞。自动 done 范围、完成快照、手动监督规则沿用 G67。\n\n## 必须先核实\n主工作区 /data/ida/multica 的 AGENTS.md、CLAUDE.md、environment-releases.md 有用户未提交修改，禁止覆盖。当前 checkout 落后于 origin/personal-studio-upstream，必须 fetch 后从最新交付基线建独立分支。读适用规则、quality-agents.md、usage-metrics.md、当前数据流和运行记录。G51 已完成，复用其强关联、Codex解析和CodeBuddy缓存口径，不重开。G47 已有监督技能内联及角色边界，保留。G51证据 /data/ida/artifacts/gong51-plan-execution-20261024/FINAL-REPORT.md 和 prod-external-three-run-proof.json；旧 agentlens-api-recovered.md 的临时iptables命令已过时，不能执行，正式精确HTTP80出口已授权存在。\n\n## 实现\n1. 以目标执行的历史 runtime 分流，不以监督员 runtime 或 Agent当前配置分流。混合任务逐run处理。CodeBuddy CLI 必须尝试 AgentLens；Codex和其他runtime不查AgentLens；DSH不因底层网关而冒充CLI。\n2. 平台后台准备材料，不在事务/完成接口等待HTTP。复用调度/附件存储，增加必要持久准备记录：工作区、任务、完成轮次、固定run集合、材料版本、状态(待处理/处理中/完整/部分/失败)、进度游标、重试、产物引用。相同范围幂等，重启恢复；重开停止旧轮次派发；批次固定不可变材料版本，迟到数据新版本。不要另建重复usage/trace数据库，不回填历史业务usage。迁移无外键、索引独立CONCURRENTLY文件。\n3. 输出执行/runtime索引、真实模型/session/请求标识及来源、用量缓存汇总、逐请求对照、脱敏可见请求响应/工具压缩事件、查询时间/覆盖与缺口。扩展现有材料类型、索引读取、连续分页覆盖和证据校验，既有结果JSON和MCP名称保留。入口仅简短索引汇总，不全量塞prompt。\n4. CodeBuddy复用G51 SDK/provider强标识查AgentLens trace/span，逐请求对照模型、次数、input/output/cache、耗时错误与本地工具。首次/续接/取消/失败/重试/子Agent/多trace正确归属。时间邻近仅线索；本地/trace汇总/span不得重复相加。保留原始值与缓存口径转换；未知格式标未知。不把可见轨迹称完整内部思维，不编造系统提示token精确拆分。\n5. Codex复用现有解析，平台usage+所属Daemon按确定run/session读取持久记录，抽取脱敏材料上传；不扫描整个用户目录或其他session。累计与本轮增量、缓存、可得推理用量、压缩/续接/重试/子执行正确；请求级不可靠时只报run级。\n6. 凭据来自受控配置，实施时核实长期来源与刷新，不输出/提交/放入Skill和模型；没有稳定凭据则明确阻塞该部分，但继续不受影响的实现。工作区权限+run归属+凭据可见范围均校验，不接受任意URL/账号/空间。现有investigation_enabled控制额外调查，不绕过关闭。既有正式精确HTTP80路径，不改网络/SSH/Codex出口。\n7. 外部不可用继续本地监督、明确gap，不打回开发。每HTTP请求15秒，临时错最多重试2次，鉴权/权限/参数错误不重试；每轮准备最多40次外部请求(含重试)，120秒上限。预算不足保存游标部分覆盖；上报延迟最多自动补查1次，余下显式复查，不无限唤醒。相同授权内复用材料，不跨工作区共享正文。平台取数与模型调查分别计预算，现有调查调用/字符上限保留。\n8. Skill分析重复读搜/无效复验、过大无关工具返回、可证实的prompt规则技能重复、错误参数机械重试、上下文膨胀与压缩遗忘、子Agent重复劳动/辅助调用、过早结束与沟通成本。高token/长思考/低cache本身不是浪费，不削必要验证和授权。建议必须具体run/request/tool证据、无收益原因、可实施调整、应修改层、观测成本/未知、验证方法；区分confirmed浪费/待验证机会/gap，不虚构比例/扣额。普通优化不自动成为交付阻塞。\n9. 默认prompt只职责分流证据；delivery-supervision技能存方法；操作文档存接口配置错误恢复。只在int同步配置测试，生产工作区配置更新属生产生效，待本次发布授权；保留用户有效自定义、绑定与所有开关/runtime/model/并发。新运行校验实际加载版本，已有运行自然结束。\n10. 现有监督页面展示AgentLens完整/部分/失败/不适用/未启用、覆盖数、差异、效率建议与缺口，首页简短展开证据。未知不当零或无问题。取数与监督自身成本单列，不混目标任务，不自我循环。\n\n## 验证和交付\n固定材料测试解析/权限/分页去重/生命周期，再在固定verify/int真实CodeBuddy、Codex执行及真实监督模型和浏览器验收。覆盖混合runtime、首次续接取消重试子调用多trace、累计增量缓存压缩、跨任务跨工作区拒绝、无效身份、重开/重启/迟到/重复回调、超时限流凭据失效部分覆盖、提示注入、真实浪费/必要复验不误报、材料加载和刷新持久化、审查回归。保留失败样本及监督实际成本；不把mock、API200、buildPASS当真实验收。生产数据不做破坏性测试，int凭据与样本按规则使用；模型服务可用性先探小样避免批量空流。\n\n文档在现有质量Agent/用量体系，附配置凭据维护/错误恢复/材料权限/回滚和证据索引；产物证据可引用 /data/ida/artifacts/quality-token-supervision-20261025。回滚可关闭新准备能力、恢复prompt/skill，不删历史证据。不要批量重审历史任务，不自动优化代码或切runtime。\n\n停止条件：准确候选完成固定int真实验收与审查，任务in_review，提交分支和测试证据/限制，释放自己的环境资源。不得因新任务已创建或脚本PASS称完成；只到int不标done。本轮无生产授权，需要发布时交付具体可审候选和证据。\n\n请持续推进全部不受阻塞工作，在原任务记录计划、里程碑、证据和下一触发。需要环境准备时走现有交付队列并结束登记运行让publisher推进，不创建重复任务、重复mention或自建发布轮询。遇关键架构范围变化或无法取得授权凭据，记录准确阻塞及仍可推进部分，不临时绕过。\n\n\n\u003c!-- multica-task-runner:ab2efe52-41f0-41c7-8d6d-1afc35f04313 --\u003e",
+        "revision": 1,
+        "comment_id": "01a17126-3f74-752c-a953-c7988ca0f127",
+        "confirmed_at": "2026-10-25T04:01:50.318297+00:00",
+        "confirmed_by": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+        "required_checks": [
+          {
+            "name": "固定int监督页面刷新持久化与审查回归",
+            "stage": "integration"
+          },
+          {
+            "name": "CodeBuddy真实强关联及逐请求对账",
+            "stage": "verification"
+          },
+          {
+            "name": "Codex所属Daemon及混合runtime材料",
+            "stage": "verification"
+          },
+          {
+            "name": "材料权限分页与生命周期恢复",
+            "stage": "verification"
+          },
+          {
+            "name": "真实监督模型加载与效率建议判定",
+            "stage": "verification"
+          }
+        ],
+        "validation_plan": {
+          "mode": "full",
+          "checks": [],
+          "reason": "缺少完整覆盖映射或存在结构/依赖变化",
+          "identity": {
+            "suite": "abfa4800f12f3596b3a015fe79d23edf7b4827b3eaa4eb2ab8679714c0dc58a7",
+            "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+            "configuration": "4c52602c51e64e1451883f0fc584ae5b026ae907ecc8a36c2d0a827215e9af16",
+            "runtime_inputs": "c1317dc7664c1d8c331e1abf3e429584022244e51722f8bc31f39f8d2d25b7d2"
+          },
+          "uncovered": [],
+          "changed_paths": []
+        },
+        "candidate_commit": "6fafcc7c8bf1a8c885162617e4d67072ae55fa3b",
+        "integration_only": true,
+        "candidate_identity": {
+          "suite": "abfa4800f12f3596b3a015fe79d23edf7b4827b3eaa4eb2ab8679714c0dc58a7",
+          "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+          "configuration": "4c52602c51e64e1451883f0fc584ae5b026ae907ecc8a36c2d0a827215e9af16",
+          "runtime_inputs": "c1317dc7664c1d8c331e1abf3e429584022244e51722f8bc31f39f8d2d25b7d2"
+        },
+        "execute_authorizations": [
+          {
+            "id": "01a17138-ccf0-7293-8034-3e575c9c7600",
+            "kind": "execute",
+            "scope": "用户在已确认方案基础上逐项反馈并明确要求继续原分支实现及准确候选验证；沿用任务描述已批准的开发、针对性验证、commit、push、固定verify/int验收范围。该评论明确不新增生产发布授权，本登记仅为执行授权。",
+            "plan_id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+            "revoked": false,
+            "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+            "comment_id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+            "created_at": "2026-10-25T04:01:50.318297+00:00",
+            "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+            "registered_by": "4e920ee7-d180-4cfa-80a3-2d8925f178a8",
+            "comment_revision": 1,
+            "comment_snapshot": {
+              "id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+              "content": "直接监督首轮反馈（依据后继执行01a17122…的seq52/62草稿，非最终候选结论）：\n1. agentlens preparation 草稿把 task_provider_trace.provider_trace_id 原样传 traceDetail.trace_id，并用返回根ID相等判断归属。G51已验证 conversationRequestId/provider_trace_id 与 SDK providerData.traceId 是不同标识，不能混用。请复用G51实际映射链，从metadata sdk_trace_id/明确请求span标识查询与验证，核对response/session/child归属；真实样本必须覆盖两个ID不相等。否则现有exact关联也会查错或误判缺口。\n2. prepareTraceMaterials 目前只有自动open round路径且非codebuddy直接not_applicable，尚未落实手动监督、Codex所属Daemon记录/压缩工具事件、逐请求归一对账。请完整按原方案继续，不能将这些明确要求降成仅平台usage或文档gap后交付。\n3. 当前lease UPDATE无claim generation/token校验，旧worker超150秒返回时可覆盖新worker processing。应以实际claim标识校验最终保存；HTTP40次/120秒目前每run新建budget，原方案是每完成轮次累计预算，恢复/多run也不能重置。请添加必要竞态/多run验证。\n4. 旧run seq109的643 down草稿含DELETE FROM supervision_material WHERE kind='trace_usage'。请核对当前版本并移除默认删除证据的恢复动作，日常回滚关闭新能力并保留材料；勿把写了down当成获准执行。\n5. agentlens重试目前100/200ms固定等待未处理Retry-After。限流需尊重服务端退避且仍受整轮上限约束。\n以上是当前草稿的具体风险，允许你正在实现中的正常补全；不要求重做已正确部分、不改变范围，也不新增发布授权。继续原分支实现并在准确候选验证后报告。\n\n\n[@任务负责人](mention://agent/4e920ee7-d180-4cfa-80a3-2d8925f178a8)\n\u003c!-- multica-task-runner-reply:acf9ca9f-11e0-4b8b-8963-813729620605 --\u003e",
+              "revision": 1,
+              "author_id": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+              "created_at": "2026-10-25T03:41:21.985635+00:00"
+            },
+            "registered_by_type": "agent"
+          }
+        ]
+      },
+      "source_branch": "feature/ida-developer/gong-86",
+      "source_commit": "87e11863efd663bb220a0b073a9f914c697267a0",
+      "authorization_state": ""
+    },
+    {
+      "id": "01a171c7-7432-7d9a-9d16-5995bb270dc2",
+      "error": "验收执行已结束，但没有提交通过证据",
+      "phase": "needs_changes",
+      "evidence": [
+        {
+          "name": "最终prompt组合、监督技能与专用MCP回归",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/prompt-fix-gong86/focused-tests.log"
+        },
+        {
+          "name": "完整daemon及调查包回归（清除任务配置根环境变量）",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/prompt-fix-gong86/go-tests-clean-env.log"
+        },
+        {
+          "name": "监督MCP校验命令回归",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/prompt-fix-gong86/mcp-tests.log"
+        },
+        {
+          "name": "技能候选真源及前置身份边界六项",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/prompt-fix-gong86/python-tests.log"
+        }
+      ],
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "revision": 4,
+      "execution": {
+        "at": "2026-10-25T06:50:32.858522+00:00",
+        "stage": "release",
+        "detail": "",
+        "generation": 33,
+        "environment": "verify-1",
+        "candidate_id": "56e6c5ea30b660805b6079604af5d29647f58d77-1792910529284684621"
+      },
+      "created_at": "2026-10-25T06:37:39.245783+00:00",
+      "updated_at": "2026-10-25T06:50:32.832322+00:00",
+      "approved_at": null,
+      "approved_by": null,
+      "base_commit": "aad3ee2b85de2a3802bafca1b39d9986334d7b13",
+      "queue_ahead": 0,
+      "candidate_id": "56e6c5ea30b660805b6079604af5d29647f58d77-1792910529284684621",
+      "candidate_url": "http://9.134.129.162:33653",
+      "plan_snapshot": {
+        "body": "本次沿用任务描述中已确认的方案，不重复索取确认。行动摘要：\n\n1. 核实既有 G51/G47/G67 数据链与权限，复用当前任务分支。\n2. 实现后台材料准备、历史 runtime 分流、AgentLens/本地记录取数、不可变证据及分页。\n3. 更新监督方法和现有页面，执行针对性检查及正式 verify/int 验收。\n4. 提交推送任务分支；验收通过后进入 in_review，生产发布另行授权。\n\n以下保存已确认方案全文：\n\n# 已确认方案：质量监督增强——轨迹对照与 token 优化\n\n用户在当前 Codex 会话已确认完整方案并明确要求「Implement the plan.」。请直接实施，不重复请求方案确认。授权包括独立任务分支开发、针对性验证、commit、push、固定 int 真实验收和进入 in_review；没有本次生产发布授权，不合主分支、不部署生产、不借用 GONG-51/47/67 旧授权。\n\n## 目标与边界\n平台准备轨迹和用量材料，delivery-supervision Skill 指导分析，已有 supervision_material MCP 分页读取。不要新增 AgentLens/usage MCP，也不开放监督员 shell、任意网络或凭据访问。审查员生产已有职责调整，保留当前提示词及 delivery-review，仅只读核对加载。质量监督仍检查需求、正确性、授权、潜在缺陷与过程效率，不变成只查 token；不自动改代码、状态、提示词或派发开发。blocking/quality 均阻塞审查，nit 不阻塞。自动 done 范围、完成快照、手动监督规则沿用 G67。\n\n## 必须先核实\n主工作区 /data/ida/multica 的 AGENTS.md、CLAUDE.md、environment-releases.md 有用户未提交修改，禁止覆盖。当前 checkout 落后于 origin/personal-studio-upstream，必须 fetch 后从最新交付基线建独立分支。读适用规则、quality-agents.md、usage-metrics.md、当前数据流和运行记录。G51 已完成，复用其强关联、Codex解析和CodeBuddy缓存口径，不重开。G47 已有监督技能内联及角色边界，保留。G51证据 /data/ida/artifacts/gong51-plan-execution-20261024/FINAL-REPORT.md 和 prod-external-three-run-proof.json；旧 agentlens-api-recovered.md 的临时iptables命令已过时，不能执行，正式精确HTTP80出口已授权存在。\n\n## 实现\n1. 以目标执行的历史 runtime 分流，不以监督员 runtime 或 Agent当前配置分流。混合任务逐run处理。CodeBuddy CLI 必须尝试 AgentLens；Codex和其他runtime不查AgentLens；DSH不因底层网关而冒充CLI。\n2. 平台后台准备材料，不在事务/完成接口等待HTTP。复用调度/附件存储，增加必要持久准备记录：工作区、任务、完成轮次、固定run集合、材料版本、状态(待处理/处理中/完整/部分/失败)、进度游标、重试、产物引用。相同范围幂等，重启恢复；重开停止旧轮次派发；批次固定不可变材料版本，迟到数据新版本。不要另建重复usage/trace数据库，不回填历史业务usage。迁移无外键、索引独立CONCURRENTLY文件。\n3. 输出执行/runtime索引、真实模型/session/请求标识及来源、用量缓存汇总、逐请求对照、脱敏可见请求响应/工具压缩事件、查询时间/覆盖与缺口。扩展现有材料类型、索引读取、连续分页覆盖和证据校验，既有结果JSON和MCP名称保留。入口仅简短索引汇总，不全量塞prompt。\n4. CodeBuddy复用G51 SDK/provider强标识查AgentLens trace/span，逐请求对照模型、次数、input/output/cache、耗时错误与本地工具。首次/续接/取消/失败/重试/子Agent/多trace正确归属。时间邻近仅线索；本地/trace汇总/span不得重复相加。保留原始值与缓存口径转换；未知格式标未知。不把可见轨迹称完整内部思维，不编造系统提示token精确拆分。\n5. Codex复用现有解析，平台usage+所属Daemon按确定run/session读取持久记录，抽取脱敏材料上传；不扫描整个用户目录或其他session。累计与本轮增量、缓存、可得推理用量、压缩/续接/重试/子执行正确；请求级不可靠时只报run级。\n6. 凭据来自受控配置，实施时核实长期来源与刷新，不输出/提交/放入Skill和模型；没有稳定凭据则明确阻塞该部分，但继续不受影响的实现。工作区权限+run归属+凭据可见范围均校验，不接受任意URL/账号/空间。现有investigation_enabled控制额外调查，不绕过关闭。既有正式精确HTTP80路径，不改网络/SSH/Codex出口。\n7. 外部不可用继续本地监督、明确gap，不打回开发。每HTTP请求15秒，临时错最多重试2次，鉴权/权限/参数错误不重试；每轮准备最多40次外部请求(含重试)，120秒上限。预算不足保存游标部分覆盖；上报延迟最多自动补查1次，余下显式复查，不无限唤醒。相同授权内复用材料，不跨工作区共享正文。平台取数与模型调查分别计预算，现有调查调用/字符上限保留。\n8. Skill分析重复读搜/无效复验、过大无关工具返回、可证实的prompt规则技能重复、错误参数机械重试、上下文膨胀与压缩遗忘、子Agent重复劳动/辅助调用、过早结束与沟通成本。高token/长思考/低cache本身不是浪费，不削必要验证和授权。建议必须具体run/request/tool证据、无收益原因、可实施调整、应修改层、观测成本/未知、验证方法；区分confirmed浪费/待验证机会/gap，不虚构比例/扣额。普通优化不自动成为交付阻塞。\n9. 默认prompt只职责分流证据；delivery-supervision技能存方法；操作文档存接口配置错误恢复。只在int同步配置测试，生产工作区配置更新属生产生效，待本次发布授权；保留用户有效自定义、绑定与所有开关/runtime/model/并发。新运行校验实际加载版本，已有运行自然结束。\n10. 现有监督页面展示AgentLens完整/部分/失败/不适用/未启用、覆盖数、差异、效率建议与缺口，首页简短展开证据。未知不当零或无问题。取数与监督自身成本单列，不混目标任务，不自我循环。\n\n## 验证和交付\n固定材料测试解析/权限/分页去重/生命周期，再在固定verify/int真实CodeBuddy、Codex执行及真实监督模型和浏览器验收。覆盖混合runtime、首次续接取消重试子调用多trace、累计增量缓存压缩、跨任务跨工作区拒绝、无效身份、重开/重启/迟到/重复回调、超时限流凭据失效部分覆盖、提示注入、真实浪费/必要复验不误报、材料加载和刷新持久化、审查回归。保留失败样本及监督实际成本；不把mock、API200、buildPASS当真实验收。生产数据不做破坏性测试，int凭据与样本按规则使用；模型服务可用性先探小样避免批量空流。\n\n文档在现有质量Agent/用量体系，附配置凭据维护/错误恢复/材料权限/回滚和证据索引；产物证据可引用 /data/ida/artifacts/quality-token-supervision-20261025。回滚可关闭新准备能力、恢复prompt/skill，不删历史证据。不要批量重审历史任务，不自动优化代码或切runtime。\n\n停止条件：准确候选完成固定int真实验收与审查，任务in_review，提交分支和测试证据/限制，释放自己的环境资源。不得因新任务已创建或脚本PASS称完成；只到int不标done。本轮无生产授权，需要发布时交付具体可审候选和证据。\n\n请持续推进全部不受阻塞工作，在原任务记录计划、里程碑、证据和下一触发。需要环境准备时走现有交付队列并结束登记运行让publisher推进，不创建重复任务、重复mention或自建发布轮询。遇关键架构范围变化或无法取得授权凭据，记录准确阻塞及仍可推进部分，不临时绕过。\n\n\n\u003c!-- multica-task-runner:ab2efe52-41f0-41c7-8d6d-1afc35f04313 --\u003e",
+        "revision": 1,
+        "comment_id": "01a17126-3f74-752c-a953-c7988ca0f127",
+        "confirmed_at": "2026-10-25T04:01:50.318297+00:00",
+        "confirmed_by": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+        "required_checks": [
+          {
+            "name": "固定int监督页面刷新持久化与审查回归",
+            "stage": "integration"
+          },
+          {
+            "name": "CodeBuddy真实强关联及逐请求对账",
+            "stage": "verification"
+          },
+          {
+            "name": "Codex所属Daemon及混合runtime材料",
+            "stage": "verification"
+          },
+          {
+            "name": "材料权限分页与生命周期恢复",
+            "stage": "verification"
+          },
+          {
+            "name": "真实监督模型加载与效率建议判定",
+            "stage": "verification"
+          }
+        ],
+        "candidate_commit": "56e6c5ea30b660805b6079604af5d29647f58d77",
+        "candidate_identity": {
+          "seed": "seed-20261025-agent-control-v4",
+          "suite": "40c590f5439e1f6a8fc530baa16f59ea75c1700a21b9b7b925c9c9ca773c604f",
+          "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+          "environment": "verify-1",
+          "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+          "configuration": "7a81602202796386026de06f2f17ffa70dd387ef4ae6c1d78f593cf7b5d0fec8",
+          "runtime_inputs": "19699c04f7a110629ae161568f4378bea8c484091cf617beb5b907f29c3104fe"
+        },
+        "execute_authorizations": [
+          {
+            "id": "01a17138-ccf0-7293-8034-3e575c9c7600",
+            "kind": "execute",
+            "scope": "用户在已确认方案基础上逐项反馈并明确要求继续原分支实现及准确候选验证；沿用任务描述已批准的开发、针对性验证、commit、push、固定verify/int验收范围。该评论明确不新增生产发布授权，本登记仅为执行授权。",
+            "plan_id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+            "revoked": false,
+            "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+            "comment_id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+            "created_at": "2026-10-25T04:01:50.318297+00:00",
+            "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+            "registered_by": "4e920ee7-d180-4cfa-80a3-2d8925f178a8",
+            "comment_revision": 1,
+            "comment_snapshot": {
+              "id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+              "content": "直接监督首轮反馈（依据后继执行01a17122…的seq52/62草稿，非最终候选结论）：\n1. agentlens preparation 草稿把 task_provider_trace.provider_trace_id 原样传 traceDetail.trace_id，并用返回根ID相等判断归属。G51已验证 conversationRequestId/provider_trace_id 与 SDK providerData.traceId 是不同标识，不能混用。请复用G51实际映射链，从metadata sdk_trace_id/明确请求span标识查询与验证，核对response/session/child归属；真实样本必须覆盖两个ID不相等。否则现有exact关联也会查错或误判缺口。\n2. prepareTraceMaterials 目前只有自动open round路径且非codebuddy直接not_applicable，尚未落实手动监督、Codex所属Daemon记录/压缩工具事件、逐请求归一对账。请完整按原方案继续，不能将这些明确要求降成仅平台usage或文档gap后交付。\n3. 当前lease UPDATE无claim generation/token校验，旧worker超150秒返回时可覆盖新worker processing。应以实际claim标识校验最终保存；HTTP40次/120秒目前每run新建budget，原方案是每完成轮次累计预算，恢复/多run也不能重置。请添加必要竞态/多run验证。\n4. 旧run seq109的643 down草稿含DELETE FROM supervision_material WHERE kind='trace_usage'。请核对当前版本并移除默认删除证据的恢复动作，日常回滚关闭新能力并保留材料；勿把写了down当成获准执行。\n5. agentlens重试目前100/200ms固定等待未处理Retry-After。限流需尊重服务端退避且仍受整轮上限约束。\n以上是当前草稿的具体风险，允许你正在实现中的正常补全；不要求重做已正确部分、不改变范围，也不新增发布授权。继续原分支实现并在准确候选验证后报告。\n\n\n[@任务负责人](mention://agent/4e920ee7-d180-4cfa-80a3-2d8925f178a8)\n\u003c!-- multica-task-runner-reply:acf9ca9f-11e0-4b8b-8963-813729620605 --\u003e",
+              "revision": 1,
+              "author_id": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+              "created_at": "2026-10-25T03:41:21.985635+00:00"
+            },
+            "registered_by_type": "agent"
+          }
+        ]
+      },
+      "source_branch": "feature/ida-developer/gong-86",
+      "source_commit": "56e6c5ea30b660805b6079604af5d29647f58d77",
+      "authorization_state": ""
+    },
+    {
+      "id": "01a171b7-60b1-788d-99f3-1d47e1c7f7ea",
+      "error": "验收执行已结束，但没有提交通过证据",
+      "phase": "needs_changes",
+      "evidence": [
+        {
+          "name": "监督验收安全前置五项检查及14个身份拒绝子场景",
+          "status": "passed",
+          "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-250b0506aa80/worktree/.gong86-setup/tests.log"
+        },
+        {
+          "name": "实际已释放槽位拒绝写入",
+          "status": "passed",
+          "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-250b0506aa80/worktree/.gong86-setup/released-lease-refusal.json"
+        }
+      ],
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "revision": 4,
+      "execution": {
+        "at": "2026-10-25T06:31:27.342848+00:00",
+        "stage": "release",
+        "detail": "",
+        "generation": 32,
+        "environment": "verify-1",
+        "candidate_id": "96b302c78548dcf5bdba997fa1bc04972c3a1549-1792909468815044667"
+      },
+      "created_at": "2026-10-25T06:20:05.678164+00:00",
+      "updated_at": "2026-10-25T06:31:27.320078+00:00",
+      "approved_at": null,
+      "approved_by": null,
+      "base_commit": "aad3ee2b85de2a3802bafca1b39d9986334d7b13",
+      "queue_ahead": 0,
+      "candidate_id": "96b302c78548dcf5bdba997fa1bc04972c3a1549-1792909468815044667",
+      "candidate_url": "http://9.134.129.162:33653",
+      "plan_snapshot": {
+        "body": "本次沿用任务描述中已确认的方案，不重复索取确认。行动摘要：\n\n1. 核实既有 G51/G47/G67 数据链与权限，复用当前任务分支。\n2. 实现后台材料准备、历史 runtime 分流、AgentLens/本地记录取数、不可变证据及分页。\n3. 更新监督方法和现有页面，执行针对性检查及正式 verify/int 验收。\n4. 提交推送任务分支；验收通过后进入 in_review，生产发布另行授权。\n\n以下保存已确认方案全文：\n\n# 已确认方案：质量监督增强——轨迹对照与 token 优化\n\n用户在当前 Codex 会话已确认完整方案并明确要求「Implement the plan.」。请直接实施，不重复请求方案确认。授权包括独立任务分支开发、针对性验证、commit、push、固定 int 真实验收和进入 in_review；没有本次生产发布授权，不合主分支、不部署生产、不借用 GONG-51/47/67 旧授权。\n\n## 目标与边界\n平台准备轨迹和用量材料，delivery-supervision Skill 指导分析，已有 supervision_material MCP 分页读取。不要新增 AgentLens/usage MCP，也不开放监督员 shell、任意网络或凭据访问。审查员生产已有职责调整，保留当前提示词及 delivery-review，仅只读核对加载。质量监督仍检查需求、正确性、授权、潜在缺陷与过程效率，不变成只查 token；不自动改代码、状态、提示词或派发开发。blocking/quality 均阻塞审查，nit 不阻塞。自动 done 范围、完成快照、手动监督规则沿用 G67。\n\n## 必须先核实\n主工作区 /data/ida/multica 的 AGENTS.md、CLAUDE.md、environment-releases.md 有用户未提交修改，禁止覆盖。当前 checkout 落后于 origin/personal-studio-upstream，必须 fetch 后从最新交付基线建独立分支。读适用规则、quality-agents.md、usage-metrics.md、当前数据流和运行记录。G51 已完成，复用其强关联、Codex解析和CodeBuddy缓存口径，不重开。G47 已有监督技能内联及角色边界，保留。G51证据 /data/ida/artifacts/gong51-plan-execution-20261024/FINAL-REPORT.md 和 prod-external-three-run-proof.json；旧 agentlens-api-recovered.md 的临时iptables命令已过时，不能执行，正式精确HTTP80出口已授权存在。\n\n## 实现\n1. 以目标执行的历史 runtime 分流，不以监督员 runtime 或 Agent当前配置分流。混合任务逐run处理。CodeBuddy CLI 必须尝试 AgentLens；Codex和其他runtime不查AgentLens；DSH不因底层网关而冒充CLI。\n2. 平台后台准备材料，不在事务/完成接口等待HTTP。复用调度/附件存储，增加必要持久准备记录：工作区、任务、完成轮次、固定run集合、材料版本、状态(待处理/处理中/完整/部分/失败)、进度游标、重试、产物引用。相同范围幂等，重启恢复；重开停止旧轮次派发；批次固定不可变材料版本，迟到数据新版本。不要另建重复usage/trace数据库，不回填历史业务usage。迁移无外键、索引独立CONCURRENTLY文件。\n3. 输出执行/runtime索引、真实模型/session/请求标识及来源、用量缓存汇总、逐请求对照、脱敏可见请求响应/工具压缩事件、查询时间/覆盖与缺口。扩展现有材料类型、索引读取、连续分页覆盖和证据校验，既有结果JSON和MCP名称保留。入口仅简短索引汇总，不全量塞prompt。\n4. CodeBuddy复用G51 SDK/provider强标识查AgentLens trace/span，逐请求对照模型、次数、input/output/cache、耗时错误与本地工具。首次/续接/取消/失败/重试/子Agent/多trace正确归属。时间邻近仅线索；本地/trace汇总/span不得重复相加。保留原始值与缓存口径转换；未知格式标未知。不把可见轨迹称完整内部思维，不编造系统提示token精确拆分。\n5. Codex复用现有解析，平台usage+所属Daemon按确定run/session读取持久记录，抽取脱敏材料上传；不扫描整个用户目录或其他session。累计与本轮增量、缓存、可得推理用量、压缩/续接/重试/子执行正确；请求级不可靠时只报run级。\n6. 凭据来自受控配置，实施时核实长期来源与刷新，不输出/提交/放入Skill和模型；没有稳定凭据则明确阻塞该部分，但继续不受影响的实现。工作区权限+run归属+凭据可见范围均校验，不接受任意URL/账号/空间。现有investigation_enabled控制额外调查，不绕过关闭。既有正式精确HTTP80路径，不改网络/SSH/Codex出口。\n7. 外部不可用继续本地监督、明确gap，不打回开发。每HTTP请求15秒，临时错最多重试2次，鉴权/权限/参数错误不重试；每轮准备最多40次外部请求(含重试)，120秒上限。预算不足保存游标部分覆盖；上报延迟最多自动补查1次，余下显式复查，不无限唤醒。相同授权内复用材料，不跨工作区共享正文。平台取数与模型调查分别计预算，现有调查调用/字符上限保留。\n8. Skill分析重复读搜/无效复验、过大无关工具返回、可证实的prompt规则技能重复、错误参数机械重试、上下文膨胀与压缩遗忘、子Agent重复劳动/辅助调用、过早结束与沟通成本。高token/长思考/低cache本身不是浪费，不削必要验证和授权。建议必须具体run/request/tool证据、无收益原因、可实施调整、应修改层、观测成本/未知、验证方法；区分confirmed浪费/待验证机会/gap，不虚构比例/扣额。普通优化不自动成为交付阻塞。\n9. 默认prompt只职责分流证据；delivery-supervision技能存方法；操作文档存接口配置错误恢复。只在int同步配置测试，生产工作区配置更新属生产生效，待本次发布授权；保留用户有效自定义、绑定与所有开关/runtime/model/并发。新运行校验实际加载版本，已有运行自然结束。\n10. 现有监督页面展示AgentLens完整/部分/失败/不适用/未启用、覆盖数、差异、效率建议与缺口，首页简短展开证据。未知不当零或无问题。取数与监督自身成本单列，不混目标任务，不自我循环。\n\n## 验证和交付\n固定材料测试解析/权限/分页去重/生命周期，再在固定verify/int真实CodeBuddy、Codex执行及真实监督模型和浏览器验收。覆盖混合runtime、首次续接取消重试子调用多trace、累计增量缓存压缩、跨任务跨工作区拒绝、无效身份、重开/重启/迟到/重复回调、超时限流凭据失效部分覆盖、提示注入、真实浪费/必要复验不误报、材料加载和刷新持久化、审查回归。保留失败样本及监督实际成本；不把mock、API200、buildPASS当真实验收。生产数据不做破坏性测试，int凭据与样本按规则使用；模型服务可用性先探小样避免批量空流。\n\n文档在现有质量Agent/用量体系，附配置凭据维护/错误恢复/材料权限/回滚和证据索引；产物证据可引用 /data/ida/artifacts/quality-token-supervision-20261025。回滚可关闭新准备能力、恢复prompt/skill，不删历史证据。不要批量重审历史任务，不自动优化代码或切runtime。\n\n停止条件：准确候选完成固定int真实验收与审查，任务in_review，提交分支和测试证据/限制，释放自己的环境资源。不得因新任务已创建或脚本PASS称完成；只到int不标done。本轮无生产授权，需要发布时交付具体可审候选和证据。\n\n请持续推进全部不受阻塞工作，在原任务记录计划、里程碑、证据和下一触发。需要环境准备时走现有交付队列并结束登记运行让publisher推进，不创建重复任务、重复mention或自建发布轮询。遇关键架构范围变化或无法取得授权凭据，记录准确阻塞及仍可推进部分，不临时绕过。\n\n\n\u003c!-- multica-task-runner:ab2efe52-41f0-41c7-8d6d-1afc35f04313 --\u003e",
+        "revision": 1,
+        "comment_id": "01a17126-3f74-752c-a953-c7988ca0f127",
+        "confirmed_at": "2026-10-25T04:01:50.318297+00:00",
+        "confirmed_by": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+        "required_checks": [
+          {
+            "name": "固定int监督页面刷新持久化与审查回归",
+            "stage": "integration"
+          },
+          {
+            "name": "CodeBuddy真实强关联及逐请求对账",
+            "stage": "verification"
+          },
+          {
+            "name": "Codex所属Daemon及混合runtime材料",
+            "stage": "verification"
+          },
+          {
+            "name": "先通过受控前置脚本配置监督runtime、候选技能和服务凭据，再建立真实模型样本；默认off不判业务失败",
+            "stage": "verification"
+          },
+          {
+            "name": "材料权限分页与生命周期恢复",
+            "stage": "verification"
+          },
+          {
+            "name": "真实监督模型加载与效率建议判定",
+            "stage": "verification"
+          }
+        ],
+        "candidate_commit": "96b302c78548dcf5bdba997fa1bc04972c3a1549",
+        "candidate_identity": {
+          "seed": "seed-20261025-agent-control-v4",
+          "suite": "2078643590fba8b6d5f296542de8dbade7ba09b521ffb011678ba44cc5ce31bd",
+          "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+          "environment": "verify-1",
+          "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+          "configuration": "7a81602202796386026de06f2f17ffa70dd387ef4ae6c1d78f593cf7b5d0fec8",
+          "runtime_inputs": "3e4ffec748bcf5c7fea266b1f228dfab534c9b98daf30a3e296b6b027be26102"
+        },
+        "execute_authorizations": [
+          {
+            "id": "01a17138-ccf0-7293-8034-3e575c9c7600",
+            "kind": "execute",
+            "scope": "用户在已确认方案基础上逐项反馈并明确要求继续原分支实现及准确候选验证；沿用任务描述已批准的开发、针对性验证、commit、push、固定verify/int验收范围。该评论明确不新增生产发布授权，本登记仅为执行授权。",
+            "plan_id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+            "revoked": false,
+            "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+            "comment_id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+            "created_at": "2026-10-25T04:01:50.318297+00:00",
+            "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+            "registered_by": "4e920ee7-d180-4cfa-80a3-2d8925f178a8",
+            "comment_revision": 1,
+            "comment_snapshot": {
+              "id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+              "content": "直接监督首轮反馈（依据后继执行01a17122…的seq52/62草稿，非最终候选结论）：\n1. agentlens preparation 草稿把 task_provider_trace.provider_trace_id 原样传 traceDetail.trace_id，并用返回根ID相等判断归属。G51已验证 conversationRequestId/provider_trace_id 与 SDK providerData.traceId 是不同标识，不能混用。请复用G51实际映射链，从metadata sdk_trace_id/明确请求span标识查询与验证，核对response/session/child归属；真实样本必须覆盖两个ID不相等。否则现有exact关联也会查错或误判缺口。\n2. prepareTraceMaterials 目前只有自动open round路径且非codebuddy直接not_applicable，尚未落实手动监督、Codex所属Daemon记录/压缩工具事件、逐请求归一对账。请完整按原方案继续，不能将这些明确要求降成仅平台usage或文档gap后交付。\n3. 当前lease UPDATE无claim generation/token校验，旧worker超150秒返回时可覆盖新worker processing。应以实际claim标识校验最终保存；HTTP40次/120秒目前每run新建budget，原方案是每完成轮次累计预算，恢复/多run也不能重置。请添加必要竞态/多run验证。\n4. 旧run seq109的643 down草稿含DELETE FROM supervision_material WHERE kind='trace_usage'。请核对当前版本并移除默认删除证据的恢复动作，日常回滚关闭新能力并保留材料；勿把写了down当成获准执行。\n5. agentlens重试目前100/200ms固定等待未处理Retry-After。限流需尊重服务端退避且仍受整轮上限约束。\n以上是当前草稿的具体风险，允许你正在实现中的正常补全；不要求重做已正确部分、不改变范围，也不新增发布授权。继续原分支实现并在准确候选验证后报告。\n\n\n[@任务负责人](mention://agent/4e920ee7-d180-4cfa-80a3-2d8925f178a8)\n\u003c!-- multica-task-runner-reply:acf9ca9f-11e0-4b8b-8963-813729620605 --\u003e",
+              "revision": 1,
+              "author_id": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+              "created_at": "2026-10-25T03:41:21.985635+00:00"
+            },
+            "registered_by_type": "agent"
+          }
+        ]
+      },
+      "source_branch": "feature/ida-developer/gong-86",
+      "source_commit": "96b302c78548dcf5bdba997fa1bc04972c3a1549",
+      "authorization_state": ""
+    },
+    {
+      "id": "01a171a9-2ea1-7838-883c-e692cada161e",
+      "error": "验收执行已结束，但没有提交通过证据",
+      "phase": "needs_changes",
+      "evidence": [
+        {
+          "name": "固定候选Go针对性检查",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/pinned-tests.log"
+        },
+        {
+          "name": "会话及准备生命周期race检查",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/final-race.log"
+        },
+        {
+          "name": "TS材料摘要schema四项",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/core-final.log"
+        },
+        {
+          "name": "监督页面十项交互检查",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/ui-final.log"
+        },
+        {
+          "name": "受影响页面ESLint",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/eslint.log"
+        },
+        {
+          "name": "相关Go包vet",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/vet-focused.log"
+        },
+        {
+          "name": "隔离PostgreSQL迁移至650",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/migrations.log"
+        },
+        {
+          "name": "原文索引不虚报覆盖",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/index-final.log"
+        },
+        {
+          "name": "当前候选38项worker协议回归",
+          "status": "passed",
+          "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-e6b66f9106f9/worktree/.gong86-resubmit/worker-tests.log"
+        },
+        {
+          "name": "当前候选release回归",
+          "status": "passed",
+          "evidence": "/data/cbs/worktree/prod/gongzuo-8d670ff37c61/gong-86-e6b66f9106f9/worktree/.gong86-resubmit/release-tests.log"
+        }
+      ],
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "revision": 4,
+      "execution": {
+        "at": "2026-10-25T06:11:38.620218+00:00",
+        "stage": "release",
+        "detail": "",
+        "generation": 31,
+        "environment": "verify-1",
+        "candidate_id": "0e85290a0e05225ad73725162893296a2a8224fe-1792908535926189285"
+      },
+      "created_at": "2026-10-25T06:04:35.356112+00:00",
+      "updated_at": "2026-10-25T06:11:38.596326+00:00",
+      "approved_at": null,
+      "approved_by": null,
+      "base_commit": "aad3ee2b85de2a3802bafca1b39d9986334d7b13",
+      "queue_ahead": 0,
+      "candidate_id": "0e85290a0e05225ad73725162893296a2a8224fe-1792908535926189285",
+      "candidate_url": "http://9.134.129.162:33653",
+      "plan_snapshot": {
+        "body": "本次沿用任务描述中已确认的方案，不重复索取确认。行动摘要：\n\n1. 核实既有 G51/G47/G67 数据链与权限，复用当前任务分支。\n2. 实现后台材料准备、历史 runtime 分流、AgentLens/本地记录取数、不可变证据及分页。\n3. 更新监督方法和现有页面，执行针对性检查及正式 verify/int 验收。\n4. 提交推送任务分支；验收通过后进入 in_review，生产发布另行授权。\n\n以下保存已确认方案全文：\n\n# 已确认方案：质量监督增强——轨迹对照与 token 优化\n\n用户在当前 Codex 会话已确认完整方案并明确要求「Implement the plan.」。请直接实施，不重复请求方案确认。授权包括独立任务分支开发、针对性验证、commit、push、固定 int 真实验收和进入 in_review；没有本次生产发布授权，不合主分支、不部署生产、不借用 GONG-51/47/67 旧授权。\n\n## 目标与边界\n平台准备轨迹和用量材料，delivery-supervision Skill 指导分析，已有 supervision_material MCP 分页读取。不要新增 AgentLens/usage MCP，也不开放监督员 shell、任意网络或凭据访问。审查员生产已有职责调整，保留当前提示词及 delivery-review，仅只读核对加载。质量监督仍检查需求、正确性、授权、潜在缺陷与过程效率，不变成只查 token；不自动改代码、状态、提示词或派发开发。blocking/quality 均阻塞审查，nit 不阻塞。自动 done 范围、完成快照、手动监督规则沿用 G67。\n\n## 必须先核实\n主工作区 /data/ida/multica 的 AGENTS.md、CLAUDE.md、environment-releases.md 有用户未提交修改，禁止覆盖。当前 checkout 落后于 origin/personal-studio-upstream，必须 fetch 后从最新交付基线建独立分支。读适用规则、quality-agents.md、usage-metrics.md、当前数据流和运行记录。G51 已完成，复用其强关联、Codex解析和CodeBuddy缓存口径，不重开。G47 已有监督技能内联及角色边界，保留。G51证据 /data/ida/artifacts/gong51-plan-execution-20261024/FINAL-REPORT.md 和 prod-external-three-run-proof.json；旧 agentlens-api-recovered.md 的临时iptables命令已过时，不能执行，正式精确HTTP80出口已授权存在。\n\n## 实现\n1. 以目标执行的历史 runtime 分流，不以监督员 runtime 或 Agent当前配置分流。混合任务逐run处理。CodeBuddy CLI 必须尝试 AgentLens；Codex和其他runtime不查AgentLens；DSH不因底层网关而冒充CLI。\n2. 平台后台准备材料，不在事务/完成接口等待HTTP。复用调度/附件存储，增加必要持久准备记录：工作区、任务、完成轮次、固定run集合、材料版本、状态(待处理/处理中/完整/部分/失败)、进度游标、重试、产物引用。相同范围幂等，重启恢复；重开停止旧轮次派发；批次固定不可变材料版本，迟到数据新版本。不要另建重复usage/trace数据库，不回填历史业务usage。迁移无外键、索引独立CONCURRENTLY文件。\n3. 输出执行/runtime索引、真实模型/session/请求标识及来源、用量缓存汇总、逐请求对照、脱敏可见请求响应/工具压缩事件、查询时间/覆盖与缺口。扩展现有材料类型、索引读取、连续分页覆盖和证据校验，既有结果JSON和MCP名称保留。入口仅简短索引汇总，不全量塞prompt。\n4. CodeBuddy复用G51 SDK/provider强标识查AgentLens trace/span，逐请求对照模型、次数、input/output/cache、耗时错误与本地工具。首次/续接/取消/失败/重试/子Agent/多trace正确归属。时间邻近仅线索；本地/trace汇总/span不得重复相加。保留原始值与缓存口径转换；未知格式标未知。不把可见轨迹称完整内部思维，不编造系统提示token精确拆分。\n5. Codex复用现有解析，平台usage+所属Daemon按确定run/session读取持久记录，抽取脱敏材料上传；不扫描整个用户目录或其他session。累计与本轮增量、缓存、可得推理用量、压缩/续接/重试/子执行正确；请求级不可靠时只报run级。\n6. 凭据来自受控配置，实施时核实长期来源与刷新，不输出/提交/放入Skill和模型；没有稳定凭据则明确阻塞该部分，但继续不受影响的实现。工作区权限+run归属+凭据可见范围均校验，不接受任意URL/账号/空间。现有investigation_enabled控制额外调查，不绕过关闭。既有正式精确HTTP80路径，不改网络/SSH/Codex出口。\n7. 外部不可用继续本地监督、明确gap，不打回开发。每HTTP请求15秒，临时错最多重试2次，鉴权/权限/参数错误不重试；每轮准备最多40次外部请求(含重试)，120秒上限。预算不足保存游标部分覆盖；上报延迟最多自动补查1次，余下显式复查，不无限唤醒。相同授权内复用材料，不跨工作区共享正文。平台取数与模型调查分别计预算，现有调查调用/字符上限保留。\n8. Skill分析重复读搜/无效复验、过大无关工具返回、可证实的prompt规则技能重复、错误参数机械重试、上下文膨胀与压缩遗忘、子Agent重复劳动/辅助调用、过早结束与沟通成本。高token/长思考/低cache本身不是浪费，不削必要验证和授权。建议必须具体run/request/tool证据、无收益原因、可实施调整、应修改层、观测成本/未知、验证方法；区分confirmed浪费/待验证机会/gap，不虚构比例/扣额。普通优化不自动成为交付阻塞。\n9. 默认prompt只职责分流证据；delivery-supervision技能存方法；操作文档存接口配置错误恢复。只在int同步配置测试，生产工作区配置更新属生产生效，待本次发布授权；保留用户有效自定义、绑定与所有开关/runtime/model/并发。新运行校验实际加载版本，已有运行自然结束。\n10. 现有监督页面展示AgentLens完整/部分/失败/不适用/未启用、覆盖数、差异、效率建议与缺口，首页简短展开证据。未知不当零或无问题。取数与监督自身成本单列，不混目标任务，不自我循环。\n\n## 验证和交付\n固定材料测试解析/权限/分页去重/生命周期，再在固定verify/int真实CodeBuddy、Codex执行及真实监督模型和浏览器验收。覆盖混合runtime、首次续接取消重试子调用多trace、累计增量缓存压缩、跨任务跨工作区拒绝、无效身份、重开/重启/迟到/重复回调、超时限流凭据失效部分覆盖、提示注入、真实浪费/必要复验不误报、材料加载和刷新持久化、审查回归。保留失败样本及监督实际成本；不把mock、API200、buildPASS当真实验收。生产数据不做破坏性测试，int凭据与样本按规则使用；模型服务可用性先探小样避免批量空流。\n\n文档在现有质量Agent/用量体系，附配置凭据维护/错误恢复/材料权限/回滚和证据索引；产物证据可引用 /data/ida/artifacts/quality-token-supervision-20261025。回滚可关闭新准备能力、恢复prompt/skill，不删历史证据。不要批量重审历史任务，不自动优化代码或切runtime。\n\n停止条件：准确候选完成固定int真实验收与审查，任务in_review，提交分支和测试证据/限制，释放自己的环境资源。不得因新任务已创建或脚本PASS称完成；只到int不标done。本轮无生产授权，需要发布时交付具体可审候选和证据。\n\n请持续推进全部不受阻塞工作，在原任务记录计划、里程碑、证据和下一触发。需要环境准备时走现有交付队列并结束登记运行让publisher推进，不创建重复任务、重复mention或自建发布轮询。遇关键架构范围变化或无法取得授权凭据，记录准确阻塞及仍可推进部分，不临时绕过。\n\n\n\u003c!-- multica-task-runner:ab2efe52-41f0-41c7-8d6d-1afc35f04313 --\u003e",
+        "revision": 1,
+        "comment_id": "01a17126-3f74-752c-a953-c7988ca0f127",
+        "confirmed_at": "2026-10-25T04:01:50.318297+00:00",
+        "confirmed_by": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+        "required_checks": [
+          {
+            "name": "固定int监督页面刷新持久化与审查回归",
+            "stage": "integration"
+          },
+          {
+            "name": "CodeBuddy真实强关联及逐请求对账",
+            "stage": "verification"
+          },
+          {
+            "name": "Codex所属Daemon及混合runtime材料",
+            "stage": "verification"
+          },
+          {
+            "name": "材料权限分页与生命周期恢复",
+            "stage": "verification"
+          },
+          {
+            "name": "真实监督模型加载与效率建议判定",
+            "stage": "verification"
+          }
+        ],
+        "candidate_commit": "0e85290a0e05225ad73725162893296a2a8224fe",
+        "candidate_identity": {
+          "seed": "seed-20261025-agent-control-v4",
+          "suite": "c5720698d9c9b6ecfca77c166c6191334114884c0007c2477be8545d1a03af58",
+          "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+          "environment": "verify-1",
+          "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+          "configuration": "7a81602202796386026de06f2f17ffa70dd387ef4ae6c1d78f593cf7b5d0fec8",
+          "runtime_inputs": "96c49e5fc3a6731ed481dd11bc7c847600340b47b9969751e7723b072737db5f"
+        },
+        "execute_authorizations": [
+          {
+            "id": "01a17138-ccf0-7293-8034-3e575c9c7600",
+            "kind": "execute",
+            "scope": "用户在已确认方案基础上逐项反馈并明确要求继续原分支实现及准确候选验证；沿用任务描述已批准的开发、针对性验证、commit、push、固定verify/int验收范围。该评论明确不新增生产发布授权，本登记仅为执行授权。",
+            "plan_id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+            "revoked": false,
+            "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+            "comment_id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+            "created_at": "2026-10-25T04:01:50.318297+00:00",
+            "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+            "registered_by": "4e920ee7-d180-4cfa-80a3-2d8925f178a8",
+            "comment_revision": 1,
+            "comment_snapshot": {
+              "id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+              "content": "直接监督首轮反馈（依据后继执行01a17122…的seq52/62草稿，非最终候选结论）：\n1. agentlens preparation 草稿把 task_provider_trace.provider_trace_id 原样传 traceDetail.trace_id，并用返回根ID相等判断归属。G51已验证 conversationRequestId/provider_trace_id 与 SDK providerData.traceId 是不同标识，不能混用。请复用G51实际映射链，从metadata sdk_trace_id/明确请求span标识查询与验证，核对response/session/child归属；真实样本必须覆盖两个ID不相等。否则现有exact关联也会查错或误判缺口。\n2. prepareTraceMaterials 目前只有自动open round路径且非codebuddy直接not_applicable，尚未落实手动监督、Codex所属Daemon记录/压缩工具事件、逐请求归一对账。请完整按原方案继续，不能将这些明确要求降成仅平台usage或文档gap后交付。\n3. 当前lease UPDATE无claim generation/token校验，旧worker超150秒返回时可覆盖新worker processing。应以实际claim标识校验最终保存；HTTP40次/120秒目前每run新建budget，原方案是每完成轮次累计预算，恢复/多run也不能重置。请添加必要竞态/多run验证。\n4. 旧run seq109的643 down草稿含DELETE FROM supervision_material WHERE kind='trace_usage'。请核对当前版本并移除默认删除证据的恢复动作，日常回滚关闭新能力并保留材料；勿把写了down当成获准执行。\n5. agentlens重试目前100/200ms固定等待未处理Retry-After。限流需尊重服务端退避且仍受整轮上限约束。\n以上是当前草稿的具体风险，允许你正在实现中的正常补全；不要求重做已正确部分、不改变范围，也不新增发布授权。继续原分支实现并在准确候选验证后报告。\n\n\n[@任务负责人](mention://agent/4e920ee7-d180-4cfa-80a3-2d8925f178a8)\n\u003c!-- multica-task-runner-reply:acf9ca9f-11e0-4b8b-8963-813729620605 --\u003e",
+              "revision": 1,
+              "author_id": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+              "created_at": "2026-10-25T03:41:21.985635+00:00"
+            },
+            "registered_by_type": "agent"
+          }
+        ]
+      },
+      "source_branch": "feature/ida-developer/gong-86",
+      "source_commit": "0e85290a0e05225ad73725162893296a2a8224fe",
+      "authorization_state": ""
+    },
+    {
+      "id": "01a17158-483c-7ab8-b126-757df71648d4",
+      "error": "验收执行已结束，但没有提交通过证据",
+      "phase": "needs_changes",
+      "evidence": [
+        {
+          "name": "固定候选Go针对性检查",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/pinned-tests.log"
+        },
+        {
+          "name": "会话及准备生命周期race检查",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/final-race.log"
+        },
+        {
+          "name": "TS材料摘要schema四项",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/core-final.log"
+        },
+        {
+          "name": "监督页面十项交互检查",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/ui-final.log"
+        },
+        {
+          "name": "受影响页面ESLint",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/eslint.log"
+        },
+        {
+          "name": "相关Go包vet",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/vet-focused.log"
+        },
+        {
+          "name": "隔离PostgreSQL迁移至650",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/migrations.log"
+        },
+        {
+          "name": "原文索引不虚报覆盖",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/index-final.log"
+        }
+      ],
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "revision": 10,
+      "execution": {
+        "at": "2026-10-25T05:57:15.200243+00:00",
+        "stage": "release",
+        "detail": "",
+        "generation": 30,
+        "environment": "verify-1",
+        "candidate_id": "920b48de4d443bafffdb5e0e21811bd979a7938a-1792907476584327166"
+      },
+      "created_at": "2026-10-25T04:36:13.496495+00:00",
+      "updated_at": "2026-10-25T05:57:15.17683+00:00",
+      "approved_at": null,
+      "approved_by": null,
+      "base_commit": "f0514bb259c0f7b79740d1757d194cdb7a40eefd",
+      "queue_ahead": 0,
+      "candidate_id": "920b48de4d443bafffdb5e0e21811bd979a7938a-1792907476584327166",
+      "candidate_url": "http://9.134.129.162:33653",
+      "plan_snapshot": {
+        "body": "本次沿用任务描述中已确认的方案，不重复索取确认。行动摘要：\n\n1. 核实既有 G51/G47/G67 数据链与权限，复用当前任务分支。\n2. 实现后台材料准备、历史 runtime 分流、AgentLens/本地记录取数、不可变证据及分页。\n3. 更新监督方法和现有页面，执行针对性检查及正式 verify/int 验收。\n4. 提交推送任务分支；验收通过后进入 in_review，生产发布另行授权。\n\n以下保存已确认方案全文：\n\n# 已确认方案：质量监督增强——轨迹对照与 token 优化\n\n用户在当前 Codex 会话已确认完整方案并明确要求「Implement the plan.」。请直接实施，不重复请求方案确认。授权包括独立任务分支开发、针对性验证、commit、push、固定 int 真实验收和进入 in_review；没有本次生产发布授权，不合主分支、不部署生产、不借用 GONG-51/47/67 旧授权。\n\n## 目标与边界\n平台准备轨迹和用量材料，delivery-supervision Skill 指导分析，已有 supervision_material MCP 分页读取。不要新增 AgentLens/usage MCP，也不开放监督员 shell、任意网络或凭据访问。审查员生产已有职责调整，保留当前提示词及 delivery-review，仅只读核对加载。质量监督仍检查需求、正确性、授权、潜在缺陷与过程效率，不变成只查 token；不自动改代码、状态、提示词或派发开发。blocking/quality 均阻塞审查，nit 不阻塞。自动 done 范围、完成快照、手动监督规则沿用 G67。\n\n## 必须先核实\n主工作区 /data/ida/multica 的 AGENTS.md、CLAUDE.md、environment-releases.md 有用户未提交修改，禁止覆盖。当前 checkout 落后于 origin/personal-studio-upstream，必须 fetch 后从最新交付基线建独立分支。读适用规则、quality-agents.md、usage-metrics.md、当前数据流和运行记录。G51 已完成，复用其强关联、Codex解析和CodeBuddy缓存口径，不重开。G47 已有监督技能内联及角色边界，保留。G51证据 /data/ida/artifacts/gong51-plan-execution-20261024/FINAL-REPORT.md 和 prod-external-three-run-proof.json；旧 agentlens-api-recovered.md 的临时iptables命令已过时，不能执行，正式精确HTTP80出口已授权存在。\n\n## 实现\n1. 以目标执行的历史 runtime 分流，不以监督员 runtime 或 Agent当前配置分流。混合任务逐run处理。CodeBuddy CLI 必须尝试 AgentLens；Codex和其他runtime不查AgentLens；DSH不因底层网关而冒充CLI。\n2. 平台后台准备材料，不在事务/完成接口等待HTTP。复用调度/附件存储，增加必要持久准备记录：工作区、任务、完成轮次、固定run集合、材料版本、状态(待处理/处理中/完整/部分/失败)、进度游标、重试、产物引用。相同范围幂等，重启恢复；重开停止旧轮次派发；批次固定不可变材料版本，迟到数据新版本。不要另建重复usage/trace数据库，不回填历史业务usage。迁移无外键、索引独立CONCURRENTLY文件。\n3. 输出执行/runtime索引、真实模型/session/请求标识及来源、用量缓存汇总、逐请求对照、脱敏可见请求响应/工具压缩事件、查询时间/覆盖与缺口。扩展现有材料类型、索引读取、连续分页覆盖和证据校验，既有结果JSON和MCP名称保留。入口仅简短索引汇总，不全量塞prompt。\n4. CodeBuddy复用G51 SDK/provider强标识查AgentLens trace/span，逐请求对照模型、次数、input/output/cache、耗时错误与本地工具。首次/续接/取消/失败/重试/子Agent/多trace正确归属。时间邻近仅线索；本地/trace汇总/span不得重复相加。保留原始值与缓存口径转换；未知格式标未知。不把可见轨迹称完整内部思维，不编造系统提示token精确拆分。\n5. Codex复用现有解析，平台usage+所属Daemon按确定run/session读取持久记录，抽取脱敏材料上传；不扫描整个用户目录或其他session。累计与本轮增量、缓存、可得推理用量、压缩/续接/重试/子执行正确；请求级不可靠时只报run级。\n6. 凭据来自受控配置，实施时核实长期来源与刷新，不输出/提交/放入Skill和模型；没有稳定凭据则明确阻塞该部分，但继续不受影响的实现。工作区权限+run归属+凭据可见范围均校验，不接受任意URL/账号/空间。现有investigation_enabled控制额外调查，不绕过关闭。既有正式精确HTTP80路径，不改网络/SSH/Codex出口。\n7. 外部不可用继续本地监督、明确gap，不打回开发。每HTTP请求15秒，临时错最多重试2次，鉴权/权限/参数错误不重试；每轮准备最多40次外部请求(含重试)，120秒上限。预算不足保存游标部分覆盖；上报延迟最多自动补查1次，余下显式复查，不无限唤醒。相同授权内复用材料，不跨工作区共享正文。平台取数与模型调查分别计预算，现有调查调用/字符上限保留。\n8. Skill分析重复读搜/无效复验、过大无关工具返回、可证实的prompt规则技能重复、错误参数机械重试、上下文膨胀与压缩遗忘、子Agent重复劳动/辅助调用、过早结束与沟通成本。高token/长思考/低cache本身不是浪费，不削必要验证和授权。建议必须具体run/request/tool证据、无收益原因、可实施调整、应修改层、观测成本/未知、验证方法；区分confirmed浪费/待验证机会/gap，不虚构比例/扣额。普通优化不自动成为交付阻塞。\n9. 默认prompt只职责分流证据；delivery-supervision技能存方法；操作文档存接口配置错误恢复。只在int同步配置测试，生产工作区配置更新属生产生效，待本次发布授权；保留用户有效自定义、绑定与所有开关/runtime/model/并发。新运行校验实际加载版本，已有运行自然结束。\n10. 现有监督页面展示AgentLens完整/部分/失败/不适用/未启用、覆盖数、差异、效率建议与缺口，首页简短展开证据。未知不当零或无问题。取数与监督自身成本单列，不混目标任务，不自我循环。\n\n## 验证和交付\n固定材料测试解析/权限/分页去重/生命周期，再在固定verify/int真实CodeBuddy、Codex执行及真实监督模型和浏览器验收。覆盖混合runtime、首次续接取消重试子调用多trace、累计增量缓存压缩、跨任务跨工作区拒绝、无效身份、重开/重启/迟到/重复回调、超时限流凭据失效部分覆盖、提示注入、真实浪费/必要复验不误报、材料加载和刷新持久化、审查回归。保留失败样本及监督实际成本；不把mock、API200、buildPASS当真实验收。生产数据不做破坏性测试，int凭据与样本按规则使用；模型服务可用性先探小样避免批量空流。\n\n文档在现有质量Agent/用量体系，附配置凭据维护/错误恢复/材料权限/回滚和证据索引；产物证据可引用 /data/ida/artifacts/quality-token-supervision-20261025。回滚可关闭新准备能力、恢复prompt/skill，不删历史证据。不要批量重审历史任务，不自动优化代码或切runtime。\n\n停止条件：准确候选完成固定int真实验收与审查，任务in_review，提交分支和测试证据/限制，释放自己的环境资源。不得因新任务已创建或脚本PASS称完成；只到int不标done。本轮无生产授权，需要发布时交付具体可审候选和证据。\n\n请持续推进全部不受阻塞工作，在原任务记录计划、里程碑、证据和下一触发。需要环境准备时走现有交付队列并结束登记运行让publisher推进，不创建重复任务、重复mention或自建发布轮询。遇关键架构范围变化或无法取得授权凭据，记录准确阻塞及仍可推进部分，不临时绕过。\n\n\n\u003c!-- multica-task-runner:ab2efe52-41f0-41c7-8d6d-1afc35f04313 --\u003e",
+        "revision": 1,
+        "comment_id": "01a17126-3f74-752c-a953-c7988ca0f127",
+        "confirmed_at": "2026-10-25T04:01:50.318297+00:00",
+        "confirmed_by": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+        "required_checks": [
+          {
+            "name": "固定int监督页面刷新持久化与审查回归",
+            "stage": "integration"
+          },
+          {
+            "name": "CodeBuddy真实强关联及逐请求对账",
+            "stage": "verification"
+          },
+          {
+            "name": "Codex所属Daemon及混合runtime材料",
+            "stage": "verification"
+          },
+          {
+            "name": "材料权限分页与生命周期恢复",
+            "stage": "verification"
+          },
+          {
+            "name": "真实监督模型加载与效率建议判定",
+            "stage": "verification"
+          }
+        ],
+        "candidate_commit": "920b48de4d443bafffdb5e0e21811bd979a7938a",
+        "candidate_identity": {
+          "seed": "seed-20261025-agent-control-v4",
+          "suite": "ba8e1aebc33acabe60737f3565a86d5d1fc22771d8cf39d43573f3647a9e4c19",
+          "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+          "environment": "verify-1",
+          "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+          "configuration": "7a81602202796386026de06f2f17ffa70dd387ef4ae6c1d78f593cf7b5d0fec8",
+          "runtime_inputs": "9f8d40d719120de476c0a58e4f4f6405c5a76f9ea5cd050d9a2303a694f70b7e"
+        },
+        "verification_repair": {
+          "checks": [
+            {
+              "name": "有界修复协议与完整operations安装",
+              "status": "passed",
+              "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/payload-fix：worker.log 38项；releases.log 44项；maintenance.log 3项；handler.log实际worker-handler6147文件；int-probe.json；ops-install.json；artifact-reuse.json。保留原400及原业务验收清单。"
+            }
+          ],
+          "request": {
+            "seed_id": "seed-20261025-agent-control-v4",
+            "generation": 29,
+            "base_commit": "f0514bb259c0f7b79740d1757d194cdb7a40eefd",
+            "environment": "verify-1",
+            "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+            "operation_id": "9347da06-456c-4958-b112-662e3b2aeeec",
+            "source_branch": "feature/ida-developer/gong-86",
+            "source_commit": "920b48de4d443bafffdb5e0e21811bd979a7938a",
+            "compatibility_evidence": "/data/ida/artifacts/quality-token-supervision-20261025/compatibility-round3/REPORT.md；b430监督与迁移保留，整合f0514bb maintenance-only基线；44/37/3回归通过；verify-1原代次29，旧站26242d5未部署业务候选，原失败保留，种子不重置，原完整业务检查清单不变。；payload-fix/handler.log：6147真实文件worker→实际handler旧400新200；int-probe.json：实际int旧1087825字节400，新1437字节进入原围栏409；ops-install.json：完整19文件operations指纹059ac74a47b84732，int/prod实际消费者退出0；artifact-reuse.json全量清单、源码、输入及版本一致，复用原920b，不重建。"
+          },
+          "previous": {
+            "error": "HTTP Error 400: Bad Request",
+            "evidence": [
+              {
+                "name": "固定候选Go针对性检查",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/pinned-tests.log"
+              },
+              {
+                "name": "会话及准备生命周期race检查",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/final-race.log"
+              },
+              {
+                "name": "TS材料摘要schema四项",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/core-final.log"
+              },
+              {
+                "name": "监督页面十项交互检查",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/ui-final.log"
+              },
+              {
+                "name": "受影响页面ESLint",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/eslint.log"
+              },
+              {
+                "name": "相关Go包vet",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/vet-focused.log"
+              },
+              {
+                "name": "隔离PostgreSQL迁移至650",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/migrations.log"
+              },
+              {
+                "name": "原文索引不虚报覆盖",
+                "status": "passed",
+                "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/index-final.log"
+              }
+            ],
+            "revision": 6,
+            "execution": null,
+            "source_commit": "920b48de4d443bafffdb5e0e21811bd979a7938a",
+            "verification_repair": {
+              "checks": [
+                {
+                  "name": "维护基线整合及发布恢复回归",
+                  "status": "passed",
+                  "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/resume-maintained：release-tests.log 44项、worker-tests.log 37项、maintenance-tests.log 3项通过；原兼容证据 compatibility-round3/REPORT.md 保留，迁移字节未变。"
+                }
+              ],
+              "request": {
+                "seed_id": "seed-20261025-agent-control-v4",
+                "generation": 29,
+                "base_commit": "f0514bb259c0f7b79740d1757d194cdb7a40eefd",
+                "environment": "verify-1",
+                "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+                "operation_id": "56169df7-7028-45f2-b059-86589b9cb7f1",
+                "source_branch": "feature/ida-developer/gong-86",
+                "source_commit": "920b48de4d443bafffdb5e0e21811bd979a7938a",
+                "compatibility_evidence": "/data/ida/artifacts/quality-token-supervision-20261025/compatibility-round3/REPORT.md；b430监督与迁移保留，整合f0514bb maintenance-only基线；44/37/3回归通过；verify-1原代次29，旧站26242d5未部署业务候选，原失败保留，种子不重置，原完整业务检查清单不变。"
+              },
+              "previous": {
+                "error": "迁移 643_supervision_material_trace_usage.up.sql 需要单独的数据库兼容方案；旧站继续运行",
+                "evidence": [
+                  {
+                    "name": "固定候选Go针对性检查",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/pinned-tests.log"
+                  },
+                  {
+                    "name": "会话及准备生命周期race检查",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/final-race.log"
+                  },
+                  {
+                    "name": "TS材料摘要schema四项",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/core-final.log"
+                  },
+                  {
+                    "name": "监督页面十项交互检查",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/ui-final.log"
+                  },
+                  {
+                    "name": "受影响页面ESLint",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/eslint.log"
+                  },
+                  {
+                    "name": "相关Go包vet",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/vet-focused.log"
+                  },
+                  {
+                    "name": "隔离PostgreSQL迁移至650",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/migrations.log"
+                  },
+                  {
+                    "name": "原文索引不虚报覆盖",
+                    "status": "passed",
+                    "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/development-gong86/index-final.log"
+                  }
+                ],
+                "revision": 3,
+                "execution": null,
+                "source_commit": "5018eb0de3cfce37f0ab3838e8bcbae8fc3ad159",
+                "verification_repair": null
+              },
+              "requested_at": "2026-10-25T05:40:15.970639+00:00"
+            }
+          },
+          "requested_at": "2026-10-25T05:51:08.070283+00:00"
+        },
+        "execute_authorizations": [
+          {
+            "id": "01a17138-ccf0-7293-8034-3e575c9c7600",
+            "kind": "execute",
+            "scope": "用户在已确认方案基础上逐项反馈并明确要求继续原分支实现及准确候选验证；沿用任务描述已批准的开发、针对性验证、commit、push、固定verify/int验收范围。该评论明确不新增生产发布授权，本登记仅为执行授权。",
+            "plan_id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+            "revoked": false,
+            "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+            "comment_id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+            "created_at": "2026-10-25T04:01:50.318297+00:00",
+            "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+            "registered_by": "4e920ee7-d180-4cfa-80a3-2d8925f178a8",
+            "comment_revision": 1,
+            "comment_snapshot": {
+              "id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+              "content": "直接监督首轮反馈（依据后继执行01a17122…的seq52/62草稿，非最终候选结论）：\n1. agentlens preparation 草稿把 task_provider_trace.provider_trace_id 原样传 traceDetail.trace_id，并用返回根ID相等判断归属。G51已验证 conversationRequestId/provider_trace_id 与 SDK providerData.traceId 是不同标识，不能混用。请复用G51实际映射链，从metadata sdk_trace_id/明确请求span标识查询与验证，核对response/session/child归属；真实样本必须覆盖两个ID不相等。否则现有exact关联也会查错或误判缺口。\n2. prepareTraceMaterials 目前只有自动open round路径且非codebuddy直接not_applicable，尚未落实手动监督、Codex所属Daemon记录/压缩工具事件、逐请求归一对账。请完整按原方案继续，不能将这些明确要求降成仅平台usage或文档gap后交付。\n3. 当前lease UPDATE无claim generation/token校验，旧worker超150秒返回时可覆盖新worker processing。应以实际claim标识校验最终保存；HTTP40次/120秒目前每run新建budget，原方案是每完成轮次累计预算，恢复/多run也不能重置。请添加必要竞态/多run验证。\n4. 旧run seq109的643 down草稿含DELETE FROM supervision_material WHERE kind='trace_usage'。请核对当前版本并移除默认删除证据的恢复动作，日常回滚关闭新能力并保留材料；勿把写了down当成获准执行。\n5. agentlens重试目前100/200ms固定等待未处理Retry-After。限流需尊重服务端退避且仍受整轮上限约束。\n以上是当前草稿的具体风险，允许你正在实现中的正常补全；不要求重做已正确部分、不改变范围，也不新增发布授权。继续原分支实现并在准确候选验证后报告。\n\n\n[@任务负责人](mention://agent/4e920ee7-d180-4cfa-80a3-2d8925f178a8)\n\u003c!-- multica-task-runner-reply:acf9ca9f-11e0-4b8b-8963-813729620605 --\u003e",
+              "revision": 1,
+              "author_id": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+              "created_at": "2026-10-25T03:41:21.985635+00:00"
+            },
+            "registered_by_type": "agent"
+          }
+        ]
+      },
+      "source_branch": "feature/ida-developer/gong-86",
+      "source_commit": "920b48de4d443bafffdb5e0e21811bd979a7938a",
+      "authorization_state": ""
+    }
+  ],
+  "acceptances": [
+    {
+      "id": "01a171f8-3d58-7c37-96a0-8362149c9556",
+      "evidence": [
+        {
+          "name": "CodeBuddy真实强关联及逐请求对账",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第1项；普通样本2请求输入/输出/缓存match，原生子调用parent_sdk匹配1请求；外部不完整保留partial，详见各codebuddy/child report与pages。"
+        },
+        {
+          "name": "Codex所属Daemon及混合runtime材料",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第2项、started-runtime-proof.json、mixed-runs.json、cancel-runs.json；真实Codex、同任务混合runtime、运行取消与重试材料分别归属，AgentLens请求0；execution-evidence-tests.log 13项通过。"
+        },
+        {
+          "name": "材料权限分页与生命周期恢复",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第3项、boundaries.json、restart.json、immutable-after-restart.json、reopen-lifecycle.json；真实分页/跨任务拒绝/重启恢复/重开保留；隔离候选PostgreSQL supervision 34项通过，5项固定int测试明确跳过待下一阶段。"
+        },
+        {
+          "name": "真实监督模型加载与效率建议判定",
+          "status": "passed",
+          "evidence": "/data/ida/artifacts/quality-token-supervision-20261025/verify87-final/REPORT.md 第4项、loaded-skills-and-tools.json、waste-subject.json、detail.png；8真实批次completed，准确技能加载/MCP读取及validate；必要读取不误报、受控重复读取指出2次额外调用并给提示词层调整及验证办法，不虚构节省比例；费用与缺口分列。"
+        }
+      ],
+      "identity": {
+        "seed": "seed-20261025-agent-control-v4",
+        "suite": "7bc0b16a3db9c208721b2aaf549dfe795c16c29a0bbdca41b15ff3e88e4560b0",
+        "schema": "21549b5f7e8288d42b5f18842d9575dcbbee8ecfa0d34df6eb9c079296af88b5",
+        "environment": "verify-1",
+        "seed_sha256": "5fcd7c40b1e78cf96ff8290d25718d6a9e463abbcc15c20a25859ba5371b6090",
+        "configuration": "7a81602202796386026de06f2f17ffa70dd387ef4ae6c1d78f593cf7b5d0fec8",
+        "runtime_inputs": "07c712da1e8ca683e339bdc60e0fbcc0c4bec44088d3eaa850ec54be25e87dda"
+      },
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "created_at": "2026-10-25T07:30:56.467906+00:00",
+      "delivery_id": "01a171e2-116d-79e6-bf67-5cb4d087625b",
+      "candidate_id": "87e11863efd663bb220a0b073a9f914c697267a0-1792912266420670525",
+      "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+      "source_commit": "87e11863efd663bb220a0b073a9f914c697267a0"
+    }
+  ],
+  "can_confirm": false,
+  "publication": {
+    "state": "idle",
+    "expires_at": null,
+    "generation": 82,
+    "delivery_id": null
+  },
+  "authorizations": [
+    {
+      "id": "01a17138-ccf0-7293-8034-3e575c9c7600",
+      "kind": "execute",
+      "scope": "用户在已确认方案基础上逐项反馈并明确要求继续原分支实现及准确候选验证；沿用任务描述已批准的开发、针对性验证、commit、push、固定verify/int验收范围。该评论明确不新增生产发布授权，本登记仅为执行授权。",
+      "plan_id": "01a17138-793c-7ee9-8b7c-b6027a596b22",
+      "revoked": false,
+      "issue_id": "01a17118-80ef-717e-b9d0-9059a78db295",
+      "comment_id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+      "created_at": "2026-10-25T04:01:50.318297+00:00",
+      "workspace_id": "c329a769-6fee-4776-ad89-8d670ff37c61",
+      "registered_by": "4e920ee7-d180-4cfa-80a3-2d8925f178a8",
+      "comment_revision": 1,
+      "comment_snapshot": {
+        "id": "01a17126-0ec1-7aae-aa77-77c4f8ef3675",
+        "content": "直接监督首轮反馈（依据后继执行01a17122…的seq52/62草稿，非最终候选结论）：\n1. agentlens preparation 草稿把 task_provider_trace.provider_trace_id 原样传 traceDetail.trace_id，并用返回根ID相等判断归属。G51已验证 conversationRequestId/provider_trace_id 与 SDK providerData.traceId 是不同标识，不能混用。请复用G51实际映射链，从metadata sdk_trace_id/明确请求span标识查询与验证，核对response/session/child归属；真实样本必须覆盖两个ID不相等。否则现有exact关联也会查错或误判缺口。\n2. prepareTraceMaterials 目前只有自动open round路径且非codebuddy直接not_applicable，尚未落实手动监督、Codex所属Daemon记录/压缩工具事件、逐请求归一对账。请完整按原方案继续，不能将这些明确要求降成仅平台usage或文档gap后交付。\n3. 当前lease UPDATE无claim generation/token校验，旧worker超150秒返回时可覆盖新worker processing。应以实际claim标识校验最终保存；HTTP40次/120秒目前每run新建budget，原方案是每完成轮次累计预算，恢复/多run也不能重置。请添加必要竞态/多run验证。\n4. 旧run seq109的643 down草稿含DELETE FROM supervision_material WHERE kind='trace_usage'。请核对当前版本并移除默认删除证据的恢复动作，日常回滚关闭新能力并保留材料；勿把写了down当成获准执行。\n5. agentlens重试目前100/200ms固定等待未处理Retry-After。限流需尊重服务端退避且仍受整轮上限约束。\n以上是当前草稿的具体风险，允许你正在实现中的正常补全；不要求重做已正确部分、不改变范围，也不新增发布授权。继续原分支实现并在准确候选验证后报告。\n\n\n[@任务负责人](mention://agent/4e920ee7-d180-4cfa-80a3-2d8925f178a8)\n\u003c!-- multica-task-runner-reply:acf9ca9f-11e0-4b8b-8963-813729620605 --\u003e",
+        "revision": 1,
+        "author_id": "46cd50a9-cfc0-4e47-9eb6-5e2f93a902fd",
+        "created_at": "2026-10-25T03:41:21.985635+00:00"
+      },
+      "registered_by_type": "agent"
+    }
+  ],
+  "user_comments_version": "ca5e381c0fec0b8f6faee11d36636b62"
+}
