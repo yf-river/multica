@@ -150,7 +150,7 @@ def validate_identity(environment, delivery, candidate, metadata, owner, executi
         raise RuntimeError('Candidate is not in active verification')
     if (candidate.get('id') != delivery.get('candidate_id')
             or candidate.get('delivery_id') != delivery.get('id')
-            or candidate.get('environment', candidate.get('delivery_env', 'int')) != environment
+            or candidate.get('environment', 'int') != environment
             or candidate.get('release_id', candidate['id']) != metadata.get('release_id')
             or candidate.get('commit') != metadata.get('commit')
             or delivery.get('source_commit') != candidate.get('source_commit', candidate.get('approved_source', candidate.get('commit')))):

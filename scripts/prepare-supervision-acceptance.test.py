@@ -84,7 +84,8 @@ class OwnershipTests(unittest.TestCase):
         values = copy.deepcopy(self.values)
         values.update(environment='int')
         values['delivery'].update(phase='preparing_release', plan_snapshot=dict(integration_only=True))
-        values['candidate'].update(environment='int', publication_lease=dict(generation=9))
+        values['candidate'].pop('environment')
+        values['candidate'].update(delivery_env='prod', publication_lease=dict(generation=9))
         values['lease'] = dict(state='active', delivery_id='delivery', generation=9,
                               expires_at=values['owner']['expires_at'])
         setup.validate_identity(**values)
