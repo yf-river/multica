@@ -381,6 +381,18 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 			return err
 		}
 	}
+	if roundOpen && !p.Manual {
+		// 原始输入在完成时冻结；后台派生报告按固定轮次和独立身份补入一次。
+		_, err = tx.Exec(ctx, `INSERT INTO supervision_frozen_material(workspace_id,issue_id,round_id,material_cutoff,kind,source_id,run_id,generation,reviewed_generation,reviewed_offset,changed_at,body)
+ SELECT m.workspace_id,m.issue_id,r.id,r.material_cutoff,m.kind,m.source_id,m.run_id,m.generation,m.reviewed_generation,m.reviewed_offset,m.changed_at,p.report
+ FROM supervision_material m JOIN supervision_trace_material p ON p.id=m.source_id AND p.workspace_id=m.workspace_id
+ JOIN supervision_round r ON r.id=p.round_id AND r.workspace_id=p.workspace_id
+ WHERE p.workspace_id=$1 AND p.id=$2 AND r.status='open' AND m.kind='trace_usage'
+ ON CONFLICT DO NOTHING`, p.Workspace, p.ID)
+		if err != nil {
+			return err
+		}
+	}
 	if roundOpen && recheck && p.Version == 1 {
 		permit, permitErr := tx.Exec(ctx, `UPDATE `+scopeTable+` SET preparation_recheck_scheduled=true WHERE workspace_id=$1 AND id=$2 AND NOT preparation_recheck_scheduled`, p.Workspace, p.Round)
 		if permitErr != nil {
