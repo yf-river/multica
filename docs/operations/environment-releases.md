@@ -99,6 +99,8 @@ multica issue delivery accept GONG-24 --delivery <UUID> --file /absolute/evidenc
 
 ## 排队与源码恢复
 
+发布操作包由候选中的 `scripts/delivery-operations.json` 声明。构建器在编译前核对所有文件存在且路径位于脚本目录内，制品携带同一清单，安装器按同一清单计算指纹并复制完整操作包。新增脚本只需维护候选清单，不能依赖当前旧发布器预先认识新增文件。缺文件时在构建前失败，不进入环境切换。
+
 数据库的 `issue_delivery_plan`、`issue_delivery` 保存方案版本、固定提交、证据、用户批准和业务阶段。`.run/publish-requests/` 保存外部发布执行日志、结果及恢复资料，不能作为用户批准的替代来源。
 
 外部 systemd 接力任务每15秒检查队列，不占 Agent 执行槽。固定 int/prod 的交付统一由生产控制端调度，同一任务通过交付归属令牌和代次隔离并发写入；相同方案、提交的重复登记返回原交付。正在验证的交付优先收尾，其余按创建顺序领取；int 被占用时保留排队状态，不 rerun、不重复 mention、不创建轮询自动化。接力单实例锁与现有 publisher/int/prod 锁共同串行化环境变更。
