@@ -73,7 +73,8 @@ def fenced_without_work(r, delivery):
 
 def idle(r,production=False):
  rows=api(r,'delivery-queue')
- if any(d['phase'] in ('waiting_int','testing','approved','preparing_release','publishing') and not fenced_without_work(r,d) for d in rows):raise RuntimeError('其他交付正在使用控制端，维护保持等待')
+ if any(d['phase'] in ('testing','preparing_release','publishing') and not fenced_without_work(r,d) for d in rows):raise RuntimeError('其他交付正在使用控制端，维护保持等待')
+ if api(r,'delivery-queue/publication').get('state')!='idle':raise RuntimeError('最终集成占用尚未释放，维护保持等待')
  for env in ('prod','int'):
   m=r.read(r.meta_path(env));r.check_process_ownership(env,m);r.check_live_environment(env,m,r.read(r.config_path(env)))
  for env in (('int','prod') if production else ('int',)):
@@ -85,7 +86,6 @@ def idle(r,production=False):
 # 2. Keep the normal durable candidate/request records, full operations bundle, locks, release windows and rollback.
 def prepare(r,source,evidence):
  with r.lock('delivery-worker-prod'),r.lock('publisher'):
-  idle(r)
   source,commit=validate_source(r,source,evidence['base_commit'])
   # Modification 1. An explicit failed-request recovery retains its identity and immutable attempt history.
   version=evidence.get('retry_request_id') or 'maintenance-'+commit
@@ -97,10 +97,14 @@ def prepare(r,source,evidence):
    git_common=r.output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=source),branch=r.output(['git','symbolic-ref','HEAD'],cwd=source))
   authorize(r,record)
   current=r.candidate() if r.candidate_path().exists() else None
+  if current and current['status'] not in ('released','failed','succeeded') and (not current.get('maintenance') or current['id']!=version):
+   raise RuntimeError('已有其他活动候选，不能登记维护占用')
   # Modification 3. A repaired source on an explicitly failed request needs a new candidate, preserving the request identity.
   if current and current['id']==version and current.get('commit')==commit and current['status'] in ('verifying','accepted','queued'):
-   r.validate_candidate(current);return current
+   idle(r);r.validate_candidate(current);return current
+  # 已授权维护先登记占用，再等待既有任务退出；新交付排队，既有执行继续。
   r.save_candidate(record)
+  idle(r)
   try:
    artifact=r.RUN/'verification-builds'/'maintenance'/commit
    if (artifact/'release.json').exists():

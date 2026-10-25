@@ -307,7 +307,10 @@ class Worker:
         r.request_release(c['id'])
     def pool_enabled(self):
         path=r.RUN/'verification-pool.json'
-        return path.exists() and r.read(path).get('enabled') is True and r.read(path).get('controller_environment')==self.env
+        if not (path.exists() and r.read(path).get('enabled') is True and r.read(path).get('controller_environment')==self.env):return False
+        current=r.candidate() if r.candidate_path().exists() else None
+        # 维护窗口只暂停新验收，pool_dispatch 继续恢复和维护已有执行。
+        return not (current and current.get('maintenance') and current['status'] not in ('released','failed','succeeded'))
 
     def current_seed(self):
         return r.current_seed()

@@ -35,6 +35,25 @@ class MaintenanceTests(unittest.TestCase):
   with patch.object(m,'api',return_value=[dict(phase='publishing')]):
    with self.assertRaisesRegex(RuntimeError,'其他交付'):m.idle(Mock(),production=True)
 
+ def test_pending_queue_yields_to_maintenance_but_live_publication_does_not(self):
+  with tempfile.TemporaryDirectory() as directory:
+   r=Mock();r.candidate_path.return_value=Path(directory)/'missing'
+   r.http.return_value=dict(active_tasks=0,claims_in_flight=0)
+   def query(_,path):
+    return [{'phase':'waiting_int'},{'phase':'approved'}] if path=='delivery-queue' else {'state':'idle'}
+   with patch.object(m,'api',side_effect=query):m.idle(r,production=True)
+   with patch.object(m,'api',side_effect=lambda _,p:[] if p=='delivery-queue' else {'state':'active'}):
+    with self.assertRaisesRegex(RuntimeError,'占用尚未释放'):m.idle(r,production=True)
+
+ def test_authorized_maintenance_reserves_before_waiting_for_active_tasks(self):
+  import contextlib
+  with tempfile.TemporaryDirectory() as directory:
+   r=Mock();r.RUN=Path(directory);r.lock.side_effect=lambda *args:contextlib.nullcontext()
+   r.candidate_path.return_value=Path(directory)/'missing'
+   with patch.object(m,'validate_source',return_value=(Path(directory),'commit')),patch.object(m,'authorize'),patch.object(m,'idle',side_effect=RuntimeError('active tasks')):
+    with self.assertRaisesRegex(RuntimeError,'active tasks'):m.prepare(r,Path(directory),{'base_commit':'base'})
+   self.assertEqual(r.save_candidate.call_args[0][0]['status'],'building')
+
  def test_fenced_record_requires_no_owner_slot_or_process(self):
   import json
   with tempfile.TemporaryDirectory() as directory:
