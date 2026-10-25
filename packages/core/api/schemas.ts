@@ -787,6 +787,7 @@ export interface AppConfigResponse {
   /** 服务器是否在创建/更新 agent 时持久化 `conversation_starters`。旧服务器会静默
    * 忽略未知字段，所以字段缺失必须当作 false。 */
   agent_conversation_starters_supported?: boolean;
+  issue_create_properties_supported?: boolean;
   server_version?: string;
   environment_name?: string;
   environment_id?: string;
@@ -985,6 +986,7 @@ export const AppConfigSchema = z.object({
   feature_flags: FeatureFlagsSchema,
   local_worktree_supported: BooleanWithDefaultSchema(false),
   agent_conversation_starters_supported: BooleanWithDefaultSchema(false),
+  issue_create_properties_supported: BooleanWithDefaultSchema(false),
   server_version: OptionalStringSchema,
   environment_name: OptionalStringSchema,
   environment_id: OptionalStringSchema,
@@ -1004,6 +1006,7 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   local_worktree_supported: false,
   // 失败时闭锁：旧服务器当年是丢弃该字段却返回成功。
   agent_conversation_starters_supported: false,
+  issue_create_properties_supported: false,
   feature_flags: {},
 };
 

@@ -54,16 +54,15 @@ func propertyComparison(kind, operator, value string) (any, error) {
 	return map[string]string{"op": op, "value": value}, nil
 }
 
-func resolveIssuePropertyFilters(ctx context.Context, client *cli.APIClient, pairs []string) (string, error) {
-	properties, err := fetchProperties(ctx, client)
-	if err != nil {
-		return "", err
-	}
+func buildIssuePropertyFiltersWithCatalog(ctx context.Context, client *cli.APIClient, directory *memberDirectory, properties []propertyDTO, pairs []string) (string, error) {
 	filters := map[string][]any{}
 	for _, pair := range pairs {
 		parts := issuePropertyFilterPattern.FindStringSubmatch(pair)
 		if parts == nil {
 			return "", fmt.Errorf("--property %q：使用 Name=Value、Score>=3、Date<2026-01-01 或 Notes~=text", pair)
+		}
+		if strings.TrimSpace(parts[3]) == "" {
+			return "", fmt.Errorf("--property: value cannot be empty; use __none__ to match unset properties")
 		}
 		p, err := resolvePropertyRef(properties, strings.TrimSpace(parts[1]))
 		if err != nil {
@@ -72,38 +71,32 @@ func resolveIssuePropertyFilters(ctx context.Context, client *cli.APIClient, pai
 		if p.Archived {
 			return "", fmt.Errorf("属性 %q 已归档", p.Name)
 		}
-		member, err := propertyComparison(p.Type, parts[2], parts[3])
-		if err != nil {
-			return "", fmt.Errorf("--property %s: %w", p.Name, err)
+		var member any
+		if parts[2] != "=" {
+			member, err = propertyComparison(p.Type, parts[2], parts[3])
+			if err != nil {
+				return "", fmt.Errorf("--property %s: %w", p.Name, err)
+			}
 		}
-		if parts[2] == "=" && parts[3] != "__none__" {
-			// 多选属性的单个 flag 对应一个元素，重复 flag 表示多个 OR 候选。
-			single := p
-			if single.Type == "multi_select" {
-				single.Type = "select"
-			}
-			if single.Type == "multi_actor" {
-				single.Type = "actor"
-			}
-			raw, err := encodeIssuePropertyValue(ctx, client, single, parts[3])
+		if parts[2] == "=" {
+			member, err = resolvePropertyFilterValue(ctx, client, directory, p, parts[3])
 			if err != nil {
 				return "", err
 			}
-			var v any
-			if err = json.Unmarshal(raw, &v); err != nil {
-				return "", err
-			}
-			switch value := v.(type) {
-			case string:
-				member = value
-			case bool:
-				member = strconv.FormatBool(value)
-			case float64:
-				member = strconv.FormatFloat(value, 'g', -1, 64)
-			default:
-				return "", fmt.Errorf("属性 %q 不能用标量筛选", p.Name)
+		}
+		duplicate := false
+		encoded, _ := json.Marshal(member)
+		for _, current := range filters[p.ID] {
+			existing, _ := json.Marshal(current)
+			if string(encoded) == string(existing) {
+				duplicate = true
+				break
 			}
 		}
+		if duplicate {
+			continue
+		}
+
 		filters[p.ID] = append(filters[p.ID], member)
 	}
 	raw, err := json.Marshal(filters)

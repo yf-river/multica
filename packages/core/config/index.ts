@@ -42,6 +42,7 @@ interface ConfigState {
   // 老处理器会接受这个未知字段并返回成功却把它丢掉，所以字段缺失必须按
   // 「不支持」处理（fail closed）。
   agentConversationStartersSupported: boolean;
+  issueCreatePropertiesSupported: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
@@ -58,6 +59,7 @@ interface ConfigState {
   setEnvironmentName: (name?: string) => void;
   setLocalWorktreeSupported: (supported?: boolean) => void;
   setAgentConversationStartersSupported: (supported?: boolean) => void;
+  setIssueCreatePropertiesSupported: (supported?: boolean) => void;
 }
 
 /** 底层的原生 Zustand store，宿主的启动代码往这里写入运行时配置。 */
@@ -75,6 +77,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   environmentName: "",
   localWorktreeSupported: false,
   agentConversationStartersSupported: false,
+  issueCreatePropertiesSupported: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
   setAuthConfig: ({
     allowSignup,
@@ -91,6 +94,8 @@ export const configStore = createStore<ConfigState>((set) => ({
     set({ localWorktreeSupported: supported === true }),
   setAgentConversationStartersSupported: (supported = false) =>
     set({ agentConversationStartersSupported: supported === true }),
+  setIssueCreatePropertiesSupported: (supported = false) =>
+    set({ issueCreatePropertiesSupported: supported === true }),
 }));
 
 /** React 侧读取配置 store 的 Hook，可传 selector 只订阅需要的片段。 */

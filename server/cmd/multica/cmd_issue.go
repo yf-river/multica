@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -599,12 +600,14 @@ func init() {
 	issueListCmd.Flags().StringArray("property", nil, "按属性筛选：Name=Value、Score>=3、Date<2026-01-01、Notes~=text；重复同属性按 OR，不同属性按 AND；含操作符的名字用 UUID")
 	issueListCmd.Flags().Int("limit", 50, fmt.Sprintf("Page size, 1 to %d (the server returns at most %d issues per request; use --offset to page through more)", issueListMaxPageSize, issueListMaxPageSize))
 	issueListCmd.Flags().Int("offset", 0, "Number of issues to skip (for pagination; while --output json reports has_more, advance it by the number of issues in that same response)")
-	issueListCmd.Flags().String("sort", "", "Sort column: position (default, manual board order), title, created_at, start_date, due_date, priority")
-	issueListCmd.Flags().String("direction", "", "Sort direction (asc or desc); requires --sort to be a non-position column (position is always ascending)")
+	issueListCmd.Flags().String("sort", "", "Sort column: position (default, manual board order), title, created_at, start_date, due_date, priority, or property:<name-or-id> to sort by a custom property (select properties sort by option order)")
+	issueListCmd.Flags().String("direction", "", "Sort direction (asc or desc); requires --sort to be a non-position column or a property sort (position is always ascending)")
 	issueListCmd.Flags().String("fields", "", "JSON output only: comma-separated list of issue fields to include (e.g. id,title,status,priority). Filtering happens client-side after the full response is fetched, so this shrinks CLI output size and agent context cost, not network/server-side cost. Omit for the full issue object (default, unchanged). Valid fields: "+strings.Join(validIssueFields, ", "))
+	issueListCmd.Flags().Bool("resolve-properties", false, resolvePropertiesHelp)
 
 	// issue get
 	issueGetCmd.Flags().String("output", "json", "Output format: table or json")
+	issueGetCmd.Flags().Bool("resolve-properties", false, resolvePropertiesHelp)
 
 	// issue pull-requests
 	issuePullRequestsCmd.Flags().String("output", "table", "Output format: table or json")
@@ -646,6 +649,7 @@ func init() {
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times). Each file is uploaded and its markdown reference is appended to the description, which is what makes it render on the issue page")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
+	issueCreateCmd.Flags().StringArray("property", nil, `Set a custom property atomically with creation as "Name=Value" (repeatable, one distinct property per flag). Multi-value properties use comma-separated values inside one flag. Property and option/member names are case-insensitive; UUIDs are accepted. Filter-only __none__, >=, <=, and != forms are rejected.`)
 
 	// issue update
 	issueUpdateCmd.Flags().String("title", "", "New title")
@@ -824,8 +828,34 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		}
 		params.Set("metadata", filter)
 	}
+	// --property filtering and property:<ref> sorting both address definitions
+	// by name or UUID, so they share a single catalog fetch. An actor filter
+	// and --resolve-properties share one member request the same way.
+	const propertySortPrefix = "property:"
+	propertyFlags, _ := cmd.Flags().GetStringArray("property")
 	sortVal, _ := cmd.Flags().GetString("sort")
-	if sortVal != "" {
+	var properties []propertyDTO
+	var members memberDirectory
+	if len(propertyFlags) > 0 || strings.HasPrefix(sortVal, propertySortPrefix) {
+		var err error
+		if properties, err = fetchProperties(ctx, client); err != nil {
+			return err
+		}
+	}
+	if len(propertyFlags) > 0 {
+		filter, err := buildPropertiesFilterQueryParam(ctx, client, &members, properties, propertyFlags)
+		if err != nil {
+			return err
+		}
+		params.Set("properties", filter)
+	}
+	if strings.HasPrefix(sortVal, propertySortPrefix) {
+		property, err := resolveSortableProperty(properties, strings.TrimPrefix(sortVal, propertySortPrefix))
+		if err != nil {
+			return err
+		}
+		params.Set("sort", propertySortPrefix+property.ID)
+	} else if sortVal != "" {
 		valid := false
 		for _, c := range validIssueSortColumns {
 			if c == sortVal {
@@ -834,7 +864,7 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if !valid {
-			return fmt.Errorf("invalid --sort %q; valid values: %s", sortVal, strings.Join(validIssueSortColumns, ", "))
+			return fmt.Errorf("invalid --sort %q; valid values: %s, or property:<name-or-id> for a custom property", sortVal, strings.Join(validIssueSortColumns, ", "))
 		}
 		params.Set("sort", sortVal)
 	}
@@ -846,17 +876,9 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		// position（手动看板顺序）永远升序，server 会忽略针对它的 --direction。
 		// 与其静默吞掉这个「传了但没用」的 flag（对脚本是隐患），不如在本地先拒绝该组合。
 		if sortVal == "" || sortVal == "position" {
-			return fmt.Errorf("--direction requires --sort to be one of %s; position (the default manual board order) is always ascending", strings.Join(directionalIssueSortColumns, ", "))
+			return fmt.Errorf("--direction requires --sort to be one of %s, or a property:<name-or-id> sort; position (the default manual board order) is always ascending", strings.Join(directionalIssueSortColumns, ", "))
 		}
 		params.Set("direction", d)
-	}
-
-	if pairs, _ := cmd.Flags().GetStringArray("property"); len(pairs) > 0 {
-		filters, err := resolveIssuePropertyFilters(ctx, client, pairs)
-		if err != nil {
-			return err
-		}
-		params.Set("properties", filters)
 	}
 
 	var fields []string
@@ -865,12 +887,31 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		for _, f := range validIssueFields {
 			valid[f] = true
 		}
+		keepsProperties := false
 		for _, f := range strings.Split(v, ",") {
 			f = strings.TrimSpace(f)
 			if !valid[f] {
 				return fmt.Errorf("invalid --fields value %q; valid values: %s", f, strings.Join(validIssueFields, ", "))
 			}
+			if f == "properties" {
+				keepsProperties = true
+			}
 			fields = append(fields, f)
+		}
+		// --fields without `properties` deletes the very key
+		// --resolve-properties rewrites, so the pair would either cost two
+		// requests for output nobody sees or leave the flag silently doing
+		// nothing. A passed-but-ignored flag is a footgun in scripts (the
+		// same reason --fields rejects "assignee" instead of dropping it),
+		// so say so instead of picking one of those.
+		//
+		// Only in JSON mode, though: both flags document themselves as having
+		// no effect on --output table, so a table reader who leaves them on
+		// the command line must still get their table.
+		outputFormat, _ := cmd.Flags().GetString("output")
+		resolve, _ := cmd.Flags().GetBool("resolve-properties")
+		if outputFormat == "json" && resolve && !keepsProperties {
+			return fmt.Errorf("--resolve-properties needs the properties field, but --fields does not include it; add properties to --fields or drop --resolve-properties")
 		}
 	}
 
@@ -908,8 +949,17 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
+		// --fields runs first so a page that drops `properties` never pays for
+		// the catalog and member requests resolving it would need. Combining
+		// the two with `properties` filtered out is rejected above, so nothing
+		// resolvable is deleted before it is resolved.
 		if len(fields) > 0 {
 			filterIssueFields(issuesRaw, fields)
+		}
+		if resolve, _ := cmd.Flags().GetBool("resolve-properties"); resolve {
+			if err := resolveIssueProperties(ctx, client, properties, &members, issuesRaw); err != nil {
+				return err
+			}
 		}
 		wrapped := map[string]any{
 			"issues":   issuesRaw,
@@ -1102,6 +1152,11 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if resolve, _ := cmd.Flags().GetBool("resolve-properties"); resolve {
+		if err := resolveIssueProperties(ctx, client, nil, &memberDirectory{}, []any{issue}); err != nil {
+			return err
+		}
+	}
 	return cli.PrintJSON(os.Stdout, issue)
 }
 
@@ -1418,6 +1473,24 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	body := map[string]any{"title": title}
+	propertyFlags, _ := cmd.Flags().GetStringArray("property")
+	var createProperties map[string]json.RawMessage
+	if len(propertyFlags) > 0 {
+		var config struct {
+			IssueCreatePropertiesSupported bool `json:"issue_create_properties_supported"`
+		}
+		if err := client.GetJSON(ctx, "/api/config", &config); err != nil {
+			return fmt.Errorf("check issue-create property support: %w", err)
+		}
+		if !config.IssueCreatePropertiesSupported {
+			return errors.New("this server version does not support atomic custom properties on issue creation; update the server before using --property")
+		}
+		createProperties, err = buildIssueCreateProperties(ctx, client, propertyFlags)
+		if err != nil {
+			return err
+		}
+		body["properties"] = createProperties
+	}
 	desc, hasDesc, err := resolveTextFlag(cmd, "description")
 	if err != nil {
 		return err
@@ -1532,6 +1605,9 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("create issue: %w", err)
 	}
+	if err := verifyIssueCreateProperties(createProperties, result); err != nil {
+		return fmt.Errorf("issue %s was created, but the server did not confirm its custom properties; review it before retrying: %w", issueDisplayKey(result), err)
+	}
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
@@ -1549,9 +1625,30 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
-// activeDuplicateIssueCreateMessage 从错误里提取「活动重复 issue」的友好报错文案。
-// 只有当错误是 HTTP 409 且响应体 code 为 active_duplicate_issue、error 非空时才返回
-// 消息，否则返回 ok=false，让调用方走普通的错误包装。
+func verifyIssueCreateProperties(expected map[string]json.RawMessage, issue map[string]any) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	bag, ok := issue["properties"].(map[string]any)
+	if !ok {
+		return errors.New("response omitted the properties snapshot")
+	}
+	for propertyID, encoded := range expected {
+		actual, exists := bag[propertyID]
+		if !exists {
+			return fmt.Errorf("response omitted property %s", propertyID)
+		}
+		var want any
+		if err := json.Unmarshal(encoded, &want); err != nil {
+			return fmt.Errorf("decode expected property %s: %w", propertyID, err)
+		}
+		if !reflect.DeepEqual(actual, want) {
+			return fmt.Errorf("response property %s does not match the canonical value", propertyID)
+		}
+	}
+	return nil
+}
+
 func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 	var httpErr *cli.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
@@ -3078,65 +3175,56 @@ func (k assigneeKinds) describe() string {
 	}
 }
 
-// resolveAssignee 把用户提供的名字解析成 (assignee_type, assignee_id)，kinds 决定
-// 允许命中哪些实体类型。匹配按三档优先级：完整 UUID / 8 位短 ID / 精确别名（如邮箱）
-// → 大小写不敏感的全名精确相等 → 子串模糊匹配；某一档命中多个即报「有歧义」。
-// 拉取 members/agents/squads 走带重试的 getAssigneeJSON；若所有列表拉取全部失败，
-// 报告真实错误而不是误导性的「未找到」。
+// assigneeCandidate is one directory entry matchAssignee ranks. aliases are
+// additional unique identifiers that select a candidate outright, ranked with
+// id matches rather than name matches — a member's email is as unambiguous as
+// their id, and is what people actually have to hand. Without it,
+// `--value bohan@example.com` fails to resolve.
+type assigneeCandidate struct {
+	assigneeMatch
+	aliases []string
+}
+
+func (c assigneeCandidate) matchesAlias(input string) bool {
+	for _, alias := range c.aliases {
+		if alias != "" && strings.EqualFold(alias, input) {
+			return true
+		}
+	}
+	return false
+}
+
+func memberCandidates(members []map[string]any) []assigneeCandidate {
+	candidates := make([]assigneeCandidate, 0, len(members))
+	for _, m := range members {
+		candidates = append(candidates, assigneeCandidate{
+			assigneeMatch: assigneeMatch{Type: "member", ID: strVal(m, "user_id"), Name: strVal(m, "name")},
+			aliases:       []string{strVal(m, "email")},
+		})
+	}
+	return candidates
+}
+
 func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, kinds assigneeKinds) (string, string, error) {
 	if client.WorkspaceID == "" {
 		return "", "", fmt.Errorf("workspace ID is required to resolve assignees; use --workspace-id or set MULTICA_WORKSPACE_ID")
 	}
-
-	input := normalizeAssigneeLookupInput(name)
-	if input == "" {
+	if normalizeAssigneeLookupInput(name) == "" {
 		return "", "", fmt.Errorf("no %s found matching %q", kinds.describe(), name)
 	}
-	inputLower := strings.ToLower(input)
 
-	// 命中按优先级分三桶收集，高优先级的桶会让低优先级的匹配短路——例如全名精确
-	// 命中永远压过与另一个候选的子串撞名。
-	//   1. idMatches        —— 完整 UUID 或 8 位 ShortID（`truncateID` 显示的那种）。
-	//   2. exactMatches     —— 大小写不敏感的全名精确相等。
-	//   3. substringMatches —— 保留既有「部分名字也能搜到」的体验。
-	var idMatches, exactMatches, substringMatches []assigneeMatch
+	var candidates []assigneeCandidate
 	var errs []error
 	var fetchAttempts int
 
-	// exactAliases 是能直接锁定某候选的额外唯一标识，与 id 命中同级而不是名字命中
-	// ——member 的邮箱和他们的 id 一样不含歧义，而且人们手里通常就有邮箱。若不支持，
-	// `--value bohan@example.com` 这种传法会解析失败。
-	classify := func(entityType, id, displayName string, exactAliases ...string) {
-		match := assigneeMatch{Type: entityType, ID: id, Name: displayName}
-		if id != "" && (strings.EqualFold(id, input) || strings.EqualFold(truncateID(id), input)) {
-			idMatches = append(idMatches, match)
-			return
-		}
-		for _, alias := range exactAliases {
-			if alias != "" && strings.EqualFold(alias, input) {
-				idMatches = append(idMatches, match)
-				return
-			}
-		}
-		if strings.EqualFold(displayName, input) {
-			exactMatches = append(exactMatches, match)
-			return
-		}
-		if strings.Contains(strings.ToLower(displayName), inputLower) {
-			substringMatches = append(substringMatches, match)
-		}
-	}
-
-	// 搜 members。
+	// Search members.
 	if kinds.member {
 		fetchAttempts++
 		var members []map[string]any
 		if err := getAssigneeJSON(ctx, client, "/api/workspaces/"+client.WorkspaceID+"/members", &members); err != nil {
 			errs = append(errs, fmt.Errorf("fetch members: %w", err))
 		} else {
-			for _, m := range members {
-				classify("member", strVal(m, "user_id"), strVal(m, "name"), strVal(m, "email"))
-			}
+			candidates = append(candidates, memberCandidates(members)...)
 		}
 	}
 
@@ -3149,7 +3237,7 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 			errs = append(errs, fmt.Errorf("fetch agents: %w", err))
 		} else {
 			for _, a := range agents {
-				classify("agent", strVal(a, "id"), strVal(a, "name"))
+				candidates = append(candidates, assigneeCandidate{assigneeMatch: assigneeMatch{Type: "agent", ID: strVal(a, "id"), Name: strVal(a, "name")}})
 			}
 		}
 	}
@@ -3169,7 +3257,7 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 				if strVal(s, "archived_at") != "" {
 					continue
 				}
-				classify("squad", strVal(s, "id"), strVal(s, "name"))
+				candidates = append(candidates, assigneeCandidate{assigneeMatch: assigneeMatch{Type: "squad", ID: strVal(s, "id"), Name: strVal(s, "name")}})
 			}
 		}
 	}
@@ -3181,6 +3269,37 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string, ki
 			msgs[i] = e.Error()
 		}
 		return "", "", fmt.Errorf("failed to resolve assignee: %s", strings.Join(msgs, "; "))
+	}
+
+	return matchAssignee(name, kinds, candidates)
+}
+
+// matchAssignee resolves name against candidates a caller already fetched.
+// Matches are collected into three priority buckets. Higher-priority buckets
+// short-circuit lower-priority matching so that, e.g., an exact name match
+// always wins over a substring collision with another candidate.
+//  1. idMatches        — full UUID or 8-char ShortID (as shown by `truncateID`), or an alias.
+//  2. exactMatches     — case-insensitive full name equality.
+//  3. substringMatches — preserves the existing partial-name UX.
+func matchAssignee(name string, kinds assigneeKinds, candidates []assigneeCandidate) (string, string, error) {
+	input := normalizeAssigneeLookupInput(name)
+	if input == "" {
+		return "", "", fmt.Errorf("no %s found matching %q", kinds.describe(), name)
+	}
+	inputLower := strings.ToLower(input)
+
+	var idMatches, exactMatches, substringMatches []assigneeMatch
+	for _, c := range candidates {
+		switch {
+		case c.ID != "" && (strings.EqualFold(c.ID, input) || strings.EqualFold(truncateID(c.ID), input)):
+			idMatches = append(idMatches, c.assigneeMatch)
+		case c.matchesAlias(input):
+			idMatches = append(idMatches, c.assigneeMatch)
+		case strings.EqualFold(c.Name, input):
+			exactMatches = append(exactMatches, c.assigneeMatch)
+		case strings.Contains(strings.ToLower(c.Name), inputLower):
+			substringMatches = append(substringMatches, c.assigneeMatch)
+		}
 	}
 
 	for _, bucket := range [][]assigneeMatch{idMatches, exactMatches, substringMatches} {

@@ -71,6 +71,8 @@ type AppConfig struct {
 	// 声明缺省时客户端必须 fail closed。
 	AgentConversationStartersSupported bool `json:"agent_conversation_starters_supported"`
 
+	// POST /api/issues 支持在同一事务内写入自定义属性。
+	IssueCreatePropertiesSupported bool `json:"issue_create_properties_supported"`
 	// ServerVersion 是运行中的 API 构建版本，自助托管运维可据此确认部署内容并在 bug 报告
 	// 中带上它。只在自助托管部署上返回——托管云持续部署、用户无法对其版本做动作，因此省略
 	// ——没有用 -X main.version 打戳的 dev 构建则为空。
@@ -86,6 +88,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		// 这是本构建的属性，不是部署的属性：只要这段代码在跑，保存闸就跟它一起在跑。
 		LocalWorktreeSupported:             true,
 		AgentConversationStartersSupported: true,
+		IssueCreatePropertiesSupported:     true,
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",

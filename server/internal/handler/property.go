@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/issueproperty"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -331,121 +331,27 @@ func selectOptionsHint(cfg PropertyConfig) string {
 // Actor 值（MUL-6286）
 // ---------------------------------------------------------------------------
 
-// actorPropertyKinds 是 actor 属性的 V1 取值域：仅限 workspace 成员。issue 的
-// assignee 还接受 "agent" 与 "squad"，但被动的引用型属性两者都不该进——引用
-// agent 会拖进整个 agent 可见性问题（私有/未进 allow-list 的 agent 不能被按
-// id 反向发现），目前又没有用例支撑；而 squad 是路由目标，不是一个人。
-//
-// 存储形态是 "<kind>:<uuid>"，所以扩这个名单只改一行：不需要迁移、不需要新
-// 属性类型，既有定义原地获得新 kind。任何加进来的东西若非对每个 workspace
-// 成员都普遍可见（例如 agent），写路径与表格 facet 读路径都必须补回可见性
-// 闸门。
-var actorPropertyKinds = []string{"member"}
+// Compatibility aliases keep the focused handler tests on the same helper
+// names while the implementation is shared with IssueService.Create.
+type actorRef = issueproperty.ActorRef
 
-// actorRef 是一条已解析的 "<kind>:<uuid>" 属性值。
-type actorRef struct {
-	Kind string
-	ID   string
-}
-
-// String 还原成 "<kind>:<uuid>" 的存储形态。
-func (a actorRef) String() string { return a.Kind + ":" + a.ID }
-
-// propertyTypeIsActor 判断类型是否为 actor/multi_actor。
-func propertyTypeIsActor(t string) bool {
-	return t == "actor" || t == "multi_actor"
-}
-
-// actorKindsHint 拼出合法 kind 列表的人读提示。
-func actorKindsHint() string {
-	return strings.Join(actorPropertyKinds, " / ")
-}
-
-// parseActorRef 解析一条存储的 actor 值。成员用 user_id 引用——与 assignee
-// 对偶用的同一 id——所以"这人是谁"在产品各处解析结果一致。
+func propertyTypeIsActor(t string) bool { return issueproperty.IsActor(t) }
+func actorKindsHint() string            { return issueproperty.ActorKindsHint() }
 func parseActorRef(s string) (actorRef, error) {
-	kind, id, found := strings.Cut(s, ":")
-	if !found {
-		return actorRef{}, fmt.Errorf("value must look like \"<kind>:<uuid>\" where kind is one of: %s", actorKindsHint())
-	}
-	valid := false
-	for _, k := range actorPropertyKinds {
-		if kind == k {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		return actorRef{}, fmt.Errorf("unknown actor kind %q; valid kinds: %s", kind, actorKindsHint())
-	}
-	parsed, err := uuid.Parse(id)
-	if err != nil {
-		return actorRef{}, fmt.Errorf("actor id in %q must be a UUID", s)
-	}
-	// 存成规范的小写横线形态。uuid.Parse 也接受大写、花括号与 urn: 前缀；下游
-	// 每个消费方（客户端成员目录查询、"= me"过滤器、@> 包含判断）都是按引用串
-	// 精确比对，未规范化的 id 能存进库、渲染时却是 Unknown、也永远匹配不上
-	// 过滤器。
-	return actorRef{Kind: kind, ID: parsed.String()}, nil
+	return issueproperty.ParseActorRef(s)
 }
 
 // parseActorRefList 校验 multi_actor 数组：每个元素都必须能解析、去掉重复项、
 // 保持调用方顺序。与 multi_select 不同，这里没有 config 顺序可供规范化，按 id
 // 排序会让头像行每次编辑都重排。@> 包含判断与顺序无关，过滤结果不受影响。
 func parseActorRefList(items []any) ([]actorRef, error) {
-	if len(items) == 0 {
-		return nil, errors.New("value must be a non-empty array of actor references")
-	}
-	if len(items) > maxPropertyActorValues {
-		return nil, fmt.Errorf("value cannot list more than %d actors", maxPropertyActorValues)
-	}
-	seen := make(map[string]struct{}, len(items))
-	refs := make([]actorRef, 0, len(items))
-	for _, item := range items {
-		s, ok := item.(string)
-		if !ok {
-			return nil, errors.New("value must be an array of actor reference strings")
-		}
-		ref, err := parseActorRef(s)
-		if err != nil {
-			return nil, err
-		}
-		if _, dup := seen[ref.String()]; dup {
-			continue
-		}
-		seen[ref.String()] = struct{}{}
-		refs = append(refs, ref)
-	}
-	return refs, nil
+	return issueproperty.ParseActorRefList(items)
 }
 
 // actorRefsInValue 重新读一份 actor 属性已规范化的存储 JSON，抽出其中的引用。
 // SetIssueProperty 在纯形状校验跑完后用它把引用拿去 workspace 里解析。
 func actorRefsInValue(propType string, stored []byte) ([]actorRef, error) {
-	if propType == "actor" {
-		var s string
-		if err := json.Unmarshal(stored, &s); err != nil {
-			return nil, err
-		}
-		ref, err := parseActorRef(s)
-		if err != nil {
-			return nil, err
-		}
-		return []actorRef{ref}, nil
-	}
-	var list []string
-	if err := json.Unmarshal(stored, &list); err != nil {
-		return nil, err
-	}
-	refs := make([]actorRef, 0, len(list))
-	for _, s := range list {
-		ref, err := parseActorRef(s)
-		if err != nil {
-			return nil, err
-		}
-		refs = append(refs, ref)
-	}
-	return refs, nil
+	return issueproperty.ActorRefsInValue(propType, stored)
 }
 
 // resolveActorRefs 确认每条引用都指向本 workspace 的真实成员。只要 kind 只有
@@ -476,126 +382,7 @@ func (h *Handler) resolveActorRefs(r *http.Request, workspaceID string, refs []a
 // validatePropertyValue 按定义的类型校验一条原始 JSON 值，返回要落库的规范化
 // JSON。错误文案在可能处枚举合法取值——agent 直接消费这些文案自我纠正。
 func validatePropertyValue(def db.IssueProperty, raw json.RawMessage) ([]byte, error) {
-	if len(raw) == 0 {
-		return nil, errors.New("value is required")
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil, fmt.Errorf("value must be valid JSON: %w", err)
-	}
-	if v == nil {
-		return nil, errors.New("value cannot be null (use DELETE to unset a property)")
-	}
-
-	cfg := parsePropertyConfig(def.Config)
-	switch def.Type {
-	case "text":
-		s, ok := v.(string)
-		if !ok {
-			return nil, errors.New("value must be a string")
-		}
-		if strings.TrimSpace(s) == "" {
-			return nil, errors.New("value cannot be empty (use DELETE to unset a property)")
-		}
-		if utf8.RuneCountInString(s) > maxPropertyTextValueLen {
-			return nil, fmt.Errorf("value must be %d characters or fewer", maxPropertyTextValueLen)
-		}
-		return json.Marshal(sanitizeNullBytes(s))
-	case "url":
-		s, ok := v.(string)
-		if !ok {
-			return nil, errors.New("value must be a URL string")
-		}
-		s = strings.TrimSpace(s)
-		if len(s) > maxPropertyURLValueLen {
-			return nil, fmt.Errorf("value must be %d characters or fewer", maxPropertyURLValueLen)
-		}
-		u, err := url.Parse(s)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return nil, errors.New("value must be an http(s) URL")
-		}
-		return json.Marshal(s)
-	case "number":
-		if _, ok := v.(float64); !ok {
-			return nil, errors.New("value must be a number")
-		}
-		return json.Marshal(v)
-	case "checkbox":
-		if _, ok := v.(bool); !ok {
-			return nil, errors.New("value must be true or false")
-		}
-		return json.Marshal(v)
-	case "date":
-		s, ok := v.(string)
-		if !ok {
-			return nil, errors.New("value must be a date string in YYYY-MM-DD format")
-		}
-		if _, err := time.Parse("2006-01-02", s); err != nil {
-			return nil, errors.New("value must be a date string in YYYY-MM-DD format")
-		}
-		return json.Marshal(s)
-	case "select":
-		s, ok := v.(string)
-		if !ok {
-			return nil, fmt.Errorf("value must be one of the option ids: %s", selectOptionsHint(cfg))
-		}
-		if _, exists := propertyOptionIDs(cfg)[s]; !exists {
-			return nil, fmt.Errorf("value must be one of the option ids: %s", selectOptionsHint(cfg))
-		}
-		return json.Marshal(s)
-	case "multi_select":
-		items, ok := v.([]any)
-		if !ok || len(items) == 0 {
-			return nil, fmt.Errorf("value must be a non-empty array of option ids: %s", selectOptionsHint(cfg))
-		}
-		order := propertyOptionIDs(cfg)
-		seen := make(map[string]struct{}, len(items))
-		ids := make([]string, 0, len(items))
-		for _, item := range items {
-			s, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("value must be a non-empty array of option ids: %s", selectOptionsHint(cfg))
-			}
-			if _, exists := order[s]; !exists {
-				return nil, fmt.Errorf("unknown option id %q; valid option ids: %s", s, selectOptionsHint(cfg))
-			}
-			if _, dup := seen[s]; dup {
-				continue
-			}
-			seen[s] = struct{}{}
-			ids = append(ids, s)
-		}
-		// 归一化到 config 顺序：相同的选择序列化出相同结果（稳定的 @> 包含过滤
-		// 与变更检测都依赖它）。
-		sort.SliceStable(ids, func(a, b int) bool { return order[ids[a]] < order[ids[b]] })
-		return json.Marshal(ids)
-	case "actor":
-		s, ok := v.(string)
-		if !ok {
-			return nil, fmt.Errorf("value must be an actor reference string like \"member:<uuid>\" (kinds: %s)", actorKindsHint())
-		}
-		ref, err := parseActorRef(s)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(ref.String())
-	case "multi_actor":
-		items, ok := v.([]any)
-		if !ok {
-			return nil, fmt.Errorf("value must be an array of actor reference strings like \"member:<uuid>\" (kinds: %s)", actorKindsHint())
-		}
-		refs, err := parseActorRefList(items)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]string, len(refs))
-		for i, ref := range refs {
-			out[i] = ref.String()
-		}
-		return json.Marshal(out)
-	default:
-		return nil, fmt.Errorf("unsupported property type %q", def.Type)
-	}
+	return issueproperty.ValidateValue(def, raw)
 }
 
 // removedOptionIDs 返回"库里现有 config 有、传入的替换 config 里没有"的选项 id。
@@ -1466,9 +1253,41 @@ func (h *Handler) propertySortExpr(r *http.Request, workspaceID string, sortValu
 	switch def.Type {
 	case "number":
 		return fmt.Sprintf("CASE WHEN jsonb_typeof(i.properties->'%s') = 'number' THEN (i.properties->>'%s')::numeric END", id, id), true, nil
-	case "date", "text", "url", "select":
+	case "select":
+		return selectPropertySortExpr(id, parsePropertyConfig(def.Config)), true, nil
+	case "date", "text", "url":
 		return fmt.Sprintf("NULLIF(i.properties->>'%s', '')", id), true, nil
 	default: // multi_select、checkbox 及未来类型：没有有意义的序
 		return "", true, nil
 	}
+}
+
+// selectPropertySortExpr ranks a select property's stored value by its
+// position in the definition's option list, so an ordinal scale (Low < Medium
+// < High) sorts by meaning rather than by the option-id string. A stored value
+// no longer in the config — and an issue without the property — yields NULL,
+// which the callers order last.
+//
+// Each CASE arm embeds the option id's ORIGINAL config spelling: explicit ids
+// are stored as supplied (validatePropertyConfig trims but does not
+// re-serialize), and issue values must equal that spelling exactly, so a
+// canonicalized form would never match. Embedding is inert because uuid.Parse
+// gates every arm and its accepted grammar (hex, dashes, braces, urn:uuid:
+// prefix) admits no quote or backslash. An empty or malformed config — the API
+// enforces at least one option, so only a corrupt row — degrades to "" and the
+// caller keeps position order, like an unknown definition.
+func selectPropertySortExpr(defID string, cfg PropertyConfig) string {
+	var b strings.Builder
+	rank := 0
+	for _, opt := range cfg.Options {
+		if _, err := uuid.Parse(opt.ID); err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, " WHEN '%s' THEN %d", opt.ID, rank)
+		rank++
+	}
+	if rank == 0 {
+		return ""
+	}
+	return fmt.Sprintf("(CASE i.properties->>'%s'%s END)::numeric", defID, b.String())
 }
