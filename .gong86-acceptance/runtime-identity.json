@@ -1,0 +1,24 @@
+{
+  "commit": "0e85290a0e05225ad73725162893296a2a8224fe",
+  "release_id": "0e85290a0e05225ad73725162893296a2a8224fe-1792908482708408108",
+  "processes": {
+    "server": {
+      "pid": 2817666,
+      "cwd": "/data/ida/multica/.run/runtime/verify-1/b",
+      "trace_preparation_configured": false,
+      "credential_file_configured": false
+    },
+    "web": {
+      "pid": 2817923,
+      "cwd": "/data/ida/multica/.run/runtime/verify-1/b/apps/web",
+      "trace_preparation_configured": false,
+      "credential_file_configured": false
+    },
+    "daemon": {
+      "pid": 2817996,
+      "cwd": "/data/ida/multica/.run/runtime/verify-1/b",
+      "trace_preparation_configured": false,
+      "credential_file_configured": false
+    }
+  }
+}
