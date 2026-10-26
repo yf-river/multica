@@ -3419,3 +3419,9 @@ export const TestEnvironmentControlSchema = z.object({
 });
 
 export const TestAgentControlCapabilitySchema = z.object({ available: z.boolean() });
+
+/** 运行时上下文事件：只要求 kind，其余字段按 kind 解释。 */
+export const TaskContextEventSchema = z.object({ kind: z.string() }).passthrough();
+export const TaskContextResponseSchema = z.object({
+  events: z.array(TaskContextEventSchema),
+}).loose();

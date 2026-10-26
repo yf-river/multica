@@ -129,3 +129,37 @@ export interface IssueExecutionTreeResponse {
   timeline_nodes?: IssueTimelineNode[];
   issue_summary?: IssueTimelineSummary;
 }
+
+/** 运行时上下文事件（DSH context/compaction 帧）。字段随 kind 变化，保持宽松。 */
+export interface TaskContextEvent {
+  kind: string;
+  request_id?: string;
+  session_id?: string;
+  seq?: number;
+  at?: string;
+  provider?: string;
+  model?: string;
+  duration_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  context_window?: number;
+  pressure_tokens?: number;
+  projected_tokens?: number;
+  breakdown?: {
+    system_tokens?: number;
+    tools_tokens?: number;
+    message_tokens?: number;
+  };
+  phase?: string;
+  before_tokens?: number;
+  after_tokens?: number;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+/** 单次运行的上下文遥测响应。 */
+export interface TaskContextResponse {
+  events: TaskContextEvent[];
+}

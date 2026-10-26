@@ -1738,6 +1738,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/quick-actions/{quickActionId}/render", h.RenderQuickAction)
 					r.Get("/task-runs", h.ListTasksByIssue)
 					r.Get("/task-runs/{taskId}", h.GetIssueTaskRun)
+					r.Get("/tasks/{taskId}/context", h.GetTaskContext)
 					r.Get("/trace", h.ListIssueTaskTraceEvents)
 					r.Get("/execution-tree", h.GetIssueExecutionTree)
 					r.Get("/usage", h.GetIssueUsage)

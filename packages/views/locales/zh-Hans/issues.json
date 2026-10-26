@@ -658,7 +658,22 @@
     "supplement_retry": "重试",
     "supplement_retry_failed": "无法重试送达。",
     "supplement_copy": "复制内容",
-    "supplement_delivered": "已送达"
+    "supplement_delivered": "已送达",
+    "context_button": "运行上下文",
+    "context_title": "运行上下文",
+    "context_empty": "该运行还没有上下文遥测数据。",
+    "context_requests": "请求数",
+    "context_peak": "峰值占用",
+    "context_window": "上下文窗口",
+    "context_cache_hit": "缓存命中",
+    "context_model_time": "模型耗时",
+    "context_compactions": "压缩次数",
+    "context_breakdown": "系统 / 工具 / 消息",
+    "context_recent": "最近请求",
+    "context_duration": "耗时",
+    "context_tokens": "输入 / 输出 / 缓存",
+    "context_pressure": "占用",
+    "context_close": "关闭"
   },
   "usage_detail": {
     "title": "用量明细",

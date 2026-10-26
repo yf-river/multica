@@ -252,11 +252,12 @@ import { createRequestId, createSafeId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
-import type { IssueExecutionTreeResponse } from "../types/issue-execution";
+import type { IssueExecutionTreeResponse, TaskContextResponse } from "../types/issue-execution";
 import {
   AgentTaskListSchema,
   EMPTY_ISSUE_EXECUTION_TREE_RESPONSE,
   IssueExecutionTreeResponseSchema,
+  TaskContextResponseSchema,
   IssueTraceEventsResponseSchema,
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListSchema,
@@ -2641,6 +2642,19 @@ export class ApiClient {
       IssueExecutionTreeResponseSchema,
       EMPTY_ISSUE_EXECUTION_TREE_RESPONSE as IssueExecutionTreeResponse,
       { endpoint: "GET /api/issues/:id/execution-tree" },
+    );
+  }
+
+  /** 读取一次运行的运行时上下文遥测（context / compaction 帧）。 */
+  async getTaskContext(issueId: string, taskId: string): Promise<TaskContextResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(taskId)}/context`,
+    );
+    return parseWithFallback<TaskContextResponse>(
+      raw,
+      TaskContextResponseSchema,
+      { events: [] },
+      { endpoint: "GET /api/issues/:id/tasks/:taskId/context" },
     );
   }
 

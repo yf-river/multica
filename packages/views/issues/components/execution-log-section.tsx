@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Loader2, RotateCcw, Square } from "lucide-react";
+import { ChevronRight, Gauge, Loader2, RotateCcw, Square } from "lucide-react";
 import { toast } from "sonner";
 import { api, dispatchReasonCode } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -32,6 +32,7 @@ import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 import { IssueUsageDialog } from "./issue-usage-dialog";
 import { TaskSupplementButton, TaskSupplementDialogs } from "./task-supplement-dialog";
 import { TaskStatusIcon } from "./task-status-icon";
+import { RunContextDialog } from "./run-context-dialog";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 
 // 本文件：ExecutionLogSection —— 问题详情右侧面板"执行日志"区段。
@@ -439,6 +440,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const { t: tAgents } = useT("agents");
   const timeAgo = useTimeAgo();
   const [retrying, setRetrying] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const label = useStatusLabel(task.status, task.failure_reason);
   const trigger = useTriggerText(task);
   const time = task.completed_at ? timeAgo(task.completed_at) : "—";
@@ -521,6 +523,21 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
         )}
       </RowStatus>
       <RowActions>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={() => setContextOpen(true)}
+                aria-label={t(($) => $.execution_log.context_button)}
+              />
+            }
+            className="flex items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          >
+            <Gauge className="h-3.5 w-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>{t(($) => $.execution_log.context_button)}</TooltipContent>
+        </Tooltip>
         <TranscriptButton task={task} agentName="" title={t(($) => $.execution_log.transcript_tooltip)} />
         {canRetry && (
           <Tooltip>
@@ -548,6 +565,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     </RowShell>
     <RunTiming task={task} />
     <CodeDiffCard result={task.result} />
+    <RunContextDialog issueId={issueId} taskId={task.id} open={contextOpen} onOpenChange={setContextOpen} />
     </div>
   );
 }
