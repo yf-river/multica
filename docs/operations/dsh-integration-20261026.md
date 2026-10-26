@@ -58,7 +58,12 @@ bridge pnpm check（22 tests + build）           PASS
 
 - 计划评审当前是自动批准，没有人工计划卡片/审批 UI；`require-plan-approval` 未实现。
 - `/goal` 的多轮驱动依赖 DSH goal-round-driver；首轮与重放已验证，未做多轮上限/阻塞的完整矩阵。
-- 角色权限只做了技能过滤；监督/审查的运行时只读策略、按角色模型默认值尚未落地。
+- 角色权限：平台技能过滤已上线；监督/审查的只读策略代码已提交（`18132b1f8` + bridge `b8dc4c9`），但受托管审查运行时只支持 Codex/CodeBuddy 与测试默认策略限制，尚未发布生产；按角色模型默认值未做。
 - 知识库删除仅 CLI/服务端，Web 未提供删除入口；来源 URL 导入、管理员配置未做。
 - 统计页尚未提供独立 Context 标签和跨任务上下文聚合。
 - bridge 仓库提交 `df5fdfa` 只在本地 profile 生效，远端推送因 GitHub 权限被拒；生产运行依赖本机 profile。
+
+## 未发布后续
+
+- `18132b1f8` / bridge `b8dc4c9`：角色只读沙箱（approval never + sandbox/mode=read-only）。协议级验证通过；GONG-92 因 verify 环境不能把托管审查角色绑定 DSH、普通样本缺 `deepseek-official` 凭据而未完成验收，生产仍为 `46d4f6ee6`。
+- bridge 本地提交已到 `b8dc4c9`；远端仓库推送仍受 GitHub 权限限制。
