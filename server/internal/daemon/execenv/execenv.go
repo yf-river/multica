@@ -132,6 +132,7 @@ type PrepareParams struct {
 // TaskContextForEnv 是任务上下文中「写上下文文件所需」的那部分子集。任务哪些
 // 信息会被写进 agent 工作目录里的简介/上下文文件，由这里的字段决定。
 type TaskContextForEnv struct {
+	CodexBriefViaAPI      bool // Codex 监督通过 developerInstructions 取得角色正文
 	CodebuddyBriefViaHook bool // 原生 ACP 从当前执行的 hook 取得简报，工作目录只承载人工正文
 	IssueID               string
 	TriggerCommentID      string // 触发本任务的评论 ID（on_assign 型任务为空）

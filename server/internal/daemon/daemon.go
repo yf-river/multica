@@ -7159,6 +7159,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentID:                          task.AgentID,
 		AgentName:                        agentName,
 		AgentInstructions:                instructions,
+		CodexBriefViaAPI:                 provider == "codex" && task.SupervisionPrompt != "",
 		AgentSkills:                      convertSkillsForEnv(skills),
 		DisabledRuntimeSkills:            convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider),
 		Repos:                            convertReposForEnv(task.Repos),
@@ -8156,11 +8157,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		execOpts.CodebuddyRuntimeBrief = runtimeBrief
 	}
 	if task.SupervisionPrompt != "" {
-		// 监督模式显式传递 Agent 指令，避免依赖 CodeBuddy 的默认文件加载。
-		if provider == "codebuddy" {
-			execOpts.SystemPrompt = instructions
+		if provider == "codex" || provider == "codebuddy" {
 			execOpts.MCPToolsOnly = true
+			execOpts.ResumeSessionID, execOpts.ResumeExpected = "", false
+			execOpts.SystemPrompt = instructions
 		}
+		// 监督角色经原生指令投递，不依赖工作目录中的指令文件。
 		execOpts.Timeout = 10 * time.Minute
 		execOpts.McpConfig = json.RawMessage(`{}`)
 		if len(task.SupervisionInvestigation) == 0 {
@@ -8307,16 +8309,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		execOpts.ResumeContinuityNotice = ""
 		taskCtx.PriorSessionResumed = false
 		if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {
-			if taskCtx.CodebuddyBriefViaHook {
-				return TaskResult{Status: "failed", SessionID: firstResult.SessionID, Usage: buildTaskUsageEntries(provider, firstUsage)}, fmt.Errorf("prepare fresh CodeBuddy hook brief: %w", briefErr)
+			if taskCtx.CodebuddyBriefViaHook || taskCtx.CodexBriefViaAPI {
+				return TaskResult{Status: "failed", SessionID: firstResult.SessionID, Usage: buildTaskUsageEntries(provider, firstUsage)}, fmt.Errorf("prepare fresh native runtime instructions: %w", briefErr)
 			}
 			taskLog.Warn("execenv: re-inject cold runtime config for fresh retry failed (non-fatal)", "error", briefErr)
 		} else {
 			runtimeBrief = freshBrief
 			if taskCtx.CodebuddyBriefViaHook {
 				execOpts.CodebuddyRuntimeBrief = runtimeBrief
+			}
+			if taskCtx.CodexBriefViaAPI {
+				execOpts.SystemPrompt = runtimeBrief
+			}
+			if taskCtx.CodebuddyBriefViaHook || taskCtx.CodexBriefViaAPI {
 				if err := execenv.WriteRuntimeProvenance(env.RootDir, env.WorkDir, provider, runtimeBrief, taskCtx); err != nil {
-					taskLog.Warn("write fresh native hook instruction provenance failed", "error", err)
+					taskLog.Warn("write fresh native instruction provenance failed", "error", err)
 				}
 			}
 			if providerNeedsInlineSystemPrompt(provider) {
