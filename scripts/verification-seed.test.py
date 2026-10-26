@@ -97,6 +97,88 @@ class EnsureTests(unittest.TestCase):
             reset.assert_called_once()
 
 
+original_worker_check = s.candidate_worker_running
+
+
+class RetiredCandidateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = patch.object(s.r, 'RUN', Path(self.tmp.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.current = dict(id='old-candidate', environment='verify-2', status='recovery_required',
+                            delivery_id='old-delivery', commit='failed-source',
+                            previous_release='live-release', error='migration rejected')
+        self.meta = dict(commit='live-source', release_id='live-release')
+        self.delivery = dict(id='old-delivery', phase='needs_changes', revision=3,
+                             verification_run=None, verification_owner=None)
+        self.slot = dict(name='verify-2', state='idle', enabled=False, delivery_id=None)
+        s.r.save_candidate(self.current)
+        for name in ('check_process_ownership', 'check_live_environment'):
+            check = patch.object(s.r, name)
+            check.start()
+            self.addCleanup(check.stop)
+        s.r.write(s.r.config_path('verify-2'), {})
+        self.api = patch.object(s, 'control_api', side_effect=self.control)
+        self.api.start()
+        self.addCleanup(self.api.stop)
+        process = patch.object(s, 'candidate_worker_running', return_value=False)
+        process.start()
+        self.addCleanup(process.stop)
+
+    def control(self, route):
+        if route == 'delivery-queue/slots':
+            return [self.slot]
+        if route == 'delivery-queue?current=old-delivery':
+            return [self.delivery]
+        raise AssertionError(route)
+
+    def test_owned_live_worker_process_is_detected(self):
+        with subprocess.Popen(['python3', '-c', 'import time; time.sleep(10)',
+                               '--pool-delivery', 'old-delivery']) as child:
+            try:
+                with patch.object(s, 'candidate_worker_running', wraps=original_worker_check):
+                    self.assertTrue(s.candidate_worker_running(self.current))
+            finally:
+                child.terminate()
+                child.wait(timeout=5)
+
+    def test_failed_undeployed_candidate_is_archived_after_lease_reset(self):
+        s.retire_failed_candidate('verify-2', self.meta)
+        current = s.r.candidate(env='verify-2')
+        self.assertEqual(current['status'], 'failed')
+        self.assertEqual(current['error'], 'migration rejected')
+        self.assertEqual(current['maintenance_recovery']['previous_status'], 'recovery_required')
+        self.assertEqual(s.r.read(s.r.RUN/'candidates/recovered/old-candidate.json'), self.current)
+        s.retire_failed_candidate('verify-2', self.meta)
+
+    def test_active_or_unproven_candidates_remain_untouched(self):
+        changes = [('status', 'verifying'), ('commit', 'live-source'), ('previous_release', 'different')]
+        for key, value in changes:
+            current = dict(self.current, **{key: value})
+            s.r.save_candidate(current)
+            with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, '候选'):
+                s.retire_failed_candidate('verify-2', self.meta)
+            self.assertEqual(s.r.candidate(env='verify-2'), current)
+
+    def test_live_owner_task_worker_or_slot_blocks_recovery(self):
+        for field, value in [('phase', 'testing'), ('verification_owner', {'execution_id': 'live'}),
+                             ('verification_run', {'status': 'running'})]:
+            previous = self.delivery.get(field)
+            self.delivery[field] = value
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                s.retire_failed_candidate('verify-2', self.meta)
+            self.delivery[field] = previous
+        self.slot['enabled'] = True
+        with self.assertRaises(RuntimeError):
+            s.retire_failed_candidate('verify-2', self.meta)
+        self.slot['enabled'] = False
+        with patch.object(s, 'candidate_worker_running', return_value=True), self.assertRaises(RuntimeError):
+            s.retire_failed_candidate('verify-2', self.meta)
+        self.assertEqual(s.r.candidate(env='verify-2'), self.current)
+
+
 class ResetTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
