@@ -81,8 +81,14 @@ import {
   useShortcut,
 } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
-import { isWorkspaceMenuVisible } from "@multica/core/workspace";
-import { MessageSquare } from "lucide-react";
+import {
+  WORKSPACE_MENU_GROUPS,
+  isWorkspaceMenuItemActive,
+  isWorkspaceMenuVisible,
+  workspaceMenuItemHref,
+  type WorkspaceMenuGroup,
+} from "@multica/core/workspace";
+import type { WorkspacePaths } from "@multica/core/paths";
 
 /**
  * 布局模块：应用主侧边栏。
@@ -90,11 +96,97 @@ import { MessageSquare } from "lucide-react";
  * 待处理邀请和底部工具条，是整个仪表盘的导航中枢。
  */
 
-// 顶层导航项在子路由下也保持高亮（例如 /:slug/projects/:id 下「项目」
-// 仍亮着）。置顶项在其他地方保持严格相等——置顶的项目不应在自己的子页
-// 上也高亮。
-function isNavActive(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(href + "/");
+// 侧边栏行与「工作区菜单」共用同一份定义；这里只负责渲染顺序：个人分组
+// 在置顶项之前，其余分组在置顶项之后。
+const MENU_GROUPS_BEFORE_PINS = WORKSPACE_MENU_GROUPS.filter((group) => group.id === "personal");
+const MENU_GROUPS_AFTER_PINS = WORKSPACE_MENU_GROUPS.filter((group) => group.id !== "personal");
+
+// 统一的导航行视觉：未选中用 muted 前景，悬停只加浅底，选中才用实底与强调
+// 前景。所有一行导航都必须经过这里，避免个别分组漏掉 muted 类而看起来更黑。
+const SIDEBAR_NAV_ROW_CLASS = "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground";
+
+/** One sidebar navigation row, identical in every group. */
+function SidebarNavRow({
+  href,
+  isActive,
+  label,
+  badge,
+}: {
+  href: string;
+  isActive: boolean;
+  label: string;
+  badge?: React.ReactNode;
+}) {
+  const Icon = routeIconForPath(href);
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={isActive}
+        render={<AppLink href={href} />}
+        className={SIDEBAR_NAV_ROW_CLASS}
+      >
+        <Icon />
+        <span>{label}</span>
+        {badge}
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
+
+/**
+ * One sidebar section. Rows hidden by the workspace menu preference are
+ * filtered first; a section with no visible row renders nothing at all, title
+ * included. The settings page always renders every section, so a hidden group
+ * can still be restored from there.
+ */
+function SidebarNavGroup({
+  group,
+  settings,
+  paths,
+  pathname,
+  searchParams,
+  unreadCount,
+  suppressActive,
+}: {
+  group: WorkspaceMenuGroup;
+  settings: Record<string, unknown> | undefined;
+  paths: WorkspacePaths;
+  pathname: string;
+  searchParams: URLSearchParams;
+  unreadCount: number;
+  suppressActive: boolean;
+}) {
+  const { t } = useT("layout");
+  const entries = group.entries.filter((entry) => isWorkspaceMenuVisible(settings, entry.key));
+  if (entries.length === 0) return null;
+  const groupLabel = group.label;
+  const label = groupLabel
+    ? t(($) => groupLabel.section === "nav" ? $.nav[groupLabel.key] : $.sidebar[groupLabel.key])
+    : null;
+  return (
+    <SidebarGroup data-menu-group={group.id}>
+      {label ? <SidebarGroupLabel>{label}</SidebarGroupLabel> : null}
+      <SidebarGroupContent>
+        <SidebarMenu className="gap-0.5">
+          {entries.map((entry) => {
+            const href = workspaceMenuItemHref(entry, paths);
+            const isActive = !suppressActive && isWorkspaceMenuItemActive(entry, { pathname, searchParams, paths });
+            return (
+              <SidebarNavRow
+                key={entry.key}
+                href={href}
+                isActive={isActive}
+                label={t(($) => $.nav[entry.navKey])}
+                badge={entry.key === "inbox" && unreadCount > 0 ? (
+                  <CappedNumberFlow value={unreadCount} animated={false} className="ml-auto text-caption" />
+                ) : null}
+              />
+            );
+          })}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
 }
 
 // 为查询默认值提供稳定的空数组。若在 `useQuery` 上用内联 `= []` 默认值，
@@ -106,82 +198,8 @@ const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INVITATIONS: Awaited<ReturnType<typeof api.listMyInvitations>> = [];
 const EMPTY_INBOX_SUMMARY: Awaited<ReturnType<typeof api.getInboxUnreadSummary>> = [];
 
-// 导航项引用 WorkspacePaths 的方法名，以便在渲染时针对当前工作区 slug 解析
-// （见 AppSidebar 主体）。只有无参数的路径才是合法的导航目标。
-type NavKey =
-  | "inbox"
-  | "myIssues"
-  | "issues"
-  | "projects"
-  | "autopilots"
-  | "agents"
-  | "squads"
-  | "usage"
-  | "runReviews"
-  | "knowledge"
-  | "runtimes"
-  | "mcp"
-  | "quickActions"
-  | "skills"
-  | "settings"
-  | "upstream"
-  | "life";
-
-// 静态 schema（仅 key）——标签在渲染时通过 useT("layout") 解析，
-// 图标通过 routeIconForPath 从目标路径推导。
-type NavLabelKey =
-  | "inbox"
-  | "my_issues"
-  | "issues"
-  | "projects"
-  | "autopilots"
-  | "agents"
-  | "squads"
-  | "usage"
-  | "run_reviews"
-  | "knowledge"
-  | "runtimes"
-  | "mcp"
-  | "quick_actions"
-  | "skills"
-  | "settings"
-  | "upstream"
-  | "life";
-
-// 导航图标不在这里声明：它们在渲染时从每项的目标路径推导，这样每个资源
-// 导航界面都一致。见 route-icon-components.tsx。
-const personalNav: { key: NavKey; labelKey: NavLabelKey }[] = [
-  { key: "inbox", labelKey: "inbox" },
-];
-
-const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
-  { key: "issues", labelKey: "issues" },
-  { key: "projects", labelKey: "projects" },
-  { key: "autopilots", labelKey: "autopilots" },
-  { key: "agents", labelKey: "agents" },
-  { key: "squads", labelKey: "squads" },
-  { key: "usage", labelKey: "usage" },
-  { key: "runReviews", labelKey: "run_reviews" },
-  { key: "knowledge", labelKey: "knowledge" },
-];
-
-const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
-  { key: "runtimes", labelKey: "runtimes" },
-  { key: "skills", labelKey: "skills" },
-  { key: "mcp", labelKey: "mcp" },
-  { key: "quickActions", labelKey: "quick_actions" },
-  { key: "upstream", labelKey: "upstream" },
-  { key: "settings", labelKey: "settings" },
-];
-
-const lifeNav = [
-  { tab: "memory", labelKey: "memory" },
-  { tab: "experiment", labelKey: "experiment" },
-  { tab: "observers", labelKey: "observers" },
-  { tab: "chronicle", labelKey: "chronicle" },
-] as const;
-
-const livingNav = ["health", "meals", "goals"] as const;
+// 导航分组与标签由 @multica/core/workspace 的 WORKSPACE_MENU_GROUPS 提供，
+// 图标在渲染时从每项的目标路径推导（见 route-icon-components.tsx）。
 
 function DraftDot() {
   const hasDraft = useIssueDraftStore((s) => s.hasDraft());
@@ -447,7 +465,7 @@ interface AppSidebarProps {
  */
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname, push } = useNavigation();
+  const { pathname, searchParams, push } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
@@ -742,36 +760,18 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
 
         {/* Navigation */}
         <SidebarContent ref={sidebarScrollRef} style={sidebarFadeStyle}>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {personalNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key)).map((item) => {
-                  const href = p[item.key]();
-                  const Icon = routeIconForPath(href);
-                  const isActive = isNavActive(pathname, href);
-                  return (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                        {item.key === "inbox" && unreadCount > 0 && (
-                          <CappedNumberFlow
-                            value={unreadCount}
-                            animated={false}
-                            className="ml-auto text-caption"
-                          />
-                        )}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {MENU_GROUPS_BEFORE_PINS.map((group) => (
+            <SidebarNavGroup
+              key={group.id}
+              group={group}
+              settings={workspace?.settings}
+              paths={p}
+              pathname={pathname}
+              searchParams={searchParams}
+              unreadCount={unreadCount}
+              suppressActive={isActivePinnedRoute}
+            />
+          ))}
 
           {visiblePinned.length > 0 && (
             <Collapsible defaultOpen>
@@ -808,102 +808,18 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             </Collapsible>
           )}
 
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.sidebar.workspace_group)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                <SidebarMenuItem>
-                  <SidebarMenuButton render={<AppLink href={p.chat()} />} isActive={isNavActive(pathname, p.chat())}>
-                    <MessageSquare aria-hidden="true" /><span>{t(($) => $.nav.chat)}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                {workspaceNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key)).map((item) => {
-                  const href = p[item.key]();
-                  const Icon = routeIconForPath(href);
-                  const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
-                  return (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.sidebar.configure_group)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {configureNav.filter((item) => isWorkspaceMenuVisible(workspace?.settings, item.key)).map((item) => {
-                  const href = p[item.key]();
-                  const Icon = routeIconForPath(href);
-                  const isActive = isNavActive(pathname, href);
-                  return (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.nav.living)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {livingNav.filter((key) => isWorkspaceMenuVisible(workspace?.settings, key)).map((key) => {
-                  const href = p[key]();
-                  const Icon = routeIconForPath(href);
-                  const isActive = isNavActive(pathname, href) ||
-                    (key === "meals" && isNavActive(pathname, p.cooking()));
-                  return (
-                    <SidebarMenuItem key={key}>
-                      <SidebarMenuButton isActive={isActive} render={<AppLink href={href} />}>
-                        <Icon />
-                        <span>{t(($) => $.nav[key])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.nav.life)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {lifeNav.filter(() => isWorkspaceMenuVisible(workspace?.settings, "life")).map((item) => {
-                  const href = p.lifeTab(item.tab);
-                  const Icon = routeIconForPath(href);
-                  const isActive = pathname.startsWith(p.life());
-                  return (
-                    <SidebarMenuItem key={item.tab}>
-                      <SidebarMenuButton isActive={isActive && new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("tab") === item.tab} render={<AppLink href={href} />} className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground">
-                        <Icon /><span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {MENU_GROUPS_AFTER_PINS.map((group) => (
+            <SidebarNavGroup
+              key={group.id}
+              group={group}
+              settings={workspace?.settings}
+              paths={p}
+              pathname={pathname}
+              searchParams={searchParams}
+              unreadCount={unreadCount}
+              suppressActive={isActivePinnedRoute}
+            />
+          ))}
         </SidebarContent>
 
         <SidebarRail />

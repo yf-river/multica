@@ -23,10 +23,15 @@ vi.mock("../../i18n", async () => {
     }),
   };
 });
-vi.mock("@multica/core/paths", () => ({
-  LIFE_TABS: ["memory", "experiment", "observers", "chronicle"],
-  useWorkspaceId: () => "ws-1",
-}));
+vi.mock("@multica/core/paths", () => {
+  const tabs = ["memory", "experiment", "observers", "chronicle"] as const;
+  type Tab = (typeof tabs)[number];
+  return {
+    LIFE_TABS: tabs,
+    parseLifeTab: (value: string | null) => tabs.includes(value as Tab) ? (value as Tab) : "memory",
+    useWorkspaceId: () => "ws-1",
+  };
+});
 vi.mock("../../navigation", () => ({
   useNavigation: () => navigation.current,
 }));

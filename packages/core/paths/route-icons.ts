@@ -64,6 +64,10 @@ export type NavLabelKey =
   | "meals"
   | "goals"
   | "life"
+  | "memory"
+  | "experiment"
+  | "observers"
+  | "chronicle"
   | "upstream";
 
 /** 每个工作区导航页的稳定标识。 */
