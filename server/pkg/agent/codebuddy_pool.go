@@ -649,7 +649,7 @@ func codebuddyResidentFingerprint(cfg Config, opts ExecOptions) (string, error) 
 	settingsJSON, _ := json.Marshal(settings)
 	_, _ = h.Write(settingsJSON)
 	home := resolveSDKConfigDir(cfg.Env)
-	for _, name := range []string{"settings.json", "config.json", "auth.json", "credentials.json", ".credentials.json", ".mcp.json", "mcp.json", "skills", "plugins/cache", "plugins/installed_plugins.json", "rules"} {
+	for _, name := range []string{"settings.json", "models.json", "config.json", "auth.json", "credentials.json", ".credentials.json", ".mcp.json", "mcp.json", "skills", "plugins/cache", "plugins/installed_plugins.json", "rules"} {
 		if err := hashCodexResidentSkills(h, filepath.Join(home, name), "account/"+name, map[string]bool{}); err != nil {
 			return "", err
 		}
@@ -685,7 +685,7 @@ func codebuddyResidentFingerprint(cfg Config, opts ExecOptions) (string, error) 
 		return "", err
 	}
 	for dir := opts.Cwd; dir != ""; dir = filepath.Dir(dir) {
-		for _, name := range []string{"CODEBUDDY.md", ".codebuddy/settings.json", ".codebuddy/settings.local.json", ".codebuddy/skills", ".mcp.json"} {
+		for _, name := range []string{"CODEBUDDY.md", ".codebuddy/settings.json", ".codebuddy/settings.local.json", ".codebuddy/models.json", ".codebuddy/skills", ".mcp.json"} {
 			if err := hashCodexResidentSkills(h, filepath.Join(dir, name), dir+"/"+name, map[string]bool{}); err != nil {
 				return "", err
 			}

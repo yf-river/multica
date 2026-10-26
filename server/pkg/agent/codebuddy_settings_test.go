@@ -71,3 +71,30 @@ func TestCodebuddyCustomSettingsContentInvalidatesResident(t *testing.T) {
 		t.Fatal("changed settings content retained a stale process")
 	}
 }
+
+func TestCodebuddyNativeModelsInvalidateResident(t *testing.T) {
+	for _, scope := range []string{"account", "project"} {
+		t.Run(scope, func(t *testing.T) {
+			cfg := codebuddyFixtureConfig(t)
+			opts := ExecOptions{Cwd: t.TempDir()}
+			dir := cfg.Env["CODEBUDDY_CONFIG_DIR"]
+			if scope == "project" {
+				dir = filepath.Join(opts.Cwd, ".codebuddy")
+				if err := os.Mkdir(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := codebuddyResidentFingerprint(cfg, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"models":[{"id":"custom","url":"http://localhost/owned"}]}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			after, err := codebuddyResidentFingerprint(cfg, opts)
+			if err != nil || before == after {
+				t.Fatalf("native model source did not invalidate resident: %v", err)
+			}
+		})
+	}
+}
