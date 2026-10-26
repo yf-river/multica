@@ -1964,7 +1964,10 @@ func TestBuildPromptDoesNotInjectUnrelatedSiblingContext(t *testing.T) {
 
 func TestDshChatPlanToggleDoesNotComposeModelPrompt(t *testing.T) {
 	for _, command := range []string{"/plan", "/plan off"} {
-		task := Task{ChatSessionID: "chat", Command: command, ChatMessage: "  " + command + "\n"}
+		task := Task{ChatSessionID: "chat", Command: command, ChatMessage: "  " + command + "\n", PriorWorkDir: "/previous", PriorSessionResumeUnavailable: true}
+		if got := BuildPrompt(task, "dsh"); got != "" {
+			t.Fatalf("fresh-session retry would create a model turn: %q", got)
+		}
 		if got := buildExecutionPrompt(task, "dsh", &execenv.Environment{}, false, true); got != "" {
 			t.Fatalf("%s would create a model turn: %q", command, got)
 		}
