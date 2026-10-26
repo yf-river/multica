@@ -2456,6 +2456,7 @@ probeLoop:
 		// its failure is reported as what it is by the version-probe path
 		// above.
 		if name == "dsh" {
+			d.prepareManagedDsh(resolved.Path, version)
 			// What the probe said decides what may happen next. Only a
 			// confirmed-absent profile may install a bundle or condemn the
 			// runtime. An incompatible one is reported and neither installed

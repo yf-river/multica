@@ -67,3 +67,37 @@ bridge pnpm check（22 tests + build）           PASS
 
 - `18132b1f8` / bridge `b8dc4c9`：角色只读沙箱（approval never + sandbox/mode=read-only）。协议级验证通过；GONG-92 因 verify 环境不能把托管审查角色绑定 DSH、普通样本缺 `deepseek-official` 凭据而未完成验收，生产仍为 `46d4f6ee6`。
 - bridge 本地提交已到 `b8dc4c9`；远端仓库推送仍受 GitHub 权限限制。
+
+
+## GONG-93：bridge 收编与自动供给（开发中）
+
+源码从外部 bridge `b8dc4c9` 收进 `packages/dsh-runtime`，包名为
+`@multica-ai/dsh-runtime`，版本 `0.3.0`，兼容范围 `>=0.2.1-rc.3 <0.3.0`。
+DSH 精确测试版本为 `0.2.1-rc.3`；依赖锁用于复现构建，不锁定用户安装的 DSH。
+
+- 制品为 `dsh-runtime-<version>.tgz`；发布清单记录兼容信息、字节数和 SHA-256。
+  Go 与 bridge 共用 execute 和事件黄金帧。正式构建从固定提交生成 bridge，
+  运行包携带 tarball，不引用外部开发目录。
+- 自动供给使用独立版本 profile、持久化候选状态和原子活动记录。
+  安装后经过 probe、真实普通任务/context、原生 plan 切换和同 session 续跑，再激活。
+  staging 安装使用 DSH plugin/pnpm 与 `--offline`，宿主 DSH 提供其自身的依赖。
+- daemon 认领/准备屏障和跨进程共享执行锁共同阻止运行时切换。
+  已验证但忙碌的候选等待空闲，续接不重复安装或消耗模型调用。
+  安装或激活失败保留/恢复旧活动记录，同一失败候选持久隔离。
+- 活动记录保留 N-1 bridge/profile；DSH 可执行路径和精确测试版本随代次固定。
+  外部 DSH 安装目录被手工原地覆盖时，路径记录本身不等于旧安装备份；
+  通用 DSH 安装备份/恢复仍是交付缺口，不能据此声称跨 DSH 版本回退已验收。
+- 发布器从运行包派生本环境 artifact/state 路径，`MULTICA_DSH_MANAGED_PROFILE=0`
+  停用受控供给并恢复原 `multica` 入口；旧 profile 和外部 bridge 目录尚未删除。
+  健康接口返回供给状态及活动版本/哈希，不返回路径和凭据。
+
+本地验证：bridge typecheck、25 项单元测试和构建通过；Go DSH/供给定向测试通过；
+发布器原有45项回归和新增制品验证通过。真实 tarball 独立 profile 的普通任务、
+context、session 续跑和不调用模型的 `/plan` 通过；供给器真实 staging→smoke→激活通过，
+新增空 pnpm 缓存与 `--offline` 安装检查通过。真实检查使用本机 DSH 账号来源，
+不构成固定 int 业务验收或生产发布；所有样本都在独立临时目录和专属 profile 中执行。
+DSH 自身的模型列表诊断可能混入 stdout，Go adapter 继续按既有协议跳过非 JSON 行。
+
+当前阶段没有生产发布授权，生产仍以现场健康版本为准。后续 DSH 问答与计划卡片
+复用 `feature/codex-codebuddy-integration` 的公共交互与轨迹组件，
+不额外建立平行审批表或通用界面；DSH 的挂起续跑行为单独扩展。

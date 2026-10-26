@@ -70,6 +70,7 @@ type HealthResponse struct {
 	// 进去——上次屏障检查时正忙，空闲后会重试。为空时省略，老消费端看不出变化。仅
 	// 诊断用途：没有任何逻辑依赖它。
 	ReloadPendingReason string            `json:"reload_pending_reason,omitempty"`
+	DSHProfileSupply    *dshSupplyHealth  `json:"dsh_profile_supply,omitempty"`
 	Workspaces          []healthWorkspace `json:"workspaces"`
 }
 
@@ -331,6 +332,7 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			SkippedAgents:         d.skippedAgentsSnapshot(),
 
 			ReloadPendingReason: d.reloadPending(),
+			DSHProfileSupply:    managedDshHealth(),
 			Workspaces:          wsList,
 		}
 		if reporter, ok := d.repoCache.(interface{ Activity() repocache.Activity }); ok {
