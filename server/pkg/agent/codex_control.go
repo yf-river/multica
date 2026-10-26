@@ -7,6 +7,48 @@ import (
 	"strings"
 )
 
+func codexGoalActivatingCommand(command string) bool {
+	command = strings.TrimSpace(command)
+	if !strings.HasPrefix(command, "/goal ") {
+		return false
+	}
+	switch strings.TrimSpace(strings.TrimPrefix(command, "/goal")) {
+	case "", "show", "pause", "clear", "complete":
+		return false
+	default:
+		return true
+	}
+}
+
+func (c *codexClient) observeGoalState(method string, params map[string]any) {
+	switch method {
+	case "thread/goal/cleared":
+		c.goalActive.Store(false)
+		c.goalStatus.Store("")
+	case "thread/goal/updated":
+		goal, _ := params["goal"].(map[string]any)
+		status, _ := goal["status"].(string)
+		c.goalStatus.Store(status)
+		c.goalActive.Store(status == "active")
+		if status == "active" {
+			c.goalEngaged.Store(true)
+		}
+	}
+}
+
+func (c *codexClient) goalStopError() string {
+	if !c.goalEngaged.Load() {
+		return ""
+	}
+	status, _ := c.goalStatus.Load().(string)
+	switch status {
+	case "blocked", "budgetLimited", "usageLimited":
+		return "codex native goal stopped: " + status
+	default:
+		return ""
+	}
+}
+
 func (c *codexClient) applyRuntimeCommand(ctx context.Context, opts ExecOptions) (string, error) {
 	command := strings.TrimSpace(opts.Command)
 	if command == "" {
@@ -50,7 +92,7 @@ func (c *codexClient) applyRuntimeCommand(ctx context.Context, opts ExecOptions)
 				Status    string `json:"status"`
 			} `json:"goal"`
 		}
-		if json.Unmarshal(current, &state) == nil && state.Goal != nil && state.Goal.Objective == action && state.Goal.Status != "complete" {
+		if json.Unmarshal(current, &state) == nil && state.Goal != nil && state.Goal.Objective == action && state.Goal.Status == "active" {
 			c.emitRuntime("goal", map[string]any{"state": json.RawMessage(current)})
 			return codexGoalSummary(current), nil
 		}

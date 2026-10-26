@@ -1280,6 +1280,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			trySendString(semanticActivityCh, description)
 		},
 		onTurnDone: func(aborted bool) {
+			// 原生 Goal 的回合边界不是任务边界，续跑由 Codex 自己调度。
+			if !aborted && c.goalActive.Load() && c.getTurnError() == "" {
+				return
+			}
 			select {
 			case turnDone <- aborted:
 			default:
@@ -1552,7 +1556,18 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			return
 		}
 		c.setThreadID(threadID)
-		commandOutput, commandErr := c.applyRuntimeCommand(runCtx, opts)
+		// 先建立带准确协作模式的用户回合，再激活 Goal。空闲线程上的
+		// goal/set 会自行启动回合，不能随后再发送一次 turn/start。
+		deferGoalCommand := !opts.CommandOnly && codexGoalActivatingCommand(opts.Command)
+		if deferGoalCommand {
+			c.goalActive.Store(true)
+			c.goalEngaged.Store(true)
+		}
+		var commandOutput string
+		var commandErr error
+		if !deferGoalCommand {
+			commandOutput, commandErr = c.applyRuntimeCommand(runCtx, opts)
+		}
 		if commandErr != nil {
 			resCh <- Result{Status: "failed", Error: commandErr.Error(), SessionID: threadID, DurationMs: time.Since(startTime).Milliseconds()}
 			return
@@ -1615,6 +1630,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					finishFirstItemWait("turn_failed")
 					finalStatus = "failed"
 					finalError = errMsg
+				} else if errMsg := c.goalStopError(); errMsg != "" {
+					finishFirstItemWait("goal_stopped")
+					finalStatus = "failed"
+					finalError = errMsg
 				} else {
 					finishFirstItemWait("turn_completed")
 				}
@@ -1634,6 +1653,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		}
 		turnNotificationGate.arm()
 		_, err = c.request(runCtx, "turn/start", turnParams)
+		if err == nil && deferGoalCommand {
+			_, err = c.applyRuntimeCommand(runCtx, opts)
+		}
 		if err != nil {
 			if runCtx.Err() != nil {
 				finishRunContextDone()
@@ -1676,6 +1698,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		for waitingForTurn {
 			select {
 			case aborted := <-turnDone:
+				if !aborted && c.getTurnError() == "" && c.goalActive.Load() {
+					continue
+				}
 				finishTurn(aborted)
 			case <-guardianRateLimitTrip:
 				waitingForTurn = false
@@ -2376,6 +2401,10 @@ type codexClient struct {
 
 	notificationProtocol string // "unknown"、"legacy"、"raw"
 	turnCompleted        bool
+	completedWithoutID   bool
+	goalActive           atomic.Bool
+	goalEngaged          atomic.Bool
+	goalStatus           atomic.Value // string，原生目标停止原因
 
 	usageMu       sync.Mutex
 	usage         TokenUsage // 由回合事件累积而来
@@ -2576,6 +2605,20 @@ func codexRequestContextError(ctx context.Context) error {
 // reached that authoritative completion boundary; callers must force-stop the
 // process tree when it is false.
 func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, configuredTimeout time.Duration, logger *slog.Logger) bool {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if c.goalActive.Load() && threadID != "" {
+		// 先保存暂停状态，防止中断后的空闲钩子或进程恢复继续执行目标。
+		pauseCtx, cancelPause := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := c.request(pauseCtx, "thread/goal/set", map[string]any{"threadId": threadID, "status": "paused", "origin": "automatic"})
+		cancelPause()
+		if err != nil {
+			logger.Warn("codex goal pause before interrupt failed", "thread_id", threadID, "error", err)
+		} else {
+			c.goalActive.Store(false)
+		}
+	}
 	select {
 	case <-turnDone:
 		// Completion won the cancellation race; usage has already been captured.
@@ -2586,9 +2629,6 @@ func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, c
 	turnID := c.activeTurnID()
 	if threadID == "" || turnID == "" {
 		return false
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	interruptTimeout := configuredTimeout
 	if interruptTimeout <= 0 {
@@ -2945,6 +2985,9 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 		c.interactions.resolve(string(id))
 		return
 	}
+	// resume 的目标快照属于当前持久状态；即使历史回合通知被门挡住，
+	// 也必须在新回合结束前知道是否仍由原生 Goal 负责续跑。
+	c.observeGoalState(method, params)
 	if c.acceptNotification != nil && !c.acceptNotification(method, params) {
 		if c.onDiscardedNotification != nil {
 			c.onDiscardedNotification(method, params)
@@ -3405,6 +3448,9 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 
 	case "turn/started":
 		if turnID := extractNestedString(params, "turn", "id"); turnID != "" {
+			if turnID != c.usageTurnID() {
+				c.turnCompleted = false
+			}
 			c.setActiveTurnID(turnID)
 		}
 		if c.onMessage != nil {
@@ -3416,10 +3462,14 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		status := extractNestedString(params, "turn", "status")
 		threadID, _ := params["threadId"].(string)
 		c.cfg.Logger.Info("codex turn/completed received", "thread_id", threadID, "turn_id", turnID, "status", status)
-		if c.turnCompleted {
+		if c.turnCompleted || (turnID == "" && c.completedWithoutID) {
 			return
 		}
 		c.turnCompleted = true
+		if turnID == "" {
+			// 缺少 ID 的旧完成事件只能接收一次，无法归属到后续回合。
+			c.completedWithoutID = true
+		}
 		c.setActiveTurnID("")
 		aborted := status == "cancelled" || status == "canceled" ||
 			status == "aborted" || status == "interrupted"
