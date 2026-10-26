@@ -10,6 +10,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("ApiClient task history", () => {
+  it("retains tools and replies when persisted runtime telemetry is present", async () => {
+    const rows = [
+      { task_id: "task", seq: 1, type: "runtime", content: '{"kind":"process","provider":"codebuddy","reused":false}' },
+      { task_id: "task", seq: 2, type: "tool_use", tool: "Bash", input: { command: "printf proof" } },
+      { task_id: "task", seq: 3, type: "tool_result", tool: "Bash", output: "proof" },
+      { task_id: "task", seq: 4, type: "runtime", content: '{"kind":"context","provider":"codebuddy"}' },
+      { task_id: "task", seq: 5, type: "text", content: "proof" },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(rows), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+
+    const messages = await new ApiClient("https://api.example.test").listTaskMessages("task");
+    expect(messages).toMatchObject(rows);
+  });
+});
+
 describe("ApiClient Mika conversation reuse", () => {
   it("scopes the reuse request and parses malformed responses", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 123 }), { status: 200, headers: { "Content-Type": "application/json" } }));

@@ -275,6 +275,7 @@ export function buildRunReviewEventRows(
       if (chain.task_id && chain.result_seq) coveredToolMessageKeys.add(toolMessageKey(chain.task_id, chain.result_seq));
     }
     for (const message of node.task_messages ?? []) {
+      if (message.type === "runtime") continue;
       if ((message.type === "tool_use" || message.type === "tool_result") && coveredToolMessageKeys.has(toolMessageKey(message.task_id, message.seq))) {
         continue;
       }

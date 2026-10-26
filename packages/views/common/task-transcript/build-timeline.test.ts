@@ -14,6 +14,19 @@ function message(seq: number, type: TaskMessagePayload["type"], content?: string
 }
 
 describe("task transcript timeline", () => {
+  it("renders tool history and replies while leaving telemetry to the context view", () => {
+    const items = buildTimeline([
+      message(1, "runtime", '{"kind":"process","provider":"codebuddy"}'),
+      { ...message(2, "tool_use"), tool: "Bash", input: { command: "printf proof" } },
+      { ...message(3, "tool_result"), tool: "Bash", output: "proof" },
+      message(4, "runtime", '{"kind":"context","provider":"codebuddy"}'),
+      message(5, "text", "proof"),
+    ]);
+
+    expect(items.map((item) => item.type)).toEqual(["tool_use", "tool_result", "text"]);
+    expect(items.at(-1)?.content).toBe("proof");
+  });
+
   it("merges adjacent text and thinking fragments split by streaming flushes", () => {
     const items = buildTimeline([
       message(2, "text", "world"),

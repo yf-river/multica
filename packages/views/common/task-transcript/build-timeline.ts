@@ -95,6 +95,8 @@ function redactTimelineItems(items: TimelineItem[]): TimelineItem[] {
 export function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   for (const msg of msgs) {
+    // 遥测由运行上下文界面消费，不作为对话正文或过程步骤显示。
+    if (msg.type === "runtime") continue;
     items.push({
       id: msg.id,
       taskId: msg.task_id,

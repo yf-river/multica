@@ -328,7 +328,7 @@ export interface TaskMessagePayload {
   issue_id: string;
   chat_session_id?: string;
   seq: number;
-  type: "text" | "thinking" | "tool_use" | "tool_result" | "error";
+  type: "text" | "thinking" | "tool_use" | "tool_result" | "error" | "runtime";
   tool?: string;
   content?: string;
   input?: Record<string, unknown>;
