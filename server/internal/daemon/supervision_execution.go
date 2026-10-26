@@ -67,6 +67,10 @@ func supervisionMCPConfig(task Task, envRoot, workspacesRoot, provider string) (
 		return nil, "", err
 	}
 	server := map[string]any{"command": executable, "args": []string{"supervision-mcp", manifest}}
+	if provider == "codebuddy" {
+		// 无内置 ToolSearch 时直接暴露本任务唯一的 MCP。
+		server["alwaysLoad"] = true
+	}
 	if provider == "codex" {
 		// Codex 的 MCP 子进程仅继承白名单变量；这里只传任务鉴权所需的变量名。
 		server["env_vars"] = []string{"MULTICA_TOKEN", "MULTICA_SERVER_URL", "MULTICA_WORKSPACE_ID", "MULTICA_AGENT_ID", "MULTICA_TASK_ID", "MULTICA_TASK_CONFIG_ROOT"}

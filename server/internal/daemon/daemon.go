@@ -7855,7 +7855,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "codebuddy" {
 		hookConfig := agent.Config{CLIVersion: resolvedVersion, BuiltinRuntime: !usesCustomProfileCommand}
 		d.configureCodebuddyResident(task, env, &hookConfig)
-		taskCtx.CodebuddyBriefViaHook = agent.CodebuddyNativeHooksEnabled(hookConfig, agent.ExecOptions{NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
+		taskCtx.CodebuddyBriefViaHook = task.SupervisionPrompt == "" && agent.CodebuddyNativeHooksEnabled(hookConfig, agent.ExecOptions{NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
 	}
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
@@ -7974,6 +7974,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, os.Environ(), agentEnv, agentCustomEnv, d.logger); err != nil {
 		return TaskResult{}, err
+	}
+	if provider == "codebuddy" && task.SupervisionPrompt != "" {
+		directory, setupErr := agent.PrepareCodebuddySupervisionConfig(env.RootDir, agentEnv)
+		if setupErr != nil {
+			return TaskResult{}, fmt.Errorf("prepare CodeBuddy supervision configuration: %w", setupErr)
+		}
+		agentEnv["CODEBUDDY_CONFIG_DIR"] = directory
+		agentEnv["CODEBUDDY_PLUGIN_DIRS"] = ""
 	}
 	// overlay 一旦建成就是权威，所以命令行上的任何东西都不能把 HERMES_HOME 指回
 	// overlay 之外。两个 argv 区段对着"解析器读过的那份同一 argv"一起剥：一次选择
@@ -8151,6 +8159,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// 监督模式显式传递 Agent 指令，避免依赖 CodeBuddy 的默认文件加载。
 		if provider == "codebuddy" {
 			execOpts.SystemPrompt = instructions
+			execOpts.MCPToolsOnly = true
 		}
 		execOpts.Timeout = 10 * time.Minute
 		execOpts.McpConfig = json.RawMessage(`{}`)

@@ -31,7 +31,7 @@ func (d *Daemon) initCodebuddyProcessPool() error {
 }
 
 func (d *Daemon) configureCodebuddyResident(task Task, env *execenv.Environment, cfg *agent.Config) {
-	if d.codebuddyPool == nil || !cfg.BuiltinRuntime || !agent.CodebuddyResidentSupported(cfg.CLIVersion) || task.LifeJobID != "" {
+	if d.codebuddyPool == nil || !cfg.BuiltinRuntime || !agent.CodebuddyResidentSupported(cfg.CLIVersion) || task.LifeJobID != "" || task.SupervisionPrompt != "" {
 		return
 	}
 	conversation := "issue:" + task.IssueID

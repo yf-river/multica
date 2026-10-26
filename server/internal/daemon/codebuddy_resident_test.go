@@ -45,7 +45,7 @@ func TestCodebuddyResidentOwnershipAndGCPin(t *testing.T) {
 			t.Fatalf("%s change reused another owner's logical session", field)
 		}
 	}
-	for _, other := range []Task{{WorkspaceID: "workspace", RuntimeID: "runtime", AgentID: "agent"}, {ChatSessionID: "chat", LifeJobID: "life"}} {
+	for _, other := range []Task{{WorkspaceID: "workspace", RuntimeID: "runtime", AgentID: "agent"}, {ChatSessionID: "chat", LifeJobID: "life"}, {ChatSessionID: "chat", SupervisionPrompt: "supervision input"}} {
 		if configure(other).CodebuddyPool != nil {
 			t.Fatal("task without a supported conversation entered the resident pool")
 		}

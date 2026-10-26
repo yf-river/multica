@@ -125,6 +125,7 @@ type ExecOptions struct {
 	// LifeCognition 标记本次执行是否属于生命认知（life cognition）流水线。
 	// Provider 据此套用生命专属的上下文与输出契约。
 	LifeCognition bool
+	MCPToolsOnly  bool // 监督执行只暴露专用 MCP，普通任务使用原生工具配置。
 }
 
 // runContext 根据配置的单次运行超时，为 agent 子进程派生出执行上下文。

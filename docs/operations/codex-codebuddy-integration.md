@@ -594,3 +594,29 @@ Agent ID 和已结束子回合仍被拒绝。恢复执行继续从当前租约�
   （17.961s）；`phase26-build.log`、`phase26-vet.log` 的 CLI 构建和 Go vet 通过。
 
 角色工具权限、知识库监督、完整业务和性能矩阵、固定 int 和生产验收仍未完成。
+
+## 第二十七阶段：CodeBuddy 监督专用工具
+
+CodeBuddy 监督使用私有任务配置目录，保留模型定义、默认模型和变体选择，账号
+认证沿用原 HOME。人工启动 hooks、插件加载目录和工具扩展不进入该执行配置。
+监督采用一次性 stream-json 进程，关闭内置工具和用户 MCP；专用监督 MCP 设置
+`alwaysLoad=true`，使其无需内置 ToolSearch 即可使用。原生 Goal 与常驻租约不能
+进入这条路径。普通任务和交付审查继续使用各自的工具与人工设置。
+
+- `phase27-codebuddy-project-hook-surface.log`：真实 2.176 CLI 将请求发到自有
+  本地采集端，主提示词存在，实际工具列表只有指定 MCP 工具，人工与项目启动
+  hook 均未执行。模型端是本地 HTTP 采集器，没有真实推理。
+- `phase27-native-supervision-mcp.log`：真实 Flash 推理和 Multica 自身的监督
+  MCP 通过（10.348s）。模型使用配置中的默认模型，仅调用一次监督读取工具，
+  返回授权文件中未出现在提示词的随机内容；MCP 保存了读取审计，人工启动
+  hook 未运行，有实际模型用量。来源及审计为本任务自有离线清单，没有调用
+  业务服务端的监督保存或结果校验 API，不等同于线上监督闭环。
+- `phase27-agent-regression.log`：CodeBuddy、Hermes 和 DSH 相关 race 回归通过
+  （18.001s）。`phase27-daemon-final-tests.log` 的监督、常驻与简报相关检查通过
+  （daemon 1.278s、execenv 1.078s）。模型设置保留、人工规则隔离及工具参数
+  不被自定义参数扩大由定向测试核对。
+- `phase27-build.log`、`phase27-vet.log`：CLI 构建与相关 Go vet 通过。
+
+Codex 的本地采集端对照中，未限制基线也没有暴露工具，不能据此证明监督隔离。
+Codex 角色权限、知识库和监督平台闭环、完整业务与性能矩阵、固定 int 和生产
+业务验收仍未完成。

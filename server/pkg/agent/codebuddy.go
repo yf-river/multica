@@ -21,6 +21,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -73,6 +74,11 @@ var codebuddyBlockedArgs = map[string]blockedArgMode{
 // ExtraArgs 经 blocked 清单过滤后接上。ExtraArgs 是 daemon 自己注入的扩展参数，
 // CustomArgs 是用户配置的，二者分别过滤再拼接。
 func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
+	if opts.MCPToolsOnly {
+		// 监督输入和角色指令由平台提供；人工工具扩展不进入本次权限范围。
+		opts.ExtraArgs, opts.CustomArgs = nil, nil
+		opts.CodebuddySettingsPath = ""
+	}
 	permissionMode := codebuddyPermissionMode(opts)
 	args := []string{
 		"-p",
@@ -140,6 +146,9 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 	if opts.ApprovalPolicy == "never" {
 		args = append(args, "--subagent-permission-mode", "dontAsk", "--permission-mode-before-plan", "dontAsk")
 	}
+	if opts.MCPToolsOnly {
+		args = append(args, "--tools", "", "--strict-mcp-config", "--setting-sources", "user", "--settings", `{"disableAllHooks":true}`)
+	}
 	return args
 }
 
@@ -158,6 +167,9 @@ func codebuddyNativeRequested(opts ExecOptions) bool {
 }
 
 func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if opts.MCPToolsOnly && (codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil) {
+		return nil, errors.New("CodeBuddy MCP-only supervision requires an isolated one-shot execution")
+	}
 	if codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil {
 		return b.executeNative(ctx, prompt, opts)
 	}
