@@ -101,6 +101,18 @@ export function SettingsCard({
 }
 
 /**
+ * 卡片内的分组小标题。用于需要在一张卡片里镜像侧边栏分区的地方（工作区
+ * 菜单），避免为每个小分组再套一张卡片。
+ */
+export function SettingsGroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <h4 className="px-4 pt-4 pb-1 text-caption font-medium text-muted-foreground">
+      {children}
+    </h4>
+  );
+}
+
+/**
  * 控件列宽度档位。同一张卡片内，所有文本输入控件共用 `text` 档以保证边缘对齐；
  * 只有当字段本身就短（如代码、枚举下拉）时才降到更小的档位——这种差异必须是
  * 有意为之。请选择档位，而不是给每一行临时加宽度。

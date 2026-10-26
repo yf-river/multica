@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { paths, isGlobalPath } from "./paths";
+import { parseLifeTab, paths, isGlobalPath } from "./paths";
 
 describe("paths.workspace(slug)", () => {
   const ws = paths.workspace("acme");
@@ -62,5 +62,20 @@ describe("isGlobalPath", () => {
   it("returns false for workspace-scoped paths", () => {
     expect(isGlobalPath("/acme/issues")).toBe(false);
     expect(isGlobalPath("/")).toBe(false);
+  });
+});
+
+describe("parseLifeTab", () => {
+  it("keeps every declared tab", () => {
+    for (const tab of ["memory", "experiment", "observers", "chronicle"] as const) {
+      expect(parseLifeTab(tab)).toBe(tab);
+    }
+  });
+
+  it("falls back to memory for a missing or unknown tab", () => {
+    expect(parseLifeTab(null)).toBe("memory");
+    expect(parseLifeTab(undefined)).toBe("memory");
+    expect(parseLifeTab("")).toBe("memory");
+    expect(parseLifeTab("not-a-tab")).toBe("memory");
   });
 });

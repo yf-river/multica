@@ -4,6 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales-test/en/common.json";
+import enLayout from "../../locales-test/en/layout.json";
 import enSettings from "../../locales-test/en/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
@@ -33,10 +34,12 @@ vi.mock("@tanstack/react-query", () => ({
   }),
 }));
 
-vi.mock("@multica/core/paths", () => ({
+vi.mock("@multica/core/paths", async (importOriginal) => ({
+  // Spread the real module: @multica/core/workspace builds its menu model from
+  // LIFE_TABS / parseLifeTab, so only the context hooks below are stubbed.
+  ...(await importOriginal<typeof import("@multica/core/paths")>()),
   useCurrentWorkspace: () => workspaceRef.current,
   useHasOnboarded: () => true,
-  WORKSPACE_PAGES: Object.fromEntries(["inbox", "issues", "projects", "autopilots", "agents", "squads", "usage", "runReviews", "runtimes", "skills", "mcp", "quickActions", "health", "meals", "goals", "life"].map(key => [key, { navKey: key }])),
   resolvePostAuthDestination: () => "/",
 }));
 
@@ -91,7 +94,7 @@ vi.mock("sonner", () => ({
 import { WorkspaceTab } from "./workspace-tab";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, settings: enSettings },
+  en: { common: enCommon, layout: enLayout, settings: enSettings },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {

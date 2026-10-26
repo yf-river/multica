@@ -42,7 +42,7 @@ import {
   useStopLifeExperimentRound,
   useUpdateLifeMemory,
 } from "@multica/core/life";
-import { LIFE_TABS, useWorkspaceId, type LifeTab } from "@multica/core/paths";
+import { parseLifeTab, useWorkspaceId, type LifeTab } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { LifeChronicleEntry, LifeExperiment, LifeExperimentRound, LifeIdentityVersion, LifeMemory, LifeObservationSeatResponse } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -51,11 +51,6 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
-
-/** 从 URL query 里解析当前激活的标签页；非法值回退到 memory。 */
-function parseLifeTab(value: string | null): LifeTab {
-  return LIFE_TABS.includes(value as LifeTab) ? (value as LifeTab) : "memory";
-}
 
 /** 生活页主组件：按 tab 分发渲染记忆/实验/观察席/编年史各面板。 */
 export function LifePage() {
