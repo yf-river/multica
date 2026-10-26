@@ -576,7 +576,7 @@ function AssistantMessage({
           isStreaming={!message}
         />
       )}
-      {canFetchTaskMessages && taskId && (isPending || canRegenerateQuickActions) && <TaskInteractionPanel taskId={taskId} active={isPending} />}
+      {canFetchTaskMessages && taskId && (isPending || canRegenerateQuickActions || processRequested) && <TaskInteractionPanel taskId={taskId} active={isPending} />}
       {isNoResponse ? (
         <NoResponseNotice />
       ) : message && timeline.length === 0 ? (
