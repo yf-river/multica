@@ -13,9 +13,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -206,4 +208,99 @@ func (h *Handler) ReadKnowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"uri": uri, "result": raw})
+}
+
+// UploadKnowledgeResource ingests one file into the workspace knowledge base.
+// POST /api/workspaces/{id}/knowledge/resources (multipart field "file")
+func (h *Handler) UploadKnowledgeResource(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	if err := r.ParseMultipartForm(12 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid multipart upload")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 10<<20+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read file")
+		return
+	}
+	if len(data) > 10<<20 {
+		writeError(w, http.StatusRequestEntityTooLarge, "file exceeds 10 MiB")
+		return
+	}
+	name := filepath.Base(header.Filename)
+	client := newKnowledgeClient()
+	uploaded, _, err := client.upload(r.Context(), workspaceID, name, data)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var envelope struct {
+		Result struct {
+			TempFileID string `json:"temp_file_id"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(uploaded, &envelope); err != nil || envelope.Result.TempFileID == "" {
+		writeError(w, http.StatusBadGateway, "openviking did not return a temp_file_id")
+		return
+	}
+	root := "viking://resources/workspaces/" + workspaceID
+	payload := map[string]any{
+		"temp_file_id": envelope.Result.TempFileID,
+		"parent":       root,
+		"reason":       "Uploaded from Multica knowledge",
+		"wait":         false,
+	}
+	added, _, err := client.do(r.Context(), http.MethodPost, "/api/v1/resources", nil, payload, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"filename": name, "result": added})
+}
+
+// upload posts one file to OpenViking's temp-upload endpoint.
+func (c *knowledgeClient) upload(ctx context.Context, workspaceID, filename string, data []byte) (json.RawMessage, int, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, 0, err
+	}
+	if _, err = part.Write(data); err != nil {
+		return nil, 0, err
+	}
+	if err = writer.Close(); err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/resources/temp_upload", &body)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-OpenViking-User", workspaceID)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	resp, err := (&http.Client{Timeout: openVikingRequestTimeout}).Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, resp.StatusCode, fmt.Errorf("openviking upload returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return json.RawMessage(raw), resp.StatusCode, nil
 }

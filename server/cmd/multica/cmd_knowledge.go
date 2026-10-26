@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -125,7 +126,7 @@ func init() {
 	knowledgeSearchCmd.Flags().String("path", "", "restrict the search to this workspace URI")
 	knowledgeReadCmd.Flags().Int("offset", 0, "starting line number")
 	knowledgeReadCmd.Flags().Int("limit", -1, "number of lines to read (-1 reads to the end)")
-	knowledgeCmd.AddCommand(knowledgeStatusCmd, knowledgeListCmd, knowledgeSearchCmd, knowledgeReadCmd)
+	knowledgeCmd.AddCommand(knowledgeStatusCmd, knowledgeListCmd, knowledgeSearchCmd, knowledgeReadCmd, knowledgeAddCmd)
 }
 
 var knowledgeReadCmd = &cobra.Command{
@@ -152,5 +153,29 @@ var knowledgeReadCmd = &cobra.Command{
 			return err
 		}
 		return printKnowledgeResult(cmd, out.Result)
+	},
+}
+
+var knowledgeAddCmd = &cobra.Command{
+	Use:   "add <file>",
+	Short: "Upload a file into the workspace knowledge base",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAPIClient(cmd)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(args[0])
+		if err != nil {
+			return fmt.Errorf("read file: %w", err)
+		}
+		if len(data) > 10<<20 {
+			return fmt.Errorf("file exceeds 10 MiB")
+		}
+		result, err := client.UploadKnowledgeResource(cmd.Context(), data, args[0])
+		if err != nil {
+			return err
+		}
+		return printKnowledgeResult(cmd, result)
 	},
 }

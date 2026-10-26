@@ -3446,3 +3446,8 @@ export const KnowledgeSearchResponseSchema = z.object({
   target_uri: z.string(),
   result: z.unknown(),
 }).loose();
+
+export const KnowledgeUploadResponseSchema = z.object({
+  filename: z.string(),
+  result: z.unknown(),
+}).loose();

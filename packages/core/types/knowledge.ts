@@ -18,3 +18,8 @@ export interface KnowledgeSearchResponse {
   target_uri: string;
   result: unknown;
 }
+
+export interface KnowledgeUploadResponse {
+  filename: string;
+  result: unknown;
+}

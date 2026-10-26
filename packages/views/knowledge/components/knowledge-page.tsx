@@ -3,9 +3,10 @@
 // 工作区知识库：OpenViking 的只读浏览与语义搜索。
 // 服务端代理负责工作区身份与凭据，浏览器只拿结果。
 
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { BookOpenText, Loader2, Search } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BookOpenText, Loader2, Search, Upload } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/paths";
 import { Button } from "@multica/ui/components/ui/button";
@@ -51,8 +52,21 @@ export function KnowledgePage() {
     queryKey: ["knowledge", "status", wsId],
     queryFn: () => api.getKnowledgeStatus(wsId),
   });
+  const queryClient = useQueryClient();
+  const fileInput = useRef<HTMLInputElement>(null);
   const search = useMutation({
     mutationFn: (value: string) => api.searchKnowledge(wsId, value, 10),
+  });
+  const upload = useMutation({
+    mutationFn: (file: File) => api.uploadKnowledgeResource(wsId, file),
+    onSuccess: () => {
+      toast.success(t(($) => $.knowledge.upload_done));
+      void queryClient.invalidateQueries({ queryKey: ["knowledge", "resources", wsId] });
+      void queryClient.invalidateQueries({ queryKey: ["knowledge", "status", wsId] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : t(($) => $.knowledge.upload_failed));
+    },
   });
   const hits = useMemo(() => collectHits(search.data?.result), [search.data]);
   const healthy = status.data?.healthy === true;
@@ -69,9 +83,30 @@ export function KnowledgePage() {
         <div className="mx-auto max-w-4xl space-y-4 p-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-body text-muted-foreground">{t(($) => $.knowledge.subtitle)}</p>
-            <span className={`rounded border px-2 py-0.5 text-caption ${healthy ? "border-success/40 text-success" : "border-warning/40 text-warning"}`}>
-              {healthy ? t(($) => $.knowledge.status_ok) : t(($) => $.knowledge.status_down)}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`rounded border px-2 py-0.5 text-caption ${healthy ? "border-success/40 text-success" : "border-warning/40 text-warning"}`}>
+                {healthy ? t(($) => $.knowledge.status_ok) : t(($) => $.knowledge.status_down)}
+              </span>
+              <input
+                ref={fileInput}
+                type="file"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) upload.mutate(file);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!healthy || upload.isPending}
+                onClick={() => fileInput.current?.click()}
+              >
+                {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {upload.isPending ? t(($) => $.knowledge.uploading) : t(($) => $.knowledge.upload)}
+              </Button>
+            </div>
           </div>
           <form
             className="flex gap-2"

@@ -253,7 +253,7 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
 import type { IssueExecutionTreeResponse, TaskContextResponse } from "../types/issue-execution";
-import type { KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus } from "../types/knowledge";
+import type { KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus, KnowledgeUploadResponse } from "../types/knowledge";
 import {
   AgentTaskListSchema,
   EMPTY_ISSUE_EXECUTION_TREE_RESPONSE,
@@ -262,6 +262,7 @@ import {
   KnowledgeStatusSchema,
   KnowledgeResourcesResponseSchema,
   KnowledgeSearchResponseSchema,
+  KnowledgeUploadResponseSchema,
   IssueTraceEventsResponseSchema,
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListSchema,
@@ -2647,6 +2648,20 @@ export class ApiClient {
       EMPTY_ISSUE_EXECUTION_TREE_RESPONSE as IssueExecutionTreeResponse,
       { endpoint: "GET /api/issues/:id/execution-tree" },
     );
+  }
+
+  /** 上传一个文件到工作区知识库；文件大小上限由服务端强制。 */
+  async uploadKnowledgeResource(workspaceId: string, file: File): Promise<KnowledgeUploadResponse> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await this.fetchRaw(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/resources`, {
+      method: "POST",
+      body: form,
+    });
+    const raw = await res.json() as unknown;
+    return parseWithFallback<KnowledgeUploadResponse>(raw, KnowledgeUploadResponseSchema, { filename: file.name, result: null }, {
+      endpoint: "POST /api/workspaces/:id/knowledge/resources",
+    });
   }
 
   /** 工作区知识库状态。 */

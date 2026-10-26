@@ -675,6 +675,46 @@ func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, file
 	return result.ID, result.URL, nil
 }
 
+// UploadKnowledgeResource posts one file to the workspace knowledge base.
+// The server forwards it to OpenViking and returns the ingestion result.
+func (c *APIClient) UploadKnowledgeResource(ctx context.Context, fileData []byte, filename string) (json.RawMessage, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filepath.Base(filename))
+	if err != nil {
+		return nil, fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return nil, fmt.Errorf("write file data: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart writer: %w", err)
+	}
+	path := "/api/workspaces/" + c.WorkspaceID + "/knowledge/resources"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.setHeaders(req)
+	resp, err := c.HTTPClient.Do(req)
+	err = wrapTransport(req, err)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, newHTTPError(http.MethodPost, path, resp)
+	}
+	var out struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode upload response: %w", wrapBodyRead(req, err))
+	}
+	return out.Result, nil
+}
+
 // ImportSkillFile 把本地 skill 包（.skill / .zip）以 multipart/form-data POST 到
 // /api/skills/import，同时带上 on_conflict 策略。结构化的导入结果解码进 out。
 func (c *APIClient) ImportSkillFile(ctx context.Context, fileData []byte, filename, onConflict string, out any) error {

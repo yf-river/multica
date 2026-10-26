@@ -42,6 +42,10 @@
     "status_down": "不可用",
     "empty": "没有检索结果。",
     "error": "知识库请求失败。",
-    "results": "检索结果"
+    "results": "检索结果",
+    "upload": "上传",
+    "uploading": "上传中…",
+    "upload_done": "已提交，索引完成前搜索结果可能延迟。",
+    "upload_failed": "上传失败。"
   }
 }
