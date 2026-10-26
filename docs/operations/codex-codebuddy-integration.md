@@ -261,3 +261,17 @@ CodeBuddy 技能开关从 Agent 配置、claim、隔离环境到两条 CLI 启�
   没有继承任务令牌，也没有请求模型回合。
 - 该探测只证明原生原语；尚未接入平台常驻池、shell 环境切换或崩溃恢复，不能算作
   三轮热会话、性能改善或业务验收。私有证据为 `phase13-codex-resident-rebind-probe.json`。
+
+## 第十四阶段：Codex 子代理关闭策略
+
+- 新建与恢复线程在请求配置中关闭原生子代理。0.164.0 及以上同时关闭
+  `features.multi_agent_v2` 和 `agents.enabled`；已探测版本用于选择对应配置项。
+  请求配置在原生加载顺序中高于启动参数，不能被用户 `--enable multi_agent` 覆盖。
+- 任务 home 的环境变量开启通道已移除，受管配置始终关闭子代理；用户全局配置不写入。
+  CodeBuddy 普通任务已有前台子调用能力按原范围处理。
+- 新建 / 恢复请求与审批 race 检查通过（1.067s），任务 home 的环境覆盖、TOML 布局、
+  幂等与共存检查通过（1.063s）；真实原生纯控制检查通过（4.28s），没有模型用量上报。
+  此检查证明配置被 CLI 接受；完整模型任务矩阵仍待执行。
+- agent / middleware / handler Go vet 通过，证据为私有 `phase13-*` 文件。
+- 扩大的 Codex race 检查通过（71.775s）；明确排除第十二阶段已在原始基线复现的
+  `TestCodexInterruptCompletesNearConfiguredDeadline`，未把它计入通过结果。

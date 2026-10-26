@@ -1310,6 +1310,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		},
 	}
 
+	c.cfg.CodexVersion = codexVersion
 	c.interactions = newInteractionBroker("codex", runCtx, runtimeInteractionRequest(opts), c.onMessage)
 	// 后台开始读 stdout
 	readerDone := make(chan struct{})
@@ -2061,6 +2062,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		// 字段。developerInstructions 保持 nil 的原因见下方 thread/start 的说明。
 		resumeParams := map[string]any{
 			"threadId":              priorThreadID,
+			"config":                codexSubagentConfig(c.cfg.CodexVersion),
 			"cwd":                   opts.Cwd,
 			"model":                 nilIfEmpty(opts.Model),
 			"developerInstructions": nil,
@@ -2125,7 +2127,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"cwd":                    opts.Cwd,
 		"approvalPolicy":         nil,
 		"sandbox":                nil,
-		"config":                 nil,
+		"config":                 codexSubagentConfig(c.cfg.CodexVersion),
 		"baseInstructions":       nil,
 		"developerInstructions":  nil,
 		"compactPrompt":          nil,

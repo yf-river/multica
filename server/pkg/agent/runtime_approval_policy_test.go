@@ -50,11 +50,16 @@ func TestCodexNeverPolicyDeniesNativeRequests(t *testing.T) {
 func TestCodexNeverPolicyAppliesToNewAndResumedThreads(t *testing.T) {
 	for _, resume := range []string{"", "thread"} {
 		c, stdin, _ := newTestCodexClient(t)
+		c.cfg.CodexVersion = "0.164.0"
 		method := "thread/start"
 		if resume != "" {
 			method = "thread/resume"
 		}
 		wait := drainRPCScript(t, c, stdin, []rpcResponse{{method: method, result: json.RawMessage(`{"thread":{"id":"thread"}}`), assertFn: func(t *testing.T, params map[string]any) {
+			config, ok := params["config"].(map[string]any)
+			if !ok || config["features.multi_agent"] != false || config["features.multi_agent_v2"] != false || config["agents.enabled"] != false {
+				t.Errorf("%s did not enforce subagent policy: %v", method, config)
+			}
 			if params["approvalPolicy"] != "never" {
 				t.Errorf("%s did not override stored approval policy: %v", method, params)
 			}

@@ -55,7 +55,7 @@ func TestCodexRealNativeGoalLoop(t *testing.T) {
 	if executable == "" || home == "" || cwd == "" {
 		t.Fatal("explicit executable, isolated account home and work directory required")
 	}
-	b := &codexBackend{cfg: Config{ExecutablePath: executable, Env: map[string]string{"CODEX_HOME": home, "MULTICA_CODEX_MULTI_AGENT": "false"}, Logger: slog.Default()}}
+	b := &codexBackend{cfg: Config{ExecutablePath: executable, Env: map[string]string{"CODEX_HOME": home}, Logger: slog.Default()}}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
 	objective := "Emit the exact final text CODEX_NATIVE_GOAL_OK, then mark this goal complete using update_goal. Do not call any file or command tools and do not delegate."
