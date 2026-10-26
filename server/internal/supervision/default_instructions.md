@@ -21,6 +21,7 @@
 沟通与用量核对：
 - 用户问了什么、Agent 是否直接回答、是否兑现决定，可用原始问答及后续动作核验。回复简短且准确是合理行为；只有重复或冗长造成具体阅读、操作成本，或遗漏明确要求时才报告问题，不强求固定字数。
 - token 优化先核对真实调用、用量口径及来源关联，再识别重复装载上下文、无进展重试和重复输出。不能从日志字数推算 token、费用或节省比例。
+- DSH 运行提供 runtime_observation：requests、context_window、peak_pressure_tokens、projected_tokens、compactions、model_duration_ms、input/output/cache_read 以及 breakdown（system/tools/messages）。判断上下文膨胀、压缩是否发生、模型耗时占比时先读它；与 platform_usage 有明显差异时把差异写成具体 gaps，不要用日志字数补推。该字段缺失时不等于没有发生，只表示本运行没有采集到。
 - 一个看板任务可以有多次执行，多次执行可以续接同一 session；一次执行与外部 trace 的关系须有准确记录，不能假定一任务一 trace。外部标识缺失、只有时间匹配或用量明细与汇总不一致时，写出具体数据缺口；不宣称已找到全部轨迹或精确成本。
 - 跨任务问题必须有各任务的真实关联证据，不能把不同任务的合理操作合并成同一任务的重复浪费。优化建议给出预期收益、代价及验证办法，不为省 token 省略必要验收和用户要求。
 

@@ -33,24 +33,44 @@ type tracePreparation struct {
 }
 
 type traceReport struct {
-	Status           string                    `json:"preparation_status"`
-	Version          int64                     `json:"material_version"`
-	Local            []agent.ExecutionEvidence `json:"local_session_evidence"`
-	Comparisons      []requestComparison       `json:"request_comparisons"`
-	Run              string                    `json:"run_id"`
-	Runtime          string                    `json:"runtime"`
-	RuntimeSource    string                    `json:"runtime_source"`
-	Session          string                    `json:"session_id"`
-	QueryStart       time.Time                 `json:"query_start"`
-	QueryEnd         time.Time                 `json:"query_end"`
-	Usage            json.RawMessage           `json:"platform_usage"`
-	References       []traceReference          `json:"references"`
-	External         []json.RawMessage         `json:"agentlens_traces"`
-	Gaps             []string                  `json:"gaps"`
-	Requests         int                       `json:"preparation_http_requests"`
-	DiscoveryPending bool                      `json:"discovery_pending"`
-	DurationMS       int64                     `json:"preparation_duration_ms"`
-	QueriedAt        time.Time                 `json:"queried_at"`
+	Status             string                    `json:"preparation_status"`
+	Version            int64                     `json:"material_version"`
+	Local              []agent.ExecutionEvidence `json:"local_session_evidence"`
+	Comparisons        []requestComparison       `json:"request_comparisons"`
+	Run                string                    `json:"run_id"`
+	Runtime            string                    `json:"runtime"`
+	RuntimeSource      string                    `json:"runtime_source"`
+	Session            string                    `json:"session_id"`
+	QueryStart         time.Time                 `json:"query_start"`
+	QueryEnd           time.Time                 `json:"query_end"`
+	Usage              json.RawMessage           `json:"platform_usage"`
+	RuntimeObservation *runtimeObservation       `json:"runtime_observation,omitempty"`
+	References         []traceReference          `json:"references"`
+	External           []json.RawMessage         `json:"agentlens_traces"`
+	Gaps               []string                  `json:"gaps"`
+	Requests           int                       `json:"preparation_http_requests"`
+	DiscoveryPending   bool                      `json:"discovery_pending"`
+	DurationMS         int64                     `json:"preparation_duration_ms"`
+	QueriedAt          time.Time                 `json:"queried_at"`
+}
+
+// runtimeObservation summarizes DSH per-request context frames. It is evidence
+// about what the runtime actually loaded, not a second cost ledger.
+type runtimeObservation struct {
+	Requests        int   `json:"requests"`
+	ContextWindow   int64 `json:"context_window,omitempty"`
+	PeakPressure    int64 `json:"peak_pressure_tokens,omitempty"`
+	ProjectedPeak   int64 `json:"projected_tokens,omitempty"`
+	Compactions     int   `json:"compactions,omitempty"`
+	ModelDurationMS int64 `json:"model_duration_ms,omitempty"`
+	InputTokens     int64 `json:"input_tokens,omitempty"`
+	OutputTokens    int64 `json:"output_tokens,omitempty"`
+	CacheReadTokens int64 `json:"cache_read_tokens,omitempty"`
+	Breakdown       struct {
+		System   int64 `json:"system_tokens"`
+		Tools    int64 `json:"tools_tokens"`
+		Messages int64 `json:"message_tokens"`
+	} `json:"breakdown"`
 }
 
 type traceReference struct {
@@ -181,6 +201,80 @@ func (s *Service) prepareTrace(ctx context.Context, p tracePreparation) error {
 	rows.Close()
 	if err != nil {
 		return err
+	}
+
+	runtimeRows, runtimeErr := s.Pool.Query(ctx, `SELECT COALESCE(content,'') FROM task_message WHERE task_id=$1 AND type='runtime' ORDER BY seq,id LIMIT 5000`, p.Run)
+	if runtimeErr != nil {
+		return runtimeErr
+	}
+	observation := &runtimeObservation{}
+	for runtimeRows.Next() {
+		var body string
+		if err = runtimeRows.Scan(&body); err != nil {
+			runtimeRows.Close()
+			return err
+		}
+		var event struct {
+			Kind            string `json:"kind"`
+			ContextWindow   int64  `json:"context_window"`
+			PressureTokens  int64  `json:"pressure_tokens"`
+			ProjectedTokens int64  `json:"projected_tokens"`
+			DurationMS      int64  `json:"duration_ms"`
+			InputTokens     int64  `json:"input_tokens"`
+			OutputTokens    int64  `json:"output_tokens"`
+			CacheReadTokens int64  `json:"cache_read_tokens"`
+			Phase           string `json:"phase"`
+			Breakdown       *struct {
+				System   int64 `json:"system_tokens"`
+				Tools    int64 `json:"tools_tokens"`
+				Messages int64 `json:"message_tokens"`
+			} `json:"breakdown"`
+		}
+		if json.Unmarshal([]byte(body), &event) != nil {
+			continue
+		}
+		switch event.Kind {
+		case "context":
+			observation.Requests++
+			if event.ContextWindow > observation.ContextWindow {
+				observation.ContextWindow = event.ContextWindow
+			}
+			if event.PressureTokens > observation.PeakPressure {
+				observation.PeakPressure = event.PressureTokens
+			}
+			if event.ProjectedTokens > observation.ProjectedPeak {
+				observation.ProjectedPeak = event.ProjectedTokens
+			}
+			observation.ModelDurationMS += event.DurationMS
+			observation.InputTokens += event.InputTokens
+			observation.OutputTokens += event.OutputTokens
+			observation.CacheReadTokens += event.CacheReadTokens
+			if event.Breakdown != nil {
+				if event.Breakdown.System > 0 {
+					observation.Breakdown.System = event.Breakdown.System
+				}
+				if event.Breakdown.Tools > 0 {
+					observation.Breakdown.Tools = event.Breakdown.Tools
+				}
+				if event.Breakdown.Messages > 0 {
+					observation.Breakdown.Messages = event.Breakdown.Messages
+				}
+			}
+		case "compaction":
+			if event.Phase == "end" {
+				observation.Compactions++
+			}
+		}
+	}
+	if err = runtimeRows.Err(); err != nil {
+		runtimeRows.Close()
+		return err
+	}
+	runtimeRows.Close()
+	if observation.Requests > 0 || observation.Compactions > 0 {
+		p.Report.RuntimeObservation = observation
+	} else {
+		p.Report.Gaps = append(p.Report.Gaps, "runtime_context_telemetry_unavailable")
 	}
 
 	if investigate && (p.Runtime == "codebuddy" || p.Runtime == "codex") && len(p.Report.Local) == 0 {

@@ -2615,7 +2615,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
 	}
 	if useSkillRefs {
-		bundles, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+		roleKey := ""
+		if agent.SystemKey.Valid {
+			roleKey = agent.SystemKey.String
+		}
+		bundles, skillRefs, err := h.TaskService.LoadAgentSkillBundlesForRole(r.Context(), task.AgentID, roleKey)
 		if err != nil {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
 		}
@@ -2634,6 +2638,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		agentSkillCount = len(skills)
 		builtinSkills := h.TaskService.BuiltinSkills()
+		if agent.SystemKey.Valid {
+			builtinSkills = service.FilterBuiltinSkillsForRole(agent.SystemKey.String, builtinSkills)
+		}
 		builtinSkillCount = len(builtinSkills)
 		skills = append(skills, builtinSkills...)
 		resp.Agent.Skills = skills

@@ -65,3 +65,16 @@ func loadBuiltinSkill(name string) (AgentSkillData, bool) {
 	})
 	return skill, true
 }
+
+// FilterBuiltinSkillsForRole keeps platform playbooks that match the agent's
+// role. Supervision and issue review bring their own instructions and must not
+// carry issue/delivery playbooks that would compete with them; ordinary agents
+// keep the full set.
+func FilterBuiltinSkillsForRole(systemKey string, skills []AgentSkillData) []AgentSkillData {
+	switch systemKey {
+	case SupervisionSystemKey, "issue_review":
+		return nil
+	default:
+		return skills
+	}
+}

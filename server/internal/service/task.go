@@ -6595,11 +6595,26 @@ func (s *TaskService) skillsWithFiles(ctx context.Context, skills []db.Skill) ([
 // 对 workspace 技能读取错误采取 fail closed，理由见 LoadAgentSkills：由部分读取拼出的 bundle 集与正确集
 // 无法区分。
 func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID) ([]AgentSkillData, []AgentSkillRefData, error) {
+	return s.loadAgentSkillBundles(ctx, agentID, "")
+}
+
+// LoadAgentSkillBundlesForRole is LoadAgentSkillBundles with the platform
+// playbooks filtered for built-in roles. The returned refs are exactly the
+// bundles the daemon may fetch, so filtered skills never reach the runtime.
+func (s *TaskService) LoadAgentSkillBundlesForRole(ctx context.Context, agentID pgtype.UUID, systemKey string) ([]AgentSkillData, []AgentSkillRefData, error) {
+	return s.loadAgentSkillBundles(ctx, agentID, systemKey)
+}
+
+func (s *TaskService) loadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID, systemKey string) ([]AgentSkillData, []AgentSkillRefData, error) {
 	skills, err := s.LoadAgentSkills(ctx, agentID)
 	if err != nil {
 		return nil, nil, err
 	}
-	skills = append(skills, s.BuiltinSkills()...)
+	builtin := s.BuiltinSkills()
+	if systemKey != "" {
+		builtin = FilterBuiltinSkillsForRole(systemKey, builtin)
+	}
+	skills = append(skills, builtin...)
 	bundles, refs := BuildAgentSkillBundles(skills)
 	return bundles, refs, nil
 }
