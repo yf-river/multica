@@ -276,12 +276,34 @@ CodeBuddy 技能开关从 Agent 配置、claim、隔离环境到两条 CLI 启�
 - 扩大的 Codex race 检查通过（71.775s）；明确排除第十二阶段已在原始基线复现的
   `TestCodexInterruptCompletesNearConfiguredDeadline`，未把它计入通过结果。
 
-## 第十五阶段：CodeBuddy 常驻 MCP 配置探测
+## 第十五阶段：CodeBuddy 常驻原语与轮次上下文验证
 
 CodeBuddy 2.176.0 同一 ACP 进程连续 `session/new`、`session/load`，向同一会话传入
 不同的 MCP 环境标记。第二轮启动新 MCP 子进程，旧 MCP 子进程已退出；进程保留同一
 PID，MCP 均未继承任务令牌。探测只加载自有空工具 MCP，未发送模型 prompt，结束后
 自有进程已退出。私有证据为 `phase15-codebuddy-resident-rebind-probe.json`。
 
-该结果证明 MCP 配置可切换；CodeBuddy 的 shell 环境、任务简报与技能重载仍需独立验证，
-不能据此把当前每任务启动实现称为常驻，也不构成冷 / 热性能结论。
+该结果证明 MCP 配置可切换；当前每任务启动实现尚未替换为常驻池，也不构成冷 / 热性能结论。
+
+后续真实模型验证：
+
+- 同一进程修改 settings.env 后重新 load，第二轮 Bash 仍读到第一轮环境值。
+  此路径验证失败，不能作为轮次凭据更新方式；证据为
+  `phase15-codebuddy-resident-shell-env-probe.json`。
+- 原生 `PreToolUse` 钩子通过 `updatedInput` 为 Bash 加载当前轮次的环境快照，
+  不增加 `permissionDecision=allow`。客户端使用原生要求的 UUIDv7
+  `conversationRequestId`，钩子核对相同的 `generation_id`。
+- 同一 PID / 会话三个实际模型 prompt，分别输出第一轮值、第二轮值、未设置；
+  随机命名的独立 shell 证明文件逐轮核对通过，避免把输入路径当成输出。
+  旧 / 缺失 generation 和 idle 状态拒绝检查使用协议夹具通过。
+  证据为 `phase15-codebuddy-resident-shell-hook-probe.json`。
+- 原生 `UserPromptSubmit.additionalContext` 同一 PID / 会话连续两轮传入不同的随机
+  简报标记，两个实际模型答复均匹配当前轮，未调用工具。证据为
+  `phase15-codebuddy-resident-prompt-hook-probe.json`。
+- 纯控制集成测试补上实际版本探测后，Codex 的 v2 / agents.enabled 配置也由真实 CLI
+  接受；两种 CLI 共 4.07s，通过且没有模型用量上报，见
+  `phase15-native-versioned-role-smoke.log`。
+
+这些结果提供了可用的原生上下文入口；任务凭据、MCP、技能、简报、前台子调用和 Goal
+必须一起纳入平台 lease 生命周期。常驻池接入、Goal 自动轮次与子调用的 generation
+绑定、完整隔离恢复、业务对照、int / 生产验收仍未完成。

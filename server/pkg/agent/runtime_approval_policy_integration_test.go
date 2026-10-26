@@ -28,6 +28,13 @@ func TestRealNativeNeverApprovalPolicy(t *testing.T) {
 			cfg := Config{ExecutablePath: path, Logger: slog.Default(), Env: map[string]string{"HOME": home}}
 			var backend Backend
 			if provider == "codex" {
+				versionCtx, stopVersion := context.WithTimeout(context.Background(), 5*time.Second)
+				version, err := DetectVersion(versionCtx, NewCommand(path, nil))
+				stopVersion()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.CodexVersion = version
 				cfg.Env["CODEX_HOME"] = home
 				backend = &codexBackend{cfg: cfg}
 			} else {
