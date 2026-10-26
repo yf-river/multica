@@ -22,7 +22,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../i18n";
 
 interface RunContextDialogProps {
-  issueId: string;
+  issueId?: string;
   taskId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -42,10 +42,10 @@ function duration(ms: number | undefined): string {
   return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
 }
 
-export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunContextDialogProps) {
+export function RunContextDialog({ issueId = "", taskId, open, onOpenChange }: RunContextDialogProps) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
-  const query = useInfiniteQuery({ ...taskContextOptions(wsId, issueId, taskId), enabled: open && Boolean(wsId && issueId && taskId) });
+  const query = useInfiniteQuery({ ...taskContextOptions(wsId, issueId, taskId), enabled: open && Boolean(wsId && taskId) });
   const events = useMemo(() => query.data?.pages.flatMap((page) => page.events) ?? [], [query.data]);
   const summary = useMemo(() => summarizeTaskContext(events), [events]);
   const { contexts, compactions } = summary;
@@ -69,12 +69,16 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
           <p className="py-6 text-body text-muted-foreground">{t(($) => $.execution_log.context_empty)}</p>
         ) : (
           <div className="space-y-4">
+            {summary.hasUnobservedUsage && <p role="note" className="text-caption text-muted-foreground">{t(($) => $.execution_log.context_usage_partial)}</p>}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               <Metric label={t(($) => $.execution_log.context_requests)} value={String(contexts.length)} />
               <Metric label={t(($) => $.execution_log.context_peak)} value={compact(summary.peak)} />
               <Metric label={t(($) => $.execution_log.context_window)} value={compact(summary.window)} />
               <Metric label={t(($) => $.execution_log.context_model_time)} value={duration(summary.modelMs)} />
               <Metric label={t(($) => $.execution_log.context_cache_hit)} value={summary.rate === undefined ? "—" : `${Math.round(summary.rate * 100)}%`} />
+              <Metric label={t(($) => $.execution_log.context_tool_time)} value={duration(summary.toolMs)} />
+              <Metric label={t(($) => $.execution_log.context_waiting_time)} value={duration(summary.waitingMs)} />
+              <Metric label={t(($) => $.execution_log.context_child_calls)} value={String(summary.childCalls)} />
               <Metric label={t(($) => $.execution_log.context_compactions)} value={String(compactions.filter((event) => event.phase === "end").length)} />
             </div>
             <div className="rounded-md border p-3 text-body">
@@ -83,6 +87,8 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
                 <span>{t(($) => $.execution_log.context_system)} {compact(summary.system)}</span>
                 <span>{t(($) => $.execution_log.context_tools)} {compact(summary.tools)}</span>
                 <span>{t(($) => $.execution_log.context_messages)} {compact(summary.messages)}</span>
+                {summary.mcp !== undefined && <span>{t(($) => $.execution_log.context_mcp)} {compact(summary.mcp)}</span>}
+                {summary.skills !== undefined && <span>{t(($) => $.execution_log.context_skills)} {compact(summary.skills)}</span>}
                 <span className="text-muted-foreground">
                   {t(($) => $.execution_log.context_tokens)}: {compact(summary.input)} / {compact(summary.output)} / {compact(summary.read)}
                 </span>

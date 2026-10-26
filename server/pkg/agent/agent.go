@@ -41,6 +41,7 @@ type ExecOptions struct {
 	// When set, the backend runs it against the session instead of a model turn.
 	Command            string
 	PlanMode           *bool // 聊天控制面期望的计划模式；nil 表示没有显式选择。
+	NativeGoal         bool  // CodeBuddy Goal 会话使用原生控制协议，普通会话沿用 stream-json。
 	CommandOnly        bool  // 纯控制命令不启动模型生成。
 	RequestInteraction func(context.Context, protocol.InteractionPrompt) (protocol.InteractionAnswer, error)
 	Model              string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型

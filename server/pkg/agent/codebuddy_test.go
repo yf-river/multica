@@ -478,7 +478,7 @@ func TestCodebuddyHandleAssistantText(t *testing.T) {
 		}),
 	}
 
-	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage), make(map[codebuddyUsageCall]TokenUsage))
+	turn := b.handleAssistant(context.Background(), msg, ch, make(map[string]TokenUsage), make(map[codebuddyUsageCall]TokenUsage))
 	output, tools := turn.text, turn.toolUses
 
 	if output != "codebuddy says hi" {
@@ -544,7 +544,7 @@ func TestCodebuddyHandleUserToolResult(t *testing.T) {
 		}),
 	}
 
-	b.handleUser(msg, ch)
+	b.handleUser(context.Background(), msg, ch)
 
 	select {
 	case m := <-ch:

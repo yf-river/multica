@@ -1841,6 +1841,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.Get("/api/tasks/{taskId}/interactions", h.ListTaskInteractions)
+			r.Get("/api/tasks/{taskId}/context", h.GetTaskContextByUser)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/interactions/{interactionId}/respond", h.RespondTaskInteraction)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 

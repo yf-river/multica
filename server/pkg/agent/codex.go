@@ -2324,6 +2324,7 @@ type codexClient struct {
 	mu                     sync.Mutex
 	writeMu                sync.Mutex
 	interactions           *interactionBroker
+	runtimeToolCompletions map[string]bool
 	nextID                 int
 	pending                map[int]*pendingRPC
 	processDone            chan struct{}
@@ -3638,6 +3639,9 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	}
 	if item == nil && method != "item/agentMessage/delta" {
 		return
+	}
+	if method == "item/completed" && (itemType == "commandExecution" || itemType == "mcpToolCall" || itemType == "fileChange") {
+		c.emitToolDuration(params, item)
 	}
 
 	switch {

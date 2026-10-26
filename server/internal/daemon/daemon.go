@@ -8066,6 +8066,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ThreadHandshakeTimeout:     d.cfg.CodexThreadHandshakeTimeout,
 		Command:                    task.Command,
 		PlanMode:                   task.PlanMode,
+		NativeGoal:                 task.NativeGoal,
 		CommandOnly:                runtimeCommandOnly(task.Command, task.ChatMessage),
 		ResumeSessionID:            task.PriorSessionID,
 		// 门控后的意图：这里的 PriorSessionID 已经反映过 pre-flight resume 闸门

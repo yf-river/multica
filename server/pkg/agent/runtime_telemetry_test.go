@@ -45,3 +45,39 @@ func TestCodexContextTelemetryAttribution(t *testing.T) {
 		t.Fatal("invented context breakdown")
 	}
 }
+
+func TestCodexToolDurationUsesReportedFieldsOnce(t *testing.T) {
+	c, _, _ := newTestCodexClient(t)
+	count := 0
+	c.onMessage = func(msg Message) {
+		if msg.Type == MessageRuntime {
+			count++
+		}
+	}
+	params := map[string]any{"turnId": "turn"}
+	c.emitToolDuration(params, map[string]any{"id": "missing"})
+	c.emitToolDuration(params, map[string]any{"id": "tool", "durationMs": float64(0)})
+	c.emitToolDuration(params, map[string]any{"id": "tool", "durationMs": float64(0)})
+	if count != 1 {
+		t.Fatalf("missing or duplicate duration: %d", count)
+	}
+}
+
+func TestCodebuddyACPContextDoesNotInventUsage(t *testing.T) {
+	var messages []Message
+	emitCodebuddyACPContext(`{"params":{"sessionId":"session","update":{"used":123,"size":1000,"_meta":{"codebuddy.ai/usageByCategory":{"systemPrompt":10,"tools":0,"conversation":100,"mcp":8,"skills":5,"version":1}}}}}`, func(msg Message) { messages = append(messages, msg) })
+	if len(messages) != 1 {
+		t.Fatal("snapshot missing")
+	}
+	var event map[string]any
+	if json.Unmarshal([]byte(messages[0].Content), &event) != nil {
+		t.Fatal("snapshot invalid")
+	}
+	if event["pressure_tokens"] != float64(123) || event["context_window"] != float64(1000) || event["input_tokens"] != nil || event["duration_ms"] != nil {
+		t.Fatalf("snapshot mixed with accounting: %+v", event)
+	}
+	breakdown := event["breakdown"].(map[string]any)
+	if breakdown["tools_tokens"] != float64(0) || breakdown["mcp_tokens"] != float64(8) {
+		t.Fatal("reported category values lost")
+	}
+}

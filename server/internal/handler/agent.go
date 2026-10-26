@@ -492,6 +492,7 @@ type AgentTaskResponse struct {
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // chat 任务的用户消息
 	Command                  string                 `json:"command,omitempty"`                     // 运行时原生斜杠命令（/plan、/goal）
 	PlanMode                 *bool                  `json:"plan_mode,omitempty"`
+	NativeGoal               bool                   `json:"native_goal,omitempty"`
 	ChatMessageIDs           []string               `json:"chat_message_ids,omitempty"`         // 封入本轮 chat 的用户消息 id
 	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"` // 用户消息上的附件——agent 逐个执行 `multica attachment download <id>`
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`               // 历史 is_agent_intro 会话的兼容字段；新建 agent 不再创建这类聊天

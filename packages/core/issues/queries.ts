@@ -503,7 +503,7 @@ export function taskContextOptions(wsId: string, issueId: string, taskId: string
     queryFn: ({ pageParam }) => api.getTaskContext(issueId, taskId, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.has_more === true && page.next_cursor ? page.next_cursor : undefined,
-    enabled: Boolean(wsId && issueId && taskId),
+    enabled: Boolean(wsId && taskId),
   });
 }
 

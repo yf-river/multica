@@ -8,7 +8,10 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestTaskContextCursor(t *testing.T) {
@@ -96,4 +99,30 @@ func TestTaskContextPagesBeyondFiveThousand(t *testing.T) {
 		cursor = page.Next
 	}
 	t.Fatal("pagination did not terminate")
+}
+
+func TestChatTaskContextUsesPrivateChatVisibility(t *testing.T) {
+	runtimeID := dbfx.Runtime(t, "chat telemetry", testutil.Cols{"provider": "codex"})
+	agentID := dbfx.Agent(t, "chat telemetry "+uuid.NewString(), runtimeID)
+	chatID := dbfx.ChatSession(t, agentID)
+	taskID := dbfx.Task(t, agentID, testutil.Cols{"runtime_id": runtimeID, "chat_session_id": chatID, "status": "running"})
+	messages := []any{map[string]any{"seq": 0, "type": "runtime", "content": `{"kind":"context","provider":"codex","pressure_tokens":12}`}, map[string]any{"seq": 1, "type": "runtime", "content": `{"kind":"compaction","phase":"end"}`}}
+	testutil.Call(t, testHandler.ReportTaskMessages, batchMessagesRequest(t, taskID, messages)).Want(200)
+	req := interactionRequest(http.MethodGet, taskID, "", nil)
+	req.URL.RawQuery = "limit=1"
+	var page struct {
+		Events []json.RawMessage `json:"events"`
+		More   bool              `json:"has_more"`
+		Next   string            `json:"next_cursor"`
+	}
+	testutil.Call(t, testHandler.GetTaskContextByUser, req).Want(200).JSON(&page)
+	if len(page.Events) != 1 || !page.More || page.Next == "" {
+		t.Fatalf("chat page incomplete: %+v", page)
+	}
+	req = interactionRequest(http.MethodGet, taskID, "", nil)
+	req.Header.Set("X-User-ID", uuid.NewString())
+	testutil.Call(t, testHandler.GetTaskContextByUser, req).Want(403)
+	req = interactionRequest(http.MethodGet, taskID, "", nil)
+	req = req.WithContext(middleware.SetMemberContext(req.Context(), uuid.NewString(), db.Member{}))
+	testutil.Call(t, testHandler.GetTaskContextByUser, req).Want(404)
 }

@@ -3296,13 +3296,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		resp.ChatMessage = strings.Join(parts, "\n\n")
 		resp.Command = chatRuntimeCommand(unanswered)
 		controlHistory, controlHistoryErr := h.Queries.ListChatMessages(r.Context(), cs.ID)
-		if controlHistoryErr == nil {
-			resp.PlanMode = chatPlanModeSelection(controlHistory)
+		if controlHistoryErr != nil {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, controlHistoryErr, "chat control history", uuidToString(cs.ID))
 		}
-		// Plan mode is a chat-session mode, but a bare /plan task has no turn to
-		// persist it. Replay the toggle before the next message so the mode
-		// survives across tasks; /plan off arrives as its own command above.
-		if resp.Command == "" {
+		resp.PlanMode = chatPlanModeSelection(controlHistory)
+		resp.NativeGoal = runtime.Provider == "codebuddy" && chatUsesNativeGoal(controlHistory)
+		// DSH 以命令恢复未物化的会话；Codex 和 CodeBuddy 使用独立模式与原生会话状态。
+		if resp.Command == "" && runtime.Provider == "dsh" {
 			if controlHistoryErr == nil {
 				history := controlHistory
 				if chatPlanModeActive(history) {
@@ -6774,4 +6774,18 @@ func latestReplayableGoalCommand(messages []db.ChatMessage) (string, time.Time) 
 		}
 	}
 	return "", time.Time{}
+}
+
+// Goal 会话的传输随聊天恢复，避免普通后续消息回到不处理 Goal 的 stream-json。
+func chatUsesNativeGoal(messages []db.ChatMessage) bool {
+	for _, message := range messages {
+		if message.Role != "user" {
+			continue
+		}
+		line := strings.TrimSpace(message.Content)
+		if line == "/goal" || strings.HasPrefix(line, "/goal ") {
+			return true
+		}
+	}
+	return false
 }

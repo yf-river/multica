@@ -25,6 +25,13 @@ describe("runtime context pagination", () => {
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
     expect((await client.getTaskContext("i", "t")).events).toEqual([{ kind: "compaction" }]);
-    expect(await client.getTaskContext("i", "t")).toEqual({ events: [] });
+    await expect(client.getTaskContext("i", "t")).rejects.toThrow("Invalid runtime context response");
   });
+  it("reads chat runtime history through task visibility rather than an invented issue", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ events: [], has_more: false }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await new ApiClient("https://api.example.test").getTaskContext("", "chat-task");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example.test/api/tasks/chat-task/context");
+  });
+
 });

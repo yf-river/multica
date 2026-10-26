@@ -39,13 +39,27 @@ func (h *Handler) GetTaskContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	h.writeTaskContextPage(w, r, task.ID)
+}
+
+// 聊天、任务与实录共用分页和可见性边界。
+func (h *Handler) GetTaskContextByUser(w http.ResponseWriter, r *http.Request) {
+	task, ok := h.loadTaskForUser(w, r, chi.URLParam(r, "taskId"))
+	if !ok {
+		return
+	}
+	h.writeTaskContextPage(w, r, task.ID)
+}
+
+func (h *Handler) writeTaskContextPage(w http.ResponseWriter, r *http.Request, taskID pgtype.UUID) {
+
 	afterSeq, afterID, limit, err := parseTaskContextPage(r.URL.Query().Get("after"), r.URL.Query().Get("limit"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	messages, err := h.Queries.ListTaskRuntimeMessagesPage(r.Context(), db.ListTaskRuntimeMessagesPageParams{
-		TaskID: task.ID, AfterSeq: afterSeq, AfterID: afterID, PageLimit: limit + 1,
+		TaskID: taskID, AfterSeq: afterSeq, AfterID: afterID, PageLimit: limit + 1,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read task context")

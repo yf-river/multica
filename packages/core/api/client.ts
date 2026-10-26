@@ -2696,15 +2696,13 @@ export class ApiClient {
 
   /** 读取一次运行的运行时上下文遥测（context / compaction 帧）。 */
   async getTaskContext(issueId: string, taskId: string, after?: string): Promise<TaskContextResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(taskId)}/context${after ? `?after=${encodeURIComponent(after)}` : ""}`,
-    );
-    return parseWithFallback<TaskContextResponse>(
-      raw,
-      TaskContextResponseSchema,
-      { events: [] },
-      { endpoint: "GET /api/issues/:id/tasks/:taskId/context" },
-    );
+    const path = issueId
+      ? `/api/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(taskId)}/context`
+      : `/api/tasks/${encodeURIComponent(taskId)}/context`;
+    const raw = await this.fetch<unknown>(`${path}${after ? `?after=${encodeURIComponent(after)}` : ""}`);
+    const parsed = TaskContextResponseSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("Invalid runtime context response");
+    return parsed.data;
   }
 
   async getTaskInteractions(taskId: string): Promise<TaskInteractionList> {

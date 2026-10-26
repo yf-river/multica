@@ -793,15 +793,16 @@ type hermesPromptResult struct {
 }
 
 type hermesClient struct {
-	cfg          Config
-	stdin        interface{ Write([]byte) (int, error) }
-	writeMu      sync.Mutex // 串行化跨 goroutine 的 stdin.Write 调用
-	mu           sync.Mutex
-	nextID       int
-	pending      map[int]*pendingRPC
-	sessionID    string
-	onMessage    func(Message)
-	onPromptDone func(hermesPromptResult)
+	cfg            Config
+	stdin          interface{ Write([]byte) (int, error) }
+	writeMu        sync.Mutex // 串行化跨 goroutine 的 stdin.Write 调用
+	mu             sync.Mutex
+	nextID         int
+	pending        map[int]*pendingRPC
+	sessionID      string
+	onMessage      func(Message)
+	onPromptDone   func(hermesPromptResult)
+	onAgentRequest func(method string, id, params json.RawMessage) bool
 	// selectPermission 让某 ACP 方言收窄通用的 headless 权限策略。Reasonix 用它拒绝
 	// 同时携带 allow_once 选项的用户提问与 fresh-human 审批。nil 则对既有后端保留共享
 	// ACP 策略。
@@ -968,6 +969,9 @@ func (c *hermesClient) handleAgentRequest(raw map[string]json.RawMessage) {
 
 	rawID, ok := raw["id"]
 	if !ok {
+		return
+	}
+	if c.onAgentRequest != nil && c.onAgentRequest(method, rawID, raw["params"]) {
 		return
 	}
 	if method == "terminal/wait_for_exit" && c.terminalEnabled {

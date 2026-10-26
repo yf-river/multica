@@ -23,3 +23,14 @@ func TestChatPlanModeIndependentOfGoal(t *testing.T) {
 		t.Fatal("invented an explicit mode")
 	}
 }
+
+func TestChatNativeGoalTransportSurvivesLaterMessages(t *testing.T) {
+	history := []db.ChatMessage{{Role: "assistant", Content: "/goal do not select"}, {Role: "user", Content: "ordinary request"}}
+	if chatUsesNativeGoal(history) {
+		t.Fatal("assistant content selected native controls")
+	}
+	history = append(history, db.ChatMessage{Role: "user", Content: "/goal show"}, db.ChatMessage{Role: "assistant", Content: "no goal"}, db.ChatMessage{Role: "user", Content: "next request"})
+	if !chatUsesNativeGoal(history) {
+		t.Fatal("later messages lost the native control transport")
+	}
+}

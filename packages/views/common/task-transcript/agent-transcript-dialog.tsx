@@ -6,6 +6,7 @@
 
 "use client";
 
+import { RunContextDialog } from "../../issues/components/run-context-dialog";
 import { TaskInteractionHistory } from "../task-interaction-panel";
 import { TaskOutput } from "./task-output";
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
@@ -336,6 +337,8 @@ export function AgentTranscriptDialog({
 }: AgentTranscriptDialogProps) {
   const { t } = useT("agents");
   const locale = useLocale();
+  const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
+  useEffect(() => { setRuntimeContextOpen(false); }, [open, task.id]);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(() => new Set());
   const [query, setQuery] = useState("");
@@ -1090,6 +1093,10 @@ export function AgentTranscriptDialog({
         )}
 
         {open && <TaskInteractionHistory taskId={task.id} active={isLive} />}
+        {open && <div className="shrink-0 border-b px-4 py-2">
+          <Button variant="outline" size="sm" onClick={() => setRuntimeContextOpen(true)}>{t(($) => $.transcript.runtime_context)}</Button>
+          {runtimeContextOpen && <RunContextDialog taskId={task.id} open onOpenChange={setRuntimeContextOpen} />}
+        </div>}
 
         {/* ── 列表工具栏：左搜索，右侧两个菜单 ── */}
         <div className="flex items-center gap-2 border-b px-4 py-1.5 shrink-0">

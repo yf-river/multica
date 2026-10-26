@@ -41,6 +41,16 @@ type codebuddyBackend struct {
 // codebuddyBlockedArgs 是 daemon 写死的参数清单，用户配置的 custom_args 不得覆盖它们。
 // 覆盖这些参数会破坏 daemon ↔ codebuddy 之间的通信协议，或绕过运行安全约束。
 var codebuddyBlockedArgs = map[string]blockedArgMode{
+	"--acp":          blockedStandalone,
+	"--serve":        blockedStandalone,
+	"--print":        blockedStandalone,
+	"--resume":       blockedWithValue,
+	"-r":             blockedWithValue,
+	"--continue":     blockedStandalone,
+	"-c":             blockedStandalone,
+	"--session-id":   blockedWithValue,
+	"--fork-session": blockedStandalone,
+
 	"-p":                       blockedStandalone, // 非交互模式
 	"--output-format":          blockedWithValue,  // stream-json 协议所必需
 	"--input-format":           blockedWithValue,  // stream-json 协议所必需
@@ -125,6 +135,9 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 // 日志、续跑被拒判定等收尾，最后把 Result 放进 resCh。结果与流式消息分别经两个
 // channel 返回。
 func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if opts.NativeGoal || (opts.CommandOnly && (opts.Command == "/plan" || opts.Command == "/plan off")) || strings.TrimSpace(opts.Command) == "/goal" || strings.HasPrefix(strings.TrimSpace(opts.Command), "/goal ") {
+		return b.executeNative(ctx, prompt, opts)
+	}
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "codebuddy"
@@ -265,6 +278,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		resultIsError := false
 		sawBackgroundTask := false
 		var sessionID string
+		lifecycle := newCodebuddyLifecycle(func(msg Message) { sendCodebuddyMessage(runCtx, msgCh, msg) })
 		var requestID string
 		usage := make(map[string]TokenUsage)
 		usageCalls := make(map[codebuddyUsageCall]TokenUsage)
@@ -297,51 +311,49 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			}
 			eventCount++
 			control.observe(msg)
+			rootEvent := lifecycle.observe(msg)
 
 			// `_requestId` 由子进程自己生成并写在 assistant/status/result 事件上，作为 provider 请求标识保存；
 			// AgentLens 的 trace/span 对应另行验收。取第一条非空值即可：同一个 CLI 进程只有一个
 			// 根请求，后续事件重复的是同一个值。绝不能拿父进程环境变量
 			// CODEBUDDY_ROOT_REQUEST_ID 顶替——那是 daemon 自己的请求标识。
-			if requestID == "" && msg.ProviderRequestID != "" {
+			if rootEvent && requestID == "" && msg.ProviderRequestID != "" {
 				requestID = msg.ProviderRequestID
 			}
 
-			// 初次SDK会话标识绑定根会话；其它信封的不同会话不能悄悄替换它。
-			if msg.SessionID != "" {
-				if sessionID != "" && msg.SessionID != sessionID {
-					b.cfg.Logger.Warn("codebuddy SDK session conflict", "root_session", sessionID, "event_session", msg.SessionID, "event_type", msg.Type)
-				}
-				if sessionID == "" || msg.Type == "result" {
-					sessionID = msg.SessionID
-				}
-			}
+			// 子调用和其它会话的终态不能覆盖主会话身份。
+			sessionID = lifecycle.sessionID
 
 			switch msg.Type {
 			case "assistant":
 				assistantEventCount++
-				turn := b.handleAssistant(msg, msgCh, usage, usageCalls)
+				turn := b.handleAssistant(runCtx, msg, msgCh, usage, usageCalls)
 				toolUseCount += turn.toolUses
 				if !turn.understood {
 					unreadableAssistantCount++
 				}
-				lastAssistantText = turn.resolveFallback(lastAssistantText)
+				if rootEvent {
+					lastAssistantText = turn.resolveFallback(lastAssistantText)
+				}
 			case "user":
-				b.handleUser(msg, msgCh)
+				b.handleUser(runCtx, msg, msgCh)
 			case "system":
 				// 无头执行不能在结果回传后继续接收后台任务通知。
 				if codebuddySystemIsBackgroundTask(msg.Subtype) {
 					sawBackgroundTask = true
 				}
-				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
+				sendCodebuddyMessage(runCtx, msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
+				if !rootEvent {
+					break
+				}
 				sawResult = true
 				finalResultText = msg.ResultText
 				resultIsError = msg.IsError
 				resultUsage = codebuddyResultUsage(msg, opts.Model)
-				closeStdin()
 			case "log":
 				if msg.Log != nil {
-					trySend(msgCh, Message{
+					sendCodebuddyMessage(runCtx, msgCh, Message{
 						Type:    MessageLog,
 						Level:   msg.Log.Level,
 						Content: msg.Log.Message,
@@ -353,6 +365,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 				}
 			case "control_response":
 				control.respond(msg.Response)
+			}
+			if sawResult && len(lifecycle.children) == 0 {
+				closeStdin()
 			}
 		}
 		scanErr := scanner.Err()
@@ -373,6 +388,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		writeErr := <-writeDone
 
 		completionGuardError := ""
+		if len(lifecycle.children) > 0 {
+			completionGuardError = "codebuddy execution ended before foreground child calls completed"
+		}
 		if sawBackgroundTask {
 			completionGuardError = "codebuddy emitted a background task system event; Multica-managed runs require foreground execution (set CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS=1)"
 		}
@@ -488,7 +506,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 //
 // 理解不了正文时（JSON 解析失败或出现未知块类型），返回的 turn.understood 为 false，
 // 调用方就不会让旧回合的文本来顶替本回合。
-func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage, calls map[codebuddyUsageCall]TokenUsage) assistantTurn {
+func (b *codebuddyBackend) handleAssistant(ctx context.Context, msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage, calls map[codebuddyUsageCall]TokenUsage) assistantTurn {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
 		// 正文读不懂：understood 保持 false，调用方会丢弃任何 fallback，而不是让更早的
@@ -534,7 +552,7 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 					"cache_write_tokens": snapshot.CacheWriteTokens - previous.CacheWriteTokens,
 					"pressure_tokens":    content.Usage.InputTokens + content.Usage.OutputTokens,
 				}
-				trySend(ch, runtimeTelemetry("codebuddy", "context", fields))
+				sendCodebuddyMessage(ctx, ch, runtimeTelemetry("codebuddy", "context", fields))
 			}
 		}
 	}
@@ -544,11 +562,11 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 		case "text":
 			if block.Text != "" {
 				assistantText.WriteString(block.Text)
-				trySend(ch, Message{Type: MessageText, Content: block.Text})
+				sendCodebuddyMessage(ctx, ch, Message{Type: MessageText, Content: block.Text})
 			}
 		case "thinking":
 			if block.Text != "" {
-				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
+				sendCodebuddyMessage(ctx, ch, Message{Type: MessageThinking, Content: block.Text})
 			}
 		case "tool_use":
 			toolUseCount++
@@ -556,7 +574,7 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 			if block.Input != nil {
 				_ = json.Unmarshal(block.Input, &input)
 			}
-			trySend(ch, Message{
+			sendCodebuddyMessage(ctx, ch, Message{
 				Type:   MessageToolUse,
 				Tool:   block.Name,
 				CallID: block.ID,
@@ -575,7 +593,7 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 
 // handleUser 处理一条 user 事件：把其中的 tool_result 块转成 MessageToolResult
 // 推送出去（按 tool_use_id 与之前的工具调用对上号）。
-func (b *codebuddyBackend) handleUser(msg codebuddySDKMessage, ch chan<- Message) {
+func (b *codebuddyBackend) handleUser(ctx context.Context, msg codebuddySDKMessage, ch chan<- Message) {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
 		return
@@ -587,7 +605,7 @@ func (b *codebuddyBackend) handleUser(msg codebuddySDKMessage, ch chan<- Message
 			if block.Content != nil {
 				resultStr = string(block.Content)
 			}
-			trySend(ch, Message{
+			sendCodebuddyMessage(ctx, ch, Message{
 				Type:   MessageToolResult,
 				CallID: block.ToolUseID,
 				Output: resultStr,
@@ -944,4 +962,14 @@ func mergeSubagentUsage(usage map[string]TokenUsage, observed map[codebuddyUsage
 		usage[call.Model] = merged
 	}
 	return usage
+}
+
+// 正常运行对完整输出施加背压；取消时解除等待，交给进程树回收。
+func sendCodebuddyMessage(ctx context.Context, ch chan<- Message, msg Message) bool {
+	select {
+	case ch <- msg:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
