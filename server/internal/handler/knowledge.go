@@ -1,11 +1,7 @@
 package handler
 
-// Workspace knowledge base proxy.
-//
-// OpenViking is the source of truth; Multica only scopes requests to a workspace
-// and keeps its credentials server-side. The browser never talks to OpenViking
-// directly. This first slice is read-only (status, browse, search); ingestion
-// and deletion follow on the same client.
+// 工作区知识库代理：Multica 校验成员、URI 和写入权限，OpenViking 保存资源与索引。
+// 浏览器通过本服务访问知识库，服务端保管上游凭据。
 
 import (
 	"bytes"
@@ -114,7 +110,7 @@ func (h *Handler) ListKnowledgeResources(w http.ResponseWriter, r *http.Request)
 	if uri == "" {
 		uri = "viking://resources/workspaces/" + workspaceID
 	}
-	if !strings.HasPrefix(uri, "viking://resources/workspaces/"+workspaceID) {
+	if !knowledgeURIAllowed(workspaceID, uri) {
 		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
 		return
 	}
@@ -124,7 +120,11 @@ func (h *Handler) ListKnowledgeResources(w http.ResponseWriter, r *http.Request)
 	// a "already exists" failure must not block browsing.
 	_, _, _ = client.do(r.Context(), http.MethodPost, "/api/v1/fs/mkdir", nil, map[string]any{"uri": root}, workspaceID)
 	_ = root
-	raw, _, err := client.do(r.Context(), http.MethodGet, "/api/v1/fs/ls", url.Values{"uri": {uri}, "output": {"agent"}}, nil, workspaceID)
+	output := "agent"
+	if r.URL.Query().Get("format") == "json" {
+		output = "original"
+	}
+	raw, _, err := client.do(r.Context(), http.MethodGet, "/api/v1/fs/ls", url.Values{"uri": {uri}, "output": {output}}, nil, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -158,7 +158,7 @@ func (h *Handler) SearchKnowledge(w http.ResponseWriter, r *http.Request) {
 	}
 	target := "viking://resources/workspaces/" + workspaceID
 	if p := strings.TrimSpace(body.Path); p != "" {
-		if !strings.HasPrefix(p, target) {
+		if !knowledgeURIAllowed(workspaceID, p) {
 			writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
 			return
 		}
@@ -182,8 +182,7 @@ func (h *Handler) ReadKnowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
-	prefix := "viking://resources/workspaces/" + workspaceID
-	if uri == "" || !strings.HasPrefix(uri, prefix) {
+	if uri == "" || !knowledgeURIAllowed(workspaceID, uri) {
 		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
 		return
 	}
@@ -320,11 +319,16 @@ func (h *Handler) DeleteKnowledgeResource(w http.ResponseWriter, r *http.Request
 		return
 	}
 	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
-	prefix := "viking://resources/workspaces/" + workspaceID
-	if uri == "" || !strings.HasPrefix(uri, prefix) {
+	if uri == "" || !knowledgeURIAllowed(workspaceID, uri) {
 		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
 		return
 	}
+	parsed, err := url.Parse(uri)
+	if err != nil || strings.TrimRight(parsed.Path, "/") == "/workspaces/"+workspaceID {
+		writeError(w, http.StatusBadRequest, "不能删除整个工作区知识库")
+		return
+	}
+
 	recursive := r.URL.Query().Get("recursive") == "true"
 	client := newKnowledgeClient()
 	raw, _, err := client.do(r.Context(), http.MethodDelete, "/api/v1/fs", url.Values{

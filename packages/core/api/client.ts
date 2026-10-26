@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import type { TestEnvironmentControl, TestAgentPolicy } from "../test-agents";
 import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, supervisionInstructionsSchema, type SupervisionEvidencePage, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback, type SupervisionInstructions } from "../supervision/schema";
 import { reviewSettingsSchema, type ReviewSettings } from "../review/schema";
@@ -253,13 +254,15 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
 import type { IssueExecutionTreeResponse, TaskContextResponse } from "../types/issue-execution";
-import type { KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus, KnowledgeUploadResponse } from "../types/knowledge";
+import type { KnowledgeImport, KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus, KnowledgeUploadResponse } from "../types/knowledge";
 import {
   AgentTaskListSchema,
   EMPTY_ISSUE_EXECUTION_TREE_RESPONSE,
   IssueExecutionTreeResponseSchema,
   TaskContextResponseSchema,
   KnowledgeStatusSchema,
+  KnowledgeImportSchema,
+  KnowledgeImportsResponseSchema,
   KnowledgeResourcesResponseSchema,
   KnowledgeSearchResponseSchema,
   KnowledgeUploadResponseSchema,
@@ -2674,11 +2677,36 @@ export class ApiClient {
 
   /** 列出工作区知识目录。 */
   async listKnowledgeResources(workspaceId: string, uri?: string): Promise<KnowledgeResourcesResponse> {
-    const query = uri ? `?uri=${encodeURIComponent(uri)}` : "";
-    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/resources${query}`);
+    const query = new URLSearchParams({ format: "json", ...(uri ? { uri } : {}) });
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/resources?${query}`);
     return parseWithFallback<KnowledgeResourcesResponse>(raw, KnowledgeResourcesResponseSchema, { uri: "", result: null }, {
       endpoint: "GET /api/workspaces/:id/knowledge/resources",
     });
+  }
+
+  async deleteKnowledgeResource(workspaceId: string, uri: string, recursive = false): Promise<KnowledgeResourcesResponse> {
+    const query = new URLSearchParams({ uri, recursive: String(recursive) });
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/resources?${query}`, { method: "DELETE" });
+    return parseWithFallback(raw, KnowledgeResourcesResponseSchema, { uri: "", result: null }, {
+      endpoint: "DELETE /api/workspaces/:id/knowledge/resources",
+    });
+  }
+
+  async importKnowledgeURL(workspaceId: string, url: string, requestId: string): Promise<KnowledgeImport> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/resources/url`, {
+      method: "POST", body: JSON.stringify({ url, request_id: requestId }),
+    });
+    const item = parseWithFallback<z.infer<typeof KnowledgeImportSchema>>(raw, KnowledgeImportSchema, {
+      id: "", source_url: url, resource_uri: "", status: "failed" as const,
+      error: undefined, created_at: "",
+    }, { endpoint: "POST /api/workspaces/:id/knowledge/resources/url", sensitive: true });
+    return { id: item.id, sourceUrl: item.source_url, resourceUri: item.resource_uri, status: item.status, error: item.error, createdAt: item.created_at };
+  }
+
+  async listKnowledgeImports(workspaceId: string): Promise<KnowledgeImport[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/imports`);
+    const response = parseWithFallback<z.infer<typeof KnowledgeImportsResponseSchema>>(raw, KnowledgeImportsResponseSchema, { imports: [] }, { endpoint: "GET /api/workspaces/:id/knowledge/imports", sensitive: true });
+    return response.imports.map((item) => ({ id: item.id, sourceUrl: item.source_url, resourceUri: item.resource_uri, status: item.status, error: item.error, createdAt: item.created_at }));
   }
 
   /** 在工作区知识库内做语义搜索。 */

@@ -10,6 +10,7 @@
   },
   "exports": {
     "./test-agents": "./test-agents/index.ts",
+    "./knowledge": "./knowledge/queries.ts",
     "./health": "./health/index.ts",
     ".": "./index.ts",
     "./markdown": "./markdown/index.ts",

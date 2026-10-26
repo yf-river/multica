@@ -49,3 +49,12 @@ multica knowledge read <viking://.../file.md> --offset 0 --limit 200
 `multica knowledge` always searches this workspace's namespace
 (`viking://resources/workspaces/<workspace-id>`). Do not pass URIs from another
 workspace; the server rejects them.
+
+## 网页导入与整理
+
+知识库页面可导入 HTTP/HTTPS 网页，并保留下载、索引、完成或失败状态。导入未完成时，
+搜索可能还没有结果；失败后先检查资源列表，避免在上游已接受但状态确认中断时重复导入。
+服务端固定下载连接的公网 IP，逐跳检查重定向，并限制超时与内容大小。
+
+工作区 owner/admin 可在资源列表或搜索结果确认删除文件、文件夹。
+删除文件夹包含其子资源；不能删除整个工作区知识库根目录。

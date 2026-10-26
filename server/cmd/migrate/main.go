@@ -118,6 +118,11 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
+	"669_task_supplement_request_index":                     "task_supplement_task_request_uidx",
+	"670_task_supplement_capability_index":                  "task_supplement_capability_task_uidx",
+	"671_task_supplement_comment_index":                     "task_supplement_comment_uidx",
+	"679_knowledge_import_identity":                         "knowledge_import_identity_idx",
+	"680_knowledge_import_workspace":                        "knowledge_import_workspace_idx",
 	"657_activity_log_member_assignee_frequency_index":      "idx_activity_log_member_assignee_frequency",
 	"658_chat_message_assistant_task_index":                 "idx_chat_message_assistant_task",
 	"659_agent_task_queue_autopilot_run_created_at_index":   "idx_agent_task_queue_autopilot_run_created_at",
@@ -414,17 +419,6 @@ var concurrentIndexCleanups = map[string]string{
 // 重试，裸 CREATE 又会卡在 "already exists"——两种情况都需要在回滚安全重试前
 // 做一次"方向相关"的清理。
 var concurrentDownIndexCleanups = map[string]string{
-	"657_activity_log_member_assignee_frequency_index":      "idx_activity_log_member_assignee_frequency",
-	"658_chat_message_assistant_task_index":                 "idx_chat_message_assistant_task",
-	"659_agent_task_queue_autopilot_run_created_at_index":   "idx_agent_task_queue_autopilot_run_created_at",
-	"660_agent_task_queue_chat_session_index":               "idx_agent_task_queue_chat_session",
-	"661_dingtalk_bot_identity_workspace_index":             "idx_dingtalk_bot_identity_workspace",
-	"662_issue_to_label_label_id_index":                     "issue_to_label_label_idx",
-	"663_chat_session_agent_id_index":                       "idx_chat_session_agent_id",
-	"664_agent_task_queue_delegated_failure_evidence_index": "idx_agent_task_queue_delegated_failure_evidence",
-	"665_chat_session_runtime_id_index":                     "idx_chat_session_runtime_id",
-	"666_github_pr_address_index":                           "idx_github_pull_request_pr_owner_repo",
-
 	"551_supervision_parallel":                              "supervision_active_workspace",
 	"144_drop_agent_task_queue_chat_pending_v1":             "idx_agent_task_queue_chat_pending",
 	"171_drop_legacy_label_namespace_index":                 "issue_label_workspace_name_lower_idx",

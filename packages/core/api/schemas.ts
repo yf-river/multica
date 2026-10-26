@@ -3451,3 +3451,16 @@ export const KnowledgeUploadResponseSchema = z.object({
   filename: z.string(),
   result: z.unknown(),
 }).loose();
+
+export const KnowledgeImportSchema = z.object({
+  id: z.string().min(1),
+  source_url: z.string(),
+  resource_uri: z.string(),
+  status: z.enum(["fetching", "indexing", "completed", "failed"]),
+  error: z.string().optional(),
+  created_at: z.string(),
+}).loose();
+
+export const KnowledgeImportsResponseSchema = z.object({
+  imports: z.array(KnowledgeImportSchema),
+}).loose();

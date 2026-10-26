@@ -1026,6 +1026,19 @@ type IssueViewPreference struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type KnowledgeImport struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	SourceUrl      string             `json:"source_url"`
+	ResourceUri    string             `json:"resource_uri"`
+	UpstreamTaskID string             `json:"upstream_task_id"`
+	Status         string             `json:"status"`
+	Error          string             `json:"error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type LarkBindingToken struct {
 	TokenHash      string             `json:"token_hash"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

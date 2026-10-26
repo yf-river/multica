@@ -919,3 +919,6 @@ observations AS (DELETE FROM health_observation WHERE health_observation.workspa
 revisions AS (DELETE FROM health_revision WHERE health_revision.workspace_id=$1),
 reports AS (DELETE FROM health_report WHERE health_report.workspace_id=$1)
 DELETE FROM health_state WHERE health_state.workspace_id=$1;
+
+-- name: DeleteWorkspaceKnowledgeImports :exec
+DELETE FROM knowledge_import WHERE workspace_id = $1;

@@ -3071,3 +3071,31 @@ describe("ApiClient shared credential across windows", () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe("ApiClient knowledge curation", () => {
+  it("scopes URL imports, preserves request identity and maps status", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "job", source_url: "https://example.com/article", resource_uri: "viking://resources/workspaces/ws/article", status: "indexing", created_at: "2026-10-26T00:00:00Z" }), { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").importKnowledgeURL("ws one", "https://example.com/article", "request-id");
+    expect(result).toMatchObject({ id: "job", sourceUrl: "https://example.com/article", status: "indexing" });
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/api/workspaces/ws%20one/knowledge/resources/url");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body)).toEqual({ url: "https://example.com/article", request_id: "request-id" });
+  });
+  it("treats a malformed import response as failure and malformed history as empty", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ id: 123, imports: "broken" }), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.importKnowledgeURL("ws", "https://example.com", "request-id")).resolves.toMatchObject({ id: "", status: "failed" });
+    await expect(client.listKnowledgeImports("ws")).resolves.toEqual([]);
+  });
+  it("uses DELETE and sends the exact resource URI", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ uri: "viking://resources/workspaces/ws/a b", result: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await new ApiClient("https://api.example.test").deleteKnowledgeResource("ws", "viking://resources/workspaces/ws/a b", true);
+    const [url, request] = fetchMock.mock.calls[0]!;
+    expect(request.method).toBe("DELETE");
+    expect(new URL(url).searchParams.get("uri")).toBe("viking://resources/workspaces/ws/a b");
+    expect(new URL(url).searchParams.get("recursive")).toBe("true");
+  });
+});

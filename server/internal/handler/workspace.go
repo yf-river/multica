@@ -1260,6 +1260,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteChatPinnedAgentsByWorkspace(ctx, requester.WorkspaceID) },
 		},
 		{
+			name: "delete knowledge imports",
+			run:  func() error { return qtx.DeleteWorkspaceKnowledgeImports(ctx, requester.WorkspaceID) },
+		},
+		{
 			// 这是第一个碰 usage 汇总的阶段。把全局汇总锁放到关系准备之后，让
 			// 无关的 workspace 只经历尽可能短的汇总窗口。这次等待由
 			// workspaceDeleteLockTimeout 封顶——4246 被批处理任务持有，这里若不

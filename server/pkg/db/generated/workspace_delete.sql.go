@@ -289,6 +289,15 @@ func (q *Queries) DeleteWorkspaceIssueRoots(ctx context.Context, workspaceID pgt
 	return err
 }
 
+const deleteWorkspaceKnowledgeImports = `-- name: DeleteWorkspaceKnowledgeImports :exec
+DELETE FROM knowledge_import WHERE workspace_id = $1
+`
+
+func (q *Queries) DeleteWorkspaceKnowledgeImports(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceKnowledgeImports, workspaceID)
+	return err
+}
+
 const deleteWorkspaceLeafData = `-- name: DeleteWorkspaceLeafData :exec
 WITH
 ws_agents AS MATERIALIZED (
