@@ -63,9 +63,23 @@ python3 scripts/verification-seed.py status
 
 原任务评论保存方案全文，登记评论 ID 和 revision 后形成当前方案。自然语言授权由 Agent 结合任务上下文解释；平台核实引用评论的用户身份、任务归属和 revision，保存原文快照、范围解释和登记者，不匹配固定口令或评论层级。用户通过原任务评论沟通和确认；Agent 将真实决定登记到对应版本。
 
+用户已在任务评论、聊天或当前会话里明确表达发布决定时，Agent 不再要求用户重新敲一条评论，而是用 `deliver --delegate "<用户原话>"` 代发一条带 `【委托登记】` 的成员评论并登记授权。委托评论记录用户原话与登记人，平台校验路径不变（评论作者为成员、版本未变、任务与候选一致）；范围变化、用户要求暂缓或没有真实用户决定时仍然停下确认。委托与用户亲发的评论一样可由撤销接口收回。
+
 方案内容变化需重新登记；普通修复及未改变需求范围的主分支整合续接现有方案。Agent 根据用户最新决定判断是否仍在授权范围内，不通过重发相同方案要求再次确认。
 
-CLI 与页面共用接口：
+CLI 与页面共用接口。常规交付使用一条命令完成登记，其余子命令用于续接与补救：
+
+```bash
+multica issue delivery preflight GONG-24 \
+  --checks-file /absolute/checks.json --evidence-file /absolute/evidence.json
+multica issue delivery deliver GONG-24 \
+  --plan-file /absolute/plan.md --checks-file /absolute/checks.json \
+  --evidence-file /absolute/evidence.json --delegate "用户原话" \
+  [--release-after-acceptance] [--wait]
+multica issue delivery wait GONG-24 --until testing,needs_changes
+```
+
+`preflight` 只读校验干净提交、本地环境文件、交付分支（`feature/`、`feat/`、`fix/`）、业务清单与证据完整性，并对相对 `base_commit` 的非新增迁移给出警告；`deliver` 先跑同一预检，再按方案评论 → 方案登记 → 委托确认 → 提交的顺序执行，`--wait` 在阶段变化时返回，不写 `sleep` 轮询。`deliver` 在内存中读取现有交付并自动带上显式替换所需的编号与 revision，不默认取消旧交付。
 
 ```bash
 multica issue delivery plan GONG-24 --file /absolute/plan.json

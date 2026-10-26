@@ -16,7 +16,7 @@ import (
 )
 
 var deliveryCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
-var deliveryBranch = regexp.MustCompile(`^feature/[a-zA-Z0-9_./-]+$`)
+var deliveryBranch = regexp.MustCompile(`^(?:feature|feat|fix)/[a-zA-Z0-9_./-]+$`)
 
 type deliveryCheck struct {
 	Name     string `json:"name"`

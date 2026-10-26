@@ -115,6 +115,7 @@ func init() {
 		cmd.Flags().String("recovery-evidence", "", "Observed old execution and environment state for explicit handoff")
 		group.AddCommand(cmd)
 	}
+	addDeliveryFlowCommands(group)
 	issueCmd.AddCommand(group)
 }
 
