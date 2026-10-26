@@ -8085,6 +8085,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ThinkingLevel:          thinkingLevel,
 		ServiceTier:            serviceTier,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
+		CodebuddySettingsPath:  env.CodebuddySettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
 	}
 	if task.SupervisionPrompt != "" {

@@ -115,7 +115,8 @@ type ExecOptions struct {
 	ServiceTier string
 	// ClaudeSettingsPath 是 daemon 拥有、按任务隔离的设置文件，通过 Claude Code 的
 	// --settings 参数传入。目前只携带限制性的运行时技能覆盖项；其它 provider 忽略它。
-	ClaudeSettingsPath string
+	ClaudeSettingsPath    string
+	CodebuddySettingsPath string // 任务专属技能禁用设置，同时用于 stream-json 与 ACP。
 	// LifeCognition 标记本次执行是否属于生命认知（life cognition）流水线。
 	// Provider 据此套用生命专属的上下文与输出契约。
 	LifeCognition bool

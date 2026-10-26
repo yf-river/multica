@@ -285,7 +285,8 @@ type Environment struct {
 	CodexHome string
 	// ClaudeSettingsPath 是任务本地的一个 --settings JSON 文件，用来施加「禁用运行
 	// 时技能」策略，且不改动用户自己的 Claude 配置。
-	ClaudeSettingsPath string
+	ClaudeSettingsPath    string
+	CodebuddySettingsPath string
 	// CursorDataDir 是 per-task 的 Cursor 数据目录（仅 cursor provider 且 agent 有
 	// managed mcp_config 时设置）。daemon 把它导出为 CURSOR_DATA_DIR，使项目级的
 	// MCP 审批与用户持久的 ~/.cursor/projects 状态隔离。
@@ -591,6 +592,13 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		}
 		env.ClaudeSettingsPath = settingsPath
 	}
+	if params.Provider == "codebuddy" {
+		settingsPath, err := prepareCodebuddySkillSettings(envRoot, params.Task.DisabledRuntimeSkills, params.Task.AgentSkills)
+		if err != nil {
+			return nil, fmt.Errorf("execenv: prepare codebuddy skill settings: %w", err)
+		}
+		env.CodebuddySettingsPath = settingsPath
+	}
 
 	// 对 Hermes：仅当 agent 绑定了技能时，才把 HERMES_HOME 重定向到 per-task 的
 	// 兼容性 overlay。没有技能的 Hermes 任务保留用户真实 home，行为与原来完全一致。
@@ -829,6 +837,14 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		} else {
 			env.ClaudeSettingsPath = settingsPath
 		}
+	}
+	if params.Provider == "codebuddy" && env.RootDir != "" {
+		settingsPath, err := prepareCodebuddySkillSettings(env.RootDir, params.Task.DisabledRuntimeSkills, params.Task.AgentSkills)
+		if err != nil {
+			logger.Warn("execenv: refresh codebuddy skill settings failed; forcing fresh prepare", "error", err)
+			return nil
+		}
+		env.CodebuddySettingsPath = settingsPath
 	}
 
 	// 复用路径上重新禁用 Reasonix 的 `ask` 工具：上面的 CleanupSidecars 已移除上一

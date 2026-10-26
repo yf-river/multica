@@ -143,3 +143,20 @@ Codex / CodeBuddy 的 claim 直接读取数据库中的控制选择，不下载�
 
 协议事实依据实际 CLI，并参照 [CodeBuddy 设置](https://www.codebuddy.ai/docs/cli/settings)
 及 [技能文档](https://www.codebuddy.ai/docs/cli/skills)核对后续角色配置能力。
+
+
+## 第七阶段：CodeBuddy 技能选择执行链路
+
+CodeBuddy 技能开关从 Agent 配置、claim、隔离环境到两条 CLI 启动路径贯通。
+任务专属 `--settings` 同时配置技能隐藏和调用拒绝，不修改用户自己的设置或技能文件。
+该策略存在时，冲突的运行时自定义 settings 参数不能覆盖本任务的禁用选择。
+
+- 当前账号目录按 `CODEBUDDY_CONFIG_DIR` 发现技能；未配置时使用原生默认目录。
+- Agent API 保存、重复禁用和重新启用的真实 PostgreSQL 检查通过；Claude 对照路径通过。
+- 原生文件访问轨迹确认读取测试技能；ACP 首个命令清单没有展示该技能，不能用该清单独自证明最终可见性。
+- 改用真实 CLI 与模型做启用/禁用对照。普通流和 ACP 均能调用启用技能，
+  禁用后的显式 `/技能名` 均返回原生 `disabled via skillOverrides`，没有执行技能正文。
+- 上述真实对照使用独立测试账号副本，测试包装器仅允许 Skill 工具；不构成业务任务矩阵验收。
+- Agent 全包 103.809s、execenv 全包 23.093s 通过；相关 daemon 定向检查、API 检查与 Go vet 通过。
+
+运行中控制、真正的进程复用、角色默认提示词和监督优化、完整业务对照与发布仍在范围内。

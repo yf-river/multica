@@ -132,7 +132,11 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 			// ~/.codebuddy/"）与
 			// https://www.codebuddy.ai/docs/cli/skills（"User-level Skills:
 			// ~/.codebuddy/skills/"）。
-			providerRoot = filepath.Join(home, ".codebuddy", "skills")
+			configDir := strings.TrimSpace(os.Getenv("CODEBUDDY_CONFIG_DIR"))
+			if configDir == "" {
+				configDir = filepath.Join(home, ".codebuddy")
+			}
+			providerRoot = filepath.Join(configDir, "skills")
 		case "codex":
 			codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
 			if codexHome == "" {
@@ -521,7 +525,7 @@ func enumerateLocalSkills(
 				Provider:    provider,
 				Root:        root.kind,
 				Plugin:      root.plugin,
-				CanDisable:  provider == "codex" || provider == "claude",
+				CanDisable:  provider == "codex" || provider == "claude" || provider == "codebuddy",
 				// `files` 是支撑包（collectLocalSkillFiles 有意排除 SKILL.md，让包的
 				// `Content` 字段能装下它而不在导入时重复）。列表摘要里用户要的是文件总
 				// 数，因此把 SKILL.md 自己加回来。

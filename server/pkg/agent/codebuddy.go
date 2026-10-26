@@ -119,8 +119,19 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
-	args = append(args, filterCustomArgs(opts.ExtraArgs, codebuddyBlockedArgs, logger)...)
-	args = append(args, filterCustomArgs(opts.CustomArgs, codebuddyBlockedArgs, logger)...)
+	blockedArgs := codebuddyBlockedArgs
+	if opts.CodebuddySettingsPath != "" {
+		blockedArgs = make(map[string]blockedArgMode, len(codebuddyBlockedArgs)+1)
+		for key, mode := range codebuddyBlockedArgs {
+			blockedArgs[key] = mode
+		}
+		blockedArgs["--settings"] = blockedWithValue
+	}
+	args = append(args, filterCustomArgs(opts.ExtraArgs, blockedArgs, logger)...)
+	args = append(args, filterCustomArgs(opts.CustomArgs, blockedArgs, logger)...)
+	if opts.CodebuddySettingsPath != "" {
+		args = append(args, "--settings", opts.CodebuddySettingsPath)
+	}
 	return args
 }
 

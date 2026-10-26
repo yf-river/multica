@@ -774,3 +774,30 @@ func TestCodebuddyExecuteFailsOnBackgroundTaskStarted(t *testing.T) {
 		t.Fatal("timeout waiting for result")
 	}
 }
+
+func TestCodebuddyManagedSkillSettingsSurviveBothTransports(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		opts := ExecOptions{CodebuddySettingsPath: "/task/skill-settings.json", ExtraArgs: []string{"--settings", "/inherited/settings.json"}, CustomArgs: []string{"--settings=/custom/settings.json", "--debug"}}
+		var args []string
+		if native {
+			args = codebuddyNativeArgs(opts, Config{Logger: slog.Default()})
+		} else {
+			args = buildCodebuddyArgs(opts, slog.Default())
+		}
+		count := 0
+		for i, arg := range args {
+			if arg == "--settings" {
+				count++
+				if i+1 >= len(args) || args[i+1] != opts.CodebuddySettingsPath {
+					t.Fatalf("managed skill policy replaced: %v", args)
+				}
+			}
+			if strings.Contains(arg, "/inherited/") || strings.Contains(arg, "/custom/") {
+				t.Fatalf("competing skill settings survived: %v", args)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("managed skill policy missing: %v", args)
+		}
+	}
+}
