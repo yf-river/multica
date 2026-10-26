@@ -13,6 +13,7 @@ class FixtureAdapter extends LlmAdapter {
     const phase = process.env.MULTICA_DSH_FIXTURE_PHASE
     appendFileSync(process.env.MULTICA_DSH_FIXTURE_REQUESTS, JSON.stringify({phase, messages: options.messages, tools: options.tools}) + '\n', {mode: 0o600})
     requests += 1
+    if (phase === 'provider-error') throw new Error('Deterministic fixture provider failure')
     if (options.provider !== 'multica-fixture' || options.model !== 'native-interaction') throw new Error('Fixture model identity changed')
     let name, args
     if (requests === 1 && (phase === 'plan' || phase === 'keep-planning')) {

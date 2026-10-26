@@ -427,7 +427,10 @@ function resultFromReason(active: ActiveRun): Omit<Extract<OutboundFrame, { type
     return { status: 'completed', output: active.lastText, stop_reason: reason.kind, resume_rejected: false }
   }
   if (reason?.kind === 'aborted') {
-    return { status: 'aborted', output: active.lastText, stop_reason: reason.kind, resume_rejected: false }
+    const cause = reason.reason
+    const hook = cause.kind === 'hook' && /^[a-z][a-z0-9_/-]{0,127}$/i.test(cause.reason) ? `: ${cause.reason}` : ''
+    return { status: 'aborted', output: active.lastText, stop_reason: reason.kind, resume_rejected: false,
+      error: { code: 'DSH_TURN_ABORTED', message: `DSH turn was aborted${hook}` } }
   }
   if (reason?.kind === 'error') {
     return {
@@ -568,21 +571,25 @@ async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<num
     if (text !== '') {
       writeFrame({ v: PROTOCOL_VERSION, type: 'text', request_id: active.command.request_id, content: text })
     }
-    if (followupPrompt !== '') {
+    const followup = followupPrompt !== '' && execution?.result.kind === 'success'
+    if (followup) {
       active.firstSeq = handle.agent.session.seq
       handle.agent.followup(createUserMessage({
         content: [{ type: 'text', text: followupPrompt }],
         source: { kind: 'user' },
       }))
+      const outcome = await waitForQuiescence(subagentLifecycle(ctx), handle.agent, active.cancel.signal)
+      if (outcome === 'cancelled' || active.cancelRequested) await settleCancelled(ctx, handle.agent)
+      else await drainDescendants(ctx, handle.agent)
+    } else {
+      await handle.agent.whenIdle()
     }
-    // Let a follow-up turn drain before settling the command so plan text and
-    // any approved execution reach the client in this same task.
-    await handle.agent.whenIdle()
     if (active.pendingInteraction !== undefined) {
       await settleCancelled(ctx, handle.agent)
       await sessions.flush(handle.agent.session)
     }
-    const pendingResult = active.pendingInteraction === undefined ? undefined : resultFromReason(active)
+    // 命令只负责切换模式；后续模型回合的真实终态决定任务结果。
+    const pendingResult = followup || active.pendingInteraction !== undefined ? resultFromReason(active) : undefined
     const sessionId = String(handle.agent.session.id)
     if (pendingResult !== undefined) {
       await handle.dispose()
@@ -590,6 +597,7 @@ async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<num
     }
     const output = pendingResult?.output ?? (active.lastText !== '' ? active.lastText : text)
     writeFrame({
+      ...pendingResult,
       v: PROTOCOL_VERSION,
       type: 'result',
       request_id: active.command.request_id,
@@ -600,7 +608,8 @@ async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<num
       ...execution === undefined ? { error: { code: 'DSH_UNKNOWN_COMMAND', message: 'unknown or malformed slash command' } } : {},
     })
     active.lastText = output
-    return execution?.result.kind === 'success' ? 0 : 1
+    const status = pendingResult?.status ?? (execution?.result.kind === 'success' ? 'completed' : 'failed')
+    return status === 'completed' || status === 'cancelled' || status === 'waiting_plan' || status === 'waiting_input' ? 0 : 1
   } catch (error: unknown) {
     const resumeRejected = error instanceof ResumeRejectedError
     writeFrame({

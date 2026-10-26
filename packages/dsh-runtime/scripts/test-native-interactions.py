@@ -92,6 +92,9 @@ def main():
     answer, _, captured = run("answer", question_work, "对上一轮问题的回答：\ndestination: docs", session=question["session_id"])
     assert answer["status"] == "completed" and answer["session_id"] == question["session_id"] and len(captured) == 1
     assert "destination: docs" in json.dumps(captured[0]["messages"], ensure_ascii=False)
+    failed, _, captured = run("provider-error", work, "Execute the approved work.", "/plan off", approved["session_id"], "approved")
+    assert failed["status"] == "failed" and len(captured) == 1
+    assert "Deterministic fixture provider failure" in failed["error"]["message"]
     rejected, _, captured = run("missing-session", work, "已批准本轮计划，请按计划执行。", "/plan off", "multica-fixture-missing-session", "approved")
     assert rejected["status"] == "failed" and not captured
     host_metadata = json.loads((args.host_package / "package.json").read_text())

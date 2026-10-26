@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,4 +64,43 @@ func TestDshNativeInteractionSmoke(t *testing.T) {
 	if err != nil || string(data) != "DSH_APPROVED_WRITE" {
 		t.Fatalf("native write failed: %q %v", data, err)
 	}
+}
+
+// 无登录副本中的真实 DSH 必须在模型请求前终止，命令成功不能覆盖后续回合失败。
+func TestDshNativeSignedOutSlashTurnDoesNotSucceed(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
+		t.Skip("explicit native smoke only")
+	}
+	executable, home := os.Getenv("MULTICA_DSH_NATIVE_SMOKE_EXECUTABLE"), os.Getenv("MULTICA_DSH_NATIVE_SMOKE_HOME")
+	if executable == "" || home == "" {
+		t.Fatal("isolated native fixture paths required")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".credentials.yaml")); !os.IsNotExist(err) {
+		t.Fatal("signed-out fixture must not contain credentials")
+	}
+	backend, err := New("dsh", Config{ExecutablePath: executable, TaskID: "native-signed-out", Env: map[string]string{
+		"DSH_HOME": home, "DSH_TELEMETRY_DISABLED": "1", "MULTICA_DSH_PROFILE": "multica",
+		"MULTICA_RUN_REAL_AGENT_SMOKE": "1", "MULTICA_DSH_HOST_LLM_MODULE": os.Getenv("MULTICA_DSH_HOST_LLM_MODULE"),
+		"MULTICA_DSH_FIXTURE_REQUESTS": filepath.Join(t.TempDir(), "requests.jsonl"), "MULTICA_DSH_FIXTURE_PHASE": "canary",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(context.Background(), "Say ready after leaving plan mode.", ExecOptions{Cwd: t.TempDir(), Command: "/plan off", Model: "deepseek-account/deepseek-flash", HumanInteractions: true, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status == "completed" {
+		t.Fatalf("command masked signed-out turn: %#v", result)
+	}
+	if !strings.Contains(result.Error, "deepseek-account/signed-out") && !strings.Contains(result.Error, "ACCOUNT_SIGN_IN_REQUIRED") {
+		t.Fatalf("missing native abort cause: %#v", result)
+	}
+	if len(result.Usage) != 0 {
+		t.Fatalf("signed-out fixture unexpectedly called a model: %#v", result.Usage)
+	}
+	t.Logf("status=%s error=%s", result.Status, result.Error)
 }

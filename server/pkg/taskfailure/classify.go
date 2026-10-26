@@ -124,6 +124,8 @@ func Classify(rawError string) Reason {
 		containsAny(lower,
 			"unauthorized",
 			"login required",
+			"account_sign_in_required",
+			"deepseek-account/signed-out",
 			"not logged in",
 			"please login again",
 			"refresh token",

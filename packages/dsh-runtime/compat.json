@@ -1,5 +1,5 @@
 {
-  "bridgeVersion": "0.3.1",
+  "bridgeVersion": "0.3.2",
   "protocolVersion": 1,
   "dshRange": ">=0.2.1-rc.3 <0.3.0",
   "capabilities": [
