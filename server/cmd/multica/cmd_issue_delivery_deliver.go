@@ -37,6 +37,7 @@ func addDeliveryFlowCommands(group *cobra.Command) {
 	deliver.Flags().String("checks-file", "", "JSON file with [{name,stage}] business checks (required)")
 	deliver.Flags().String("evidence-file", "", "JSON file with [{name,status,evidence}] local results (required)")
 	deliver.Flags().String("delegate", "", "The user's own words authorizing this delivery (required)")
+	deliver.Flags().Bool("reuse-plan", false, "Reuse the registered plan instead of posting a new plan comment")
 	deliver.Flags().String("scope", "", "Agent's scope statement for the authorization")
 	deliver.Flags().Bool("release-after-acceptance", false, "Release to production after acceptance passes")
 	deliver.Flags().String("source-commit", "", "Full commit hash (defaults to HEAD)")
@@ -244,20 +245,27 @@ func runDeliveryDeliver(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	planBody, err := readTextFile(planPath)
-	if err != nil {
-		return err
-	}
-	var planComment struct {
-		ID       string `json:"id"`
-		Revision int    `json:"revision"`
-	}
-	if err = client.PostJSON(ctx, path+"/comments", map[string]any{"content": planBody}, &planComment); err != nil {
-		return fmt.Errorf("register plan comment: %w", err)
-	}
-	var afterPlan json.RawMessage
-	if err = client.PutJSON(ctx, path+"/delivery-plan", map[string]any{"comment_id": planComment.ID, "revision": planComment.Revision}, &afterPlan); err != nil {
-		return fmt.Errorf("register plan: %w", err)
+	reusePlan, _ := cmd.Flags().GetBool("reuse-plan")
+	if reusePlan {
+		if _, _, planErr := currentPlan(ctx, client, path); planErr != nil {
+			return fmt.Errorf("--reuse-plan: %w", planErr)
+		}
+	} else {
+		planBody, readErr := readTextFile(planPath)
+		if readErr != nil {
+			return readErr
+		}
+		var planComment struct {
+			ID       string `json:"id"`
+			Revision int    `json:"revision"`
+		}
+		if err = client.PostJSON(ctx, path+"/comments", map[string]any{"content": planBody}, &planComment); err != nil {
+			return fmt.Errorf("register plan comment: %w", err)
+		}
+		var afterPlan json.RawMessage
+		if err = client.PutJSON(ctx, path+"/delivery-plan", map[string]any{"comment_id": planComment.ID, "revision": planComment.Revision}, &afterPlan); err != nil {
+			return fmt.Errorf("register plan: %w", err)
+		}
 	}
 	planID, planRevision, err := currentPlan(ctx, client, path)
 	if err != nil {
