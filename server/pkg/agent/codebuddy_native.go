@@ -426,7 +426,11 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		}
 		setup, stop := context.WithTimeout(runCtx, handshake)
 		defer stop()
-		if _, err := client.request(setup, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "multica", "version": "1"}}); err != nil {
+		capabilities := map[string]any{}
+		if opts.RequestInteraction != nil && opts.ApprovalPolicy != "never" {
+			capabilities["_meta"] = map[string]any{"codebuddy.ai": map[string]bool{"question": true}}
+		}
+		if _, err := client.request(setup, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": capabilities, "clientInfo": map[string]string{"name": "multica", "version": "1"}}); err != nil {
 			fail(err)
 			return
 		}
