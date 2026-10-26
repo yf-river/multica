@@ -159,3 +159,62 @@ func writeDshFixture(t *testing.T, body string) string {
 	}
 	return path
 }
+
+func TestDshContextFrameBecomesRuntimeMessage(t *testing.T) {
+	ch := make(chan Message, 2)
+	state := &dshRunState{usage: map[string]TokenUsage{}}
+	handleDshFrame(dshFrame{
+		Version:        DshProtocolVersion,
+		Type:           "context",
+		RequestID:      "req-1",
+		SessionID:      "session-1",
+		Seq:            12,
+		At:             "2026-10-26T02:00:00Z",
+		Provider:       "deepseek-account",
+		Model:          "deepseek-flash",
+		DurationMs:     900,
+		InputTokens:    100,
+		OutputTokens:   5,
+		PressureTokens: 7000,
+		ContextWindow:  131072,
+		Breakdown: &struct {
+			SystemTokens  int64 `json:"system_tokens"`
+			ToolsTokens   int64 `json:"tools_tokens"`
+			MessageTokens int64 `json:"message_tokens"`
+		}{SystemTokens: 1000, ToolsTokens: 2000, MessageTokens: 4000},
+	}, "req-1", ch, state)
+	msg := <-ch
+	if msg.Type != MessageRuntime {
+		t.Fatalf("message type = %q, want runtime", msg.Type)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(msg.Content), &payload); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if payload["kind"] != "context" || payload["pressure_tokens"] != float64(7000) || payload["context_window"] != float64(131072) {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	if payload["model"] != "deepseek-flash" {
+		t.Fatalf("model missing: %+v", payload)
+	}
+}
+
+func TestDshCompactionFrameBecomesRuntimeMessage(t *testing.T) {
+	ch := make(chan Message, 2)
+	state := &dshRunState{usage: map[string]TokenUsage{}}
+	handleDshFrame(dshFrame{
+		Version: DshProtocolVersion, Type: "compaction", RequestID: "req-1",
+		Phase: "end", BeforeTokens: 9000, AfterTokens: 3000, Reason: "threshold",
+	}, "req-1", ch, state)
+	msg := <-ch
+	if msg.Type != MessageRuntime {
+		t.Fatalf("message type = %q, want runtime", msg.Type)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(msg.Content), &payload); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if payload["kind"] != "compaction" || payload["phase"] != "end" || payload["before_tokens"] != float64(9000) || payload["after_tokens"] != float64(3000) {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}

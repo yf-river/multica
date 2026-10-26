@@ -91,32 +91,50 @@ type dshWireError struct {
 
 // dshFrame 是 DSH 出站协议帧的通用载体，按 Type 区分语义、只取相关字段。
 type dshFrame struct {
-	Version          int             `json:"v"`                 // 协议版本，应与 DshProtocolVersion 一致
-	Type             string          `json:"type"`              // 帧类型：ready/session/text/thinking/tool_call/tool_result/usage/protocol_error/result/models
-	Runtime          string          `json:"runtime,omitempty"` // ready 帧里自报的运行时名，需为 "dsh"
-	ProtocolVersion  int             `json:"protocol_version,omitempty"`
-	RequestID        string          `json:"request_id,omitempty"`
-	SessionID        string          `json:"session_id,omitempty"`
-	Resumed          bool            `json:"resumed,omitempty"`   // 是否为续跑后的会话
-	Content          string          `json:"content,omitempty"`   // text/thinking 帧的正文
-	CallID           string          `json:"call_id,omitempty"`   // 工具调用 id
-	Name             string          `json:"name,omitempty"`      // 工具名
-	Arguments        string          `json:"arguments,omitempty"` // 工具入参（JSON 字符串）
-	Output           string          `json:"output,omitempty"`    // 工具出参 / 最终输出
-	IsError          bool            `json:"is_error,omitempty"`
-	Provider         string          `json:"provider,omitempty"` // usage 帧：provider 名
-	Model            string          `json:"model,omitempty"`    // usage 帧：模型名
-	InputTokens      int64           `json:"input_tokens,omitempty"`
-	OutputTokens     int64           `json:"output_tokens,omitempty"`
-	CacheReadTokens  int64           `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int64           `json:"cache_write_tokens,omitempty"`
-	Status           string          `json:"status,omitempty"` // result 帧：完成状态
-	StopReason       string          `json:"stop_reason,omitempty"`
-	ResumeRejected   bool            `json:"resume_rejected,omitempty"` // result 帧：续跑被永久拒绝
-	Error            *dshWireError   `json:"error,omitempty"`           // result/protocol_error 帧：结构化错误
-	Code             string          `json:"code,omitempty"`
-	Message          string          `json:"message,omitempty"`
-	Models           []dshModelFrame `json:"models,omitempty"` // models 帧：模型目录
+	Version          int    `json:"v"`                 // 协议版本，应与 DshProtocolVersion 一致
+	Type             string `json:"type"`              // 帧类型：ready/session/text/thinking/tool_call/tool_result/usage/protocol_error/result/models
+	Runtime          string `json:"runtime,omitempty"` // ready 帧里自报的运行时名，需为 "dsh"
+	ProtocolVersion  int    `json:"protocol_version,omitempty"`
+	RequestID        string `json:"request_id,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
+	Resumed          bool   `json:"resumed,omitempty"`   // 是否为续跑后的会话
+	Content          string `json:"content,omitempty"`   // text/thinking 帧的正文
+	CallID           string `json:"call_id,omitempty"`   // 工具调用 id
+	Name             string `json:"name,omitempty"`      // 工具名
+	Arguments        string `json:"arguments,omitempty"` // 工具入参（JSON 字符串）
+	Output           string `json:"output,omitempty"`    // 工具出参 / 最终输出
+	IsError          bool   `json:"is_error,omitempty"`
+	Provider         string `json:"provider,omitempty"` // usage 帧：provider 名
+	Model            string `json:"model,omitempty"`    // usage 帧：模型名
+	InputTokens      int64  `json:"input_tokens,omitempty"`
+	OutputTokens     int64  `json:"output_tokens,omitempty"`
+	CacheReadTokens  int64  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int64  `json:"reasoning_tokens,omitempty"`
+	// Runtime telemetry frames (context / compaction). The adapter forwards them
+	// to the daemon as MessageRuntime JSON instead of model-visible content.
+	Seq             int64  `json:"seq,omitempty"`
+	At              string `json:"at,omitempty"`
+	DurationMs      int64  `json:"duration_ms,omitempty"`
+	ContextWindow   int64  `json:"context_window,omitempty"`
+	PressureTokens  int64  `json:"pressure_tokens,omitempty"`
+	ProjectedTokens int64  `json:"projected_tokens,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	BeforeTokens    int64  `json:"before_tokens,omitempty"`
+	AfterTokens     int64  `json:"after_tokens,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	Breakdown       *struct {
+		SystemTokens  int64 `json:"system_tokens"`
+		ToolsTokens   int64 `json:"tools_tokens"`
+		MessageTokens int64 `json:"message_tokens"`
+	} `json:"breakdown,omitempty"`
+	Status         string          `json:"status,omitempty"` // result 帧：完成状态
+	StopReason     string          `json:"stop_reason,omitempty"`
+	ResumeRejected bool            `json:"resume_rejected,omitempty"` // result 帧：续跑被永久拒绝
+	Error          *dshWireError   `json:"error,omitempty"`           // result/protocol_error 帧：结构化错误
+	Code           string          `json:"code,omitempty"`
+	Message        string          `json:"message,omitempty"`
+	Models         []dshModelFrame `json:"models,omitempty"` // models 帧：模型目录
 }
 
 // dshThinkingFrame 描述某个模型支持的思考档位。
@@ -478,6 +496,62 @@ func handleDshFrame(frame dshFrame, requestID string, ch chan<- Message, state *
 			usage.CacheReadTokens += frame.CacheReadTokens
 			usage.CacheWriteTokens += frame.CacheWriteTokens
 			state.usage[key] = usage
+		}
+	case "context", "compaction":
+		// Runtime telemetry is stored as one JSON task message per frame. The
+		// payload keeps the frame type so the server can aggregate context and
+		// compaction series without a second protocol version.
+		payload := map[string]any{
+			"kind":          frame.Type,
+			"request_id":    frame.RequestID,
+			"session_id":    frame.SessionID,
+			"seq":           frame.Seq,
+			"at":            frame.At,
+			"provider":      frame.Provider,
+			"model":         frame.Model,
+			"duration_ms":   frame.DurationMs,
+			"input_tokens":  frame.InputTokens,
+			"output_tokens": frame.OutputTokens,
+		}
+		if frame.CacheReadTokens > 0 {
+			payload["cache_read_tokens"] = frame.CacheReadTokens
+		}
+		if frame.CacheWriteTokens > 0 {
+			payload["cache_write_tokens"] = frame.CacheWriteTokens
+		}
+		if frame.ReasoningTokens > 0 {
+			payload["reasoning_tokens"] = frame.ReasoningTokens
+		}
+		if frame.ContextWindow > 0 {
+			payload["context_window"] = frame.ContextWindow
+		}
+		if frame.PressureTokens > 0 {
+			payload["pressure_tokens"] = frame.PressureTokens
+		}
+		if frame.ProjectedTokens > 0 {
+			payload["projected_tokens"] = frame.ProjectedTokens
+		}
+		if frame.Breakdown != nil {
+			payload["breakdown"] = map[string]any{
+				"system_tokens":  frame.Breakdown.SystemTokens,
+				"tools_tokens":   frame.Breakdown.ToolsTokens,
+				"message_tokens": frame.Breakdown.MessageTokens,
+			}
+		}
+		if frame.Phase != "" {
+			payload["phase"] = frame.Phase
+		}
+		if frame.BeforeTokens > 0 {
+			payload["before_tokens"] = frame.BeforeTokens
+		}
+		if frame.AfterTokens > 0 {
+			payload["after_tokens"] = frame.AfterTokens
+		}
+		if frame.Reason != "" {
+			payload["reason"] = frame.Reason
+		}
+		if raw, err := json.Marshal(payload); err == nil {
+			trySend(ch, Message{Type: MessageRuntime, Content: string(raw)})
 		}
 	case "protocol_error":
 		state.protocolError = strings.TrimSpace(frame.Code + ": " + frame.Message)

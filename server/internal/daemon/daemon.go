@@ -8959,6 +8959,19 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						CreatedAt: observedAt,
 					})
 					mu.Unlock()
+				case agent.MessageRuntime:
+					// Runtime telemetry (context usage, compaction) is persisted next
+					// to tool/text messages so the run view can build a context panel
+					// without a separate ingestion endpoint.
+					s := msgSeq.Add(1)
+					mu.Lock()
+					batch = append(batch, TaskMessageData{
+						Seq:       int(s),
+						Type:      "runtime",
+						Content:   msg.Content,
+						CreatedAt: observedAt,
+					})
+					mu.Unlock()
 				}
 				switch msg.Type {
 				case agent.MessageToolUse, agent.MessageToolResult, agent.MessageError:

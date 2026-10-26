@@ -159,6 +159,10 @@ const (
 	MessageStatus     MessageType = "status"      // 状态变更（会话 id 等）
 	MessageError      MessageType = "error"       // 出错事件
 	MessageLog        MessageType = "log"         // 运行时日志
+	// MessageRuntime carries runtime-native telemetry (context usage, compaction,
+	// subagent lifecycle) as a JSON payload. It is not model-visible content; the
+	// daemon persists it as a task message and the run view renders it separately.
+	MessageRuntime MessageType = "runtime"
 )
 
 // Message 是 agent 在执行期间向外发射的统一事件。
