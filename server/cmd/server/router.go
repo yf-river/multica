@@ -1387,6 +1387,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/traces", h.ReportTaskTraces)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
+		r.Post("/tasks/{taskId}/interactions", h.CreateTaskInteraction)
+		r.Get("/tasks/{taskId}/interactions/{interactionId}", h.GetTaskInteractionByDaemon)
+		r.Post("/tasks/{taskId}/interactions/{interactionId}/expire", h.ExpireTaskInteraction)
+		r.Post("/tasks/{taskId}/interactions/{interactionId}/lease", h.RenewTaskInteractionLease)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
 		r.Post("/tasks/{taskId}/release-pause-ack", h.AckReleasePause)
@@ -1836,6 +1840,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/runs/{runId}/fail", h.FailUpstreamRun)
 			})
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/interactions", h.ListTaskInteractions)
+			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/interactions/{interactionId}/respond", h.RespondTaskInteraction)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
 			// Issue quick action（定义；运行在 /api/issues/{id}/quick-actions/{quickActionId}/run 之下）

@@ -8133,6 +8133,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if providerNeedsInlineSystemPrompt(provider) {
 		execOpts.SystemPrompt = runtimeBrief
 	}
+	if (provider == "codex" || provider == "codebuddy") && task.SupervisionPrompt == "" && task.ReviewCommit == "" && task.LifeJobID == "" && (task.ChatSessionID != "" || task.IssueID != "") {
+		execOpts.RequestInteraction = d.client.taskInteractionRequester(task.ID, provider)
+	}
 
 	// 来自"早于服务器侧生成"服务器的 quick-actions 刷新任务（MUL-5573）。这个
 	// daemon 已经没有可拿来跑它的建议通道，而且它绝不能掉进下面的普通 chat 路径：
@@ -8712,7 +8715,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	var idleWatchdogThreshold atomic.Int64
 	idleWatchdogThreshold.Store(int64(idleWindow))
 	if idleWindow > 0 {
-		go d.runIdleWatchdog(agentCtx, idleWindow, d.cfg.AgentToolWatchdog, &lastActivityAt, &inFlightTools, &idleWatchdogFired, &idleWatchdogThreshold, agentCancel, session.Messages, taskLog)
+		go d.runIdleWatchdog(agentCtx, idleWindow, d.cfg.AgentToolWatchdog, &lastActivityAt, &inFlightTools, &idleWatchdogFired, &idleWatchdogThreshold, agentCancel, session.Messages, taskLog, session.WaitingForInput)
 	}
 
 	// drainFinished 在排空 goroutine 冲刷完最后一批消息后关闭，让下面的结果交接
@@ -9096,7 +9099,7 @@ func idleWatchdogTickInterval(window time.Duration) time.Duration {
 //
 // Polling rate comes from idleWatchdogTickInterval, so a run is force-stopped
 // somewhere between its budget and budget + tick, never earlier.
-func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger) {
+func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger, waitingForInput ...func() bool) {
 	ticker := time.NewTicker(idleWatchdogTickInterval(window))
 	defer ticker.Stop()
 	for {
@@ -9104,6 +9107,9 @@ func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow ti
 		case <-agentCtx.Done():
 			return
 		case <-ticker.C:
+			if len(waitingForInput) > 0 && waitingForInput[0] != nil && waitingForInput[0]() {
+				continue
+			}
 			// 挑选静默预算。在途工具预期会静默（一场长构建/安装/测试在 tool_use 与
 			// tool_result 之间不发任何东西），所以它用更大的 toolWindow；toolWindow
 			// <= 0 则完全禁用"在途"上界。

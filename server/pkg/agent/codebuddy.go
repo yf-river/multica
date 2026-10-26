@@ -6,13 +6,13 @@ package agent
 // system / result / log / control_request 等），prompt 作为一条 user 事件写进 stdin。
 //
 // 与 claude.go 的执行模型同构：stdin/stdout 并发读写避免管道死锁；写完后不关闭
-// stdin，保持开放以在运行中应答 control_request 的自动批准；用 runContext 实现
+// stdin，保持开放以在运行中应答 control_request；用 runContext 实现
 // 「零超时 = 不设截止时间」的语义。
 //
 // 执行流程：Execute 拼好参数拉起进程 → 独立 goroutine 先把 prompt 写进 stdin → 主
 // goroutine 循环读 stdout 事件：assistant 消息拆出文本/思考/工具调用并推送；user 消
-// 息里的 tool_result 回填工具结果；result 事件汇总终态与用量；control_request 一律
-// 自动批准 → 进程退出后用 finalizeStreamResult 把各类信号综合成最终状态
+// 息里的 tool_result 回填工具结果；result 事件汇总终态与用量；交互任务将权限请求
+// 交给用户确认 → 进程退出后用 finalizeStreamResult 把各类信号综合成最终状态
 // （completed/failed/timeout/aborted），连同会话 ID、token 用量一起放进 Result。
 //
 // 会话续跑用 --resume；daemon 判定续跑被拒（resumeWasRejected）时会在 Result 里置
@@ -33,7 +33,7 @@ import (
 // codebuddyBackend 实现 Backend 接口：以 --output-format stream-json 拉起 CodeBuddy
 // CLI（Claude Code 的一个分支）。
 // 与 claude.go 的执行模型一致：stdin/stdout 并发读写避免管道死锁；stdin 保持打开以便
-// 应答 control_request 的自动批准；用 runContext 实现「零超时 = 无截止时间」的语义。
+// 应答 control_request；用 runContext 实现「零超时 = 无截止时间」的语义。
 type codebuddyBackend struct {
 	cfg Config
 }
@@ -73,18 +73,10 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		"--input-format", "stream-json",
 		"--verbose",
 		"--permission-mode", permissionMode,
-		// CodeBuddy 的交互式工具在 daemon 无头的 stream-json 传输下没有可渲染的 UI。
-		// AskUserQuestion 和 ExitPlanMode 都被排除在 CodeBuddy 的 permission-mode 终审
-		// 之外，所以 --permission-mode bypassPermissions 并不会自动批准它们——它们总会
-		// 走到权限桥，然后卡住回合、等一个永远不会有人给的确认（GitHub #6012）。
-		// EnterPlanMode 与它们一起被禁用：留着它，模型会进入一个「进去后没有工具能出
-		// 来」的计划模式。计划形态的工作仍然会发生——计划以普通 assistant 输出的形式
-		// 写出，而不是挡在一个审批闸门后面。
-		//
-		// 每个工具名单独传一个值：--disallowedTools 是可变参数，CodeBuddy 用精确比对把
-		// 每项与工具名对照（PermissionUtils.matchPermissionRules），所以逗号拼起来的
-		// 字符串一条都匹配不上——尽管 CLI 自己的帮助文本声称可以。
-		"--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
+	}
+	// 无人值守角色禁用需要人回答的工具；交互任务通过持久化问答桥接。
+	if opts.RequestInteraction == nil {
+		args = append(args, "--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode")
 	}
 	if opts.LifeCognition {
 		// 后台认知禁用内置工具及用户 MCP，只加载本轮专用 MCP。
@@ -237,6 +229,12 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 	control := newCodebuddyControlClient(stdin)
+	interactions := newInteractionBroker("codebuddy", runCtx, opts.RequestInteraction, func(msg Message) {
+		select {
+		case msgCh <- msg:
+		case <-runCtx.Done():
+		}
+	})
 
 	// 把 prompt 放进独立 goroutine 写，防止死锁：CodeBuddy（同 Claude Code）会先把
 	// 启动横幅打到 stdout 再去读 stdin；若同步写，一旦管道缓冲填满就会卡死。写完 prompt
@@ -255,6 +253,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
+		defer interactions.stop()
 		if mcpConfigPath != "" {
 			defer cleanupMcpConfigTemp(mcpConfigPath)
 		}
@@ -349,7 +348,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 					})
 				}
 			case "control_request":
-				b.handleControlRequest(msg, control)
+				if opts.RequestInteraction == nil || !handleCodebuddyInteraction(msg, control, interactions) {
+					b.handleControlRequest(msg, control)
+				}
 			case "control_response":
 				control.respond(msg.Response)
 			}
@@ -478,7 +479,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		}
 	}()
 
-	return &Session{Supplement: control.supplement, SupplementReady: control.ready, Messages: msgCh, Result: resCh}, nil
+	return &Session{Supplement: control.supplement, SupplementReady: control.ready, WaitingForInput: interactions.waiting, Messages: msgCh, Result: resCh}, nil
 }
 
 // handleAssistant 处理一条 assistant 事件：解析出内容块（文本 / 思考 / 工具调用），

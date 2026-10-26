@@ -123,5 +123,25 @@
   },
   "navigation": {
     "open_in_new_tab": "在新标签页打开"
+  },
+  "runtime_interaction": {
+    "load_error": "暂时无法读取待确认事项。",
+    "retry": "重试",
+    "history": "本次执行的问答与确认记录",
+    "saved": "回答已保存",
+    "expired": "请求已失效",
+    "declined": "已拒绝",
+    "allowed": "已允许",
+    "other_answer": "或填写自己的回答",
+    "answer": "回答",
+    "save_error": "回答未能保存，请重试；请求可能已结束。",
+    "unsupported": "此请求暂不支持在当前页面回答。",
+    "saving": "正在保存…",
+    "submit": "提交回答",
+    "execute": "开始执行",
+    "allow": "允许本次操作",
+    "deny": "拒绝",
+    "empty": "没有问答或确认记录。",
+    "unknown": "请求状态暂时无法确认"
   }
 }

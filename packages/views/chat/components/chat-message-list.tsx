@@ -49,6 +49,7 @@ import type {
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { buildTimeline } from "../../common/task-transcript";
 import { traceToolArgSummary } from "../../common/task-transcript/trace-event-presenter";
+import { TaskInteractionPanel } from "../../common/task-interaction-panel";
 import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { FOLLOW_EDGE_THRESHOLD } from "../../common/task-transcript/transcript-follow";
@@ -103,6 +104,7 @@ interface ChatMessageListProps {
 // `context` prop，以普通 prop 形式到达这些组件（重渲染，而非重挂载）。
 
 interface ChatListContext {
+  active: boolean;
   isFetchingOlderMessages: boolean;
   showStatusPill: boolean;
   pendingTask: ChatPendingTask | null | undefined;
@@ -143,14 +145,16 @@ function ChatListHeader({ context }: { context?: ChatListContext }) {
   );
 }
 
-// Footer 现在只扛状态 pill——是任务的"外壳"，不再是内容。实时 timeline 挪进了
-// 真正的行，好让它在任务完成时保住自己的身份（见 ChatRenderItem）。
+// Footer 承载任务状态和待确认事项；实时 timeline 使用独立行身份（见 ChatRenderItem）。
 //
 // 容器总是渲染（即使没有 pill），让列表保持恒定的底部内缩：没有它，最后一行的
 // py-2 会是最终回复（及它的跟进 pills）与输入框之间唯一的间隔。
 function ChatListFooter({ context }: { context?: ChatListContext }) {
   return (
     <div className={cn(CHAT_COLUMN, "pb-4 space-y-4")}>
+      {context?.pendingTask?.status === "running" && isTaskMessageTaskId(context.pendingTask.task_id) && (
+        <TaskInteractionPanel taskId={context.pendingTask.task_id} active={context.active} />
+      )}
       {context?.showStatusPill && context.pendingTask ? (
         <TaskStatusPill
           pendingTask={context.pendingTask}
@@ -262,6 +266,7 @@ export function ChatMessageList({
   const liveEndKey = renderItems[renderItems.length - 1]?.key ?? null;
 
   const listContext: ChatListContext = {
+    active,
     isFetchingOlderMessages,
     showStatusPill,
     pendingTask,

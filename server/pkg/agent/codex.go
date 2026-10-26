@@ -945,6 +945,11 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		sessionMu.RUnlock()
 		return session != nil && session.SupplementReady != nil && session.SupplementReady()
 	}
+	waitingForInput := func() bool {
+		sessionMu.RLock()
+		defer sessionMu.RUnlock()
+		return currentSession != nil && currentSession.WaitingForInput != nil && currentSession.WaitingForInput()
+	}
 
 	go func() {
 		defer func() {
@@ -1037,7 +1042,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		}
 	}()
 
-	return &Session{Supplement: supplement, SupplementReady: supplementReady, Messages: msgCh, Result: resCh}, nil
+	return &Session{Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: waitingForInput, Messages: msgCh, Result: resCh}, nil
 }
 
 // executeOnce 真正拉起一次 codex app-server 进程并跑完一轮（进程生命周期 + JSON-RPC
@@ -1282,6 +1287,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		},
 	}
 
+	c.interactions = newInteractionBroker("codex", runCtx, opts.RequestInteraction, c.onMessage)
 	// 后台开始读 stdout
 	readerDone := make(chan struct{})
 	go func() {
@@ -1440,7 +1446,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		defer stopProcess()
 		defer close(msgCh)
 		defer close(resCh)
-		defer drainAndWait()
+		defer func() { cancel(); drainAndWait(); c.interactions.stop() }()
 
 		startTime := time.Now()
 		finalStatus := "completed"
@@ -1698,6 +1704,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					stopFirstTurnNoProgressTimer()
 				}
 			case <-firstTurnNoProgressTimerC:
+				if c.interactions.waiting() {
+					firstTurnNoProgressTimer.Reset(firstTurnNoProgressTimeout)
+					continue
+				}
 				waitingForTurn = false
 				finishFirstItemWait("no_progress_timeout")
 				finalStatus = "timeout"
@@ -1718,6 +1728,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					"last_activity", lastSemanticActivityDescription,
 				)
 			case <-semanticTimer.C:
+				if c.interactions.waiting() {
+					resetTimer(semanticTimer, semanticInactivityTimeout)
+					continue
+				}
 				waitingForTurn = false
 				finishFirstItemWait("semantic_inactivity_timeout")
 				finalStatus = "timeout"
@@ -1899,7 +1913,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	supplementReady := func() bool {
 		return c.getThreadID() != "" && c.activeTurnID() != ""
 	}
-	return &Session{Supplement: supplement, SupplementReady: supplementReady, Messages: msgCh, Result: resCh}, nil
+	return &Session{Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: c.interactions.waiting, Messages: msgCh, Result: resCh}, nil
 }
 
 func supplementCodexTurn(ctx context.Context, c *codexClient, instruction string) error {
@@ -2308,6 +2322,8 @@ type codexClient struct {
 	cfg                    Config
 	stdin                  interface{ Write([]byte) (int, error) }
 	mu                     sync.Mutex
+	writeMu                sync.Mutex
+	interactions           *interactionBroker
 	nextID                 int
 	pending                map[int]*pendingRPC
 	processDone            chan struct{}
@@ -2642,7 +2658,7 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 		return nil, err
 	}
 	data = append(data, '\n')
-	if _, err := c.stdin.Write(data); err != nil {
+	if _, err := c.write(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
@@ -2691,10 +2707,10 @@ func (c *codexClient) notify(method string) {
 	}
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	_, _ = c.write(data)
 }
 
-func (c *codexClient) respond(id int, result any) {
+func (c *codexClient) respond(id any, result any) {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -2702,10 +2718,10 @@ func (c *codexClient) respond(id int, result any) {
 	}
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	_, _ = c.write(data)
 }
 
-func (c *codexClient) respondError(id int, code int, message string) {
+func (c *codexClient) respondError(id any, code int, message string) {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -2716,7 +2732,7 @@ func (c *codexClient) respondError(id int, code int, message string) {
 	}
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	_, _ = c.write(data)
 }
 
 func (c *codexClient) closeAllPending(err error) {
@@ -2843,11 +2859,15 @@ func (c *codexClient) handleResponse(raw map[string]json.RawMessage) {
 }
 
 func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
-	var id int
-	_ = json.Unmarshal(raw["id"], &id)
+	id := raw["id"]
 
 	var method string
 	_ = json.Unmarshal(raw["method"], &method)
+	if c.interactions != nil && (method == "item/tool/requestUserInput" || method == "tool/requestUserInput" ||
+		(c.interactions.request != nil && (method == "item/commandExecution/requestApproval" || method == "item/fileChange/requestApproval" || method == "item/permissions/requestApproval" || method == "execCommandApproval" || method == "applyPatchApproval"))) {
+		c.handleInteractionRequest(id, method, raw["params"])
+		return
+	}
 
 	// daemon 模式下自动批准所有 exec/patch 类请求：没有人在屏幕前点「允许」。
 	switch method {
@@ -2917,6 +2937,11 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	// started/turnID；若让别的线程先到，可能把主回合 ID 顶掉，让后续主线 item/完成事件
 	// 看着像过期数据。
 	if c.isNotificationFromOtherThread(params) {
+		return
+	}
+	if method == "serverRequest/resolved" && c.interactions != nil {
+		id, _ := json.Marshal(params["requestId"])
+		c.interactions.resolve(string(id))
 		return
 	}
 	if c.acceptNotification != nil && !c.acceptNotification(method, params) {

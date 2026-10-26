@@ -6,6 +6,7 @@
 
 "use client";
 
+import { TaskInteractionHistory } from "../task-interaction-panel";
 import { TaskOutput } from "./task-output";
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
 import { Virtuoso, type VirtuosoHandle, type Components } from "react-virtuoso";
@@ -1087,6 +1088,8 @@ export function AgentTranscriptDialog({
             {headerSlot}
           </div>
         )}
+
+        {open && <TaskInteractionHistory taskId={task.id} active={isLive} />}
 
         {/* ── 列表工具栏：左搜索，右侧两个菜单 ── */}
         <div className="flex items-center gap-2 border-b px-4 py-1.5 shrink-0">

@@ -6385,61 +6385,11 @@ func (h *Handler) hydrateTaskTraces(ctx context.Context, issueID pgtype.UUID, re
 // Verifies the task belongs to the caller's workspace.
 func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
-	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
+	task, ok := h.loadTaskForUser(w, r, taskID)
 	if !ok {
 		return
 	}
-
-	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
-	if err != nil {
-		if !isNotFound(err) {
-			slog.Warn("get agent task failed", "task_id", taskID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to load task")
-			return
-		}
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-
-	// Verify the task belongs to the caller's workspace. A failed lookup is a
-	// 5xx here too: this endpoint does not drive the daemon's interrupt, but
-	// telling a reader "this task does not exist" because the DB blinked is
-	// the same lie, and it trains clients to give up on a retryable error.
-	wsID, err := h.TaskService.ResolveTaskWorkspaceIDChecked(r.Context(), task)
-	if err != nil {
-		slog.Warn("resolve task workspace failed", "task_id", taskID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to load task")
-		return
-	}
-	// Mismatch stays a 404 rather than a 403: a task in another workspace must
-	// be indistinguishable from one that does not exist.
-	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-	if task.IssueID.Valid {
-		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
-		if err != nil || !healthIssueVisible(issue, requestUserID(r)) {
-			writeError(w, 404, "task not found")
-			return
-		}
-	}
-
-	if task.ChatSessionID.Valid {
-		if r.Header.Get("X-Actor-Source") == "task_token" {
-			sourceID, valid := parseUUIDOrBadRequest(w, r.Header.Get("X-Task-ID"), "task_id")
-			if !valid {
-				return
-			}
-			source, err := h.Queries.GetAgentTask(r.Context(), sourceID)
-			if err != nil || !rerunSourceMatchesTaskScope(task, source) {
-				writeError(w, http.StatusForbidden, "not your chat session")
-				return
-			}
-		} else if _, ok := h.gateChatSessionForUser(w, r, requestUserID(r), wsID, uuidToString(task.ChatSessionID)); !ok {
-			return
-		}
-	}
+	taskUUID := task.ID
 
 	if r.URL.Query().Has("output_id") {
 		h.readTaskOutput(w, r, taskUUID)

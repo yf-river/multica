@@ -1,5 +1,6 @@
 "use client";
 
+import { TaskInteractionPanel } from "../../common/task-interaction-panel";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Gauge, ListTree, Loader2, RotateCcw, Square } from "lucide-react";
@@ -372,6 +373,7 @@ export function ActiveTaskRow({
   // 手写的夹具命中，而那等于在测一个生产环境造不出来的场景。要恢复它，
   // 请与"增量上报 + 缓存失效"的改动同批做。
   return (
+    <div className="min-w-0 space-y-2">
     <RowShell task={task}>
       <TriggerText text={trigger} />
       <TaskCommentCoverage task={task} />
@@ -428,6 +430,8 @@ export function ActiveTaskRow({
         }
       />
     </RowShell>
+    {task.status === "running" && <TaskInteractionPanel taskId={task.id} active />}
+    </div>
   );
 }
 
