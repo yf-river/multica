@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -169,4 +170,40 @@ func (h *Handler) SearchKnowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"query": query, "target_uri": target, "result": raw})
+}
+
+// ReadKnowledge reads one file from the workspace knowledge base.
+// GET /api/workspaces/{id}/knowledge/read?uri=...&offset=0&limit=-1
+func (h *Handler) ReadKnowledge(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
+	prefix := "viking://resources/workspaces/" + workspaceID
+	if uri == "" || !strings.HasPrefix(uri, prefix) {
+		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
+		return
+	}
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	limit := -1
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed != 0 && parsed <= 2000 {
+			limit = parsed
+		}
+	}
+	client := newKnowledgeClient()
+	raw, _, err := client.do(r.Context(), http.MethodGet, "/api/v1/content/read", url.Values{
+		"uri": {uri}, "offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(limit)},
+	}, nil, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"uri": uri, "result": raw})
 }

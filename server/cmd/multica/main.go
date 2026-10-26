@@ -79,6 +79,7 @@ func init() {
 	updateCmd.GroupID = groupAdditional
 	versionCmd.GroupID = groupAdditional
 
+	rootCmd.AddCommand(knowledgeCmd)
 	rootCmd.AddCommand(issueCmd)
 	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(labelCmd)
