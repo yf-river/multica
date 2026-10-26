@@ -811,3 +811,19 @@ AskUserQuestion，任务虽正常结束，但没有产生可回答的问题。�
 
 本轮代码及证据已形成可审阅增量，尚未登记新 int 候选。发布流程所需的原任务
 用户评论来源已向用户询问，不能把已发布固定提交的旧登记当作本轮已获平台批准。
+
+## 第三十四阶段：SDK 问答初始化
+
+CodeBuddy stream-json 交互运行先发送 initialize，声明 askUserQuestion 与后续
+prompt，再等待对应成功回执后提交模型输入。无回答器或 never 策略沿用无人值守
+路径。初始化拒绝、回执缺失、进程结束或取消均停止等待；内部初始化失败保留明确
+原因并回收进程，不以取消掩盖失败。子调用回执不能确认主执行的初始化或 steer。
+
+- `phase34-sdk-hooks-disabled-question.log`：真实 2.177.0、固定指纹 `a246ed81`、
+  Flash，显式 disableAllHooks 时回答和拒答均通过（20.75s），模型分别返回准确
+  选项和 DECLINED；回答器为自动测试，未修改账号设置。
+- `phase34-codebuddy-race.log`：CodeBuddy 定向 race 全部通过（22.124s）；
+  最后的初始化、取消与 steer 检查 3.181s 通过。夹具覆盖错误回执、无回执、
+  子调用成功回执后主执行拒绝，以及确认前不得提交 prompt。
+- core / views 的历史过程修复、原生与 SDK 问答均已具备本地验证，相关 Go vet
+  和 CLI 构建通过。准确新候选的 int 问答页面、恢复与生产验收仍待完成。

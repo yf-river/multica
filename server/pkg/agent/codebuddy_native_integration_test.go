@@ -16,6 +16,14 @@ import (
 )
 
 func TestCodebuddyRealNativeQuestionAnswer(t *testing.T) {
+	testCodebuddyRealQuestionAnswers(t, "native")
+}
+
+func TestCodebuddyRealSDKQuestionAnswer(t *testing.T) {
+	testCodebuddyRealQuestionAnswers(t, "sdk")
+}
+
+func testCodebuddyRealQuestionAnswers(t *testing.T, transport string) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real native question smoke is opt-in")
 	}
@@ -24,7 +32,13 @@ func TestCodebuddyRealNativeQuestionAnswer(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var count atomic.Int32
 			backend := &codebuddyBackend{cfg: Config{ExecutablePath: runtime.Path, BuiltinRuntime: true, CLIVersion: runtime.Version, Logger: slog.Default(), Env: map[string]string{"HOME": runtime.Home, "CODEBUDDY_CONFIG_DIR": filepath.Join(runtime.Home, "codebuddy")}}}
-			session, err := backend.executeNative(t.Context(), "必须调用 AskUserQuestion 原生工具提出一个单选问题：回复要采用哪种长度？选项为简短、详细，各有一句说明。等待用户选择后，只回复所选选项；如果用户拒绝回答，只回复 DECLINED。不要运行命令、搜索或调用其他工具。", ExecOptions{Cwd: t.TempDir(), Model: "deepseek-v4.1-flash", Timeout: 100 * time.Second, RequestInteraction: func(_ context.Context, prompt protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
+			execute := backend.executeNative
+			var customArgs []string
+			if transport == "sdk" {
+				execute = backend.Execute
+				customArgs = []string{"--settings", `{"disableAllHooks":true}`}
+			}
+			session, err := execute(t.Context(), "必须调用 AskUserQuestion 原生工具提出一个单选问题：回复要采用哪种长度？选项为简短、详细，各有一句说明。等待用户选择后，只回复所选选项；如果用户拒绝回答，只回复 DECLINED。不要运行命令、搜索或调用其他工具。", ExecOptions{Cwd: t.TempDir(), Model: "deepseek-v4.1-flash", CustomArgs: customArgs, Timeout: 100 * time.Second, RequestInteraction: func(_ context.Context, prompt protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
 				count.Add(1)
 				if prompt.Kind != "question" || len(prompt.Questions) != 1 || len(prompt.Questions[0].Options) != 2 {
 					t.Errorf("unexpected native question: kind=%s questions=%d title=%.350q", prompt.Kind, len(prompt.Questions), prompt.Title)
@@ -55,7 +69,7 @@ func TestCodebuddyRealNativeQuestionAnswer(t *testing.T) {
 			if result.Status != "completed" || strings.TrimSpace(result.Output) != test.output || count.Load() != 1 || len(result.Usage) == 0 {
 				t.Fatalf("native question failed: status=%s error=%s output=%q questions=%d models=%d", result.Status, result.Error, result.Output, count.Load(), len(result.Usage))
 			}
-			t.Logf("Real CodeBuddy %s native question decision=%s delivered once; model observed exact outcome; models=%d duration_ms=%d; responder=automated_test", runtime.Version, test.decision, len(result.Usage), result.DurationMs)
+			t.Logf("Real CodeBuddy %s transport=%s question decision=%s delivered once; model observed exact outcome; models=%d duration_ms=%d; responder=automated_test", runtime.Version, transport, test.decision, len(result.Usage), result.DurationMs)
 		})
 	}
 }

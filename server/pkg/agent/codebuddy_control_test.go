@@ -4,7 +4,92 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 )
+
+func TestCodebuddySDKInitializationRequiresMatchingAcknowledgement(t *testing.T) {
+	for _, subtype := range []string{"success", "error"} {
+		t.Run(subtype, func(t *testing.T) {
+			stdin := &fakeStdinWithHook{}
+			control := newCodebuddyControlClient(stdin)
+			stdin.afterWrite = func() {
+				var sent struct {
+					RequestID string `json:"request_id"`
+					Request   struct {
+						Subtype      string          `json:"subtype"`
+						HasPrompt    bool            `json:"hasPrompt"`
+						Capabilities map[string]bool `json:"capabilities"`
+					} `json:"request"`
+				}
+				if err := json.Unmarshal([]byte(stdin.Lines()[0]), &sent); err != nil {
+					t.Error(err)
+					return
+				}
+				if sent.Request.Subtype != "initialize" || !sent.Request.HasPrompt || !sent.Request.Capabilities["askUserQuestion"] {
+					t.Errorf("missing SDK question capability: %+v", sent)
+				}
+				control.respond(json.RawMessage(`{"subtype":"success","request_id":"unrelated"}`))
+				response, _ := json.Marshal(map[string]string{"subtype": subtype, "request_id": sent.RequestID, "error": "test rejection"})
+				control.respond(response)
+			}
+			if err := control.initialize(t.Context()); (err != nil) != (subtype == "error") {
+				t.Fatalf("initialize=%v subtype=%s", err, subtype)
+			}
+			if control.ready() || len(control.pending) != 0 {
+				t.Fatal("initialization enabled steer or retained a pending request")
+			}
+		})
+	}
+}
+
+func TestCodebuddySDKInitializationStopsWaiting(t *testing.T) {
+	for _, closeProcess := range []bool{false, true} {
+		stdin := &fakeStdinWithHook{}
+		control := newCodebuddyControlClient(stdin)
+		ctx, cancel := context.WithCancel(t.Context())
+		stdin.afterWrite = func() {
+			if closeProcess {
+				control.close()
+			} else {
+				cancel()
+			}
+		}
+		start := time.Now()
+		if err := control.initialize(ctx); err == nil {
+			t.Fatal("missing initialization acknowledgement succeeded")
+		}
+		cancel()
+		if time.Since(start) > time.Second || len(control.pending) != 0 {
+			t.Fatal("initialization did not release its pending request")
+		}
+	}
+}
+
+func TestCodebuddySDKInitializationDoesNotAcceptCancelledAcknowledgement(t *testing.T) {
+	stdin := &fakeStdinWithHook{}
+	control := newCodebuddyControlClient(stdin)
+	ctx, cancel := context.WithCancel(t.Context())
+	stdin.afterWrite = func() {
+		var request struct {
+			RequestID string `json:"request_id"`
+		}
+		_ = json.Unmarshal([]byte(stdin.Lines()[0]), &request)
+		response, _ := json.Marshal(map[string]string{"subtype": "success", "request_id": request.RequestID})
+		control.respond(response)
+		cancel()
+	}
+	if err := control.initialize(ctx); err != context.Canceled {
+		t.Fatalf("cancelled initialization accepted acknowledgement: %v", err)
+	}
+	if len(control.pending) != 0 {
+		t.Fatal("cancelled initialization retained pending request")
+	}
+	stdin = &fakeStdinWithHook{}
+	control = newCodebuddyControlClient(stdin)
+	if err := control.initialize(ctx); err != context.Canceled || len(stdin.Lines()) != 0 {
+		t.Fatal("cancelled initialization wrote another request")
+	}
+}
 
 func TestCodebuddySteerAcknowledgement(t *testing.T) {
 	for _, test := range []struct {
