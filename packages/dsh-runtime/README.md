@@ -17,7 +17,7 @@ pnpm --filter @multica-ai/dsh-runtime bundle:daemon
 包名和 profile 入口为 `@multica-ai/dsh-runtime` 与 `multica`：
 
 ```sh
-dsh plugin --profile multica add /absolute/path/to/dsh-runtime-0.3.0.tgz
+dsh plugin --profile multica add /absolute/path/to/dsh-runtime-0.3.1.tgz
 dsh --profile multica --probe
 dsh --profile multica --list-models
 dsh --profile multica --stdio
@@ -30,7 +30,24 @@ dsh --profile multica --stdio
 - JSONL v1 支持续跑、取消、模型发现、工具、用量、context/compaction 和 MCP。
 - `MULTICA_DSH_SESSION_ROOT` 将日志隔离到 runtime/Agent；用户 profile 和凭据由 DSH 管理。
 - 只向子工具转发服务器签发的 `mat_` 任务令牌，不转发模型凭据。
-- 当前计划评审仍沿用自动批准；持久化交互在后续独立交付中接入公共交互服务。
+- `MULTICA_DSH_INTERACTIONS=1` 在 daemon 启用持久化计划评审和普通问题；默认关闭。
+- 开关启用后，`exit_plan_mode` / `ask_user_question` 输出 `plan_review` / `user_question`，当前原生工具取消并完成会话持久化，进程以 `waiting_plan` / `waiting_input` 结束。
+- 人工决定创建下一轮任务。批准通过原生 `/plan off` 恢复并执行；继续规划通过 `/plan` 恢复；普通回答作为下一轮输入。原生会话不可恢复时停止，不能用新会话代替批准执行。
+- DSH 会话标题的模型生成关闭；聊天标题由 Multica 维护。模型历史、工具结果、context/compaction 和缓存计量由 DSH 提供。
 - `approval_policy=never` 是现有角色只读协议，正式验收和显式 Agent 设置另行交付。
 
 凭据、私有 session、生成的 profile 和真实任务输出不进入本包。
+
+## 无付费模型的原生交互验收
+
+此入口启动真实 DSH 引擎，使用确定性本地 provider，在新建的无凭据 `DSH_HOME` 中验证计划、普通问答、进程退出、重启续跑和 bash 写入。它验证原生执行链，模型规划质量和真实缓存命中需要另行验证。
+
+```sh
+MULTICA_RUN_REAL_AGENT_SMOKE=1 python3 packages/dsh-runtime/scripts/test-native-interactions.py \
+  --dsh /absolute/dsh \
+  --host-package /absolute/dsh/package \
+  --bundle /absolute/dsh-runtime-0.3.1.tgz \
+  --artifacts /private/evidence
+```
+
+每次运行创建独立证据目录；保留前轮输出。`tests/fixtures/native-provider.mjs` 只用于这个显式入口，不能安装到日常 profile。

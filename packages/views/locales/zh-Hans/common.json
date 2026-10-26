@@ -123,5 +123,33 @@
   },
   "navigation": {
     "open_in_new_tab": "在新标签页打开"
+  },
+  "runtime_interaction": {
+    "load_error": "暂时无法读取待确认事项。",
+    "retry": "重试",
+    "history": "本次执行的问答与确认记录",
+    "saved": "回答已保存",
+    "expired": "请求已失效",
+    "declined": "已拒绝",
+    "allowed": "已允许",
+    "other_answer": "或填写自己的回答",
+    "answer": "回答",
+    "save_error": "回答未能保存，请重试；请求可能已结束。",
+    "unsupported": "此请求暂不支持在当前页面回答。",
+    "saving": "正在保存…",
+    "submit": "提交回答",
+    "execute": "开始执行",
+    "allow": "允许本次操作",
+    "deny": "拒绝",
+    "empty": "没有问答或确认记录。",
+    "unknown": "请求状态暂时无法确认",
+    "approve_plan": "批准并执行",
+    "keep_planning": "继续规划",
+    "cancel_plan": "取消",
+    "plan_feedback": "补充意见（可选）",
+    "plan_approved": "已批准",
+    "planning_continued": "已继续规划",
+    "cancelled": "已取消",
+    "waiting_plan": "等待你确认计划"
   }
 }

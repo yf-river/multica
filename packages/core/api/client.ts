@@ -253,6 +253,8 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
 import type { IssueExecutionTreeResponse, TaskContextResponse } from "../types/issue-execution";
+import type { InteractionAnswer, TaskInteraction, TaskInteractionList } from "../types/task-interaction";
+import { TaskInteractionSchema, TaskInteractionListSchema } from "./task-interaction-schema";
 import type { KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus, KnowledgeUploadResponse } from "../types/knowledge";
 import {
   AgentTaskListSchema,
@@ -2703,6 +2705,22 @@ export class ApiClient {
       { events: [] },
       { endpoint: "GET /api/issues/:id/tasks/:taskId/context" },
     );
+  }
+
+  async getTaskInteractions(taskId: string): Promise<TaskInteractionList> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/interactions`);
+    return parseWithFallback(raw, TaskInteractionListSchema, { interactions: [], available: false }, {
+      endpoint: "GET /api/tasks/:taskId/interactions",
+    });
+  }
+
+  async respondTaskInteraction(taskId: string, interactionId: string, answer: InteractionAnswer): Promise<TaskInteraction | null> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/interactions/${encodeURIComponent(interactionId)}/respond`, {
+      method: "POST", body: JSON.stringify(answer),
+    });
+    return parseWithFallback(raw, TaskInteractionSchema.nullable(), null, {
+      endpoint: "POST /api/tasks/:taskId/interactions/:interactionId/respond",
+    });
   }
 
   /** 列出外部凭证配置；可按 provider 过滤。 */

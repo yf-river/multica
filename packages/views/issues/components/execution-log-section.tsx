@@ -1,5 +1,7 @@
 "use client";
 
+import { TaskInteractionPanel } from "../../common/task-interaction-panel";
+
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Gauge, ListTree, Loader2, RotateCcw, Square } from "lucide-react";
@@ -101,7 +103,7 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
           //（在等一个路径锁），不是终态。把它列在这里，正是告诉用户
           // agent 还活着、会继续跑。
           t.status === "waiting_local_directory" ||
-          t.status === "running",
+          t.status === "waiting_plan" || t.status === "waiting_input" || t.status === "running",
       ),
     [tasks],
   );
@@ -170,7 +172,10 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
       {open && (
         <div className="space-y-0.5 pl-2">
           {activeTasks.map((task) => (
-            <ActiveTaskRow key={task.id} task={task} issueId={issueId} />
+            <div key={task.id}>
+              <ActiveTaskRow task={task} issueId={issueId} />
+              {(task.status === "running" || task.status === "waiting_plan" || task.status === "waiting_input") && <TaskInteractionPanel taskId={task.id} active={task.status === "running"} />}
+            </div>
           ))}
 
           {pastTasks.length > 0 && (
@@ -293,6 +298,8 @@ export function IssueUsageTotal({
 // ─── 行视觉配置 ─────────────────────────────────────────────────────────
 
 const STATUS_TONE: Record<AgentTask["status"], string> = {
+  waiting_plan: "text-warning",
+  waiting_input: "text-warning",
   queued: "text-warning",
   dispatched: "text-warning",
   // 与 queued/dispatched 同色——视觉上"停住"让用户看出任务被停放，

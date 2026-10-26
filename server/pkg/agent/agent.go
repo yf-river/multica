@@ -18,6 +18,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Backend 是通过编码智能体执行提示词的统一接口。
@@ -40,8 +42,10 @@ type ExecOptions struct {
 	Command string
 	// ApprovalPolicy is the runtime approval stance for this run: "ask" (default)
 	// delegates to the configured answerer, "never" rejects every approval ask.
-	ApprovalPolicy string
-	Model          string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
+	HumanInteractions bool   // 启用结束进程后续跑的 DSH 人工交互
+	PlanDecision      string // approved|keep_planning，必须恢复原生会话
+	ApprovalPolicy    string
+	Model             string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
 	// SystemPrompt 携带 Multica 的运行时简报（runtime brief），仅对少数无法
 	// 从磁盘读取该简报的 provider 有效。daemon 对其它所有 provider 都把它留空
 	// （见 daemon.providerNeedsInlineSystemPrompt），因为那份简报已经以"每次任务的
@@ -208,12 +212,13 @@ const CostUSDTicksPerUSD = 10_000_000_000
 
 // Result 是 agent 会话结束后的最终结果。
 type Result struct {
-	Status     string                // "completed"、"failed"、"aborted"、"timeout"、"cancelled"
-	Output     string                // backend 挑出来的、面向用户的最终输出
-	Error      string                // 失败时的错误信息
-	DurationMs int64                 // 本次运行耗时（毫秒）
-	SessionID  string                // 后端会话 id
-	Usage      map[string]TokenUsage // 按模型名索引的 token 用量
+	PendingInteraction *protocol.SuspendedInteraction // 仅在进程完成原生工具收尾后有效
+	Status             string                         // "completed"、"failed"、"aborted"、"timeout"、"cancelled"
+	Output             string                         // backend 挑出来的、面向用户的最终输出
+	Error              string                         // 失败时的错误信息
+	DurationMs         int64                          // 本次运行耗时（毫秒）
+	SessionID          string                         // 后端会话 id
+	Usage              map[string]TokenUsage          // 按模型名索引的 token 用量
 	// ProviderTraceID 是本次子进程自己声明的根请求 id（CodeBuddy 为 stream-json
 	// 事件上的 `_requestId`），不是父进程环境变量里继承来的值。与外部观测系统的
 	// trace/span 对应需另行验证。一次 CLI 进程

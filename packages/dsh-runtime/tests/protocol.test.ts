@@ -119,3 +119,14 @@ describe('wire helpers', () => {
     expect(line.slice(0, -1)).not.toContain('\n')
   })
 })
+
+describe('plan decisions', () => {
+  const command = { v: 1, type: 'execute', request_id: 'decision', cwd: '/work', prompt: 'Approved.', mcp_servers: [], human_interactions: true, resume_session_id: 'native-session', plan_decision: 'approved', command: '/plan off' }
+  it('requires the native session, explicit interaction support and the matching mode command', () => {
+    expect(parseInboundCommand(JSON.stringify(command))).toEqual(command)
+    expect(parseInboundCommand(JSON.stringify({ ...command, plan_decision: 'keep_planning', command: '/plan' }))).toMatchObject({ plan_decision: 'keep_planning' })
+    for (const patch of [{ resume_session_id: undefined }, { human_interactions: false }, { command: '/goal' }, { plan_decision: 'allow' }]) {
+      expect(() => parseInboundCommand(JSON.stringify({ ...command, ...patch }))).toThrow()
+    }
+  })
+})

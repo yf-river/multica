@@ -25,6 +25,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -65,17 +67,19 @@ type dshMCPServer struct {
 
 // dshExecuteCommand 是下发"执行"的入站命令帧。
 type dshExecuteCommand struct {
-	Version         int                `json:"v"`
-	Type            string             `json:"type"`                        // 固定 "execute"
-	RequestID       string             `json:"request_id"`                  // 本次请求 id，用于把结果对回任务
-	Cwd             string             `json:"cwd"`                         // 工作目录
-	Prompt          string             `json:"prompt"`                      // 提示词正文
-	Command         string             `json:"command,omitempty"`           // 斜杠命令；非空时替代 prompt
-	ApprovalPolicy  string             `json:"approval_policy,omitempty"`   // ask|never；角色只读策略
-	ResumeSessionID string             `json:"resume_session_id,omitempty"` // 非空表示续跑某会话
-	Model           *dshModelSelection `json:"model,omitempty"`             // 选定模型；空用默认
-	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
-	MCPServers      []dshMCPServer     `json:"mcp_servers"` // 本次执行要挂载的 MCP 服务器
+	Version           int                `json:"v"`
+	Type              string             `json:"type"`              // 固定 "execute"
+	RequestID         string             `json:"request_id"`        // 本次请求 id，用于把结果对回任务
+	Cwd               string             `json:"cwd"`               // 工作目录
+	Prompt            string             `json:"prompt"`            // 提示词正文
+	Command           string             `json:"command,omitempty"` // 斜杠命令；非空时替代 prompt
+	HumanInteractions bool               `json:"human_interactions,omitempty"`
+	PlanDecision      string             `json:"plan_decision,omitempty"`
+	ApprovalPolicy    string             `json:"approval_policy,omitempty"`   // ask|never；角色只读策略
+	ResumeSessionID   string             `json:"resume_session_id,omitempty"` // 非空表示续跑某会话
+	Model             *dshModelSelection `json:"model,omitempty"`             // 选定模型；空用默认
+	ReasoningEffort   string             `json:"reasoning_effort,omitempty"`
+	MCPServers        []dshMCPServer     `json:"mcp_servers"` // 本次执行要挂载的 MCP 服务器
 }
 
 // dshCancelCommand 是下发"取消"的入站命令帧（优雅取消，先于信号）。
@@ -93,26 +97,31 @@ type dshWireError struct {
 
 // dshFrame 是 DSH 出站协议帧的通用载体，按 Type 区分语义、只取相关字段。
 type dshFrame struct {
-	Version          int    `json:"v"`                 // 协议版本，应与 DshProtocolVersion 一致
-	Type             string `json:"type"`              // 帧类型：ready/session/text/thinking/tool_call/tool_result/usage/protocol_error/result/models
-	Runtime          string `json:"runtime,omitempty"` // ready 帧里自报的运行时名，需为 "dsh"
-	ProtocolVersion  int    `json:"protocol_version,omitempty"`
-	RequestID        string `json:"request_id,omitempty"`
-	SessionID        string `json:"session_id,omitempty"`
-	Resumed          bool   `json:"resumed,omitempty"`   // 是否为续跑后的会话
-	Content          string `json:"content,omitempty"`   // text/thinking 帧的正文
-	CallID           string `json:"call_id,omitempty"`   // 工具调用 id
-	Name             string `json:"name,omitempty"`      // 工具名
-	Arguments        string `json:"arguments,omitempty"` // 工具入参（JSON 字符串）
-	Output           string `json:"output,omitempty"`    // 工具出参 / 最终输出
-	IsError          bool   `json:"is_error,omitempty"`
-	Provider         string `json:"provider,omitempty"` // usage 帧：provider 名
-	Model            string `json:"model,omitempty"`    // usage 帧：模型名
-	InputTokens      int64  `json:"input_tokens,omitempty"`
-	OutputTokens     int64  `json:"output_tokens,omitempty"`
-	CacheReadTokens  int64  `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty"`
-	ReasoningTokens  int64  `json:"reasoning_tokens,omitempty"`
+	Capabilities *struct {
+		PlanReview    bool `json:"plan_review"`
+		UserQuestions bool `json:"user_questions"`
+	} `json:"capabilities,omitempty"`
+	Interaction      *protocol.SuspendedInteraction `json:"interaction,omitempty"`
+	Version          int                            `json:"v"`                 // 协议版本，应与 DshProtocolVersion 一致
+	Type             string                         `json:"type"`              // 帧类型：ready/session/text/thinking/tool_call/tool_result/usage/protocol_error/result/models
+	Runtime          string                         `json:"runtime,omitempty"` // ready 帧里自报的运行时名，需为 "dsh"
+	ProtocolVersion  int                            `json:"protocol_version,omitempty"`
+	RequestID        string                         `json:"request_id,omitempty"`
+	SessionID        string                         `json:"session_id,omitempty"`
+	Resumed          bool                           `json:"resumed,omitempty"`   // 是否为续跑后的会话
+	Content          string                         `json:"content,omitempty"`   // text/thinking 帧的正文
+	CallID           string                         `json:"call_id,omitempty"`   // 工具调用 id
+	Name             string                         `json:"name,omitempty"`      // 工具名
+	Arguments        string                         `json:"arguments,omitempty"` // 工具入参（JSON 字符串）
+	Output           string                         `json:"output,omitempty"`    // 工具出参 / 最终输出
+	IsError          bool                           `json:"is_error,omitempty"`
+	Provider         string                         `json:"provider,omitempty"` // usage 帧：provider 名
+	Model            string                         `json:"model,omitempty"`    // usage 帧：模型名
+	InputTokens      int64                          `json:"input_tokens,omitempty"`
+	OutputTokens     int64                          `json:"output_tokens,omitempty"`
+	CacheReadTokens  int64                          `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64                          `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int64                          `json:"reasoning_tokens,omitempty"`
 	// Runtime telemetry frames (context / compaction). The adapter forwards them
 	// to the daemon as MessageRuntime JSON instead of model-visible content.
 	Seq             int64  `json:"seq,omitempty"`
@@ -265,6 +274,9 @@ func buildDshMCPServers(raw json.RawMessage, logger interface {
 // dshCancelGrace 后进程还活着就 SIGTERM；再宽限 dshTerminateGrace 后仍未消失
 // 则 SIGKILL（见下方第一个 goroutine）。结果通道永远只收一个值。
 func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if opts.PlanDecision != "" && (opts.PlanDecision != "approved" && opts.PlanDecision != "keep_planning" || !opts.HumanInteractions || opts.ResumeSessionID == "" || (opts.PlanDecision == "approved" && opts.Command != "/plan off") || (opts.PlanDecision == "keep_planning" && opts.Command != "/plan")) {
+		return nil, errors.New("DSH plan decisions require enabled human interactions and the original session")
+	}
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "dsh"
@@ -327,6 +339,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	}
 	command := dshExecuteCommand{
 		Version: DshProtocolVersion, Type: "execute", RequestID: requestID,
+		HumanInteractions: opts.HumanInteractions, PlanDecision: opts.PlanDecision,
 		Cwd: opts.Cwd, Prompt: prompt, Command: opts.Command, ApprovalPolicy: opts.ApprovalPolicy, ResumeSessionID: opts.ResumeSessionID,
 		Model: model, ReasoningEffort: opts.ThinkingLevel, MCPServers: mcpServers,
 	}
@@ -434,6 +447,11 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				result.Error = "dsh exited without a terminal result"
 			}
 		}
+		if result.Status == "waiting_plan" || result.Status == "waiting_input" {
+			if !opts.HumanInteractions || scanErr != nil || exitErr != nil || runCtx.Err() != nil || !state.ready || state.protocolError != "" {
+				result.Status, result.Error, result.PendingInteraction = "failed", "DSH did not safely finish the native interaction", nil
+			}
+		}
 		// 报错时附上 stderr 尾部，帮用户/日志看到进程侧的真实报错。
 		if result.Error != "" {
 			result.Error = withAgentStderr(result.Error, "dsh", stderrBuf.Tail())
@@ -451,13 +469,17 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 
 // dshRunState 是单次执行的帧解码累积状态，跨帧汇总会话/错误/用量信息。
 type dshRunState struct {
-	ready         bool                  // 是否收到过合法的 ready 帧（运行时就绪）
-	sessionID     string                // 从 session 帧拿到的会话 id
-	protocolError string                // 协议层错误文本（版本不符 / protocol_error 帧）
-	frameCount    int                   // 收到的协议帧总数（日志用）
-	invalidFrames int                   // 解析失败被跳过的行数（日志用）
-	usage         map[string]TokenUsage // 按 "provider/model" 累加的用量
-	result        *Result               // 收到 result 帧后存放最终结果；nil 表示还没结束
+	pending        *protocol.SuspendedInteraction
+	pendingSession string
+	planReview     bool
+	userQuestions  bool
+	ready          bool                  // 是否收到过合法的 ready 帧（运行时就绪）
+	sessionID      string                // 从 session 帧拿到的会话 id
+	protocolError  string                // 协议层错误文本（版本不符 / protocol_error 帧）
+	frameCount     int                   // 收到的协议帧总数（日志用）
+	invalidFrames  int                   // 解析失败被跳过的行数（日志用）
+	usage          map[string]TokenUsage // 按 "provider/model" 累加的用量
+	result         *Result               // 收到 result 帧后存放最终结果；nil 表示还没结束
 }
 
 // handleDshFrame 把单个协议帧落进 state 并视需要向 ch 推送统一 Message。
@@ -476,6 +498,9 @@ func handleDshFrame(frame dshFrame, requestID string, ch chan<- Message, state *
 	case "ready":
 		// 就绪帧带运行时自报；必须是 dsh 本尊才算数，避免误连其它同协议的 CLI。
 		state.ready = frame.Runtime == "dsh"
+		if frame.Capabilities != nil {
+			state.planReview, state.userQuestions = frame.Capabilities.PlanReview, frame.Capabilities.UserQuestions
+		}
 	case "session":
 		state.sessionID = frame.SessionID
 		trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: frame.SessionID})
@@ -567,6 +592,14 @@ func handleDshFrame(frame dshFrame, requestID string, ch chan<- Message, state *
 		if raw, err := json.Marshal(payload); err == nil {
 			trySend(ch, Message{Type: MessageRuntime, Content: string(raw)})
 		}
+	case "plan_review", "user_question":
+		pending := frame.Interaction
+		if state.pending != nil || pending == nil || pending.Validate() != nil || frame.SessionID == "" || frame.SessionID != state.sessionID ||
+			(frame.Type == "plan_review") != (pending.Kind == "plan") {
+			state.protocolError = "invalid or conflicting native interaction frame"
+			return
+		}
+		state.pending, state.pendingSession = pending, frame.SessionID
 	case "protocol_error":
 		state.protocolError = strings.TrimSpace(frame.Code + ": " + frame.Message)
 	case "result":
@@ -581,6 +614,17 @@ func handleDshFrame(frame dshFrame, requestID string, ch chan<- Message, state *
 		// 部分实现只在 session 帧给 id、result 帧不给，回退到已记录的会话 id。
 		if state.result.SessionID == "" {
 			state.result.SessionID = state.sessionID
+		}
+		waiting := frame.Status == "waiting_plan" || frame.Status == "waiting_input"
+		if waiting {
+			if state.protocolError != "" || state.pending == nil || (frame.Status == "waiting_plan" && !state.planReview) || (frame.Status == "waiting_input" && !state.userQuestions) || state.result.SessionID != state.pendingSession ||
+				(frame.Status == "waiting_plan") != (state.pending.Kind == "plan") || errorText != "" {
+				state.result.Status, state.result.Error = "failed", "invalid native interaction result"
+			} else {
+				state.result.PendingInteraction = state.pending
+			}
+		} else if state.pending != nil && frame.Status == "completed" {
+			state.result.Status, state.result.Error = "failed", "native interaction completed without waiting for a human"
 		}
 	}
 }

@@ -193,6 +193,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilitySourceContextQuickCreateV1,
 		protocol.DaemonCapabilityRPCV1,
 		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
+		protocol.DaemonCapabilityDSHInteractionsV1,
 	}, ",")
 }
 
@@ -1352,4 +1353,16 @@ func (c *Client) AckReleasePause(ctx context.Context, taskID string, result Task
 // skipped 继续收尾，而不是永远等一个不会到来的停止确认。
 func (c *Client) AckReleasePauseFailure(ctx context.Context, taskID, reason string) error {
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/release-pause-ack", taskID), map[string]any{"error": reason}, nil, defaultTerminalRetrySchedule)
+}
+
+// 挂起结果复用终态 outbox；服务端确认前不能丢失计划或原生恢复位置。
+func (c *Client) suspendTaskWithRetrySchedule(ctx context.Context, report terminalTaskReport, schedule []time.Duration) error {
+	if report.interaction == nil {
+		return fmt.Errorf("suspended report requires a native interaction")
+	}
+	if err := report.interaction.Validate(); err != nil {
+		return err
+	}
+	body := map[string]any{"output": report.output, "session_id": report.sessionID, "work_dir": report.workDir, "interaction": report.interaction}
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/suspend", report.taskID), body, nil, schedule)
 }

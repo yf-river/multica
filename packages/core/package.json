@@ -166,7 +166,9 @@
     "./supervision/*": "./supervision/*.ts",
     "./upstream/queries": "./upstream/queries.ts",
     "./upstream/mutations": "./upstream/mutations.ts",
-    "./review/*": "./review/*.ts"
+    "./review/*": "./review/*.ts",
+    "./runtimes/interactions": "./runtimes/interactions.ts",
+    "./types/task-interaction": "./types/task-interaction.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",

@@ -237,6 +237,7 @@ type terminalTaskReportKind uint8
 const (
 	terminalTaskReportComplete terminalTaskReportKind = iota + 1
 	terminalTaskReportFail
+	terminalTaskReportSuspend
 
 	// CompleteTask/FailTask 会按 defaultTerminalRetrySchedule 里的五次退避做六次
 	// 30 秒的 HTTP 尝试（合计 124 秒）。把这个分离回调自己的截止时间定得高于这
@@ -249,6 +250,7 @@ const (
 // 路径都收敛到这个值、再统一走 reportTerminalTask，就为"持久化 outbox"只留了
 // 一个插入点，以后新增任务退出路径时不必逐个改动。
 type terminalTaskReport struct {
+	interaction    *protocol.SuspendedInteraction
 	kind           terminalTaskReportKind
 	taskID         string
 	output         string
@@ -5840,6 +5842,17 @@ func (d *Daemon) acquireLocalDirectoryLockIfNeeded(ctx context.Context, task Tas
 // "忘掉"这段对话。
 func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result TaskResult, taskLog *slog.Logger) {
 	switch result.Status {
+	case "waiting_plan", "waiting_input":
+		if result.PendingInteraction == nil {
+			taskLog.Error("suspended task has no interaction")
+			return
+		}
+		if err := d.reportTerminalTask(ctx, terminalTaskReport{
+			kind: terminalTaskReportSuspend, taskID: taskID, output: result.Comment,
+			sessionID: result.SessionID, workDir: result.WorkDir, interaction: result.PendingInteraction,
+		}); err != nil {
+			taskLog.Error("suspended result remains in durable report queue", "error", err)
+		}
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
 		err := d.reportTerminalTask(ctx, terminalTaskReport{
@@ -5985,6 +5998,8 @@ func (d *Daemon) sendTerminalTaskReport(ctx context.Context, report terminalTask
 	switch report.kind {
 	case terminalTaskReportComplete:
 		return d.client.completeTaskWithRetrySchedule(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff, schedule)
+	case terminalTaskReportSuspend:
+		return d.client.suspendTaskWithRetrySchedule(ctx, report, schedule)
 	case terminalTaskReportFail:
 		return d.client.failTaskWithRetrySchedule(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.branchName, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID, report.durableWorkDir, report.codeDiff, schedule)
 	default:
@@ -7461,8 +7476,44 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		env.LocalWorktree = savedPause.Worktree
 		envReused = true
 	}
+	savedInteraction, interactionRestoreErr := loadDSHInteractionCheckpoint(task, d.cfg.WorkspacesRoot)
+	if interactionRestoreErr != nil {
+		return TaskResult{}, fmt.Errorf("恢复 DSH 人工交互环境: %w", interactionRestoreErr)
+	}
+	if savedInteraction != nil {
+		if savedPause != nil {
+			return TaskResult{}, errors.New("任务不能同时恢复发布暂停和人工交互")
+		}
+		wsRoot, err := os.OpenRoot(d.cfg.WorkspacesRoot)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		defer wsRoot.Close()
+		rel, err := filepath.Rel(d.cfg.WorkspacesRoot, savedInteraction.Root)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		claim, _, err := execenv.LockEnvRootForReuse(wsRoot, rel, savedInteraction.Root)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		defer claim.Release()
+		// 取锁后再次核对检查点，避免等待期间读到已被替换的执行目录。
+		rechecked, err := loadDSHInteractionCheckpoint(task, d.cfg.WorkspacesRoot)
+		if err != nil || rechecked.Root != savedInteraction.Root {
+			return TaskResult{}, errors.New("DSH 人工交互环境在等待期间已变化")
+		}
+		env, err = d.reuseExecutionEnvironment(prepareCtx, execenv.ReuseParams{WorkspacesRoot: d.cfg.WorkspacesRoot, Profile: d.cfg.Profile,
+			WorkDir: savedInteraction.WorkDir, RootDir: savedInteraction.Root, LocalDirectory: savedInteraction.LocalDirectory,
+			Provider: provider, ResumeSessionID: task.PriorSessionID, McpConfig: effectiveMcpConfig, Task: taskCtx})
+		if err != nil || env == nil {
+			return TaskResult{}, fmt.Errorf("恢复 DSH 人工交互环境失败: %v", err)
+		}
+		env.LocalWorktree = savedInteraction.Worktree
+		envReused = true
+	}
 	normalReuseTask := task
-	if savedPause != nil {
+	if savedPause != nil || savedInteraction != nil {
 		normalReuseTask.PriorWorkDir = ""
 	}
 	priorClaim, priorWorkDir, lockedPriorInfo, reusable, reuseErr := d.lockReusablePriorEnvRoot(ctx, normalReuseTask, localAssignment, envClaim.RootDir())
@@ -7630,6 +7681,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// DurableWorkDir 刻意保持缺席，而不是在同一路径下顶着两个生命周期含义。
 	if env.LocalWorktree != nil {
 		defer func() {
+			if taskResult.Status == "waiting_plan" || taskResult.Status == "waiting_input" {
+				return
+			}
 			if taskResult.WorkDir == "" {
 				taskResult.WorkDir = env.WorkDir
 			}
@@ -7674,6 +7728,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}()
 	}
+	defer func() {
+		if taskResult.Status == "waiting_plan" || taskResult.Status == "waiting_input" {
+			if err := saveDSHInteractionCheckpoint(task, taskResult, env, envClaim.RootDir()); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("保存 DSH 人工交互环境失败: %w", err))
+			}
+		}
+	}()
 	if task.ReviewCommit != "" {
 		reviewDirectory := env.WorkDir
 		if localAssignment == nil {
@@ -8064,7 +8125,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			approvalPolicy = "never"
 		}
 	}
+	if task.InteractionContinuation && (provider != "dsh" || task.PriorSessionID == "" || task.PriorWorkDir != env.WorkDir || os.Getenv("MULTICA_DSH_INTERACTIONS") != "1") {
+		return TaskResult{}, errors.New("原生交互无法恢复，请启用 DSH 交互并恢复原会话后重试")
+	}
 	execOpts := agent.ExecOptions{
+		HumanInteractions:          provider == "dsh" && os.Getenv("MULTICA_DSH_INTERACTIONS") == "1",
+		PlanDecision:               task.PlanDecision,
 		ApprovalPolicy:             approvalPolicy,
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
@@ -8217,7 +8283,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	providerTraceIDs := traceListForResult(result)
 	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
-	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
+	if !task.InteractionContinuation && shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
 		firstUsage := result.Usage
 		firstTools := tools
@@ -8318,6 +8384,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	defer func() { taskResult.SessionRolloutMissing = sessionRolloutMissing }()
 
 	switch result.Status {
+	case "waiting_plan", "waiting_input":
+		if result.PendingInteraction == nil {
+			return TaskResult{}, errors.New("DSH interaction result is missing its prompt")
+		}
+		return TaskResult{Status: result.Status, Comment: result.Output, SessionID: result.SessionID, WorkDir: env.WorkDir,
+			EnvRoot: env.RootDir, Usage: usageEntries, PendingInteraction: result.PendingInteraction}, nil
 	case "completed":
 		if result.Output == "" {
 			// agent 成功完成却没产出文本。这是合法的——agent 可能全程都靠工具调用

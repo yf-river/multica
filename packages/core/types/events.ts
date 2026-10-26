@@ -32,6 +32,8 @@ export type WSEventType =
   | "task:dispatch"
   | "task:running"
   | "task:waiting_local_directory"
+  | "task:waiting_human"
+  | "task:interaction_resolved"
   | "task:progress"
   | "task:completed"
   | "task:failed"
@@ -635,6 +637,8 @@ export interface WSEventPayloadMap {
   "task:failed": TaskFailedPayload;
   "task:message": TaskMessagePayload;
   "task:cancelled": TaskCancelledPayload;
+  "task:waiting_human": { task_id: string; chat_session_id?: string };
+  "task:interaction_resolved": { task_id: string; chat_session_id?: string };
   "task:progress": unknown;
   "inbox:new": InboxNewPayload;
   "inbox:read": InboxReadPayload;

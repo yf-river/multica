@@ -19,6 +19,8 @@ sql:
       - "migrations/656_comment_deleted_at.up.sql"
       - "migrations/667_task_message_call_id.up.sql"
       - "migrations/668_task_supplements.up.sql"
+      - "migrations/672_task_interaction.up.sql"
+      - "migrations/681_task_interaction_continuation.up.sql"
     gen:
       go:
         package: "db"

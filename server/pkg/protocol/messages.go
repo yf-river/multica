@@ -44,7 +44,8 @@ const (
 	// an additional text instruction without cancelling or starting a task.
 	// It is persisted when this exact task enters running; absence always means
 	// unsupported so mixed server/daemon versions fail closed.
-	DaemonCapabilityTaskSupplementV1 = "task-supplement-v1"
+	DaemonCapabilityTaskSupplementV1  = "task-supplement-v1"
+	DaemonCapabilityDSHInteractionsV1 = "dsh-interactions-v1"
 
 	TaskSupplementFailureTurnNotStarted   = "turn_not_started"
 	TaskSupplementFailureProviderRejected = "provider_rejected"

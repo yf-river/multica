@@ -394,6 +394,9 @@ WITH target AS (
 cleared_task_supplements AS (
  DELETE FROM task_supplement WHERE issue_id IN (SELECT target.id FROM target)
 ),
+cleared_task_interactions AS (
+ DELETE FROM task_interaction WHERE issue_id IN (SELECT target.id FROM target)
+),
 cleared_task_supplement_capabilities AS (
  DELETE FROM task_supplement_capability WHERE issue_id IN (SELECT target.id FROM target)
 ),

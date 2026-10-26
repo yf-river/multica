@@ -1917,6 +1917,24 @@ type SysCronExecution struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TaskInteraction struct {
+	TaskID         pgtype.UUID        `json:"task_id"`
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	Provider       string             `json:"provider"`
+	Kind           string             `json:"kind"`
+	Request        []byte             `json:"request"`
+	Response       []byte             `json:"response"`
+	Status         string             `json:"status"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	RespondedAt    pgtype.Timestamptz `json:"responded_at"`
+	DeliveryMode   string             `json:"delivery_mode"`
+	FollowupTaskID pgtype.UUID        `json:"followup_task_id"`
+}
+
 type TaskMessage struct {
 	ID        pgtype.UUID        `json:"id"`
 	TaskID    pgtype.UUID        `json:"task_id"`

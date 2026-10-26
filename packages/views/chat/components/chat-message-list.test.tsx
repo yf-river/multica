@@ -15,6 +15,9 @@ import zhHansChat from "../../locales/zh-Hans/chat.json";
 // renders its Footer but NO data rows under jsdom's zero-height viewport, so
 // these tests must stub it to see rows at all. computeItemKey is still applied
 // here — it is what expresses the live -> persisted identity.
+// 卡片的问答行为由 task-interaction-panel.test.tsx 覆盖；此套验证列表身份与滚动。
+vi.mock("../../common/task-interaction-panel", () => ({ TaskInteractionPanel: () => null }));
+
 vi.mock("react-virtuoso", () => ({
   Virtuoso: ({
     data,

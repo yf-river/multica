@@ -16,16 +16,22 @@
 # variable; the working-directory service now injects the directory itself.
 - id: system-prompt
   config:
-    personaPrefix: >-
-      You are a coding agent powered by the {{model}} model and running for Multica.
-      This runtime is headless: do not call
-      ask_user_question. When a genuinely user-owned decision blocks progress,
-      explain the decision and available options in your final response.
+    personaPrefix: !!js >-
+      process.env.MULTICA_DSH_INTERACTIONS === '1'
+        ? 'You are a coding agent powered by the {{model}} model and running for Multica. Ask user-owned questions with ask_user_question. Submit plans through exit_plan_mode; wait for the user decision before implementation.'
+        : 'You are a coding agent powered by the {{model}} model and running for Multica. This runtime is headless: do not call ask_user_question. When a genuinely user-owned decision blocks progress, explain the decision and available options in your final response.'
+
+# Multica 已维护聊天标题，关闭重复的原生标题模型请求。
+- id: session-title-llm
+  disabled: true
 
 - insert:
     # DSH's launcher treats this reserved row id as a one-shot surface. The
     # bridge owns process lifetime through appExit, so profile HMR/watchers
     # must never race its shutdown after a result is emitted.
+    - id: multica-tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+      disabled: !!js process.env.MULTICA_DSH_INTERACTIONS !== '1'
     - id: headless-runner
       name: '@multica-ai/dsh-runtime'
 

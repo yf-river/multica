@@ -6,6 +6,8 @@
 
 "use client";
 
+import { TaskInteractionHistory } from "../task-interaction-panel";
+
 import { TaskOutput } from "./task-output";
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
 import { Virtuoso, type VirtuosoHandle, type Components } from "react-virtuoso";
@@ -790,6 +792,11 @@ export function AgentTranscriptDialog({
             {t(($) => $.transcript.status_dispatched)}
           </span>
         );
+      case "waiting_plan":
+      case "waiting_input":
+        return <span className={cn(base, "bg-warning/15 text-warning")}>
+          {effectiveStatus === "waiting_plan" ? t(($) => $.transcript.status_waiting_plan) : t(($) => $.transcript.status_waiting_input)}
+        </span>;
       case "waiting_local_directory":
         return (
           <span className={cn(base, "bg-muted text-muted-foreground")}>
@@ -1088,6 +1095,7 @@ export function AgentTranscriptDialog({
           </div>
         )}
 
+        {open && <TaskInteractionHistory taskId={task.id} active={isLive} />}
         {/* ── 列表工具栏：左搜索，右侧两个菜单 ── */}
         <div className="flex items-center gap-2 border-b px-4 py-1.5 shrink-0">
           <label className="flex h-7 min-w-0 max-w-xs flex-1 items-center gap-1.5 rounded-md bg-muted px-2 text-caption">

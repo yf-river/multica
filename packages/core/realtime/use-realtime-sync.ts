@@ -1496,6 +1496,20 @@ export function useRealtimeSync(
     //      没有它，第二标签页场景里药丸会永远转圈。
     // CancelTask 在停止的 chat 任务已经流过会话记录行时，还会持久化一条尽力而为的
     // 助手快照，所以清待处理的同时要刷新消息页。
+    const refreshInteraction = (value: unknown) => {
+      if (typeof value !== "object" || value === null || !("task_id" in value) || typeof value.task_id !== "string") return;
+      const payload = value as {task_id: string; chat_session_id?: string};
+      qc.invalidateQueries({queryKey: ["task-interactions", getCurrentWsId(), payload.task_id]});
+      if (typeof payload.chat_session_id !== "string" || !payload.chat_session_id) return;
+      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(payload.chat_session_id), old => removePendingChatTask(old, payload.task_id));
+      qc.invalidateQueries({queryKey: chatKeys.pendingTask(payload.chat_session_id)});
+      invalidateChatMessageQueries(qc, payload.chat_session_id);
+      invalidatePendingAggregate();
+      invalidateSessionLists();
+    };
+    const unsubTaskWaitingHuman = ws.on("task:waiting_human", refreshInteraction);
+    const unsubTaskInteractionResolved = ws.on("task:interaction_resolved", refreshInteraction);
+
     const unsubTaskCancelled = ws.on("task:cancelled", (p) => {
       const payload = p as TaskCancelledPayload;
       if (!payload.chat_session_id) return;
@@ -1639,6 +1653,8 @@ export function useRealtimeSync(
       unsubTaskDispatch();
       unsubTaskRunning();
       unsubTaskWaitingLocalDir();
+      unsubTaskWaitingHuman();
+      unsubTaskInteractionResolved();
       unsubTaskCancelled();
       unsubTaskCompleted();
       unsubTaskFailed();

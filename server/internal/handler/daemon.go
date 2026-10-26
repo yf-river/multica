@@ -3823,6 +3823,43 @@ ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID)).Scan(&deliveryI
 		}
 	}
 
+	interaction, interactionErr := h.Queries.GetTaskInteractionFollowup(r.Context(), task.ID)
+	if interactionErr == nil {
+		source, err := h.Queries.GetAgentTask(r.Context(), interaction.TaskID)
+		var answer protocol.InteractionAnswer
+		if err != nil || !requestHasClientCapability(r, protocol.DaemonCapabilityDSHInteractionsV1) || interaction.Provider != "dsh" || interaction.DeliveryMode != "suspended" || interaction.Status != "responded" || runtime.Provider != "dsh" ||
+			source.AgentID != task.AgentID || source.RuntimeID != task.RuntimeID || source.ChatSessionID != task.ChatSessionID || source.IssueID != task.IssueID ||
+			!source.SessionID.Valid || !source.WorkDir.Valid || json.Unmarshal(interaction.Response, &answer) != nil || answer.Decision == "cancelled" {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(r.Context(), task,
+				"原生会话已不可续接，请重新规划。", taskfailure.ReasonAgentUnknown, "error_interaction_continuity", http.StatusConflict, "native interaction continuity is unavailable")
+		}
+		resp.InteractionContinuation = true
+		resp.InteractionSourceTaskID = uuidToString(source.ID)
+		resp.PriorSessionID, resp.PriorWorkDir = source.SessionID.String, source.WorkDir.String
+		if interaction.Kind == "plan" {
+			resp.PlanDecision = answer.Decision
+			if answer.Decision == "approved" {
+				resp.Command = "/plan off"
+			} else if answer.Decision == "keep_planning" {
+				resp.Command = "/plan"
+			} else {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(r.Context(), task,
+					"计划决定无效，请重新规划。", taskfailure.ReasonAgentUnknown, "error_interaction_decision", http.StatusConflict, "invalid plan decision")
+			}
+		}
+	} else if len(task.Context) != 0 {
+		var context map[string]json.RawMessage
+		_ = json.Unmarshal(task.Context, &context)
+		if len(context["dsh_interaction_continuation"]) != 0 {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(r.Context(), task,
+				"人工决定的原生续跑记录缺失，请重新规划。", taskfailure.ReasonAgentUnknown, "error_interaction_binding", http.StatusConflict, "native interaction binding is unavailable")
+		}
+		if !errors.Is(interactionErr, pgx.ErrNoRows) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, interactionErr, "interaction continuation", uuidToString(task.ID))
+		}
+	} else if !errors.Is(interactionErr, pgx.ErrNoRows) {
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, interactionErr, "interaction continuation", uuidToString(task.ID))
+	}
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
 }
 
@@ -6381,61 +6418,11 @@ func (h *Handler) hydrateTaskTraces(ctx context.Context, issueID pgtype.UUID, re
 // Verifies the task belongs to the caller's workspace.
 func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
-	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
+	task, ok := h.loadTaskForUser(w, r, taskID)
 	if !ok {
 		return
 	}
-
-	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
-	if err != nil {
-		if !isNotFound(err) {
-			slog.Warn("get agent task failed", "task_id", taskID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to load task")
-			return
-		}
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-
-	// Verify the task belongs to the caller's workspace. A failed lookup is a
-	// 5xx here too: this endpoint does not drive the daemon's interrupt, but
-	// telling a reader "this task does not exist" because the DB blinked is
-	// the same lie, and it trains clients to give up on a retryable error.
-	wsID, err := h.TaskService.ResolveTaskWorkspaceIDChecked(r.Context(), task)
-	if err != nil {
-		slog.Warn("resolve task workspace failed", "task_id", taskID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to load task")
-		return
-	}
-	// Mismatch stays a 404 rather than a 403: a task in another workspace must
-	// be indistinguishable from one that does not exist.
-	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-	if task.IssueID.Valid {
-		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
-		if err != nil || !healthIssueVisible(issue, requestUserID(r)) {
-			writeError(w, 404, "task not found")
-			return
-		}
-	}
-
-	if task.ChatSessionID.Valid {
-		if r.Header.Get("X-Actor-Source") == "task_token" {
-			sourceID, valid := parseUUIDOrBadRequest(w, r.Header.Get("X-Task-ID"), "task_id")
-			if !valid {
-				return
-			}
-			source, err := h.Queries.GetAgentTask(r.Context(), sourceID)
-			if err != nil || !rerunSourceMatchesTaskScope(task, source) {
-				writeError(w, http.StatusForbidden, "not your chat session")
-				return
-			}
-		} else if _, ok := h.gateChatSessionForUser(w, r, requestUserID(r), wsID, uuidToString(task.ChatSessionID)); !ok {
-			return
-		}
-	}
+	taskUUID := task.ID
 
 	if r.URL.Query().Has("output_id") {
 		h.readTaskOutput(w, r, taskUUID)

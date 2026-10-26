@@ -118,6 +118,9 @@ var commentContentBigramIndex = usableIndexRequirement{
 // 注册只花一次 to_regclass 查询，且只在它们仍 pending 的数据库上发生：全新自
 // 托管安装——这正是被打断的构建最容易留下"永久不可用索引"的地方。
 var concurrentIndexCleanups = map[string]string{
+	"685_task_interaction_expiry":                           "task_interaction_suspended_expiry",
+	"684_task_interaction_followup":                         "task_interaction_followup",
+	"673_task_interaction_identity":                         "task_interaction_identity",
 	"669_task_supplement_request_index":                     "task_supplement_task_request_uidx",
 	"670_task_supplement_capability_index":                  "task_supplement_capability_task_uidx",
 	"671_task_supplement_comment_index":                     "task_supplement_comment_uidx",

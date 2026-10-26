@@ -34,6 +34,8 @@ import { installMulticaTerminalEnvironment } from './environment.js'
 import { settleCancelled as settleCancelledAgent, waitForQuiescence, type SubagentLifecycle } from './lifecycle.js'
 import { detectServices, enforceReadOnly, type ServiceLookup } from './capabilities.js'
 import { runtimeHost } from './host.js'
+import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
+import { pendingInteraction, type PendingInteraction } from './interactions.js'
 
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
@@ -49,6 +51,8 @@ interface ActiveRun {
   cancel: AbortController
   lastText: string
   endReason?: TurnEndReason
+  pendingInteraction?: PendingInteraction
+  interactionError?: string
   toolNames: Map<string, string>
   /** Timestamp of the model request currently being assembled. */
   requestStartedAt?: number
@@ -413,6 +417,12 @@ function resultFromReason(active: ActiveRun): Omit<Extract<OutboundFrame, { type
   if (active.cancelRequested) {
     return { status: 'cancelled', output: active.lastText, stop_reason: 'cancelled', resume_rejected: false }
   }
+  if (active.interactionError !== undefined) {
+    return { status: 'failed', output: active.lastText, resume_rejected: false, error: { code: 'DSH_INTERACTION_INVALID', message: active.interactionError } }
+  }
+  if (active.pendingInteraction !== undefined) {
+    return { status: active.pendingInteraction.kind === 'plan' ? 'waiting_plan' : 'waiting_input', output: active.pendingInteraction.title, stop_reason: 'waiting_human', resume_rejected: false }
+  }
   if (reason?.kind === 'completed' || reason?.kind === 'max-tokens') {
     return { status: 'completed', output: active.lastText, stop_reason: reason.kind, resume_rejected: false }
   }
@@ -455,18 +465,37 @@ async function createOrResumeAgent(
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
       return Promise.resolve<ApprovalOutcome>('allowed-once').catch(() => next())
     })
-    // Headless chat has no plan-review UI. DSH plan mode asks a
-    // user-questions request tagged plan-review; auto-approve it so the
-    // default plan-and-execute flow can proceed. A UI-backed approval path
-    // can replace this listener later.
-    ;(agentCtx as any).on('user-questions/request', (request: any, next: any) => {
+    // 交互开关启用时把原生问题交给 daemon，并停止当前回合；服务端负责持久化与续接。
+    agentCtx.on('user-questions/request', (request, next) => {
+      if (active.command.human_interactions === true) {
+        try {
+          const pending = pendingInteraction(request, [...active.toolNames].filter(([id]) => active.toolStartedAt.has(id)).map(([id, name]) => ({ id, name })))
+          if (active.pendingInteraction !== undefined && JSON.stringify(active.pendingInteraction) !== JSON.stringify(pending)) {
+            throw new Error('multiple native human interactions cannot share one suspended task')
+          }
+          if (active.pendingInteraction === undefined) {
+            active.pendingInteraction = pending
+            writeFrame({ v: PROTOCOL_VERSION, type: pending.kind === 'plan' ? 'plan_review' : 'user_question', request_id: active.command.request_id, session_id: String(request.agent?.session.id ?? active.agent?.session.id), interaction: pending })
+          }
+        } catch (error: unknown) {
+          active.interactionError = errorMessage(error)
+          throw error
+        } finally {
+          active.cancel.abort()
+          const caller = request.agent ?? active.agent
+          caller?.cancel({ kind: 'user' })
+        }
+        throw new UserQuestionError('Waiting for a human response in Multica', 'ASK_CANCELLED')
+      }
+
       const questions = Array.isArray(request?.questions) ? request.questions : []
       const planQuestion = questions.find((question: any) => question?.intent?.kind === 'plan-review')
-      if (planQuestion !== undefined && typeof planQuestion.intent.approve === 'string') {
+      const approve = planQuestion?.intent?.approve
+      if (typeof approve === 'string') {
         return Promise.resolve({
           answers: questions.map((question: any) => ({
             id: question.id,
-            selected: [question.intent?.approve ?? planQuestion.intent.approve],
+            selected: [question.intent?.approve ?? approve],
           })),
         })
       }
@@ -510,6 +539,7 @@ function applyRoleSandboxPolicy(active: ActiveRun, agent: Agent): void {
 }
 
 async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<number> {
+  active.ctx = ctx
   const sessions = ctx.get('sessions')
   if (sessions === undefined) throw new Error('DSH session service is unavailable')
   const commands = ctx.get('commands')
@@ -522,6 +552,8 @@ async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<num
     active.agent = handle.agent
     applyRoleSandboxPolicy(active, handle.agent)
     await handle.agent.whenIdle()
+    writeFrame({ v: PROTOCOL_VERSION, type: 'session', request_id: active.command.request_id,
+      session_id: String(handle.agent.session.id), resumed: created.resumed })
     const line = active.command.command ?? ''
     // /plan <message> is split into the mode toggle plus a normal user turn:
     // dispatching the whole line lets the handler's steer() race an idle agent,
@@ -546,13 +578,23 @@ async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<num
     // Let a follow-up turn drain before settling the command so plan text and
     // any approved execution reach the client in this same task.
     await handle.agent.whenIdle()
-    const output = active.lastText !== '' ? active.lastText : text
+    if (active.pendingInteraction !== undefined) {
+      await settleCancelled(ctx, handle.agent)
+      await sessions.flush(handle.agent.session)
+    }
+    const pendingResult = active.pendingInteraction === undefined ? undefined : resultFromReason(active)
+    const sessionId = String(handle.agent.session.id)
+    if (pendingResult !== undefined) {
+      await handle.dispose()
+      handle = undefined
+    }
+    const output = pendingResult?.output ?? (active.lastText !== '' ? active.lastText : text)
     writeFrame({
       v: PROTOCOL_VERSION,
       type: 'result',
       request_id: active.command.request_id,
-      status: execution?.result.kind === 'success' ? 'completed' : 'failed',
-      session_id: String(handle.agent.session.id),
+      status: pendingResult?.status ?? (execution?.result.kind === 'success' ? 'completed' : 'failed'),
+      session_id: sessionId,
       output,
       resume_rejected: false,
       ...execution === undefined ? { error: { code: 'DSH_UNKNOWN_COMMAND', message: 'unknown or malformed slash command' } } : {},
@@ -631,7 +673,7 @@ async function execute(ctx: Context, active: ActiveRun): Promise<number> {
       session_id: sessionId,
       ...result,
     })
-    return result.status === 'completed' || result.status === 'cancelled' ? 0 : 1
+    return result.status === 'completed' || result.status === 'cancelled' || result.status === 'waiting_plan' || result.status === 'waiting_input' ? 0 : 1
   } catch (error: unknown) {
     if (handle !== undefined) {
       try {
@@ -747,7 +789,8 @@ async function stdio(ctx: Context): Promise<number> {
       context: services.session_projections,
       compaction: services.compaction,
       commands: services.commands,
-      plan_review: false,
+      plan_review: process.env.MULTICA_DSH_INTERACTIONS === '1' && services.user_questions && services.commands,
+      user_questions: process.env.MULTICA_DSH_INTERACTIONS === '1' && services.user_questions,
       services,
       mcp: ['stdio', 'streamable-http'],
     },

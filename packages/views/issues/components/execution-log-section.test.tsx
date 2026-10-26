@@ -9,6 +9,9 @@ const mockState = vi.hoisted(() => ({
   taskMessagesOptions: vi.fn(),
 }));
 
+// 计划/问答卡片由独立组件套件验收；此套验证执行列表和用量布局。
+vi.mock("../../common/task-interaction-panel", () => ({ TaskInteractionPanel: () => null }));
+
 vi.mock("@multica/core/chat/queries", () => ({
   taskMessagesOptions: mockState.taskMessagesOptions,
 }));
