@@ -490,6 +490,7 @@ type AgentTaskResponse struct {
 	ChatType                 string                 `json:"chat_type,omitempty"`                   // channel_chat_session_binding.chat_type——共享房间为 "group"，与机器人 1:1 为 "p2p"。让每轮提示告诉 agent 还有谁能读它的回复；纯 Web 聊天为空
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // 最近一次 @提及是否为线程内回复；告诉 agent 用 `multica chat thread` 还是 `multica chat history`
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // chat 任务的用户消息
+	Command                  string                 `json:"command,omitempty"`                     // 运行时原生斜杠命令（/plan、/goal）
 	ChatMessageIDs           []string               `json:"chat_message_ids,omitempty"`            // 封入本轮 chat 的用户消息 id
 	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // 用户消息上的附件——agent 逐个执行 `multica attachment download <id>`
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // 历史 is_agent_intro 会话的兼容字段；新建 agent 不再创建这类聊天

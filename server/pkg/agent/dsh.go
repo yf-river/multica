@@ -70,6 +70,7 @@ type dshExecuteCommand struct {
 	RequestID       string             `json:"request_id"`                  // 本次请求 id，用于把结果对回任务
 	Cwd             string             `json:"cwd"`                         // 工作目录
 	Prompt          string             `json:"prompt"`                      // 提示词正文
+	Command         string             `json:"command,omitempty"`           // 斜杠命令；非空时替代 prompt
 	ResumeSessionID string             `json:"resume_session_id,omitempty"` // 非空表示续跑某会话
 	Model           *dshModelSelection `json:"model,omitempty"`             // 选定模型；空用默认
 	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
@@ -315,7 +316,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	}
 	command := dshExecuteCommand{
 		Version: DshProtocolVersion, Type: "execute", RequestID: requestID,
-		Cwd: opts.Cwd, Prompt: prompt, ResumeSessionID: opts.ResumeSessionID,
+		Cwd: opts.Cwd, Prompt: prompt, Command: opts.Command, ResumeSessionID: opts.ResumeSessionID,
 		Model: model, ReasoningEffort: opts.ThinkingLevel, MCPServers: mcpServers,
 	}
 	// json.Encoder 不保证并发安全；主流程写 execute 帧、下方取消 goroutine 可能写

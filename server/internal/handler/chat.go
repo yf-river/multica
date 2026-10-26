@@ -932,6 +932,13 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
+	// /plan with an inline message would start a model turn inside the command
+	// handler; the bridge settles the command before that turn drains. Require
+	// the two-step form instead: /plan, then the message.
+	if trimmed := strings.TrimSpace(req.Content); strings.HasPrefix(trimmed, "/plan ") && trimmed != "/plan off" {
+		writeError(w, http.StatusBadRequest, "send /plan first, then the message")
+		return
+	}
 
 	// 提前校验附件 id，非法输入在 400 即返回、不产生任何状态变更。真正的绑定在
 	// CreateChatMessage 之后进行，这样才能拿到 message_id 回填进附件行。

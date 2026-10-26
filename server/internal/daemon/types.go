@@ -167,6 +167,7 @@ type Task struct {
 	ChatType                 string               `json:"chat_type,omitempty"`                   // 频道会话是共享房间时为 "group"，与机器人 1:1 为 "p2p"。网页 chat 或老服务器为空；此时每轮 prompt 报 unknown 而不是猜成 1:1
 	ChatInThread             bool                 `json:"chat_in_thread,omitempty"`              // 最新一次 @ 提及是楼层回复时为 true；决定 prompt 让 agent 先用哪条读取命令
 	ChatMessage              string               `json:"chat_message,omitempty"`                // chat 任务的用户消息内容
+	Command                  string               `json:"command,omitempty"`                     // 运行时原生斜杠命令（/plan、/goal）
 	ChatMessageIDs           []string             `json:"chat_message_ids,omitempty"`            // 封进本回合的用户消息 id
 	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // 关联到 chat 消息的附件；agent 用它们执行 `multica attachment download <id>`
 	ChatIntro                bool                 `json:"chat_intro,omitempty"`                  // 对历史 is_agent_intro 会话的兼容遗留；新建 agent 不再产生这类 chat

@@ -3287,6 +3287,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		resp.ChatMessage = strings.Join(parts, "\n\n")
+		resp.Command = chatRuntimeCommand(unanswered)
 
 		// Fail closed: a task-owned direct task that resolves to no user text
 		// (and is not the agent's proactive intro) must never dispatch an
@@ -6712,4 +6713,25 @@ func (h *Handler) GetIssueTaskRun(w http.ResponseWriter, r *http.Request) {
 		task.Result, _ = json.Marshal(map[string]any{"summary_only": true, "has_changes": changed, "task_id": uuidToString(task.ID), "issue_id": uuidToString(issue.ID)})
 	}
 	writeJSON(w, 200, taskToResponse(task, uuidToString(issue.WorkspaceID)))
+}
+
+// chatRuntimeCommand returns a runtime-native slash command from the trailing
+// user message. Only /plan (state toggle) and /goal (set/show/clear/pause) are
+// supported: both settle without starting a model turn, so the bridge can
+// return a command result in the same task. Other runtimes ignore the field.
+func chatRuntimeCommand(messages []db.ChatMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(messages[i].Content)
+		if line == "" {
+			continue
+		}
+		if line == "/plan" || line == "/plan off" {
+			return line
+		}
+		if line == "/goal" || strings.HasPrefix(line, "/goal ") {
+			return line
+		}
+		return ""
+	}
+	return ""
 }
