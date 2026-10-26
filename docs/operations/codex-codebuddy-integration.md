@@ -1096,3 +1096,49 @@ home 样本的失败解释为已被本轮代码完全修复。
 原生进程核对、`summary.json` 和 `catalog-evidence.json`。新增 integration
 编译、未启用 opt-in 的跳过检查及 execenv 包 vet 通过。完整六类任务对照、
 新候选固定 int、重启与发布恢复、监督保存校验和生产业务验收仍待完成。
+
+## 第四十二阶段：CodeBuddy 原生本地 MCP 配置识别与作用域并集
+
+固定 2.177.0 CLI 的 `mcp add` 实际登记路径表明：用户 MCP 写入配置目录的
+`.mcp.json`，项目 MCP 写入工作目录 `.mcp.json`，本地 MCP 写入配置目录的
+`.codebuddy.json` 并按项目存储。原检测只检查 HOME 下的同名本地文件，
+当 HOME 和配置目录分开、且只配置本地 MCP 时，可能误入无任务环境的常驻进程。
+配置指纹也遗漏该文件，新增或修改本地 MCP 可能复用之前的进程。
+
+已补齐配置目录 `.codebuddy.json` 的递归 MCP 检测和配置指纹。仅含普通项目
+元数据的空配置仍可使用常驻进程；存在原生 MCP 或配置无法可靠读取时，
+使用独占任务进程，按 CLI 原来的作用域解析配置，不修改原生配置内容。
+
+原公共测试夹具将 HOME 和配置目录放在同一路径，掩盖了这项差别；夹具现在
+采用真实的分离布局。受控子进程回归在修复前复现本地配置下任务环境缺失，
+修复后通过；另外验证本地 MCP 的新增、内容变化会使配置指纹变化，空项目
+元数据不会单独禁用常驻。
+
+新增真实 CLI / 模型作用域检查：从本任务已有独立测试账号复制认证材料，
+由 CLI 本身登记 user / project / local 三类 MCP，并通过平台参数再提供一类
+managed MCP。四个 MCP 都是本地 Python 脚本夹具，返回不同随机标记并保存
+实际调用审计；没有把脚本当成真实知识库或现有业务服务器。
+
+| 模式 | user / project / local / managed 实际调用次数 | 自动测试批准次数 |
+| --- | --- | ---: |
+| 普通任务 | 各一次 | 0 |
+| 计划 | 各一次 | 4 |
+| 原生目标 | 各一次 | 0 |
+
+三轮实际模型均为 `deepseek-v4.1-flash-ioa`，固定 ELF 指纹 `a246ed81`。
+四个服务分别核对本轮任务环境标记，结束后池条目清空，原生作用域未进入
+跨任务缓存。SDK 记录也确认四个真实 MCP 目标各调用一次；流里的
+DeferExecuteTool 包装事件不能直接当成 MCP 调用次数。计划中的四次批准
+由测试响应器返回，不构成人工页面审批验收。原生目标评估器用量仍标为未知。
+
+首轮认证失败因新 HOME 未复制其原生认证目录，在 session/new 阶段结束；
+补齐本次私有认证副本后通过，原账号配置未修改，失败记录保留。
+CodeBuddy 全部定向 race 通过（21.985s），包含常驻池、环境、设置与清理；
+同时补验上一轮共享进程回收函数的 CodeBuddy 调用方（4.487s）。新增
+integration 编译、默认跳过行为和 Agent 包 vet 通过。
+
+证据：`phase42-local-mcp-distinct-homes-before-fix.log`、
+`phase42-local-mcp-after-fix.log`、`phase42-codebuddy-all-race.log`、
+`phase42-native-mcp-scopes-ordinary-auth-fixed.*`、
+`phase42-native-mcp-scopes-controls.*`、`phase42-sdk-mcp-call-proof.json`。
+用户 MCP、账号默认设置及生产任务均未更改，本阶段未执行部署。
