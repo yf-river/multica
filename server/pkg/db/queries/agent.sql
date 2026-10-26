@@ -1048,6 +1048,32 @@ SET status = 'completed', completed_at = now(), result = $2,
 WHERE id = $1 AND status = 'running'
 RETURNING *;
 
+-- name: GetTaskSessionSource :one
+-- 原生状态恢复沿已选定的会话查找原任务，不接受客户端提供的文件路径。
+SELECT source.id
+FROM agent_task_queue current_task
+JOIN agent_task_queue source ON source.agent_id = current_task.agent_id
+  AND source.runtime_id = current_task.runtime_id
+JOIN agent a ON a.id = current_task.agent_id
+JOIN agent_runtime runtime ON runtime.id = current_task.runtime_id
+  AND runtime.workspace_id = a.workspace_id
+WHERE current_task.id = sqlc.arg('task_id')
+  AND source.session_id = sqlc.arg('session_id')::text
+  AND source.status IN ('completed', 'failed', 'cancelled')
+  AND source.created_at <= CURRENT_TIMESTAMP
+  AND COALESCE(source.completed_at, source.started_at, source.dispatched_at, source.created_at) <= CURRENT_TIMESTAMP
+  AND (sqlc.narg('source_task_id')::uuid IS NULL OR source.id = sqlc.narg('source_task_id')::uuid)
+  AND (
+    (current_task.chat_session_id IS NOT NULL
+      AND source.chat_session_id = current_task.chat_session_id
+      AND (current_task.channel_context_revision IS NULL
+        OR COALESCE(source.channel_context_revision, 1) = current_task.channel_context_revision))
+    OR (current_task.chat_session_id IS NULL AND source.chat_session_id IS NULL
+      AND current_task.issue_id IS NOT NULL AND source.issue_id = current_task.issue_id)
+  )
+ORDER BY COALESCE(source.completed_at, source.started_at, source.dispatched_at, source.created_at) DESC, source.id DESC
+LIMIT 1;
+
 -- name: GetLastTaskSession :one
 -- Returns the session_id and work_dir from the most recent task for a given
 -- (agent_id, issue_id) pair, used for session resumption on the auto-retry

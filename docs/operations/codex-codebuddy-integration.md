@@ -36,7 +36,7 @@ CodeBuddy 子调用收尾、遥测分页、技能执行开关，以及运行中�
 真实 CLI 已验证目标循环、计划正文审批、技能开关、运行中查询与暂停；
 数据库、协议与界面定向检查的证据分别记在下述阶段中。
 
-剩余交付包括真正的常驻进程及轮次凭据隔离、角色权限与提示词、知识库和监督优化、
+剩余交付包括 CodeBuddy 常驻池、两种运行时的完整隔离与恢复验收、角色权限与提示词、知识库和监督优化、
 完整冷 / 热业务对照、固定 int 和生产业务验收。CLI 层强制退出恢复不等于平台重启验收；
 运行中控制的适配器故障对照已完成，平台重启与常驻恢复仍待验收。浏览器验收尚未执行。
 
@@ -338,3 +338,49 @@ loaded 集合为空；未知状态回收进程，不把它交给下一轮。任�
 当前复用仍要求相同任务 home；跨任务 home 的稳定 SQLite、rollout 路径衔接与资源
 配置归一化尚待实施。CodeBuddy 平台常驻池、完整性能对照、固定 int、生产和浏览器
 业务验收也未完成，本阶段不代表完整计划交付。
+
+
+## 第十七阶段：跨任务 home 的 Codex 原生状态
+
+领取响应通过已选会话 ID 解析来源任务，限制 Agent、Runtime、Issue / 聊天及聊天
+代际；手动重试限定原任务。取最新已结束的同会话 producer，不能按任务创建时间
+错误地恢复较旧的 Goal 计量。daemon 通过归属索引定位私有任务目录并取得占用，
+不用工作目录推测来源。原池进程先收尾；等待短暂的辅助进程退出，仍声明使用该 home 的外部进程会阻止迁移。
+
+默认 Linux 内置 Codex 的 SQLite 固定到会话存储下、按 Runtime 隔离的位置。
+使用纯 Go SQLite 驱动的 [Backup API](https://www.sqlite.org/backup.html) 生成一致性
+快照，包含 WAL 已提交数据，保留 rowid；原数据库保留。原 sessions 真目录保留为
+备份，当前路径链接到持久 rollout 存储，后续任务也直接使用该存储。人工指定的
+`sqlite_home` / `CODEX_SQLITE_HOME` 沿用用户配置。
+
+0.164 的分页历史不能仅从 rollout 重建；直接指定迁移后的新 path 会被原生拒绝，
+只传 thread ID 也不会修复失效的旧路径。因此在尚未发布的 `state_5` 快照中校验每个
+活跃线程的 rollout 元数据，再调整索引的文件位置；Goal、分页内容和原生 schema
+均不重写。未知的新索引版本拒绝迁移。原生恢复按 ID 发起，并核对回包线程身份与
+持久文件身份；缺失、冲突或恢复失败时保留现场，不自动换新会话绕过。
+
+池以稳定 SQLite 位置绑定会话；新任务 home 不再单独决定 PID。账号、静态配置、
+指令、技能资源、插件和规则的变化参与失效检查。绝对资源路径或工作目录变化仍可
+触发合法的进程替换，完整热会话矩阵尚待验收。
+
+本阶段证据仍位于控制仓库 `.run/evidence/codex-codebuddy-integration/`：
+
+- `phase17-session-source-tests.log`：隔离数据库的来源范围、重试与聊天代际检查。
+- `phase17-native-state-final-tests.log`：race 检查覆盖 WAL、非零夹具数据、rowid、
+  原目录删除后恢复、分页索引与内容、冲突拒绝及外部占用拒绝。非零计量是 SQLite
+  夹具数据，不能冒充真实模型产生的原生 Goal 用量。
+- `phase17-native-goal-owned-source-final.log`：真实 0.164 创建暂停 Goal 后迁移，删除原
+  任务目录，两轮新 home 保留同一原生 Goal 和同一 PID，通过（4.13s，无模型调用）。
+- `phase17-codex-regression.log`：Codex race 回归通过（73.776s），排除已在原始
+  基线复现的截止时间用例。`phase17-daemon-final-tests.log`：daemon race 通过
+  （45.305s），排除基线同样失败的缓冲时间戳用例。execenv 全包 race 通过
+  （36.898s）；新增备份路径另有定向检查。
+- 全量 daemon 最初另有一项旧 MCP 转录断言失败：新增原生耗时事件占据 seq=2。
+  已更新该验收，明确检查 tool_use、原生耗时和 tool_result 的顺序与数据；定向通过。
+- `phase17-native-paged-history-model.log` 的恢复模型回合超时；随后
+  `phase17-native-paged-history-model-recheck.log` 连迁移前的冷启动模型回合也超时。
+  不能把超时归因为迁移，也不能把这些样本计为模型上下文恢复通过或性能通过。
+
+真实模型读取迁移后分页上下文仍待通过；压缩 rollout 的迁移兼容、active Goal 的
+无加载纯查询、完整业务与性能矩阵也需继续处理。CodeBuddy 平台常驻池、角色与知识库
+监督优化、固定 int、生产与浏览器验收尚未完成。

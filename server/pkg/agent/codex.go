@@ -2172,6 +2172,16 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		resumeResult, err := c.request(ctx, "thread/resume", resumeParams)
 		if err == nil {
 			if threadID := extractThreadID(resumeResult); threadID != "" {
+				if c.cfg.CodexResumePath != "" {
+					var restored struct {
+						Thread struct {
+							Path string `json:"path"`
+						} `json:"thread"`
+					}
+					if json.Unmarshal(resumeResult, &restored) != nil || !sameCodexResidentRollout(restored.Thread.Path, c.cfg.CodexResumePath) || threadID != priorThreadID {
+						return "", false, errors.New("codex native resume did not use its persistent conversation rollout")
+					}
+				}
 				c.rememberNativeThreadModel(resumeResult)
 				logger.Info("codex lifecycle",
 					"phase", "thread_resume_response",
@@ -2186,10 +2196,13 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 				)
 				return threadID, true, nil
 			}
+			if c.cfg.CodexResumePath != "" {
+				return "", false, errors.New("codex native resume did not return the original thread identity")
+			}
 			logger.Warn("codex thread/resume returned no thread ID; falling back to thread/start", "prior_thread_id", priorThreadID)
 		} else {
-			if isCodexTransportError(err) {
-				logger.Warn("codex thread/resume failed due to transport error; not falling back to thread/start", "prior_thread_id", priorThreadID, "error", err)
+			if isCodexTransportError(err) || c.cfg.CodexResumePath != "" {
+				logger.Warn("codex thread/resume failed; replacement thread is prohibited", "prior_thread_id", priorThreadID, "error", err)
 				return "", false, fmt.Errorf("codex thread/resume failed: %w", err)
 			}
 			logger.Warn("codex thread/resume failed; falling back to thread/start", "prior_thread_id", priorThreadID, "error", err)

@@ -164,7 +164,11 @@ func (p *CodexProcessPool) acquire(ctx context.Context, cfg Config, opts ExecOpt
 			}
 		}
 	}
-	keyBytes := sha256.Sum256([]byte(cfg.ResidentSessionKey + "\x00" + opts.Cwd + "\x00" + home))
+	state := cfg.Env["CODEX_SQLITE_HOME"]
+	if state == "" {
+		state = home
+	}
+	keyBytes := sha256.Sum256([]byte(cfg.ResidentSessionKey + "\x00" + opts.Cwd + "\x00" + state))
 	key := hex.EncodeToString(keyBytes[:])
 	for {
 		if err := ctx.Err(); err != nil {
@@ -241,6 +245,46 @@ func (p *CodexProcessPool) acquire(ctx context.Context, cfg Config, opts ExecOpt
 		p.entries[key] = entry
 		p.mu.Unlock()
 		return &codexProcessLease{pool: p, entry: entry, threadConfig: config, execution: execution, stderr: entry.stderr.current}, nil
+	}
+}
+
+// RetireHome 在原生状态迁移前收齐旧 home 的原生进程，调用者仍持有会话 writer lock。
+func (p *CodexProcessPool) RetireHome(ctx context.Context, home string) error {
+	if p == nil {
+		return nil
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		p.mu.Lock()
+		busy := false
+		for key, entry := range p.entries {
+			if entry.home != home {
+				continue
+			}
+			if entry.busy {
+				busy = true
+				continue
+			}
+			delete(p.entries, key)
+			p.stop(entry)
+			p.signalLocked()
+		}
+		changed := p.changed
+		unhealthy := p.unhealthy.Load()
+		p.mu.Unlock()
+		if unhealthy {
+			return errors.New("Codex state migration could not confirm native process cleanup")
+		}
+		if !busy {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
 	}
 }
 
@@ -492,14 +536,32 @@ func codexResidentConfig(cfg Config, opts ExecOptions, command Command, args []s
 	}
 	_, _ = h.Write(auth)
 	rootEnv := codexResidentEnvironment(cfg.Env)
+	// 任务 home 只提供当前线程资源；稳定 SQLite 已接好时，home 路径不决定进程身份。
+	if cfg.Env["CODEX_SQLITE_HOME"] != "" {
+		for index, field := range rootEnv {
+			if strings.HasPrefix(field, "CODEX_HOME=") {
+				rootEnv[index] = "CODEX_HOME=<task-home>"
+			}
+		}
+	}
 	sort.Strings(rootEnv)
 	identity, _ := json.Marshal([]any{stable, command.Path, command.Prefix, args, rootEnv, cfg.CodexVersion})
 	_, _ = h.Write(identity)
 	if info, err := os.Stat(command.Path); err == nil {
 		_, _ = fmt.Fprintf(h, "%d:%d", info.Size(), info.ModTime().UnixNano())
 	}
-	if err := hashCodexResidentSkills(h, filepath.Join(home, "skills"), "", make(map[string]bool)); err != nil {
-		return nil, "", err
+	for _, name := range []string{"skills", "plugins", "rules"} {
+		if err := hashCodexResidentSkills(h, filepath.Join(home, name), name, make(map[string]bool)); err != nil {
+			return nil, "", err
+		}
+	}
+	for _, name := range []string{"config.json", "instructions.md"} {
+		body, err := os.ReadFile(filepath.Join(home, name))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, "", errors.New("cannot bind current Codex user instructions")
+		}
+		_, _ = fmt.Fprintln(h, name)
+		_, _ = h.Write(body)
 	}
 	return config, hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -567,17 +629,17 @@ func hashCodexResidentSkills(out io.Writer, path, relative string, visited map[s
 	if err != nil {
 		return errors.New("cannot read Codex skill configuration")
 	}
+	_, _ = fmt.Fprintf(out, "%s:%o\n", relative, info.Mode().Perm())
 	if !info.IsDir() {
-		if info.Name() != "SKILL.md" {
-			return nil
+		if !info.Mode().IsRegular() {
+			return errors.New("Codex static resource is not a regular file")
 		}
-		body, err := os.ReadFile(resolved)
+		file, err := os.Open(resolved)
 		if err != nil {
-			return errors.New("cannot read Codex skill instructions")
+			return errors.New("cannot read Codex static resource")
 		}
-		_, _ = fmt.Fprintln(out, relative)
-		_, _ = out.Write(body)
-		return nil
+		_, copyErr := io.Copy(out, file)
+		return errors.Join(copyErr, file.Close())
 	}
 	if visited[resolved] {
 		return nil

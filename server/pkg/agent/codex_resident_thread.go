@@ -4,9 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"time"
 )
+
+func sameCodexResidentRollout(actual, expected string) bool {
+	if actual == "" || expected == "" {
+		return false
+	}
+	left, leftErr := os.Stat(actual)
+	right, rightErr := os.Stat(expected)
+	return leftErr == nil && rightErr == nil && os.SameFile(left, right)
+}
 
 func (c *codexClient) currentThreadConfig() map[string]any {
 	if c.threadConfig == nil {

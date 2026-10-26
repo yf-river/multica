@@ -3773,6 +3773,9 @@ ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID)).Scan(&deliveryI
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, pauseErr, "release resume", uuidToString(task.ID))
 		}
 	}
+	if err := h.resolveCodexSessionSource(r.Context(), *task, runtime, &resp); err != nil {
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "native session source", uuidToString(task.ID))
+	}
 	// Last gate before dispatch: refuse to hand a worktree-mode local_directory
 	// task to a daemon that cannot implement the mode.
 	//

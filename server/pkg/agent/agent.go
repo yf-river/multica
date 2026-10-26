@@ -289,6 +289,7 @@ type Result struct {
 type Config struct {
 	CodexPool          *CodexProcessPool
 	ResidentSessionKey string
+	CodexResumePath    string // 原生恢复必须命中的持久 rollout，按线程 ID 发起并校验回包文件身份
 	PinResidentHome    func() func()
 	ExecutablePath     string            // CLI 可执行文件路径
 	CLIVersion         string            // 与 ExecutablePath 配套检测到的版本；内置提供方按已发布协议归一化用量

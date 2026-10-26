@@ -143,6 +143,7 @@ type Task struct {
 	// 但没有这个保证——因此 taskIsSquadLeader 对这两种情况都回退到 brief 里的标记（MUL-5811）。
 	LeaderRoleResolved bool   `json:"leader_role_resolved,omitempty"`
 	PriorSessionID     string `json:"prior_session_id,omitempty"` // 本 issue 上一次任务留下的 Claude 会话 ID
+	PriorTaskID        string `json:"prior_task_id,omitempty"`    // 由服务端按会话和任务范围解析
 	PriorWorkDir       string `json:"prior_work_dir,omitempty"`   // 本 issue 上一次任务使用的 work_dir
 	// PriorSessionResumeUnavailable: MUL-5305 中服务器提示“更新的 Codex 会话被扣下
 	// （rollout 缺失），如果带 PriorSessionID 那也只是较旧的回退”，因此即使旧会话能干净

@@ -447,6 +447,7 @@ type AgentTaskResponse struct {
 	WorkspaceRepos []WorkspaceRepoData `json:"workspace_repos,omitempty"`
 	CreatedAt      string              `json:"created_at"`
 	PriorSessionID string              `json:"prior_session_id,omitempty"` // 同一 issue 上一任务留下的会话 ID
+	PriorTaskID    string              `json:"prior_task_id,omitempty"`    // 原生会话状态所在的原任务
 	PriorWorkDir   string              `json:"prior_work_dir,omitempty"`   // 同一 issue 上一任务留下的工作目录
 	// PriorSessionResumeUnavailable 在较新的 Codex 会话因缺失回滚被扣下时置位
 	// （MUL-5305）；PriorSessionID（如有）为较旧的兜底。即使旧会话正常恢复，

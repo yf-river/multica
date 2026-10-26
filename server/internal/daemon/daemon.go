@@ -7614,6 +7614,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}
 	}
+	var codexNativeState execenv.CodexNativeState
+	if provider == "codex" && !usesCustomProfileCommand && runtime.GOOS == "linux" && agent.CodexResidentSupported(codexVersion) {
+		var stateErr error
+		codexNativeState, stateErr = d.prepareCodexNativeState(prepareCtx, task, env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx))
+		if stateErr != nil {
+			return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("prepare Codex native state: %w", stateErr))
+		}
+	}
 	phaseRecorder.Mark(taskPhaseEnvironmentReady)
 	// Belt-and-suspenders: also mark whatever root we ended up with, in case
 	// future changes diverge from ResolveRootDir.
@@ -7915,6 +7923,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.CodexHome != "" {
 		agentEnv["CODEX_HOME"] = env.CodexHome
 	}
+	if codexNativeState.SQLiteHome != "" {
+		agentEnv["CODEX_SQLITE_HOME"] = codexNativeState.SQLiteHome
+	}
 	// HOME 与 XDG base 目录在这里刻意不碰：gh、aws、kubectl、npm 等 provider 工具
 	// 继续解析 daemon 用户的既有状态（MUL-5578）。Multica CLI 是例外：
 	// MULTICA_TASK_CONFIG_ROOT 把它的隐式 profile 查找重定向到私有任务本地状态、
@@ -7972,16 +7983,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// NewRuntime 分派，协议族走 New。这是唯一的生产边界——daemon 从不直接调
 	// agent.New 或 agent.NewRuntime，两个工厂各自保持"恰好一个含义"。
 	backendConfig := agent.Config{
-		ExecutablePath: entry.Path,
-		LaunchPrefix:   profileFixedArgs,
-		CLIVersion:     resolvedVersion,
-		Env:            agentEnv,
-		Logger:         d.logger,
-		TaskID:         task.ID,
-		RuntimeID:      task.RuntimeID,
-		DaemonVersion:  d.cfg.CLIVersion,
-		CodexVersion:   codexVersion,
-		BuiltinRuntime: !usesCustomProfileCommand,
+		ExecutablePath:  entry.Path,
+		LaunchPrefix:    profileFixedArgs,
+		CLIVersion:      resolvedVersion,
+		Env:             agentEnv,
+		Logger:          d.logger,
+		TaskID:          task.ID,
+		RuntimeID:       task.RuntimeID,
+		DaemonVersion:   d.cfg.CLIVersion,
+		CodexVersion:    codexVersion,
+		BuiltinRuntime:  !usesCustomProfileCommand,
+		CodexResumePath: codexNativeState.ResumePath,
 	}
 	if provider == "codex" {
 		d.configureCodexResident(task, env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx), &backendConfig)
@@ -8243,7 +8255,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	providerTraceIDs := traceListForResult(result)
 	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
-	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
+	if backendConfig.CodexResumePath == "" && shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
 		firstUsage := result.Usage
 		firstTools := tools
