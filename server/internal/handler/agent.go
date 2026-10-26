@@ -778,6 +778,7 @@ type TaskAgentData struct {
 	Model                 string                      `json:"model,omitempty"`
 	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
 	ServiceTier           string                      `json:"service_tier,omitempty"`
+	SystemKey             string                      `json:"system_key,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkill      `json:"disabled_runtime_skills,omitempty"`
 	// RuntimeConfig 是 agent 保存的原始 runtime_config JSON。daemon 解码其中
 	// 各厂商专有字段，同时保留服务端所有的 schema。

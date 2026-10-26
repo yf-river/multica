@@ -38,7 +38,10 @@ type ExecOptions struct {
 	// Command is a runtime-native slash command (for example /plan or /goal).
 	// When set, the backend runs it against the session instead of a model turn.
 	Command string
-	Model   string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
+	// ApprovalPolicy is the runtime approval stance for this run: "ask" (default)
+	// delegates to the configured answerer, "never" rejects every approval ask.
+	ApprovalPolicy string
+	Model          string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
 	// SystemPrompt 携带 Multica 的运行时简报（runtime brief），仅对少数无法
 	// 从磁盘读取该简报的 provider 有效。daemon 对其它所有 provider 都把它留空
 	// （见 daemon.providerNeedsInlineSystemPrompt），因为那份简报已经以"每次任务的

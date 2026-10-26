@@ -8052,7 +8052,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "opencode" || provider == "codearts" {
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
+	approvalPolicy := "ask"
+	if task.Agent != nil {
+		switch task.Agent.SystemKey {
+		case "quality_supervision", "issue_review":
+			approvalPolicy = "never"
+		}
+	}
 	execOpts := agent.ExecOptions{
+		ApprovalPolicy:             approvalPolicy,
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
 		Model:                      model,
