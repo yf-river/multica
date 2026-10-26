@@ -80,7 +80,7 @@ func codebuddyNativeAccounting(env map[string]string, sessionID string, cids map
 		mergeCodebuddyCallUsage(usage, call)
 	}
 	for _, cid := range ids {
-		_, childTraces, childCalls := codebuddyCollectSubagentUsage(env, sessionID, cid)
+		_, childTraces, childCalls := codebuddyCollectScopedSubagentUsage(env, sessionID, cid, cids)
 		traces = append(traces, childTraces...)
 		for _, call := range childCalls {
 			key := codebuddyUsageCall{request: call.CID, message: call.MessageID, model: call.Model}

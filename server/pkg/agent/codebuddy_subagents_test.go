@@ -4,10 +4,34 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestCodebuddyResumedChildAccountsOnlyObservedGeneration(t *testing.T) {
+	old := string(testChildTranscript(999))
+	fresh := strings.ReplaceAll(string(testChildTranscript(7)), testChildCID, "fresh-child-cid")
+	root := stageTree(t, testParentTranscript(), []byte(old+fresh))
+	usage, traces, calls := codebuddyCollectScopedSubagentUsage(envOf(root), testParentSession, testRootCID, map[string]bool{"fresh-child-cid": true})
+	if usage["claude-sonnet-5"].OutputTokens != 7 || len(traces) != 1 || len(calls) != 1 || calls[0].CID != "fresh-child-cid" {
+		t.Fatalf("resumed child replayed old accounting: usage=%v traces=%v calls=%v", usage, traces, calls)
+	}
+	usage, traces, calls = codebuddyCollectScopedSubagentUsage(envOf(root), testParentSession, testRootCID, map[string]bool{"unobserved": true})
+	if len(usage) != 0 || len(traces) != 0 || len(calls) != 0 {
+		t.Fatal("child history was billed without a current observed generation")
+	}
+	file := filepath.Join(root, "projects", "work", testParentSession, "subagents", testChildID+".jsonl")
+	conflict := strings.Replace(fresh, `"completion_tokens":7`, `"completion_tokens":8`, 1)
+	if err := os.WriteFile(file, []byte(old+fresh+conflict), 0600); err != nil {
+		t.Fatal(err)
+	}
+	usage, traces, calls = codebuddyCollectScopedSubagentUsage(envOf(root), testParentSession, testRootCID, map[string]bool{"fresh-child-cid": true})
+	if len(usage) != 0 || len(traces) != 0 || len(calls) != 0 {
+		t.Fatal("conflicting resumed child call was partially billed")
+	}
+}
 
 // 仓库内的 fixture 都是脱敏的最小同协议样本：不复制真实 prompt、任务目录或凭据。
 const (

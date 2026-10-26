@@ -17,7 +17,8 @@ func TestCodebuddyRealNativeForegroundChild(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real foreground child model smoke is opt-in")
 	}
-	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	path, home := runtime.Path, runtime.Home
 	if path == "" || home == "" {
 		t.Fatal("explicit executable and isolated smoke home required")
 	}
@@ -53,7 +54,8 @@ func TestCodebuddyRealNativeManagedHooks(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real managed hook model smoke is opt-in")
 	}
-	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	path, home := runtime.Path, runtime.Home
 	if path == "" || home == "" {
 		t.Fatal("explicit executable and isolated smoke home required")
 	}
@@ -75,7 +77,7 @@ func TestCodebuddyRealNativeManagedHooks(t *testing.T) {
 			if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nunset MULTICA_NATIVE_HOOK_VALUE\nexec "+shellQuote(path)+" \"$@\"\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			backend := &codebuddyBackend{cfg: Config{ExecutablePath: wrapper, BuiltinRuntime: true, CLIVersion: "2.176.0", Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_NATIVE_HOOK_VALUE": marker}}}
+			backend := &codebuddyBackend{cfg: Config{ExecutablePath: wrapper, BuiltinRuntime: true, CLIVersion: runtime.Version, Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_NATIVE_HOOK_VALUE": marker}}}
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 			opts := ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", Timeout: 110 * time.Second, MaxTurns: 8, SystemPrompt: "Execute only the requested small acceptance check. Do not inspect unrelated files or invoke other tools."}
@@ -107,12 +109,13 @@ func TestCodebuddyRealNativeHookBriefAcrossResumedTasks(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real native hook brief model smoke is opt-in")
 	}
-	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	path, home := runtime.Path, runtime.Home
 	if path == "" || home == "" {
 		t.Fatal("explicit executable and isolated smoke home required")
 	}
 	work, sid, previousCID := t.TempDir(), "", ""
-	backend := &codebuddyBackend{cfg: Config{ExecutablePath: path, BuiltinRuntime: true, CLIVersion: "2.176.0", Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy")}}}
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: path, BuiltinRuntime: true, CLIVersion: runtime.Version, Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy")}}}
 	for round := 0; round < 2; round++ {
 		marker, err := newCodebuddyGeneration()
 		if err != nil {
@@ -147,7 +150,8 @@ func TestCodebuddyRealNativeGoalControl(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
 		t.Skip("native runtime smoke is opt-in")
 	}
-	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	path, home := runtime.Path, runtime.Home
 	if path == "" || home == "" {
 		t.Fatal("explicit executable and isolated smoke home required")
 	}
@@ -177,7 +181,8 @@ func TestCodebuddyRealNativeGoalLoop(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real goal model smoke is opt-in")
 	}
-	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	path, home := runtime.Path, runtime.Home
 	if path == "" || home == "" {
 		t.Fatal("explicit executable and isolated smoke home required")
 	}
@@ -208,7 +213,8 @@ func TestCodebuddyRealNativePlanApproval(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real native plan model smoke is opt-in")
 	}
-	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	path, home := runtime.Path, runtime.Home
 	if path == "" || home == "" {
 		t.Fatal("explicit executable and isolated smoke home required")
 	}
