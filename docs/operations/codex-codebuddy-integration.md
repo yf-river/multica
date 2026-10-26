@@ -493,3 +493,29 @@ Linux 内置 CodeBuddy 2.176+ 的 ACP 执行接入受管 hook；旧版、自定�
 当前原生根进程仍按单次执行持有环境，不能宣称已完成常驻凭据隔离。
 CodeBuddy 有界常驻池、MCP / 简报换发、常驻收尾与崩溃恢复、角色和知识库监督、
 真实任务与性能矩阵、固定 int 和生产业务验收仍待完成。
+
+## 第二十三阶段：每轮简报与空闲 MCP 解除
+
+受管 hook 可用的 CodeBuddy 原生执行，从当前执行的 `UserPromptSubmit` 取得任务
+简报。daemon 与 backend 共用原生分派判断；普通 stream-json、旧版和自定义 profile
+沿用文件路径。原生路径从 CODEBUDDY.md 中精确移除平台拥有的简报块，保留人工
+正文的原始字节，不创建空的受管记忆文件。`SystemPrompt` 通过原生参数投递。
+
+冷会话重试重新生成 hook 简报及来源指纹；无法准备当前简报时停止重试并保留已知
+用量与链路。来源记录标识 `delivery=native_hook`，不把不存在的简报文件当成证据，
+也不在诊断中复制指令正文。
+
+- `phase23-native-hook-brief-tests.log`：CodeBuddy 与上下文文件的 race 检查通过
+  （Agent 10.722s，execenv 1.178s），覆盖旧代际拒绝获取新简报、人工正文和尾部
+  字节保留、旧平台块解除、hook 投递指纹及原生系统指令不重复注入。
+- `phase23-native-hook-brief-model.log`：真实 2.176 / Flash 两次冷执行通过
+  （8.29s、6.69s），第二次恢复同一 SID，取得新随机简报标记，使用新 CID 且有
+  独立逐调用用量；工作目录没有简报文件。该样本不证明同 PID 热复用。
+- `phase23-codebuddy-idle-detach-probe.json`：同一 PID 的两轮协议检查通过。
+  每轮切到不带受管 MCP 的空闲会话，旧 MCP 确认退出；随后恢复原 SID 并传入新
+  环境成功。此处 MCP 是启动/退出探针，没有 prompt，不是知识库业务验收。
+- `phase23-daemon-brief-tests.log`：daemon 的监督、提示词、恢复及链路相关 race
+  检查通过（1.322s）；CLI 构建与相关 Go vet 通过。
+
+有界进程池、租约间的完整凭据和配置换发、常驻收尾与崩溃恢复仍需实现与验收。
+角色和知识库监督、完整业务与性能对照、固定 int 和生产验收仍未完成。

@@ -7847,9 +7847,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// 注入 runtime 专属配置（meta skill），让 agent 发现 .agent_context/。
+	taskCtx.CodebuddyBriefViaHook = provider == "codebuddy" && agent.CodebuddyNativeHooksEnabled(
+		agent.Config{CLIVersion: resolvedVersion, BuiltinRuntime: !usesCustomProfileCommand},
+		agent.ExecOptions{NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
-		if provider == "codex" {
+		if provider == "codex" || taskCtx.CodebuddyBriefViaHook {
 			return TaskResult{}, fmt.Errorf("inject runtime config: %w", err)
 		}
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
@@ -8132,6 +8135,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		CodebuddySettingsPath:  env.CodebuddySettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
 	}
+	if taskCtx.CodebuddyBriefViaHook {
+		execOpts.CodebuddyRuntimeBrief = runtimeBrief
+	}
 	if task.SupervisionPrompt != "" {
 		// 监督模式显式传递 Agent 指令，避免依赖 CodeBuddy 的默认文件加载。
 		if provider == "codebuddy" {
@@ -8283,9 +8289,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		execOpts.ResumeContinuityNotice = ""
 		taskCtx.PriorSessionResumed = false
 		if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {
+			if taskCtx.CodebuddyBriefViaHook {
+				return TaskResult{Status: "failed", SessionID: firstResult.SessionID, Usage: buildTaskUsageEntries(provider, firstUsage)}, fmt.Errorf("prepare fresh CodeBuddy hook brief: %w", briefErr)
+			}
 			taskLog.Warn("execenv: re-inject cold runtime config for fresh retry failed (non-fatal)", "error", briefErr)
 		} else {
 			runtimeBrief = freshBrief
+			if taskCtx.CodebuddyBriefViaHook {
+				execOpts.CodebuddyRuntimeBrief = runtimeBrief
+				if err := execenv.WriteRuntimeProvenance(env.RootDir, env.WorkDir, provider, runtimeBrief, taskCtx); err != nil {
+					taskLog.Warn("write fresh native hook instruction provenance failed", "error", err)
+				}
+			}
 			if providerNeedsInlineSystemPrompt(provider) {
 				execOpts.SystemPrompt = runtimeBrief
 			}

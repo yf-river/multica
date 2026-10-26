@@ -171,3 +171,15 @@ func TestCodebuddyHookHelperRequiresLiveOwner(t *testing.T) {
 		t.Fatal("ended task retained hook environment")
 	}
 }
+
+func TestCodebuddyHookBriefRequiresOwnedPrompt(t *testing.T) {
+	hooks := testCodebuddyHooks(t, nil, ExecOptions{CodebuddyRuntimeBrief: "current task brief", SystemPrompt: "native system instruction"})
+	raw, err := hooks.handle(codebuddyHookInput{Event: "UserPromptSubmit", SessionID: "session", GenerationID: "root"})
+	if err != nil || !bytes.Contains(raw, []byte("current task brief")) || bytes.Contains(raw, []byte("native system instruction")) {
+		t.Fatalf("hook context mixed brief and native system instruction: %v", err)
+	}
+	raw, err = hooks.handle(codebuddyHookInput{Event: "UserPromptSubmit", SessionID: "session", GenerationID: "old"})
+	if err == nil || len(raw) != 0 {
+		t.Fatal("old prompt obtained the current task brief")
+	}
+}

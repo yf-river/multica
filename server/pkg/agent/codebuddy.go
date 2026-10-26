@@ -153,8 +153,12 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 // 写 prompt 失败/扫描出错/CLI 有无回 result）得出最终状态 → 再把 stderr 尾部、协议观测
 // 日志、续跑被拒判定等收尾，最后把 Result 放进 resCh。结果与流式消息分别经两个
 // channel 返回。
+func codebuddyNativeRequested(opts ExecOptions) bool {
+	return opts.NativeGoal || (opts.CommandOnly && (opts.Command == "/plan" || opts.Command == "/plan off")) || strings.TrimSpace(opts.Command) == "/goal" || strings.HasPrefix(strings.TrimSpace(opts.Command), "/goal ")
+}
+
 func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
-	if opts.NativeGoal || (opts.CommandOnly && (opts.Command == "/plan" || opts.Command == "/plan off")) || strings.TrimSpace(opts.Command) == "/goal" || strings.HasPrefix(strings.TrimSpace(opts.Command), "/goal ") {
+	if codebuddyNativeRequested(opts) {
 		return b.executeNative(ctx, prompt, opts)
 	}
 	execPath := b.cfg.ExecutablePath

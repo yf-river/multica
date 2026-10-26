@@ -54,6 +54,7 @@ type codebuddyHooks struct {
 	dir, socket, nonce string
 	settings, envFile  string
 	sid, root          string
+	brief              string
 	goal, closed       bool
 	seen               map[string]bool
 	seenAgents         map[string]bool
@@ -68,12 +69,18 @@ func codebuddyManagedHooksSupported(cfg Config) bool {
 	return runtime.GOOS == "linux" && cfg.BuiltinRuntime && err == nil && version.Major == 2 && !version.lessThan(semver{Major: 2, Minor: 176})
 }
 
+// CodebuddyNativeHooksEnabled 与执行分派共用判断，供 daemon 选择简报投递方式。
+func CodebuddyNativeHooksEnabled(cfg Config, opts ExecOptions) bool {
+	return codebuddyManagedHooksSupported(cfg) && codebuddyNativeRequested(opts)
+}
+
 func newCodebuddyHooks(ctx context.Context, env map[string]string, opts ExecOptions) (_ *codebuddyHooks, err error) {
 	dir, err := os.MkdirTemp("", "multica-cb-hooks-")
 	if err != nil {
 		return nil, err
 	}
 	h := &codebuddyHooks{ctx: ctx, dir: dir, socket: filepath.Join(dir, "hook.sock"), settings: filepath.Join(dir, "settings.json"), envFile: filepath.Join(dir, "environment.sh"), seen: map[string]bool{}, seenAgents: map[string]bool{}, children: map[string]string{}, agents: map[string]codebuddyHookAgent{}, done: make(chan struct{})}
+	h.brief = opts.CodebuddyRuntimeBrief
 	defer func() {
 		if err != nil {
 			_ = os.RemoveAll(dir)
@@ -264,6 +271,9 @@ func (h *codebuddyHooks) handle(input codebuddyHookInput) (json.RawMessage, erro
 				return nil, errors.New("CodeBuddy prompt generation was not issued by this task")
 			}
 			h.root, h.seen[cid] = cid, true
+		}
+		if h.brief != "" {
+			return json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": input.Event, "additionalContext": h.brief}})
 		}
 		return json.RawMessage(`{}`), nil
 	}

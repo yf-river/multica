@@ -58,6 +58,7 @@ type ExecOptions struct {
 	// 因此 backend 绝不能假设该字段一定有值：新增一个只读 SystemPrompt 的 backend，
 	// 会悄无声息地什么也拿不到。
 	SystemPrompt              string
+	CodebuddyRuntimeBrief     string        // 通过受管 UserPromptSubmit 投递的本轮任务简报
 	ThreadName                string        // 会话/线程名，用于命名 agent 侧的会话
 	MaxTurns                  int           // 最多允许的回合数；0 表示不限
 	Timeout                   time.Duration // 整体执行超时（墙钟时间）

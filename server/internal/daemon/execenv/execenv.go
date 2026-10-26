@@ -132,9 +132,10 @@ type PrepareParams struct {
 // TaskContextForEnv 是任务上下文中「写上下文文件所需」的那部分子集。任务哪些
 // 信息会被写进 agent 工作目录里的简介/上下文文件，由这里的字段决定。
 type TaskContextForEnv struct {
-	IssueID          string
-	TriggerCommentID string // 触发本任务的评论 ID（on_assign 型任务为空）
-	TriggerThreadID  string // 触发线程的根评论 ID；为空时回退到 TriggerCommentID
+	CodebuddyBriefViaHook bool // 原生 ACP 从当前执行的 hook 取得简报，工作目录只承载人工正文
+	IssueID               string
+	TriggerCommentID      string // 触发本任务的评论 ID（on_assign 型任务为空）
+	TriggerThreadID       string // 触发线程的根评论 ID；为空时回退到 TriggerCommentID
 	// CommentReplyTargets 在一次评论任务「合并了横跨多个根线程的评论」时才会被设置
 	// （MUL-4348）。条目数 >=2 时，工作流的回复步骤会一对一线程地分发回复，而不是
 	// 走单一的 `--parent=trigger` 方式——这是为了让持久化的 brief 与每一轮的 prompt

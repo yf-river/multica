@@ -103,6 +103,46 @@ func TestCodebuddyRealNativeManagedHooks(t *testing.T) {
 	}
 }
 
+func TestCodebuddyRealNativeHookBriefAcrossResumedTasks(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
+		t.Skip("real native hook brief model smoke is opt-in")
+	}
+	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	if path == "" || home == "" {
+		t.Fatal("explicit executable and isolated smoke home required")
+	}
+	work, sid, previousCID := t.TempDir(), "", ""
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: path, BuiltinRuntime: true, CLIVersion: "2.176.0", Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy")}}}
+	for round := 0; round < 2; round++ {
+		marker, err := newCodebuddyGeneration()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
+		opts := ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", NativeGoal: true, ResumeSessionID: sid, Timeout: 60 * time.Second, MaxTurns: 2, SystemPrompt: "Answer the requested current task marker. Do not use tools.", CodebuddyRuntimeBrief: "The current runtime brief marker is " + marker + ". This is the current task's marker."}
+		session, err := backend.Execute(ctx, "Reply only with the marker specified by the current runtime brief. Ignore markers from previous tasks. Do not call tools.", opts)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		for range session.Messages {
+		}
+		result := <-session.Result
+		cancel()
+		if result.Status != "completed" || strings.TrimSpace(result.Output) != marker || result.ProviderTraceID == "" || result.ProviderTraceID == previousCID || len(result.Usage) == 0 {
+			t.Fatalf("hook brief round %d failed: status=%s matches=%v new_cid=%v usage=%v error=%s", round, result.Status, strings.TrimSpace(result.Output) == marker, result.ProviderTraceID != previousCID, len(result.Usage) > 0, result.Error)
+		}
+		if sid != "" && result.SessionID != sid {
+			t.Fatal("hook brief changed the resumed native session")
+		}
+		sid, previousCID = result.SessionID, result.ProviderTraceID
+		t.Logf("Cold task round %d resumed=%v; fresh hook marker and per-call usage verified; duration_ms=%d", round, round > 0, result.DurationMs)
+	}
+	if _, err := os.Stat(filepath.Join(work, "CODEBUDDY.md")); !os.IsNotExist(err) {
+		t.Fatal("hook brief was also written to the native project memory file")
+	}
+}
+
 func TestCodebuddyRealNativeGoalControl(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
 		t.Skip("native runtime smoke is opt-in")
