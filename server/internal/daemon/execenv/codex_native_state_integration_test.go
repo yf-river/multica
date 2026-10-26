@@ -152,7 +152,7 @@ func testCodexRealGoalAcrossTaskHomes(t *testing.T, compressed bool) {
 			t.Fatal("fresh task home restarted the native app-server")
 		}
 		priorPID = record.Identity.PID
-		t.Logf("round=%d native_pid=%d original_home_removed=true native_goal_preserved=true original_thread_preserved=true compressed_source=%v model_context_recalled=%v", round, priorPID, compressed, prompt != "")
+		t.Logf("round=%d launcher_pid=%d original_home_removed=true native_goal_preserved=true original_thread_preserved=true compressed_source=%v model_context_recalled=%v", round, priorPID, compressed, prompt != "")
 	}
 }
 

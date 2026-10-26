@@ -1188,7 +1188,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		stdout, stdin, stderrBuf = stream.reader, stream, resident.stderr
 		pid = resident.entry.cmd.Process.Pid
 		stopProcess = func() { _ = stream.Close(); resident.release(false) }
-		b.cfg.Logger.Info("codex resident lease", "native_pid", pid, "task_id", b.cfg.TaskID, "reused", resident.reused)
+		b.cfg.Logger.Info("codex resident lease", "launcher_pid", pid, "task_id", b.cfg.TaskID, "reused", resident.reused)
 	} else {
 		var err error
 		processCtx, stop := context.WithCancel(context.WithoutCancel(runCtx))

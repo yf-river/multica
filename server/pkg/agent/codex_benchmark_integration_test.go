@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,12 +25,21 @@ func TestCodexRealResidentPreparationComparison(t *testing.T) {
 		t.Skip("five cold and three warm model calls are opt-in")
 	}
 	executable, account, destination := os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_HOME"), os.Getenv("MULTICA_CODEX_POOL_BENCH_RESULT")
-	if executable == "" || account == "" || destination == "" {
-		t.Fatal("explicit CLI, isolated account metadata and private result path required")
+	nativePath := os.Getenv("MULTICA_CODEX_BENCH_NATIVE_PATH")
+	if executable == "" || account == "" || destination == "" || nativePath == "" {
+		t.Fatal("explicit CLI, native executable, isolated account metadata and private result path required")
+	}
+	nativeFile, err := os.Stat(nativePath)
+	if err != nil {
+		t.Fatal(err)
 	}
 	version, err := DetectVersion(t.Context(), NewCommand(executable, nil))
 	if err != nil || !CodexResidentSupported(version) {
 		t.Fatalf("native runtime version: %s %v", version, err)
+	}
+	nativeVersion, err := DetectVersion(t.Context(), NewCommand(nativePath, nil))
+	if err != nil || nativeVersion != version {
+		t.Fatalf("native executable version differs from CLI launcher: native=%s launcher=%s error=%v", nativeVersion, version, err)
 	}
 	// 原生会话记录随结果保留，便于核查逐轮上下文和 usage；账号材料仅写入私有目录。
 	artifacts, err := os.MkdirTemp(filepath.Dir(destination), "native-")
@@ -76,6 +86,7 @@ func TestCodexRealResidentPreparationComparison(t *testing.T) {
 	type sample struct {
 		Cold          bool                  `json:"cold"`
 		PID           int                   `json:"pid"`
+		NativePID     int                   `json:"native_pid"`
 		Reused        bool                  `json:"reused"`
 		InitializeMs  int64                 `json:"initialize_ms"`
 		ThreadMs      int64                 `json:"thread_setup_ms"`
@@ -93,7 +104,7 @@ func TestCodexRealResidentPreparationComparison(t *testing.T) {
 			pool.Close()
 		}
 	}()
-	sid, warmPID, executableSHA := "", 0, ""
+	sid, warmPID, warmNativePID, executableSHA := "", 0, 0, ""
 	for index := 0; index < 8; index++ {
 		cold := index < 5
 		if cold {
@@ -141,7 +152,7 @@ func TestCodexRealResidentPreparationComparison(t *testing.T) {
 				Time      time.Time `json:"time"`
 				Message   string    `json:"msg"`
 				Phase     string    `json:"phase"`
-				PID       int       `json:"native_pid"`
+				PID       int       `json:"launcher_pid"`
 				Reused    bool      `json:"reused"`
 				Latency   string    `json:"latency"`
 				LatencyMs int64     `json:"latency_ms"`
@@ -174,7 +185,11 @@ func TestCodexRealResidentPreparationComparison(t *testing.T) {
 		if cold && entry.Reused || !cold && (!entry.Reused || entry.PID != warmPID || result.SessionID != sid) {
 			t.Fatal("warm sample did not retain the actual process and thread")
 		}
-		binary, err := os.Open(fmt.Sprintf("/proc/%d/exe", entry.PID))
+		entry.NativePID = codexBenchmarkNativePID(t, entry.PID, nativeFile)
+		if !cold && entry.NativePID != warmNativePID {
+			t.Fatal("warm sample replaced the native executable behind its launcher")
+		}
+		binary, err := os.Open(fmt.Sprintf("/proc/%d/exe", entry.NativePID))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,13 +207,13 @@ func TestCodexRealResidentPreparationComparison(t *testing.T) {
 		for _, usage := range result.Usage {
 			entry.Tokens += usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 		}
-		sid, warmPID = result.SessionID, entry.PID
+		sid, warmPID, warmNativePID = result.SessionID, entry.PID, entry.NativePID
 		samples = append(samples, entry)
 		raw, _ := json.MarshalIndent(map[string]any{"runtime": "codex", "cli": version, "executable_sha256": executableSHA, "model": "gpt-6.1-sol", "thinking_level": "low", "service_tier": "default", "case": "candidate five new conversations then three warm turns; actual model inference", "samples": samples}, "", "  ")
 		if err := os.WriteFile(destination, raw, 0600); err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("sample=%d cold=%v pid=%d reused=%v initialize_ms=%d thread_ms=%d prep_ms=%d duration_ms=%d observed_tokens=%d", index, cold, entry.PID, entry.Reused, entry.InitializeMs, entry.ThreadMs, entry.PreparationMs, entry.DurationMs, entry.Tokens)
+		t.Logf("sample=%d cold=%v launcher_pid=%d native_pid=%d reused=%v initialize_ms=%d thread_ms=%d prep_ms=%d duration_ms=%d observed_tokens=%d", index, cold, entry.PID, entry.NativePID, entry.Reused, entry.InitializeMs, entry.ThreadMs, entry.PreparationMs, entry.DurationMs, entry.Tokens)
 	}
 	median := func(cold bool, value func(sample) int64) float64 {
 		var values []int64
@@ -218,4 +233,51 @@ func TestCodexRealResidentPreparationComparison(t *testing.T) {
 	if prepRatio > .8 || timeRatio > 1.1 || wallRatio > 1.1 || tokenRatio > 1.1 {
 		t.Fatalf("startup comparison thresholds not met: preparation=%.3f duration=%.3f wall=%.3f tokens=%.3f", prepRatio, timeRatio, wallRatio, tokenRatio)
 	}
+}
+
+// npm 启动器的 PID 对应 Node；身份检查需要匹配本次拥有的进程树中的 CLI 正文。
+func codexBenchmarkNativePID(t *testing.T, root int, executable os.FileInfo) int {
+	t.Helper()
+	queue, visited, matched := []int{root}, make(map[int]bool), 0
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if visited[pid] {
+			continue
+		}
+		visited[pid] = true
+		if len(visited) > 256 {
+			t.Fatal("owned benchmark process tree exceeded inspection limit")
+		}
+		if actual, err := os.Stat(fmt.Sprintf("/proc/%d/exe", pid)); err == nil && os.SameFile(actual, executable) {
+			if matched != 0 {
+				t.Fatal("owned process tree contains multiple matching native executables")
+			}
+			matched = pid
+		}
+		threads, err := filepath.Glob(fmt.Sprintf("/proc/%d/task/*/children", pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, thread := range threads {
+			raw, err := os.ReadFile(thread)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range strings.Fields(string(raw)) {
+				child, err := strconv.Atoi(value)
+				if err != nil || child <= 0 {
+					t.Fatal("invalid owned child process identity")
+				}
+				queue = append(queue, child)
+			}
+		}
+	}
+	if matched == 0 {
+		t.Fatal("native executable not found in the owned launcher process tree")
+	}
+	return matched
 }
