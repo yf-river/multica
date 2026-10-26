@@ -19,3 +19,5 @@
 
 - `server/internal/handler/repository.go` owns the workspace repository registry and runtime locations. Project resources store `repository_id` and an optional project ref; claim resolves the effective ref from this registry. Workspace `repos` in API responses is a projection, not an editable second list. Repository writes use `/workspaces/{id}/repos[/{repositoryId}]`.
 - Configured repository locations use committed development branches for new worktrees, excluding uncommitted base-checkout files. Existing tasks continue their own branches. `server/internal/daemon/execenv/local_worktree.go` verifies the local remote identity, fetches the branch, and rejects divergent local/remote development branches.
+
+- `server/pkg/db/queries/task_token.sql` 的 `GetTaskTokenByHash` 同时验证期限、任务执行状态和 `created_at >= dispatched_at`；`server/internal/middleware/auth.go` 在读取成功后才建立任务身份。`server/internal/handler/native_task_credential_test.go` 验证实际 HTTP 401、重新认领与配置变更后的旧凭据、事务回滚和新凭据。

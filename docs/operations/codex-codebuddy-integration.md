@@ -245,3 +245,19 @@ CodeBuddy 技能开关从 Agent 配置、claim、隔离环境到两条 CLI 启�
 常驻前的权限调查同时确认：完成和失败处理器已有提交后的 best-effort 任务令牌撤销，
 不能称为“没有撤销”；鉴权查询仍仅检查令牌期限，终态事务与撤销之间的窗口需在常驻隔离中处理。
 完整角色文件隔离、专用 MCP 与真实后台业务验收仍待完成。
+
+## 第十三阶段：凭据轮次校验与常驻原生探测
+
+- 公共任务令牌鉴权同时检查期限、任务处于 `dispatched` / `running`、令牌创建时间
+  不早于当前 `dispatched_at`。终态提交后的撤销窗口、重新派发和运行时配置切换均不能
+  恢复旧令牌权限；已有的提交后撤销与过期清理继续处理存储行。
+- Codex、CodeBuddy 与共享鉴权回归用例通过真实 PostgreSQL 和 HTTP 中间件，覆盖
+  终态、重排、重新领取、旧 / 新凭据、过期、配置变化和事务回滚；运行中输入、认领
+  最终化和工作区选择器的关联检查通过。race 结果为 handler 2.298s、middleware
+  1.053s、service 1.386s，证据为 `phase13-credential-db-tests.log`。无需数据库结构迁移。
+- Codex 0.164.0 源码与真实协议确认：线程设置 `thread_unload_delay_secs=0` 后，
+  `thread/unsubscribe` 会卸载空闲线程并回收 MCP。探测在新建且暂停的自有目标上执行，
+  同一 app-server PID 两次恢复得到不同 MCP 环境与子 PID，两个子进程均在卸载后退出，
+  没有继承任务令牌，也没有请求模型回合。
+- 该探测只证明原生原语；尚未接入平台常驻池、shell 环境切换或崩溃恢复，不能算作
+  三轮热会话、性能改善或业务验收。私有证据为 `phase13-codex-resident-rebind-probe.json`。
