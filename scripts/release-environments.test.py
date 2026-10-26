@@ -460,6 +460,25 @@ class ReleaseTests(unittest.TestCase):
             unknown=target/'999_unknown.up.sql';unknown.write_bytes((source/names[0]).read_bytes())
             self.assertFalse(r.reviewed_curated_nullable_columns(unknown))
 
+    def test_managed_dsh_state_uses_verification_profile_and_respects_override(self):
+        with tempfile.TemporaryDirectory() as folder:
+            release=Path(folder);manifest=release/'runtimes/dsh/manifest.json'
+            manifest.parent.mkdir(parents=True);manifest.write_text('{}')
+            metadata={'daemon_profile_path':'/isolated-agent/.multica/profiles/verify/profile.json'}
+            configured={'HOME':'/isolated-agent','MULTICA_ENV_ID':'verify-3'}
+            env=r.dsh_runtime_environment('verify-3',release,configured,metadata)
+            self.assertEqual(env['MULTICA_DSH_PROFILE_STATE'],'/isolated-agent/.multica/profiles/verify/dsh-runtime')
+            self.assertEqual(env['MULTICA_DSH_ARTIFACT_DIR'],str(manifest.parent))
+            self.assertNotIn('MULTICA_DSH_PROFILE_STATE',configured)
+            for target in ('int','prod'):
+                self.assertEqual(r.dsh_runtime_environment(target,release,configured,metadata)['MULTICA_DSH_PROFILE_STATE'],str(r.RUN/'state'/target/'dsh-runtime'))
+            configured['MULTICA_DSH_PROFILE_STATE']='/explicit/isolated-state'
+            self.assertEqual(r.dsh_runtime_environment('verify-3',release,configured,metadata)['MULTICA_DSH_PROFILE_STATE'],'/explicit/isolated-state')
+            configured['MULTICA_DSH_MANAGED_PROFILE']='0'
+            self.assertEqual(r.dsh_runtime_environment('verify-3',release,configured,metadata),configured)
+            configured.pop('MULTICA_DSH_MANAGED_PROFILE');manifest.unlink()
+            self.assertEqual(r.dsh_runtime_environment('verify-3',release,configured,metadata),configured)
+
     def test_dsh_interaction_migrations_require_exact_review(self):
         source=Path(__file__).parent.parent/'server/migrations'
         names=('674_task_interaction_lease.up.sql','681_task_interaction_continuation.up.sql',
