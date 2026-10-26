@@ -5848,7 +5848,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			return
 		}
 		if err := d.reportTerminalTask(ctx, terminalTaskReport{
-			kind: terminalTaskReportSuspend, taskID: taskID, output: result.Comment,
+			kind: terminalTaskReportSuspend, taskID: taskID, output: result.Comment, codeDiff: result.CodeDiff,
 			sessionID: result.SessionID, workDir: result.WorkDir, interaction: result.PendingInteraction,
 		}); err != nil {
 			taskLog.Error("suspended result remains in durable report queue", "error", err)

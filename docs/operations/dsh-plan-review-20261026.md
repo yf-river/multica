@@ -25,7 +25,7 @@ GONG-94 当前为本地实现与验收阶段，尚未提交固定 verify/int 验
 
 私有证据根：控制仓库 `.run/evidence/dsh-plan-review/`。不得提交凭据、原生会话、私有日志或生成的 profile。
 
-扩展检查遇到两类基线测试问题：`TestCancelCommentAssigneeFallbacksMigration` 读取快照已覆盖并移除的 456 迁移文件；旧 runtime sweeper fixture 使用迁移 500 前的优先级。全量 service 包的 9 个失败也均由旧优先级 fixture 触发。ChatPage 旧测试的 paths mock 缺少页面已使用的 useRequiredWorkspaceSlug。上述源代码在本阶段基线即存在。扩展检查未通过，不能记为全套 Go 测试通过；本阶段继续以新增业务测试、既有取消事务回归及固定交付门禁分别记录结果。
+扩展检查遇到两类基线测试问题：`TestCancelCommentAssigneeFallbacksMigration` 读取快照已覆盖并移除的 456 迁移文件；旧 runtime sweeper fixture 使用迁移 500 前的优先级。全量 service 包的 9 个失败也均由旧优先级 fixture 触发。ChatPage 旧测试的 paths mock 缺少页面已使用的 useRequiredWorkspaceSlug。上述源代码在本阶段基线即存在。全量 agent 包还触发 root 环境下 Claude bypassPermissions 保护，未作为 DSH 的通过证据。扩展检查未通过，不能记为全套 Go 测试通过；本阶段继续以新增业务测试、既有取消事务回归及固定交付门禁分别记录结果。
 
 人工交互续跑带持久化标记，基础设施失败不自动重发批准输入；Issue 的“从头重跑”拒绝这类任务并提示恢复原生会话或重新规划。
 

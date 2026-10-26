@@ -1364,5 +1364,8 @@ func (c *Client) suspendTaskWithRetrySchedule(ctx context.Context, report termin
 		return err
 	}
 	body := map[string]any{"output": report.output, "session_id": report.sessionID, "work_dir": report.workDir, "interaction": report.interaction}
+	if report.codeDiff != nil {
+		body["code_diff"] = report.codeDiff
+	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/suspend", report.taskID), body, nil, schedule)
 }
