@@ -3299,8 +3299,18 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// persist it. Replay the toggle before the next message so the mode
 		// survives across tasks; /plan off arrives as its own command above.
 		if resp.Command == "" {
-			if history, historyErr := h.Queries.ListChatMessages(r.Context(), cs.ID); historyErr == nil && chatPlanModeActive(history) {
-				resp.Command = "/plan"
+			if history, historyErr := h.Queries.ListChatMessages(r.Context(), cs.ID); historyErr == nil {
+				if chatPlanModeActive(history) {
+					resp.Command = "/plan"
+				} else if goalLine, goalAt := latestReplayableGoalCommand(history); goalLine != "" && !goalAt.IsZero() {
+					// A command-only /goal task has no turn, so its session is not
+					// materialized. Replay the objective into the first turn after it;
+					// once that turn exists the goal lives in the resumed session.
+					var ran bool
+					if scanErr := h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM task_usage u JOIN agent_task_queue t ON t.id=u.task_id WHERE t.chat_session_id=$1 AND t.id<>$2 AND t.created_at>$3)`, cs.ID, task.ID, goalAt).Scan(&ran); scanErr == nil && !ran {
+						resp.Command = goalLine
+					}
+				}
 			}
 		}
 
@@ -6768,4 +6778,30 @@ func chatPlanModeActive(messages []db.ChatMessage) bool {
 		}
 	}
 	return active
+}
+
+// latestReplayableGoalCommand returns the most recent goal-setting command and
+// its timestamp. A later clear/pause/complete/show suppresses replay.
+func latestReplayableGoalCommand(messages []db.ChatMessage) (string, time.Time) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if message.Role != "user" {
+			continue
+		}
+		line := strings.TrimSpace(message.Content)
+		if !strings.HasPrefix(line, "/goal ") && line != "/goal" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return "", time.Time{}
+		}
+		switch fields[1] {
+		case "clear", "pause", "resume", "complete", "show":
+			return "", time.Time{}
+		default:
+			return line, message.CreatedAt.Time
+		}
+	}
+	return "", time.Time{}
 }
