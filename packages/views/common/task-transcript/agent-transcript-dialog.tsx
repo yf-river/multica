@@ -1474,11 +1474,18 @@ function StepRow({
   );
 
   const call = isCallStep(row) ? row : null;
+  // 未知种类保留自己的名字，绝不谎报成「错误」：转录只把真正的 error 事件
+  // 标成错误，其它运行时事件（如遥测）即便漏到这里也不该冒充失败。
+  const kind = row.kind as string;
   const label = call
     ? call.tool || t(($) => $.transcript.kind_tool)
-    : row.kind === "thinking"
+    : kind === "thinking"
       ? t(($) => $.transcript.kind_thinking)
-      : t(($) => $.transcript.kind_error);
+      : kind === "error"
+        ? t(($) => $.transcript.kind_error)
+        : kind === "text"
+          ? t(($) => $.transcript.kind_text)
+          : kind;
   const summary = call
     ? callSummary(call, summaryLabels)
     : firstLineOf((row as TraceMessageStep).item.content);
@@ -1674,14 +1681,17 @@ function StepInspector({
     });
   }, [call, message, showCopied]);
 
+  const kind = step.kind as string;
   const title =
     call
       ? call.tool || t(($) => $.transcript.kind_tool)
-      : step.kind === "thinking"
+      : kind === "thinking"
         ? t(($) => $.transcript.kind_thinking)
-        : step.kind === "text"
+        : kind === "text"
           ? t(($) => $.transcript.kind_text)
-          : t(($) => $.transcript.kind_error);
+          : kind === "error"
+            ? t(($) => $.transcript.kind_error)
+            : (message?.item.type || kind);
 
   return (
     <aside className="flex w-[26rem] shrink-0 flex-col border-l bg-muted/25">

@@ -328,7 +328,11 @@ export interface TaskMessagePayload {
   issue_id: string;
   chat_session_id?: string;
   seq: number;
-  type: "text" | "thinking" | "tool_use" | "tool_result" | "error";
+  /**
+   * `runtime` 是运行时遥测（DSH 的 context / compaction 帧）：它和模型可见的
+   * 消息一起落库，但转录永远不渲染它，运行上下文弹窗走独立接口读取。
+   */
+  type: "text" | "thinking" | "tool_use" | "tool_result" | "error" | "runtime";
   tool?: string;
   content?: string;
   input?: Record<string, unknown>;

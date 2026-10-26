@@ -16,6 +16,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/agentconfig"
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 // agentCopyCmd 是 `agent copy` 命令，复制语义详见其 Long 帮助文本
@@ -33,8 +34,8 @@ Copied by default without a dedicated override flag: conversation starters.
 Copied by default, each overridable with the matching flag: name (suffixed
 " (copy)"), description, instructions, avatar, custom_args, max_concurrent_tasks,
 invocation permission (permission_mode + allow-list), assigned workspace skills,
-and — only when the target runtime is unchanged — model, thinking_level and
-service_tier.
+sandbox_mode, and — only when the target runtime is unchanged — model,
+thinking_level and service_tier.
 
 Secret and machine-local fields are never copied: custom_env, mcp_config and
 runtime_config. Supply fresh values for the copy with the same secret-safe flags
@@ -63,6 +64,7 @@ func registerAgentCopyFlags(cmd *cobra.Command) {
 	cmd.Flags().String("model", "", "Model identifier for the copy. Required when --runtime-id selects a different runtime (pass \"\" to accept the target runtime default). Empty otherwise = runtime default.")
 	cmd.Flags().String("thinking-level", "", "Override thinking level. Not carried across a runtime change unless set here.")
 	cmd.Flags().String("service-tier", "", "Override Codex service tier. Not carried across a runtime change unless set here.")
+	cmd.Flags().String("sandbox-mode", "", "Override run filesystem permissions: read-only, workspace-write or danger-full-access. Default: copy the source stance.")
 	cmd.Flags().String("custom-args", "", "Override custom CLI arguments as a JSON array.")
 	cmd.Flags().Int32("max-concurrent-tasks", 6, "Override maximum concurrent tasks")
 	cmd.Flags().String("visibility", "", "Override visibility: private or workspace (legacy; mapped to --permission-mode)")
@@ -211,6 +213,19 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("service-tier") {
 		v, _ := cmd.Flags().GetString("service-tier")
 		body["service_tier"] = v
+	}
+
+	// 运行权限是 Multica 自己的字段，不是 runtime 原生参数：无论副本落在哪个
+	// runtime 都照抄源值，除非用 --sandbox-mode 显式覆盖。
+	if v := strVal(src, "sandbox_mode"); v != "" {
+		body["sandbox_mode"] = v
+	}
+	if cmd.Flags().Changed("sandbox-mode") {
+		v, _ := cmd.Flags().GetString("sandbox-mode")
+		if !agent.ValidSandboxMode(v) {
+			return fmt.Errorf("--sandbox-mode must be read-only, workspace-write or danger-full-access, got %q", v)
+		}
+		body["sandbox_mode"] = v
 	}
 
 	// 调用权限：默认照抄源 agent 的 permission_mode + allow-list；一旦给了任何

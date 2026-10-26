@@ -47,6 +47,7 @@ export type {
   AgentRuntimeMode,
   AgentVisibility,
   AgentPermissionMode,
+  AgentSandboxMode,
   AgentInvocationTarget,
   AgentInvocationTargetInput,
   AgentTask,

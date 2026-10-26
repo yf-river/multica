@@ -40,6 +40,7 @@ func fullSourceAgent() map[string]any {
 		"model":                "claude-sonnet-4-6",
 		"thinking_level":       "high",
 		"service_tier":         "priority",
+		"sandbox_mode":         "workspace-write",
 		"permission_mode":      "public_to",
 		"invocation_targets":   []any{map[string]any{"target_type": "workspace"}},
 		"skills": []any{
@@ -136,6 +137,11 @@ func TestAgentCopySameRuntimeCopiesPortableFields(t *testing.T) {
 	}
 	if gotBody["service_tier"] != "priority" {
 		t.Errorf("service_tier = %v", gotBody["service_tier"])
+	}
+	// The sandbox stance is Multica's own field, not a runtime-native one: the
+	// copy keeps it.
+	if gotBody["sandbox_mode"] != "workspace-write" {
+		t.Errorf("sandbox_mode = %v, want workspace-write", gotBody["sandbox_mode"])
 	}
 	// Invocation permission is copied verbatim.
 	if gotBody["permission_mode"] != "public_to" {
@@ -265,6 +271,10 @@ func TestAgentCopyCrossRuntimeDropsRuntimeSpecificFields(t *testing.T) {
 	}
 	if _, ok := gotBody["service_tier"]; ok {
 		t.Errorf("service_tier must be dropped on a runtime change, got %v", gotBody["service_tier"])
+	}
+	// The sandbox stance is not runtime-native, so it travels with the copy.
+	if gotBody["sandbox_mode"] != "workspace-write" {
+		t.Errorf("sandbox_mode = %v, want workspace-write", gotBody["sandbox_mode"])
 	}
 	// Skills still travel across the runtime change.
 	if !reflect.DeepEqual(gotBody["skill_ids"], []any{"skill-1", "skill-2"}) {

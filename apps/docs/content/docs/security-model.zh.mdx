@@ -41,7 +41,8 @@ Multica 不会替你做文件系统沙箱。如果守护进程跑在你的个人
 
 ## 不构成边界的部分
 
-- **编程工具自带的沙箱与审批设置。** Multica 以无人值守方式运行智能体，审批请求会被自动应答。默认路径下文件系统沙箱同样处于关闭状态：Codex 使用 `sandbox_mode = "danger-full-access"`，Claude Code 使用 `--permission-mode bypassPermissions`。例外是 Windows——如果你显式配置了 Codex 原生沙箱（`windows.sandbox = "unelevated"` 或 `"elevated"`），Multica 会尊重这个 opt-in，对这些 task 保留 `workspace-write`。适用场景下值得开启，但它只覆盖一个平台上的一个工具，不改变你应当如何收窄守护进程用户的权限。
+- **编程工具自带的沙箱与审批设置。** Multica 以无人值守方式运行智能体，审批请求会被自动应答。默认路径下文件系统沙箱同样处于关闭状态：Codex 使用 `sandbox_mode = "danger-full-access"`，Claude Code 使用 `--permission-mode bypassPermissions`，DSH 使用 `DSH_PERMISSION_MODE=danger-full-access`（值来自该智能体的运行权限设置，默认为完全访问）。例外是 Windows——如果你显式配置了 Codex 原生沙箱（`windows.sandbox = "unelevated"` 或 `"elevated"`），Multica 会尊重这个 opt-in，对这些 task 保留 `workspace-write`。适用场景下值得开启，但它只覆盖一个平台上的一个工具，不改变你应当如何收窄守护进程用户的权限。
+- **智能体的运行权限设置。** 每个智能体可以单独选择 `read-only` / `workspace-write` / `danger-full-access`，目前由 DSH 运行时执行；Codex 与 Claude 的策略仍由守护进程固定（即上一条的默认值）。把智能体收窄到 `workspace-write` 只限制写入位置，构建缓存目录仍可能不可写，构建型任务应当保留完全访问。
 - **你的 `HOME` 目录结构。** task 继承守护进程用户真实的 `HOME` 与 `XDG_*` 变量——正因如此，`gh`、`aws`、`kubectl`、`gcloud`、`glab` 等宿主 CLI 在 task 内的行为与在你 shell 里完全一致。这同时也意味着该 home 下的一切都可触达。
 
 <Callout>

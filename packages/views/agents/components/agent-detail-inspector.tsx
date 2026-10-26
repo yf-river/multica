@@ -41,6 +41,7 @@ import {
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
+import { SandboxSettingField } from "./inspector/sandbox-setting-field";
 
 interface InspectorProps {
   /** 当前展示的 Agent。 */
@@ -309,6 +310,13 @@ export function AgentDetailInspector({
             value={agent.service_tier ?? ""}
             canEdit={canEdit}
             onChange={(serviceTier) => update({ service_tier: serviceTier })}
+          />
+          <SandboxSettingField
+            label={t(($) => $.inspector.prop_sandbox)}
+            value={agent.sandbox_mode}
+            provider={runtime?.provider ?? ""}
+            canEdit={canEdit}
+            onChange={(sandboxMode) => update({ sandbox_mode: sandboxMode })}
           />
           <SettingsRow
             label={t(($) => $.inspector.prop_concurrency)}

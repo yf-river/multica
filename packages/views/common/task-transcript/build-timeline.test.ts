@@ -78,6 +78,22 @@ describe("task transcript timeline", () => {
     expect(items[0]?.content).not.toContain("def456");
   });
 
+  it("drops runtime telemetry rows instead of rendering them", () => {
+    const items = buildTimeline([
+      message(1, "text", "hello"),
+      message(2, "runtime", '{"kind":"context","breakdown":{"message_tokens":42}}'),
+      message(3, "text", " world"),
+      message(4, "tool_use"),
+      message(5, "runtime", '{"kind":"compaction"}'),
+    ]);
+
+    // 遥测行既不成行、也不打断相邻文本的合并。
+    expect(items.map((item) => item.type)).toEqual(["text", "tool_use"]);
+    expect(items[0]?.content).toBe("hello world");
+    // 遥测正文完全不出现在时间线里。
+    expect(JSON.stringify(items)).not.toContain("message_tokens");
+  });
+
   it("keeps the latest created_at when coalescing streaming fragments", () => {
     const items = coalesceTimelineItems([
       { seq: 1, type: "text", content: "hello ", created_at: "2026-06-09T09:00:00.000Z" },

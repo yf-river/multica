@@ -77,6 +77,7 @@ const baseDraft: AgentDraft = {
   model: "gpt-5.6-sol",
   thinkingLevel: "",
   serviceTier: "",
+  sandboxMode: "danger-full-access",
   skillIds: new Set(),
   permissionScope: "private",
   memberIds: new Set(),

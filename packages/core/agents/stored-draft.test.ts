@@ -18,6 +18,7 @@ const draft = (): AgentDraft => ({
   model: "gpt-5.6-sol",
   thinkingLevel: "high",
   serviceTier: "priority",
+  sandboxMode: "workspace-write",
   skillIds: new Set(["skill-1", "skill-2"]),
   permissionScope: "members",
   memberIds: new Set(["member-1"]),

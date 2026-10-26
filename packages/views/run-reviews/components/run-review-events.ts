@@ -275,6 +275,11 @@ export function buildRunReviewEventRows(
       if (chain.task_id && chain.result_seq) coveredToolMessageKeys.add(toolMessageKey(chain.task_id, chain.result_seq));
     }
     for (const message of node.task_messages ?? []) {
+      // 运行时遥测（DSH context / compaction 帧）不是评审证据：它以整段 JSON
+      // 落库，混进事件列表只会被读成一条没有意义的「文本」。
+      if (message.type === "runtime") {
+        continue;
+      }
       if ((message.type === "tool_use" || message.type === "tool_result") && coveredToolMessageKeys.has(toolMessageKey(message.task_id, message.seq))) {
         continue;
       }

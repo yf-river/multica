@@ -129,6 +129,11 @@ type AgentResponse struct {
 	// ServiceTier 是该 agent 持久化的、runtime 原生的 Codex 执行档位
 	// （空 = 继承本地 Codex 配置）。
 	ServiceTier string `json:"service_tier"`
+	// SandboxMode 是该 agent 的运行文件系统权限（read-only /
+	// workspace-write / danger-full-access）。它是 Multica 自己的字段，不是
+	// 某个 runtime 的原生配置：daemon 在 claim 时按 provider 决定怎么执行，
+	// 目前只有 DSH 会真正切换沙箱，其余 runtime 保持守护进程的固定策略。
+	SandboxMode string `json:"sandbox_mode"`
 	// ComposioToolkitAllowlist 是该 agent 在任务派发时被允许挂载为 MCP 的
 	// Composio toolkit 子集——适用于任何通过该 agent 调用权限的运行，使用
 	// agent 所有者的 Composio 连接（MUL-3963；不再要求发起人==所有者）。
@@ -241,6 +246,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		Model:                    a.Model.String,
 		ThinkingLevel:            a.ThinkingLevel.String,
 		ServiceTier:              a.ServiceTier.String,
+		SandboxMode:              agent.SandboxModeOrDefault(a.SandboxMode),
 		ComposioToolkitAllowlist: composioAllowlist,
 		OwnerID:                  uuidToPtr(a.OwnerID),
 		Skills:                   []AgentSkillSummary{},
@@ -250,6 +256,15 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		ArchivedAt:               timestampToPtr(a.ArchivedAt),
 		ArchivedBy:               uuidToPtr(a.ArchivedBy),
 	}
+}
+
+// 运行文件系统权限的取值与归一化由 pkg/agent 提供，daemon 与 API 共用同一
+// 份定义，避免两侧各写一份枚举后漂移。
+
+// sandboxModeForClaim 归一化 claim 载荷里的运行权限。handler/daemon.go 里
+// 数据库行变量的名字就是 agent，无法直接调用同名包函数，所以在这里包一层。
+func sandboxModeForClaim(mode string) string {
+	return agent.SandboxModeOrDefault(mode)
 }
 
 // maskGatewayToken 在 runtime_config.gateway.token 非空时用公开掩码哨兵
@@ -767,19 +782,22 @@ type TaskTraceData struct {
 // TaskAgentData 携带 claim 响应里的 agent 信息，daemon 据此搭好执行环境
 // （分支命名、skill 文件、指令）。
 type TaskAgentData struct {
-	ID                    string                      `json:"id"`
-	Name                  string                      `json:"name"`
-	Instructions          string                      `json:"instructions"`
-	Skills                []service.AgentSkillData    `json:"skills,omitempty"`
-	SkillRefs             []service.AgentSkillRefData `json:"skill_refs,omitempty"`
-	CustomEnv             map[string]string           `json:"custom_env,omitempty"`
-	CustomArgs            []string                    `json:"custom_args,omitempty"`
-	McpConfig             json.RawMessage             `json:"mcp_config,omitempty"`
-	Model                 string                      `json:"model,omitempty"`
-	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
-	ServiceTier           string                      `json:"service_tier,omitempty"`
-	SystemKey             string                      `json:"system_key,omitempty"`
-	DisabledRuntimeSkills []DisabledRuntimeSkill      `json:"disabled_runtime_skills,omitempty"`
+	ID            string                      `json:"id"`
+	Name          string                      `json:"name"`
+	Instructions  string                      `json:"instructions"`
+	Skills        []service.AgentSkillData    `json:"skills,omitempty"`
+	SkillRefs     []service.AgentSkillRefData `json:"skill_refs,omitempty"`
+	CustomEnv     map[string]string           `json:"custom_env,omitempty"`
+	CustomArgs    []string                    `json:"custom_args,omitempty"`
+	McpConfig     json.RawMessage             `json:"mcp_config,omitempty"`
+	Model         string                      `json:"model,omitempty"`
+	ThinkingLevel string                      `json:"thinking_level,omitempty"`
+	ServiceTier   string                      `json:"service_tier,omitempty"`
+	// SandboxMode 是本次运行的运行文件系统权限。老服务端不下发时 daemon 取
+	// 默认完全访问（见 agent.AgentData 的注释）。
+	SandboxMode           string                 `json:"sandbox_mode,omitempty"`
+	SystemKey             string                 `json:"system_key,omitempty"`
+	DisabledRuntimeSkills []DisabledRuntimeSkill `json:"disabled_runtime_skills,omitempty"`
 	// RuntimeConfig 是 agent 保存的原始 runtime_config JSON。daemon 解码其中
 	// 各厂商专有字段，同时保留服务端所有的 schema。
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
@@ -1273,6 +1291,8 @@ type CreateAgentRequest struct {
 	Model              string                     `json:"model"`
 	ThinkingLevel      string                     `json:"thinking_level"`
 	ServiceTier        string                     `json:"service_tier"`
+	// SandboxMode 是创建时的运行文件系统权限。缺席 = 默认完全访问；非法值 400。
+	SandboxMode string `json:"sandbox_mode"`
 	// ComposioToolkitAllowlist 为逐任务叠加层门控播种（MUL-3869）。创建时只有
 	// 调用用户可能是所有者，故此处无条件接受该字段；跨所有者的权限门控在 PUT。
 	// nil = 列留 NULL（无叠加）。空切片 = 显式 `{}`（也无叠加，但列读作「已配置」，
@@ -1446,6 +1466,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("service_tier %q is not a recognised value for runtime %q", req.ServiceTier, runtime.Provider))
 		return
 	}
+	if req.SandboxMode != "" && !agent.ValidSandboxMode(req.SandboxMode) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("sandbox_mode %q must be one of read-only, workspace-write, danger-full-access", req.SandboxMode))
+		return
+	}
+	sandboxMode := agent.SandboxModeOrDefault(req.SandboxMode)
 
 	// 在 INSERT 前探测工作区 agent 数量，让漏斗得到干净的「工作区首个 agent」
 	// 信号——onboarding 的第 4 步总是落在这个分支。非致命读取：列表失败就以
@@ -1559,6 +1584,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ServiceTier:              pgtype.Text{String: req.ServiceTier, Valid: req.ServiceTier != ""},
 		ConversationStarters:     sp,
 		ComposioToolkitAllowlist: allowlist,
+		SandboxMode:              sandboxMode,
 	})
 	if err != nil {
 		// (workspace_id, name) 唯一约束——返回清晰的冲突错误，让 UI 显示正确
@@ -1679,6 +1705,10 @@ type UpdateAgentRequest struct {
 	// ServiceTier 与 ThinkingLevel 同一三态契约：缺席保留、空串清除、非空设置
 	// 一个 Codex 目录 ID。
 	ServiceTier *string `json:"service_tier"`
+	// SandboxMode 是运行文件系统权限。列非空，所以只有两种状态：缺席 = 保持
+	// 现值；出现则必须是三个合法字面量之一（空串和其它值都 400，避免把
+	// 「没选」静默写成默认值）。
+	SandboxMode *string `json:"sandbox_mode"`
 	// ComposioToolkitAllowlist 是三态，模式同 thinking_level、mcp_config：
 	//   - 字段缺席 → 不变（列原样保留）
 	//   - 字段为 null → 显式清除（ClearAgent... 查询）
@@ -2172,6 +2202,17 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			))
 			return
 		}
+	}
+
+	// sandbox_mode 与 provider 无关，不需要解析 runtime：缺席保持、出现必须是
+	// 封闭集合里的字面量。
+	if req.SandboxMode != nil {
+		value := *req.SandboxMode
+		if !agent.ValidSandboxMode(value) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("sandbox_mode %q must be one of read-only, workspace-write, danger-full-access", value))
+			return
+		}
+		params.SandboxMode = pgtype.Text{String: value, Valid: true}
 	}
 
 	// composio_toolkit_allowlist 处理（MUL-3869）。三态语义镜像 thinking_level

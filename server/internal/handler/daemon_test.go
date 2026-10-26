@@ -4688,3 +4688,32 @@ func newOwnerDaemonRequest(method, path string, body any) *http.Request {
 	req.Header.Set("X-User-ID", testUserID)
 	return req
 }
+
+// claim 必须把 agent 的运行权限带给 daemon：daemon 是唯一知道怎么把它翻译成
+// provider 参数的一侧，服务端漏发就等于退回「provider 自己的默认」——DSH 那次
+// 就是因此继承了 workspace-write。
+func TestClaimCarriesAgentSandboxMode(t *testing.T) {
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Sandbox claim runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Sandbox claim agent")
+	dbfx.Exec(t, `UPDATE agent SET sandbox_mode = 'read-only' WHERE id = $1`, agentID)
+	dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": runtimeID,
+		"issue_id":   issueID,
+	})
+
+	req := newOwnerDaemonRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusOK)
+
+	var claimResp struct {
+		Task *AgentTaskResponse `json:"task"`
+	}
+	w.JSON(&claimResp)
+	if claimResp.Task == nil || claimResp.Task.Agent == nil {
+		t.Fatalf("missing task agent in response: %s", w.Body.String())
+	}
+	if got := claimResp.Task.Agent.SandboxMode; got != "read-only" {
+		t.Fatalf("claimed sandbox_mode = %q, want read-only", got)
+	}
+}

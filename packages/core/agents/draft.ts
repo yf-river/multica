@@ -5,6 +5,7 @@ import type {
   Agent,
   AgentInvocationTargetInput,
   AgentPermissionScope,
+  AgentSandboxMode,
   AgentConversationStarter,
   CreateAgentRequest,
   RuntimeDevice,
@@ -35,6 +36,8 @@ export interface AgentDraft {
   thinkingLevel: string;
   /** 运行时原生的执行档位（如 Codex Speed 的服务等级），限定于当前 `model`。 */
   serviceTier: string;
+  /** 运行文件系统权限；与模型无关，换 runtime/model 都保留。 */
+  sandboxMode: AgentSandboxMode;
   skillIds: Set<string>;
   permissionScope: AgentPermissionScope;
   memberIds: Set<string>;
@@ -53,6 +56,7 @@ export const EMPTY_AGENT_DRAFT: AgentDraft = {
   model: "",
   thinkingLevel: "",
   serviceTier: "",
+  sandboxMode: "danger-full-access",
   skillIds: new Set(),
   permissionScope: "private",
   memberIds: new Set(),
@@ -202,6 +206,8 @@ export function buildDuplicateDraft(
     model: keepsRuntime ? source.model ?? "" : "",
     thinkingLevel: keepsRuntime ? source.thinking_level ?? "" : "",
     serviceTier: keepsRuntime ? source.service_tier ?? "" : "",
+    // 沙箱档位不是 runtime/model 原生参数，换环境后仍然有意义，原样继承。
+    sandboxMode: source.sandbox_mode ?? "danger-full-access",
     skillIds: new Set(source.skills.map((skill) => skill.id)),
     ...deriveDuplicateAccess(source),
   };
@@ -237,6 +243,7 @@ export function buildCreateAgentRequest(options: {
     model: draft.model.trim() || undefined,
     thinking_level: draft.thinkingLevel.trim() || undefined,
     service_tier: draft.serviceTier.trim() || undefined,
+    sandbox_mode: draft.sandboxMode,
     permission_mode:
       draft.permissionScope === "private" ? "private" : "public_to",
     invocation_targets: buildInvocationTargets(draft),

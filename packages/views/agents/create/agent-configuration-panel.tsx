@@ -27,6 +27,7 @@ import {
 } from "../../settings/components/settings-layout";
 import { CharCounter } from "../components/char-counter";
 import { ServiceTierSettingField } from "../components/inspector/service-tier-setting-field";
+import { SandboxSettingField } from "../components/inspector/sandbox-setting-field";
 import { ThinkingSettingField } from "../components/inspector/thinking-prop-row";
 import { ModelDropdown } from "../components/model-dropdown";
 import { RuntimePicker } from "../components/runtime-picker";
@@ -429,6 +430,13 @@ export function AgentExecutionOverrides({
         value={draft.serviceTier}
         canEdit={!disabled}
         onChange={(serviceTier) => onChange({ ...draft, serviceTier })}
+      />
+      <SandboxSettingField
+        label={t(($) => $.inspector.prop_sandbox)}
+        value={draft.sandboxMode}
+        provider={runtime?.provider ?? ""}
+        canEdit={!disabled}
+        onChange={(sandboxMode) => onChange({ ...draft, sandboxMode })}
       />
     </>
   );

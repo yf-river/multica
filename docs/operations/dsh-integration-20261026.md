@@ -67,3 +67,12 @@ bridge pnpm check（22 tests + build）           PASS
 
 - `18132b1f8` / bridge `b8dc4c9`：角色只读沙箱（approval never + sandbox/mode=read-only）。协议级验证通过；GONG-92 因 verify 环境不能把托管审查角色绑定 DSH、普通样本缺 `deepseek-official` 凭据而未完成验收，生产仍为 `46d4f6ee6`。
 - bridge 本地提交已到 `b8dc4c9`；远端仓库推送仍受 GitHub 权限限制。
+
+## 运行权限：默认完全访问 + 按 Agent 可配（2026-10-26）
+
+`GONG-55` 暴露了两件事：转录把 DSH 的 `runtime` 遥测帧当成了"错误"（前端 schema 也没有该类型，导致重新打开运行时历史为空），以及 DSH 任务继承了 DSH 自己的 `workspace-write` 默认——bwrap 把 `/tmp` 换成空 tmpfs、其余只读，daemon 建在 `/tmp/multica-task-*` 的 TMPDIR 与 `~/.cache/go-build` 因此在沙箱里不可用，`go vet/test` 直接失败。
+
+- 运行权限成为 Agent 字段 `sandbox_mode`（`read-only` / `workspace-write` / `danger-full-access`），默认 `danger-full-access`，与 `security-model` 承诺的"Multica 不替用户做文件系统沙箱"一致。
+- daemon 按 claim 载荷把它翻译成 DSH 的 `DSH_PERMISSION_MODE`；`read-only` 同时把 approval 姿态设为 `never`（否则 agent 可以用一次审批把写入要回来）。按角色（监督/审查）的审批姿态被按 Agent 的档位取代，`18132b1f8` 的角色判定不再参与。
+- 非完全访问档位下 daemon 把任务的 `TMPDIR` 重定向到任务工作目录内的 `.multica-tmp`，否则沙箱内没有任何可写临时目录；`GOCACHE` / `GOMODCACHE` 仍在工作区外，构建型任务应保留完全访问。
+- Codex / Claude 的沙箱策略继续由守护进程固定（Linux Codex `danger-full-access`、Claude `bypassPermissions`），本字段对它们不生效；设置页在该情况下保持控件可见但禁用并说明原因。

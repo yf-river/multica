@@ -2219,3 +2219,24 @@ describe("tool call identity compatibility", () => {
   expect(rows.every(row=>row.output==="ok")).toBe(true);
  });
 });
+
+describe("runtime telemetry tolerance", () => {
+ const base = { task_id: "task-1", seq: 1, type: "text", content: "hello" };
+ it("accepts runtime telemetry rows next to model-visible messages", () => {
+  const rows = TaskMessagePayloadSchema.array().parse([
+   base,
+   { task_id: "task-1", seq: 2, type: "runtime", content: '{"kind":"context"}' },
+  ]);
+  expect(rows.map((row) => row.type)).toEqual(["text", "runtime"]);
+ });
+ it("degrades an unknown message kind instead of failing the whole transcript", () => {
+  // 一个不认识的消息类型曾让整个数组校验失败，parseWithFallback 随即清空该次
+  // 运行的全部历史。未知种类必须降级成不渲染的遥测，而不是拖垮整批。
+  const rows = TaskMessagePayloadSchema.array().parse([
+   base,
+   { task_id: "task-1", seq: 2, type: "future-kind" },
+  ]);
+  expect(rows.map((row) => row.type)).toEqual(["text", "runtime"]);
+  expect(rows[0]?.content).toBe("hello");
+ });
+});

@@ -95,6 +95,10 @@ function redactTimelineItems(items: TimelineItem[]): TimelineItem[] {
 export function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   for (const msg of msgs) {
+    // 运行时遥测（DSH 的 context / compaction 帧）和工具消息一起落库，但它不是
+    // 模型可见的事件：运行上下文弹窗走独立接口读它，转录不该出现这一行。早先
+    // 把它当普通消息渲染，屏幕上就是一堵红色的「错误」墙。
+    if (msg.type === "runtime") continue;
     items.push({
       id: msg.id,
       taskId: msg.task_id,

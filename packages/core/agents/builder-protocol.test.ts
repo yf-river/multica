@@ -19,6 +19,7 @@ const draft = (): AgentDraft => ({
   model: "model-1",
   thinkingLevel: "",
   serviceTier: "",
+  sandboxMode: "danger-full-access",
   skillIds: new Set(["skill-1"]),
   permissionScope: "private",
   memberIds: new Set(),

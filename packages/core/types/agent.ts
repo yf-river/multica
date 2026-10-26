@@ -63,6 +63,13 @@ export type AgentVisibility = "workspace" | "private";
 export type AgentPermissionMode = "private" | "public_to";
 
 /**
+ * Agent 的运行文件系统权限。字面量与 DSH / Codex 的沙箱词汇一致，选中的值
+ * 原样下发给能执行它的运行时；目前只有 DSH 真正按它切换沙箱，其余运行时
+ * 保持守护进程的固定策略（Codex 完全访问、Claude bypassPermissions）。
+ */
+export type AgentSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+
+/**
  * 一条针对 agent 的"调用授权"记录：允许谁去调用它。
  * 目标为整个工作区时 `target_id` 是 `null`（即授权覆盖所有成员）；
  * 目标限定到某成员/某团队时，`target_id` 存对应的 id。
@@ -674,6 +681,11 @@ export interface Agent {
   /** 运行时原生的 Codex 服务档位（如 `priority`，界面显示 Fast）。空/缺省
    *  表示不覆盖：本地 Codex 配置与账号默认值仍然权威。 */
   service_tier?: string;
+  /**
+   * 运行文件系统权限。老后端整个缺省该字段，`undefined` 按默认完全访问处理
+   * ——这正是没有该字段时的行为，不会把已有 agent 悄悄收紧。
+   */
+  sandbox_mode?: AgentSandboxMode;
   owner_id: string | null;
   /** agent 已挂载技能的摘要列表。 */
   skills: AgentSkillSummary[];
@@ -763,6 +775,8 @@ export interface CreateAgentRequest {
   thinking_level?: string;
   /** 可选的 Codex 服务档位目录 id，见 `Agent.service_tier`。 */
   service_tier?: string;
+  /** 运行文件系统权限；省略 = 默认完全访问，见 `AgentSandboxMode`。 */
+  sandbox_mode?: AgentSandboxMode;
   /** 可选的创建来源标注。会以 `template` 属性出现在 `agent_created`
    *  PostHog 事件上。 */
   template?: string;
@@ -799,6 +813,8 @@ export interface StoredAgentDraft {
   model: string;
   thinking_level: string;
   service_tier: string;
+  /** 运行文件系统权限；旧草稿缺省时按默认完全访问恢复。 */
+  sandbox_mode: AgentSandboxMode;
   skill_ids: string[];
   permission_scope: AgentPermissionScope;
   member_ids: string[];
@@ -890,6 +906,11 @@ export interface UpdateAgentRequest {
    * Codex 服务档位覆盖：省略保留原值，"" 清除，非空值存一条运行时目录 id。
    */
   service_tier?: string;
+  /**
+   * 运行文件系统权限：省略保留原值；出现则必须是 `AgentSandboxMode` 之一，
+   * 其它值服务端回 400。列非空，所以没有"清空回默认"这种状态。
+   */
+  sandbox_mode?: AgentSandboxMode;
 }
 
 /**

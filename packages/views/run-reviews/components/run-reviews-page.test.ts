@@ -337,6 +337,32 @@ describe("buildRunReviewEventRows", () => {
     expect(rows.find((row) => row.kind === "trace")?.tokenTotal).toBe(30);
   });
 
+  it("keeps runtime telemetry out of the event list", () => {
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [
+          message({ seq: 1, type: "text", content: "hello", output: "" }),
+          message({
+            seq: 2,
+            type: "runtime",
+            content: '{"kind":"context","breakdown":{"message_tokens":42}}',
+            output: "",
+          }),
+        ],
+        trace_events: [],
+        tool_call_chains: [],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const rows = buildRunReviewEventRows(tree, []);
+
+    // 遥测帧不是评审证据：它不该以「文本」的身份混进事件列表。
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain("message_tokens");
+  });
+
   it("preserves agent mentions in readable detail and raw evidence", () => {
     const dispatch = "handoff: mention://agent/02-design 请继续方案设计并保留真实调度内容";
     const tree = {

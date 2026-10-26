@@ -288,6 +288,21 @@ describe("AgentTranscriptDialog", () => {
     expect(inspector).toHaveTextContent("Final delivered reply");
   });
 
+  it("never labels runtime telemetry as an error step", () => {
+    // 运行时遥测（DSH context / compaction 帧）不是失败。即使它漏过时间线
+    // 过滤到达这里，也只能显示自己的类型名，绝不能冒充 Error。
+    renderDialog([
+      { seq: 1, type: "runtime" as TimelineItem["type"], content: '{"kind":"context"}' },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: /context/ }));
+
+    const inspector = screen.getByRole("complementary");
+    expect(within(inspector).getAllByText("runtime").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Error" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Error")).not.toBeInTheDocument();
+  });
+
   it("explains unavailable live events for an empty Antigravity transcript", async () => {
     vi.mocked(api.listRuntimes).mockResolvedValue([runtimeFor("antigravity")]);
 

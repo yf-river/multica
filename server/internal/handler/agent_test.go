@@ -1613,3 +1613,109 @@ func insertHandlerTestTask(t *testing.T, agentID string) string {
 // Defence-in-depth: spot-check that the package compiles a small
 // fmt.Sprintf so accidental imports stay tidy.
 var _ = fmt.Sprintf
+
+// 运行权限是 agent 的一等字段：缺省必须落在文档承诺的默认完全访问上，显式值
+// 必须能存能读，非法字面量必须在写入前被拒绝——否则 daemon 会拿到一个它只能
+// 猜的档位。
+func TestAgentSandboxMode_DefaultValidatesAndUpdates(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'sandbox-mode-%'`, testWorkspaceID)
+	})
+
+	createAgent := func(name string, extra map[string]any) (*httptest.ResponseRecorder, map[string]any) {
+		t.Helper()
+		body := map[string]any{
+			"name":                 name,
+			"runtime_id":           testRuntimeID,
+			"visibility":           "private",
+			"max_concurrent_tasks": 1,
+		}
+		for k, v := range extra {
+			body[k] = v
+		}
+		w := httptest.NewRecorder()
+		testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
+		var resp map[string]any
+		if w.Code == http.StatusCreated {
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode create response: %v", err)
+			}
+		}
+		return w, resp
+	}
+
+	w, resp := createAgent("sandbox-mode-default", nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := resp["sandbox_mode"]; got != "danger-full-access" {
+		t.Errorf("omitted sandbox_mode: response = %v, want danger-full-access", got)
+	}
+	agentID, _ := resp["id"].(string)
+	var stored string
+	if err := testPool.QueryRow(ctx, `SELECT sandbox_mode FROM agent WHERE id = $1`, agentID).Scan(&stored); err != nil {
+		t.Fatalf("read stored sandbox_mode: %v", err)
+	}
+	if stored != "danger-full-access" {
+		t.Errorf("stored sandbox_mode = %q, want danger-full-access", stored)
+	}
+
+	w, resp = createAgent("sandbox-mode-readonly", map[string]any{"sandbox_mode": "read-only"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create read-only: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := resp["sandbox_mode"]; got != "read-only" {
+		t.Errorf("explicit sandbox_mode: response = %v, want read-only", got)
+	}
+
+	w, _ = createAgent("sandbox-mode-invalid", map[string]any{"sandbox_mode": "full"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid sandbox_mode: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	put := func(body map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID, body), "id", agentID)
+		rec := httptest.NewRecorder()
+		testHandler.UpdateAgent(rec, req)
+		return rec
+	}
+
+	w = put(map[string]any{"sandbox_mode": "workspace-write"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if got := updated["sandbox_mode"]; got != "workspace-write" {
+		t.Errorf("updated sandbox_mode = %v, want workspace-write", got)
+	}
+
+	// 字段缺席 = 不改；非法的显式值 = 400，且不写库。
+	w = put(map[string]any{"description": "still here"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update without sandbox_mode: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := testPool.QueryRow(ctx, `SELECT sandbox_mode FROM agent WHERE id = $1`, agentID).Scan(&stored); err != nil {
+		t.Fatalf("re-read sandbox_mode: %v", err)
+	}
+	if stored != "workspace-write" {
+		t.Errorf("absent sandbox_mode must keep the stored value, got %q", stored)
+	}
+	w = put(map[string]any{"sandbox_mode": "bogus"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid update: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := testPool.QueryRow(ctx, `SELECT sandbox_mode FROM agent WHERE id = $1`, agentID).Scan(&stored); err != nil {
+		t.Fatalf("re-read sandbox_mode: %v", err)
+	}
+	if stored != "workspace-write" {
+		t.Errorf("rejected update must not change the value, got %q", stored)
+	}
+}

@@ -7863,6 +7863,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, err
 	}
 	agentEnv := taskMulticaEnvironment(task, provider, agentName, agentToken, env.MulticaConfigRoot, d.cfg.WorkspacesRoot, d.cfg.ServerBaseURL, d.cfg.HealthPort, slot, taskTempDir)
+	// 本次运行的运行文件系统权限。服务器按 agent 下发；老服务端缺省时取默认
+	// 完全访问（见 pkg/agent.SandboxModeOrDefault）。目前只有 DSH 真正执行这个
+	// 档位，其余 provider 保持各自固定的沙箱策略。
+	sandboxMode := agent.SandboxDangerFullAccess
+	if task.Agent != nil {
+		sandboxMode = agent.SandboxModeOrDefault(task.Agent.SandboxMode)
+	}
 	if checkoutMode := repoCheckoutModeFor(provider, runtime.GOOS); checkoutMode != "" {
 		agentEnv[repoCheckoutModeEnv] = checkoutMode
 	}
@@ -7930,8 +7937,23 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("prepare dsh session root: %w", err)
 		}
-		agentEnv["MULTICA_DSH_SESSION_ROOT"] = dshSessionRoot
-		agentEnv["DSH_TELEMETRY_DISABLED"] = "1"
+		for key, value := range dshRuntimeEnv(dshSessionRoot, sandboxMode) {
+			agentEnv[key] = value
+		}
+		// workspace-write / read-only 档位下 DSH 把 /tmp 换成空 tmpfs，daemon 建在
+		// /tmp/multica-task-* 的 TMPDIR 因此在沙箱里不存在（go 会直接报
+		// "creating work dir: stat ...: no such file or directory"）。把临时目录
+		// 移到唯一保证可写的位置——工作目录内——让非默认档位仍然能跑构建。
+		if sandboxMode != agent.SandboxDangerFullAccess {
+			sandboxTemp := filepath.Join(env.WorkDir, ".multica-tmp")
+			if mkErr := os.MkdirAll(sandboxTemp, 0o700); mkErr != nil {
+				taskLog.Warn("dsh sandbox: create workspace temp dir failed; keeping the task temp dir", "error", mkErr)
+			} else {
+				agentEnv["TMPDIR"] = sandboxTemp
+				agentEnv["TMP"] = sandboxTemp
+				agentEnv["TEMP"] = sandboxTemp
+			}
+		}
 	}
 	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, os.Environ(), agentEnv, agentCustomEnv, d.logger); err != nil {
 		return TaskResult{}, err
@@ -8052,12 +8074,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "opencode" || provider == "codearts" {
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
+	// 只读档位下拒绝一切审批：否则 agent 可以靠一次审批把写入要回来，档位
+	// 就名不副实。这与 DSH 自己的配对语义一致（danger-full-access ⇒ never），
+	// 区别只是由 agent 配置而不是全局环境决定。其余档位保持 ask——headless 下
+	// bridge 会把审批自动放行，multica 仍然记录完整的审批轨迹。
 	approvalPolicy := "ask"
-	if task.Agent != nil {
-		switch task.Agent.SystemKey {
-		case "quality_supervision", "issue_review":
-			approvalPolicy = "never"
-		}
+	if provider == "dsh" && sandboxMode == agent.SandboxReadOnly {
+		approvalPolicy = "never"
 	}
 	execOpts := agent.ExecOptions{
 		ApprovalPolicy:             approvalPolicy,

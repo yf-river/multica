@@ -247,17 +247,20 @@ type CoalescedCommentData struct {
 
 // AgentData 存放 claim 端点返回的 agent 详情。
 type AgentData struct {
-	ID                    string                     `json:"id"`
-	Name                  string                     `json:"name"`
-	Instructions          string                     `json:"instructions"`
-	Skills                []SkillData                `json:"skills,omitempty"`
-	SkillRefs             []SkillRefData             `json:"skill_refs,omitempty"`
-	CustomEnv             map[string]string          `json:"custom_env,omitempty"`
-	CustomArgs            []string                   `json:"custom_args,omitempty"`
-	McpConfig             json.RawMessage            `json:"mcp_config,omitempty"`
-	Model                 string                     `json:"model,omitempty"`
-	ThinkingLevel         string                     `json:"thinking_level,omitempty"`
-	ServiceTier           string                     `json:"service_tier,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Instructions  string            `json:"instructions"`
+	Skills        []SkillData       `json:"skills,omitempty"`
+	SkillRefs     []SkillRefData    `json:"skill_refs,omitempty"`
+	CustomEnv     map[string]string `json:"custom_env,omitempty"`
+	CustomArgs    []string          `json:"custom_args,omitempty"`
+	McpConfig     json.RawMessage   `json:"mcp_config,omitempty"`
+	Model         string            `json:"model,omitempty"`
+	ThinkingLevel string            `json:"thinking_level,omitempty"`
+	ServiceTier   string            `json:"service_tier,omitempty"`
+	// SandboxMode 是本次运行的运行文件系统权限（read-only / workspace-write /
+	// danger-full-access）。老服务端不下发时取默认完全访问。
+	SandboxMode           string                     `json:"sandbox_mode,omitempty"`
 	SystemKey             string                     `json:"system_key,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkillData `json:"disabled_runtime_skills,omitempty"`
 	// RuntimeConfig 是 agent 记录上按 provider 存放的 runtime_config JSON，claim

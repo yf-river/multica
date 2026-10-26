@@ -1967,7 +1967,13 @@ export const TaskMessagePayloadSchema = z.object({
   call_id: z.string().optional().catch(undefined),
   chat_session_id: z.string().optional(),
   seq: z.number(),
-  type: z.enum(["text", "thinking", "tool_use", "tool_result", "error"]),
+  // `runtime` 行是运行时遥测（context / compaction），与工具消息一起落库但
+  // 从不进转录。未知种类回退成它，而不是让整行失败：一个不认识的消息类型
+  // 曾让整个数组校验失败，`parseWithFallback` 于是把一次运行的完整历史变成
+  // 空列表。降级成「不渲染的遥测」是正确损失，删掉整次运行不是。
+  type: z
+    .enum(["text", "thinking", "tool_use", "tool_result", "error", "runtime"])
+    .catch("runtime"),
   tool: z.string().optional(),
   content: z.string().optional(),
   input: z.record(z.string(), z.unknown()).optional(),
@@ -2366,6 +2372,10 @@ export const StoredAgentDraftSchema = z.object({
   model: z.string().catch(""),
   thinking_level: z.string().catch(""),
   service_tier: z.string().catch(""),
+  // 旧草稿没有这个字段；恢复时回到默认完全访问，绝不把一份旧草稿悄悄收紧。
+  sandbox_mode: z
+    .enum(["read-only", "workspace-write", "danger-full-access"])
+    .catch("danger-full-access"),
   skill_ids: z.array(z.string()).catch([]),
   permission_scope: z
     .enum(["private", "workspace", "members"])

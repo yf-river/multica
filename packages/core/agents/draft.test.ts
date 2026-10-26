@@ -21,6 +21,7 @@ const draft = (): AgentDraft => ({
   model: "model-1",
   thinkingLevel: "",
   serviceTier: "",
+  sandboxMode: "danger-full-access",
   skillIds: new Set(["skill-1"]),
   permissionScope: "private",
   memberIds: new Set(),
@@ -216,6 +217,36 @@ describe("agent draft execution overrides", () => {
       expect(request).not.toHaveProperty("max_concurrent_tasks");
     },
   );
+
+  it("always sends the sandbox stance, including the default", () => {
+    expect(
+      buildCreateAgentRequest({
+        draft: { ...draft(), sandboxMode: "read-only" },
+        runtimeId: "runtime-1",
+      }).sandbox_mode,
+    ).toBe("read-only");
+    // 默认值也要显式发出：服务端的列非空，省略会被解释成"保持默认"，
+    // 与用户在表单里看到的档位可能不一致。
+    expect(
+      buildCreateAgentRequest({ draft: draft(), runtimeId: "runtime-1" })
+        .sandbox_mode,
+    ).toBe("danger-full-access");
+  });
+
+  it("carries the source sandbox stance into a duplicate", () => {
+    const duplicate = buildDuplicateDraft(
+      sourceAgent({ sandbox_mode: "workspace-write" }),
+      {
+        runtimes: [CODEX_RUNTIME, OTHER_RUNTIME],
+        currentUserId: "user-1",
+        fallbackRuntimeId: "runtime-2",
+        nameSuffix: " (copy)",
+      },
+    );
+
+    // 档位不是 runtime 原生参数：即使副本回退到别的运行时也要继承。
+    expect(duplicate.sandboxMode).toBe("workspace-write");
+  });
 
   it("clears model, thinking level and service tier on a runtime change", () => {
     const current = {
