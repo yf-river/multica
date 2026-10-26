@@ -49,6 +49,60 @@ func TestCodebuddyRealNativeForegroundChild(t *testing.T) {
 	t.Logf("Foreground child complete; separate parent answer; models=%d extra_traces=%d duration_ms=%d", len(result.Usage), len(result.ExtraTraces), result.DurationMs)
 }
 
+func TestCodebuddyRealNativeManagedHooks(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
+		t.Skip("real managed hook model smoke is opt-in")
+	}
+	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	if path == "" || home == "" {
+		t.Fatal("explicit executable and isolated smoke home required")
+	}
+	for _, goal := range []bool{false, true} {
+		name := "foreground-child"
+		if goal {
+			name = "automatic-goal"
+		}
+		t.Run(name, func(t *testing.T) {
+			work := t.TempDir()
+			marker, err := newCodebuddyGeneration()
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof := filepath.Join(work, "proof")
+			command := `printf '%s' "$MULTICA_NATIVE_HOOK_VALUE" > ` + shellQuote(proof)
+			// 启动包装器删去标记，证明实际 Bash 从受管 hook 快照取得本轮值。
+			wrapper := filepath.Join(work, "codebuddy-without-task-marker")
+			if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nunset MULTICA_NATIVE_HOOK_VALUE\nexec "+shellQuote(path)+" \"$@\"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			backend := &codebuddyBackend{cfg: Config{ExecutablePath: wrapper, BuiltinRuntime: true, CLIVersion: "2.176.0", Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_NATIVE_HOOK_VALUE": marker}}}
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			opts := ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", Timeout: 110 * time.Second, MaxTurns: 8, SystemPrompt: "Execute only the requested small acceptance check. Do not inspect unrelated files or invoke other tools."}
+			prompt := "Use Agent exactly once to delegate one foreground general-purpose subagent. Ask it to use Bash exactly once to execute this command verbatim: " + command + ". Wait for it to finish. Then reply exactly MANAGED_NATIVE_HOOK_OK. Do not use background tasks, teams, other tools, read files, or delegate further."
+			if goal {
+				prompt = ""
+				opts.Command = "/goal Use Bash exactly once to execute this command verbatim: " + command + ". Then emit MANAGED_NATIVE_HOOK_OK. This goal succeeds when the command ran and that text was emitted. Do not use other tools or read files."
+			}
+			session, err := backend.executeNative(ctx, prompt, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range session.Messages {
+			}
+			result := <-session.Result
+			got, proofErr := os.ReadFile(proof)
+			if result.Status != "completed" || proofErr != nil || string(got) != marker || !strings.Contains(result.Output, "MANAGED_NATIVE_HOOK_OK") {
+				t.Fatalf("managed hook check failed: status=%s error=%s proof_error=%v matches=%v output=%q", result.Status, result.Error, proofErr, string(got) == marker, result.Output)
+			}
+			if len(result.Usage) == 0 || !goal && len(result.ExtraTraces) == 0 {
+				t.Fatal("managed hook run lost native accounting")
+			}
+			t.Logf("Managed %s hooks passed; actual Bash environment proof; models=%d child_traces=%d duration_ms=%d", name, len(result.Usage), len(result.ExtraTraces), result.DurationMs)
+		})
+	}
+}
+
 func TestCodebuddyRealNativeGoalControl(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
 		t.Skip("native runtime smoke is opt-in")

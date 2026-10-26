@@ -18,10 +18,12 @@ import (
 // SubagentCall 是一条可对账的子调用：它的 (CID, messageId, model) 与用量。
 // 调用方拿它和本轮 stream 已观测的调用集合比对，决定是否还需要补用量。
 type SubagentCall struct {
-	CID       string
-	MessageID string
-	Model     string
-	Usage     TokenUsage
+	CID          string
+	MessageID    string
+	Model        string
+	Usage        TokenUsage
+	SDKTraceID   string
+	SDKSourceSHA string
 }
 
 type SubagentTrace struct {
@@ -275,7 +277,11 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	usage := map[string]TokenUsage{}
 	type callKey struct{ cid, message string }
-	seen := map[callKey]subagentRawUsage{}
+	type observedCall struct {
+		usage subagentRawUsage
+		model string
+	}
+	seen := map[callKey]observedCall{}
 	traceIDs := map[string]struct{}{}
 	cids := map[string]struct{}{}
 	sessions := map[string]struct{}{}
@@ -307,12 +313,12 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 		sawUsage = true
 		key := callKey{pd.ConversationRequestID, pd.MessageID}
 		if old, ok := seen[key]; ok {
-			if old != u {
+			if old.usage != u || old.model != pd.Model {
 				return nil, SubagentTrace{}, nil, nil, false
 			}
 			continue
 		}
-		seen[key] = u
+		seen[key] = observedCall{usage: u, model: pd.Model}
 		traceIDs[pd.TraceID] = struct{}{}
 		cids[pd.ConversationRequestID] = struct{}{}
 		sessions[record.SessionID] = struct{}{}
@@ -320,9 +326,10 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 			cwds[record.Cwd] = struct{}{}
 		}
 		perCall = append(perCall, SubagentCall{
-			CID:       pd.ConversationRequestID,
-			MessageID: pd.MessageID,
-			Model:     pd.Model,
+			CID:        pd.ConversationRequestID,
+			MessageID:  pd.MessageID,
+			Model:      pd.Model,
+			SDKTraceID: pd.TraceID,
 			Usage: TokenUsage{
 				InputTokens:      int64(subagentInput(u)),
 				OutputTokens:     int64(u.CompletionTokens),
@@ -351,6 +358,9 @@ func parseSubagentFile(raw []byte, childID string) (map[string]TokenUsage, Subag
 		session = id
 	}
 	digest := sha256.Sum256(raw)
+	for i := range perCall {
+		perCall[i].SDKSourceSHA = hex.EncodeToString(digest[:])
+	}
 	calls := make([][2]string, 0, len(seen))
 	for key := range seen {
 		calls = append(calls, [2]string{key.cid, key.message})

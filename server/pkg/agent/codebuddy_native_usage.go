@@ -66,11 +66,10 @@ func codebuddyNativeAccounting(env map[string]string, sessionID string, cids map
 	}
 	sort.Strings(ids)
 	for _, cid := range ids {
-		_, trace, _, perCall, valid := parseSubagentFile(buckets[cid].Bytes(), sessionID)
+		trace, perCall, valid := parseCodebuddyNativeCalls(buckets[cid].Bytes(), sessionID, sourceSHA)
 		if !valid {
 			continue
 		}
-		trace.SDKSourceSHA = sourceSHA
 		traces = append(traces, trace)
 		calls = append(calls, perCall...)
 	}
@@ -97,6 +96,58 @@ func codebuddyNativeAccounting(env map[string]string, sessionID string, cids map
 		return nil, traces, calls
 	}
 	return usage, traces, calls
+}
+
+// Goal 的同一 CID 可以跨越多个 SDK trace。逐 trace 校验、跨 trace 按模型响应去重，
+// 多链路的 CID 不填写单一 SDK 溯源；每次调用的实际 trace 和文件指纹单独保留。
+func parseCodebuddyNativeCalls(raw []byte, sessionID, sourceSHA string) (SubagentTrace, []SubagentCall, bool) {
+	groups := map[string]*bytes.Buffer{}
+	var order []string
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		var record subagentRecord
+		if json.Unmarshal(scanner.Bytes(), &record) != nil || record.Provider.TraceID == "" {
+			return SubagentTrace{}, nil, false
+		}
+		id := record.Provider.TraceID
+		if groups[id] == nil {
+			groups[id] = &bytes.Buffer{}
+			order = append(order, id)
+		}
+		groups[id].Write(scanner.Bytes())
+		groups[id].WriteByte('\n')
+	}
+	if scanner.Err() != nil || len(order) == 0 {
+		return SubagentTrace{}, nil, false
+	}
+	seen := map[string]SubagentCall{}
+	var calls []SubagentCall
+	var trace SubagentTrace
+	for _, id := range order {
+		_, parsed, _, perCall, valid := parseSubagentFile(groups[id].Bytes(), sessionID)
+		if !valid || trace.TraceID != "" && parsed.TraceID != trace.TraceID {
+			return SubagentTrace{}, nil, false
+		}
+		trace = parsed
+		for _, call := range perCall {
+			if old, exists := seen[call.MessageID]; exists {
+				if old.Model != call.Model || old.Usage != call.Usage {
+					return SubagentTrace{}, nil, false
+				}
+				continue
+			}
+			call.SDKSourceSHA = sourceSHA
+			seen[call.MessageID] = call
+			calls = append(calls, call)
+		}
+	}
+	trace.SDKSourceSHA = sourceSHA
+	if len(order) > 1 {
+		trace.SDKTraceID = ""
+		trace.SDKSourceSHA = ""
+	}
+	return trace, calls, true
 }
 
 func mergeCodebuddyCallUsage(usage map[string]TokenUsage, call SubagentCall) {

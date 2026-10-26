@@ -33,8 +33,26 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		return nil, err
 	}
 	runCtx, cancel := runContext(ctx, opts.Timeout)
+	var hooks *codebuddyHooks
+	if codebuddyManagedHooksSupported(b.cfg) {
+		hooks, err = newCodebuddyHooks(runCtx, b.cfg.Env, opts)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("prepare CodeBuddy task hooks: %w", err)
+		}
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			hooks.close()
+		}
+	}()
 	processCtx, stopProcess := context.WithCancel(context.WithoutCancel(ctx))
-	args := codebuddyNativeArgs(opts, b.cfg)
+	launchOpts := opts
+	if hooks != nil {
+		launchOpts.CodebuddySettingsPath = hooks.settings
+	}
+	args := codebuddyNativeArgs(launchOpts, b.cfg)
 	cmd := b.cfg.commandAt(executable).exec(processCtx, args...)
 	cmd.Env = buildCodebuddyEnv(b.cfg.Env)
 	cmd.Dir = opts.Cwd
@@ -214,6 +232,9 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		if err != nil {
 			return "", err
 		}
+		if action == "set" || action == "resume" {
+			hooks.allowGoal(true)
+		}
 		goal, err := requestCodebuddyGoal(call, client, sid, action, condition)
 		if err != nil {
 			var rejected *acpRPCError
@@ -247,11 +268,14 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		}
 		if action == "pause" || action == "clear" {
 			humanStoppedGoal.Store(true)
+			hooks.allowGoal(false)
 		}
 		emitCodebuddyGoal(client, sid, action, goal)
 		return codebuddyGoalSummary(goal), nil
 	}
+	handedOff = true
 	go func() {
+		defer hooks.close()
 		defer stopProcess()
 		defer cancel()
 		defer close(messages)
@@ -294,6 +318,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			if waitErr != nil || result.Status != "completed" {
 				reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], identity, b.cfg.Logger)
 			}
+			hooks.close()
 			result.DurationMs = time.Since(started).Milliseconds()
 			if result.Error != "" {
 				result.Error = withAgentStderr(result.Error, "codebuddy", stderr.Tail())
@@ -310,15 +335,17 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			result.Usage, traces, calls = codebuddyNativeAccounting(b.cfg.Env, result.SessionID, requestIDs)
 			for _, trace := range traces {
 				if trace.TraceID == result.ProviderTraceID {
-					result.SDKTraceID = trace.SDKTraceID
-					result.SDKTraceSourceSHA256 = trace.SDKSourceSHA
-					result.SDKTraceSourcePath = SDKTraceSourceMarker
+					if trace.SDKTraceID != "" {
+						result.SDKTraceID = trace.SDKTraceID
+						result.SDKTraceSourceSHA256 = trace.SDKSourceSHA
+						result.SDKTraceSourcePath = SDKTraceSourceMarker
+					}
 				} else {
 					result.ExtraTraces = append(result.ExtraTraces, trace)
 				}
 			}
 			for _, call := range calls {
-				emit(runtimeTelemetry("codebuddy", "context", map[string]any{"session_id": result.SessionID, "request_id": call.CID, "item_id": call.MessageID, "model": call.Model, "scope": "request_delta", "source": "sdk_log", "input_tokens": call.Usage.InputTokens, "output_tokens": call.Usage.OutputTokens, "cache_read_tokens": call.Usage.CacheReadTokens, "cache_write_tokens": call.Usage.CacheWriteTokens}))
+				emit(runtimeTelemetry("codebuddy", "context", map[string]any{"session_id": result.SessionID, "request_id": call.CID, "item_id": call.MessageID, "model": call.Model, "scope": "request_delta", "source": "sdk_log", "sdk_trace_id": call.SDKTraceID, "sdk_trace_source_sha256": call.SDKSourceSHA, "input_tokens": call.Usage.InputTokens, "output_tokens": call.Usage.OutputTokens, "cache_read_tokens": call.Usage.CacheReadTokens, "cache_write_tokens": call.Usage.CacheWriteTokens}))
 			}
 			if goalWasActive.Load() && len(requestIDs) > 0 {
 				emit(runtimeTelemetry("codebuddy", "accounting", map[string]any{"scope": "observed_provider_calls", "goal_evaluator_usage": "unknown"}))
@@ -346,6 +373,8 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			return
 		}
 		method := "session/new"
+		hooks.bind(opts.ResumeSessionID)
+		hooks.allowGoal(opts.NativeGoal && !opts.CommandOnly)
 		params := map[string]any{"cwd": opts.Cwd, "mcpServers": mcp}
 		if opts.ResumeSessionID != "" {
 			method = "session/load"
@@ -375,6 +404,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		sessionID = sid
 		stateMu.Unlock()
 		client.sessionID = sid
+		hooks.bind(sid)
 		result.SessionID = sid
 		emit(Message{Type: MessageStatus, Status: "running", SessionID: sid})
 		if opts.Model != "" && extractACPCurrentModelID(raw) != opts.Model {
@@ -396,6 +426,9 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			if err != nil {
 				fail(err)
 				return
+			}
+			if action == "set" || action == "resume" {
+				hooks.allowGoal(true)
 			}
 			goal, err = requestCodebuddyGoal(setup, client, sid, action, condition)
 			if err != nil {
@@ -426,7 +459,18 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				return
 			}
 			goalWasActive.Store(before.HasGoal && before.ActiveGoal != nil && !before.ActiveGoal.Paused)
-			raw, err := client.request(runCtx, "session/prompt", map[string]any{"sessionId": sid, "prompt": []map[string]string{{"type": "text", "text": prompt}}})
+			hooks.allowGoal(goalWasActive.Load())
+			params := map[string]any{"sessionId": sid, "prompt": []map[string]string{{"type": "text", "text": prompt}}}
+			if hooks != nil {
+				cid, err := newCodebuddyGeneration()
+				if err != nil {
+					fail(err)
+					return
+				}
+				hooks.expectPrompt(cid)
+				params["_meta"] = map[string]string{"codebuddy.ai/conversationRequestId": cid}
+			}
+			raw, err := client.request(runCtx, "session/prompt", params)
 			if err != nil {
 				fail(err)
 				return
