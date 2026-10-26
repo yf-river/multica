@@ -344,7 +344,7 @@ func runDeliveryDeliver(cmd *cobra.Command, args []string) error {
 	}
 	if wait, _ := cmd.Flags().GetBool("wait"); wait {
 		timeout, _ := cmd.Flags().GetDuration("timeout")
-		return waitForPhase(ctx, client, path, []string{"prepared", "needs_changes"}, timeout, 5*time.Second)
+		return waitForPhase(client, path, []string{"prepared", "needs_changes"}, timeout, 5*time.Second)
 	}
 	return nil
 }
@@ -369,10 +369,14 @@ func runDeliveryWait(cmd *cobra.Command, args []string) error {
 	}
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	interval, _ := cmd.Flags().GetDuration("interval")
-	return waitForPhase(ctx, client, "/api/issues/"+ref.ID, until, timeout, interval)
+	return waitForPhase(client, "/api/issues/"+ref.ID, until, timeout, interval)
 }
 
-func waitForPhase(ctx context.Context, client *cli.APIClient, path string, until []string, timeout, interval time.Duration) error {
+// waitForPhase polls until the delivery reaches one of the targets. It builds
+// a fresh context per poll: the CLI's one-shot API context expires long before
+// a build queue does, and reusing it turned a 30 minute wait into a bogus
+// "context deadline exceeded" after two minutes.
+func waitForPhase(client *cli.APIClient, path string, until []string, timeout, interval time.Duration) error {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
@@ -383,7 +387,9 @@ func waitForPhase(ctx context.Context, client *cli.APIClient, path string, until
 	}
 	last := ""
 	for {
-		status, err := readStatus(ctx, client, path)
+		pollCtx, pollCancel := cli.APIContext(context.Background())
+		status, err := readStatus(pollCtx, client, path)
+		pollCancel()
 		if err != nil {
 			return err
 		}
@@ -409,11 +415,7 @@ func waitForPhase(ctx context.Context, client *cli.APIClient, path string, until
 		if time.Now().After(deadline) {
 			return fmt.Errorf("等待超时：当前阶段 %s", phase)
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(interval):
-		}
+		time.Sleep(interval)
 	}
 }
 
