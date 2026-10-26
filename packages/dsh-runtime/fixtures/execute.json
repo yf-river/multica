@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "execute",
+  "request_id": "contract-task",
+  "cwd": "/contract/work",
+  "prompt": "compare the current implementation",
+  "command": "/plan",
+  "approval_policy": "never",
+  "resume_session_id": "contract-session",
+  "model": { "provider": "deepseek-official", "id": "deepseek-flash", "reasoning_effort": "high" },
+  "reasoning_effort": "high",
+  "mcp_servers": []
+}

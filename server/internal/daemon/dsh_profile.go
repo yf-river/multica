@@ -16,6 +16,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/processtree"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/dshprofile"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -125,7 +126,15 @@ func dshMulticaProfileManifestPath() string {
 	if dshHome == "" {
 		dshHome = filepath.Join(home, ".dsh")
 	}
-	return filepath.Join(dshHome, "profiles", dshMulticaProfileName, "package.json")
+	profile := dshMulticaProfileName
+	if root, _, enabled := dshSupplyConfig(); enabled {
+		state, err := dshprofile.Read(root)
+		if err != nil || state == nil {
+			return ""
+		}
+		profile = state.Active.Profile
+	}
+	return filepath.Join(dshHome, "profiles", profile, "package.json")
 }
 
 // dshProfileNamesRuntime reports whether the manifest lists the Multica runtime
@@ -376,6 +385,9 @@ func provisionDshMulticaProfile(ctx context.Context, dshPath string, logger *slo
 // otherwise be retried every discovery interval forever. A restart is the
 // retry.
 func (d *Daemon) startDshProfileProvision(dshPath string) bool {
+	if _, _, enabled := dshSupplyConfig(); enabled {
+		return d.dshInstallInFlight.Load()
+	}
 	if len(dshProfileBundleSpecs()) == 0 {
 		return false
 	}

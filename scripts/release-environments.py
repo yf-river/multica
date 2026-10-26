@@ -320,6 +320,27 @@ def operation_files(directory):
             raise RuntimeError('发布操作包缺少文件或路径越界：'+name)
     return (manifest.name,*names)
 
+def build_dsh_runtime(source, target, env):
+    """从固定源码生成 bridge，运行包携带校验清单而非开发目录链接。"""
+    package=source/'packages/dsh-runtime'
+    if not (package/'package.json').exists(): return None
+    destination=target/'runtimes/dsh'
+    with build_stage('dsh-runtime'):
+        run(['pnpm','--filter','@multica-ai/dsh-runtime','build'],cwd=source,env=env)
+        run(['pnpm','--filter','@multica-ai/dsh-runtime','pack:runtime',str(destination)],cwd=source,env=env)
+    manifest=read(destination/'manifest.json')
+    filename=manifest.get('filename','')
+    if not re.fullmatch(r'dsh-runtime-[0-9A-Za-z.+-]+\.tgz',filename):
+        raise RuntimeError('bridge 制品文件名无效')
+    packed=destination/filename
+    if packed.is_symlink() or not packed.is_file(): raise RuntimeError('bridge 制品不是普通文件')
+    data=packed.read_bytes()
+    if hashlib.sha256(data).hexdigest()!=manifest.get('sha256') or len(data)!=manifest.get('bytes'):
+        raise RuntimeError('bridge 制品校验失败')
+    if manifest.get('bridgeVersion')!=read(package/'package.json')['version']:
+        raise RuntimeError('bridge 制品与源码版本不符')
+    return manifest
+
 def build(source, target, *, verification=False):
     source, sha = checked_source(source, verification=verification)
     with build_stage('preflight'):
@@ -327,12 +348,14 @@ def build(source, target, *, verification=False):
         print(json.dumps(executor_preflight(source),ensure_ascii=False),file=sys.stderr)
     version = build_version(source, sha)
     digest, files = source_digest(source)
+    has_bridge=(source/'packages/dsh-runtime/package.json').exists()
     groups = {'go': hashlib.sha256(), 'web': hashlib.sha256()}
+    if has_bridge: groups['dsh']=hashlib.sha256()
     for name in files:
         if name.startswith(('docs/','apps/docs/','.github/','.agents/')) or ('/' not in name and name.endswith('.md')):
             continue
         # 未知根目录输入同时影响两组；宁可多编译，不误复用。
-        selected = ['go'] if name.startswith('server/') else ['web'] if name.startswith(('apps/', 'packages/')) else ['go', 'web']
+        selected = ['dsh'] if name.startswith('packages/dsh-runtime/') and has_bridge else ['go'] if name.startswith('server/') else ['web'] if name.startswith(('apps/', 'packages/')) else list(groups)
         for group in selected:
             groups[group].update(name.encode()+b'\0'+(source/name).read_bytes())
     inputs = {name: value.hexdigest() for name, value in groups.items()}
@@ -347,11 +370,15 @@ def build(source, target, *, verification=False):
     for key in list(env):
         if key.startswith(('NEXT_PUBLIC_', 'MULTICA_', 'GOAL_TEST_')) or key in ('REMOTE_API_URL','FRONTEND_ORIGIN','DATABASE_URL','JWT_SECRET'): env.pop(key)
     env.update(STANDALONE='true', NEXT_PUBLIC_APP_VERSION=version, NEXT_TELEMETRY_DISABLED='1')
+    if has_bridge:
+        with build_stage('dependencies'):
+            run(['pnpm','install','--frozen-lockfile'],cwd=source,env=env)
     if reusable and previous.get('inputs', {}).get('web') == inputs['web']:
         copy_tree(current, target, excludes=('/server/', '/release.json', '**/.next/cache/***'))
     else:
-        with build_stage('dependencies'):
-            run(['pnpm', 'install', '--frozen-lockfile'], cwd=source, env=env)
+        if not has_bridge:
+            with build_stage('dependencies'):
+                run(['pnpm', 'install', '--frozen-lockfile'], cwd=source, env=env)
         with build_stage('web'):
             run(['pnpm', '--filter', '@multica/web', 'build'], cwd=source, env=env)
         copy_tree(source/'apps/web/.next/standalone', target)
@@ -365,6 +392,7 @@ def build(source, target, *, verification=False):
             with build_stage('go-'+binary):
                 run(['go', 'build', '-ldflags', f'-X main.version={version} -X main.commit={sha}' + (f' -X main.buildCommit={sha}' if binary == 'multica' else ''), '-o', target/'server/bin'/binary, './cmd/'+binary], cwd=source/'server', env=env)
     copy_tree(source/'server/migrations', target/'server/migrations')
+    bridge=build_dsh_runtime(source,target,env)
     operations=target/'operations';operations.mkdir(exist_ok=True)
     for name in operation_files(source/'scripts'):
         destination=operations/name;destination.parent.mkdir(parents=True,exist_ok=True)
@@ -383,6 +411,7 @@ def build(source, target, *, verification=False):
     write(target/'server/queries.json', queries)
     manifest = dict(id=sha+'-'+str(time.time_ns()), source_commit=sha, source_directory=str(source), source_digest=digest,
                     version=version, inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+    if bridge: manifest['dsh_bridge']=bridge
     write(target/'release.json', manifest)
     for cache in (source/'apps/web/.next/cache', source/'.turbo'):
         if cache.exists() and sum(p.stat().st_size for p in cache.rglob('*') if p.is_file() and not p.is_symlink()) > 1024**3:
@@ -753,7 +782,11 @@ def launch(env, release, cfg, m,prior_readiness=None):
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
     # 以 CLI 管理的 profile 启动；PID 来自健康端点，不猜测子进程。
-    run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=cfg['daemon'],stdout=subprocess.DEVNULL,**service_credentials(cfg['daemon']))
+    daemon_env=dict(cfg['daemon'])
+    if (release/'runtimes/dsh/manifest.json').is_file() and daemon_env.get('MULTICA_DSH_MANAGED_PROFILE')!='0':
+        daemon_env['MULTICA_DSH_ARTIFACT_DIR']=str(release/'runtimes/dsh')
+        daemon_env['MULTICA_DSH_PROFILE_STATE']=str(RUN/'state'/env/'dsh-runtime')
+    run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=daemon_env,stdout=subprocess.DEVNULL,**service_credentials(daemon_env))
     h=ready(health_url(env)+'/health')
     if h['profile']!=m['daemon_profile']: raise RuntimeError('Daemon profile 不匹配')
     result['daemon']=h['pid']

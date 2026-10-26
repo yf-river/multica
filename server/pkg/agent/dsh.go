@@ -269,6 +269,16 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	if execPath == "" {
 		execPath = "dsh"
 	}
+	execPath, profile, releaseProfile, err := acquireDshLaunch(ctx, execPath, b.cfg.Env)
+	if err != nil {
+		return nil, err
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			releaseProfile()
+		}
+	}()
 	if _, err := exec.LookPath(execPath); err != nil {
 		return nil, fmt.Errorf("dsh executable not found at %q: %w", execPath, err)
 	}
@@ -282,7 +292,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	}
 
 	runCtx, cancel := runContext(ctx, opts.Timeout)
-	args := dshLaunchArgs()
+	args := []string{"--profile", profile, "--stdio"}
 	cmd := b.cfg.commandAt(execPath).exec(runCtx, args...)
 	hideAgentWindow(cmd)
 	// 取消不走 exec.Command 默认的杀进程路径，而是走"cancel 帧→SIGTERM→SIGKILL"
@@ -371,6 +381,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	// 收尸（cmd.Wait）、按上下文/扫描/退出原因拼出最终 Result 并发送。
 	go func() {
 		defer cancel()
+		defer releaseProfile()
 		defer close(msgCh)
 		defer close(resCh)
 		defer func() { _ = stdin.Close() }()
@@ -434,6 +445,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		resCh <- *result
 	}()
 
+	handedOff = true
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
@@ -579,7 +591,13 @@ func discoverDshModels(ctx context.Context, runtimeCmd Command) ([]Model, error)
 	if runtimeCmd.Path == "" {
 		runtimeCmd.Path = "dsh"
 	}
-	cmd := runtimeCmd.exec(ctx, "--profile", dshProfile, "--list-models")
+	path, profile, release, err := acquireDshLaunch(ctx, runtimeCmd.Path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	runtimeCmd.Path = path
+	cmd := runtimeCmd.exec(ctx, "--profile", profile, "--list-models")
 	hideAgentWindow(cmd)
 	cmd.WaitDelay = time.Second
 	stdout, err := cmd.StdoutPipe()
