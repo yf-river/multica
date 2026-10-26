@@ -516,7 +516,7 @@ func (h *Handler) GetSupervisionSubject(w http.ResponseWriter, r *http.Request) 
  COALESCE((coverage->>'preparation_http_requests')::integer,0) preparation_http_requests,
  COALESCE((coverage->>'preparation_duration_ms')::bigint,0) preparation_duration_ms,
  COALESCE((coverage->>'differences')::integer,0) differences,
- COALESCE(report->'runtime_observation','null'::jsonb) runtime_observation
+ COALESCE((report::jsonb)->'runtime_observation','null'::jsonb) runtime_observation
  FROM supervision_trace_material WHERE workspace_id=$1 AND issue_id=$2 AND report<>'' ORDER BY run_id,created_at DESC,material_version DESC)x`, &traceMaterials},
 		{`SELECT COALESCE(jsonb_agg(x),'[]') FROM (SELECT id,batch_id,created_at,request,result-'text' result FROM supervision_investigation WHERE workspace_id=$1 AND issue_id=$2 ORDER BY created_at DESC LIMIT 100)x`, &investigations},
 		{`SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.last_seen_at DESC),'[]') FROM supervision_finding f WHERE workspace_id=$1 AND issue_id=$2`, &findings},
