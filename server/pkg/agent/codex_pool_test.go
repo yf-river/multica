@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -285,5 +286,77 @@ func TestCodexResidentNestedConfigurationCannotEnableSubagents(t *testing.T) {
 	}
 	if _, exists := config["features.multi_agent"]; exists {
 		t.Fatal("overlapping table and dotted-key overrides remain order-dependent")
+	}
+}
+
+func TestCodexResidentResourceFingerprintTracksContentPermissionsAndLinks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"a", ".git"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{"a/note": "alpha", "b": "beta", ".git/ignored": "ignored"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, target := range map[string]string{"c": "a", "d": "missing", "e": "."} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fingerprint := func(path string) string {
+		t.Helper()
+		var output bytes.Buffer
+		if err := hashCodexResidentSkills(&output, path, "skills", make(map[string]bool)); err != nil {
+			t.Fatal(err)
+		}
+		return output.String()
+	}
+	want := "skills:700\nskills/a:700\nskills/a/note:600\nalphaskills/b:600\nbetaskills/c:700\nskills/e:700\n"
+	if got := fingerprint(root); got != want {
+		t.Fatalf("resource content, aliases or directory cycle changed fingerprint: %q", got)
+	}
+	alias := filepath.Join(t.TempDir(), "account-skills")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	if fingerprint(alias) != want {
+		t.Fatal("linked resource root changed its fingerprint")
+	}
+	note := filepath.Join(root, "a", "note")
+	info, err := os.Stat(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(note, []byte("omega"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(note, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	changed := fingerprint(root)
+	if changed == want {
+		t.Fatal("same-size content change with restored mtime did not invalidate fingerprint")
+	}
+	if err := os.Chmod(filepath.Join(root, "b"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if fingerprint(root) == changed {
+		t.Fatal("resource permission change did not invalidate fingerprint")
+	}
+}
+
+func TestCodexResidentResourceFingerprintRejectsSpecialFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := hashCodexResidentSkills(&bytes.Buffer{}, root, "plugins", make(map[string]bool)); err == nil {
+		t.Fatal("special resource must be rejected before attempting to read it")
 	}
 }
