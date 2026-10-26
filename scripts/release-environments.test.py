@@ -487,8 +487,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_dsh_interaction_migrations_require_exact_review(self):
         source=Path(__file__).parent.parent/'server/migrations'
-        names=('674_task_interaction_lease.up.sql','681_task_interaction_continuation.up.sql',
-               '682_task_interaction_dsh.up.sql','683_task_waiting_human.up.sql')
+        # 674/681/682 已并按新增方式折进 672，只有状态枚举放宽仍需精确评审。
+        names=('683_task_waiting_human.up.sql',)
         with tempfile.TemporaryDirectory() as folder:
             old=Path(folder)/'old';new=Path(folder)/'new'
             (old/'server/migrations').mkdir(parents=True)
