@@ -131,5 +131,7 @@ DSH 自身的模型列表诊断可能混入 stdout，Go adapter 继续按既有�
 CLI profile 目录；独立 daemon 安装和旧发布器都能供给 bridge。生成制品从
 `packages/dsh-runtime` 构建，CI 重新生成并校验字节；用户可用既有开关停用。
 
-verify-3 当前没有 DSH 认证，真实 verify/int 样本还需明确测试账号来源。
-本机现有 DSH 登录同时用于日常运行，未经该测试范围授权不复制到验收环境。
+用户已授权本阶段使用现有原生 DSH 登录的隔离副本进行 verify/int 验收。
+仅复制原生账号认证与必要模型配置，不复制会话或业务数据。凭据或网络恢复后，
+本机操作者可通过 `multica daemon dsh-retry --profile <profile>` 显式重试原失败候选；
+命令经过 profile 身份核对，候选仍需通过既有 probe/smoke 与空闲激活门禁。

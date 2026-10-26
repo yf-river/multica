@@ -19,3 +19,5 @@
 
 - `server/internal/handler/repository.go` owns the workspace repository registry and runtime locations. Project resources store `repository_id` and an optional project ref; claim resolves the effective ref from this registry. Workspace `repos` in API responses is a projection, not an editable second list. Repository writes use `/workspaces/{id}/repos[/{repositoryId}]`.
 - Configured repository locations use committed development branches for new worktrees, excluding uncommitted base-checkout files. Existing tasks continue their own branches. `server/internal/daemon/execenv/local_worktree.go` verifies the local remote identity, fetches the branch, and rejects divergent local/remote development branches.
+
+- `server/cmd/multica/cmd_daemon_dsh.go` 提供仅本机操作者可用的 `daemon dsh-retry`，核对所选 profile 的 daemon 身份后调用 loopback `/dsh-profile/retry`。`dsh_retry.go` 仅将持久化失败候选改为待重试并唤醒发现；制品身份与激活门禁由供给流程核对。
