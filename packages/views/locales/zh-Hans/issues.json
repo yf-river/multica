@@ -673,7 +673,16 @@
     "context_duration": "耗时",
     "context_tokens": "输入 / 输出 / 缓存",
     "context_pressure": "占用",
-    "context_close": "关闭"
+    "context_close": "关闭",
+    "detail_button": "运行详情",
+    "detail_title": "运行详情",
+    "detail_empty": "该运行还没有可展示的轨迹。",
+    "detail_nodes": "时间线节点",
+    "detail_events": "事件",
+    "detail_tokens": "输入 / 输出 / 缓存",
+    "detail_duration": "耗时",
+    "detail_export": "导出 JSON",
+    "detail_no_events": "暂无事件。"
   },
   "usage_detail": {
     "title": "用量明细",

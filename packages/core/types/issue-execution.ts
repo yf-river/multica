@@ -86,6 +86,7 @@ type IssueTimelineNodeType =
 export interface IssueTimelineNode {
   root_task_id?: string;
   node_id: string;
+  parent_node_id?: string;
   node_type: IssueTimelineNodeType;
   agent_id?: string;
   agent_name?: string;

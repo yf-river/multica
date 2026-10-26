@@ -2033,6 +2033,7 @@ const AgentTaskArtifactSchema = z.object({
 const IssueTimelineNodeSchema = z.object({
   root_task_id: z.string().optional(),
   node_id: z.string(),
+  parent_node_id: z.string().optional(),
   node_type: z.enum([
     "agent_task",
     "squad_step",

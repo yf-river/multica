@@ -98,7 +98,14 @@ export function RunReviewsPage() {
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const selectedIssueId = navigation.searchParams.get("issue");
-  const qualityTab = navigation.searchParams.get("tab") === "quality";
+  // 任务级运行记录已移出本页：运行详情改在 issue 执行日志的“运行详情”里打开。
+  // 保留 URL 参数兼容，但本页始终渲染质量监督；旧的 ?issue=/?tab=records 链接
+  // 会落到这里而不再展示重复的任务列表。
+  const qualityTab = true;
+  const legacyIssue = navigation.searchParams.get("issue");
+  useEffect(() => {
+    if (legacyIssue) navigation.replace(paths.issueDetail(legacyIssue));
+  }, [legacyIssue, navigation, paths]);
   const issuesQuery = useQuery({ ...issueListOptions(wsId, { sort_by: "created_at", sort_direction: "desc" }), enabled: !qualityTab });
   const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
   const requestedIssue = useQuery({ ...issueDetailOptions(wsId, selectedIssueId ?? ""), enabled: !qualityTab && Boolean(selectedIssueId) && !issues.some((issue) => issue.id === selectedIssueId) });
@@ -120,7 +127,7 @@ export function RunReviewsPage() {
       </PageHeader>
 
       <nav aria-label={t(($) => $.page_title)} className="flex shrink-0 gap-5 border-b px-4 sm:px-6">
-        {[{ key: "records", label: t(($) => $.supervision.records_tab) }, { key: "quality", label: t(($) => $.supervision.quality_tab) }].map((tab) => {
+        {[{ key: "quality", label: t(($) => $.supervision.quality_tab) }].map((tab) => {
           const next = new URLSearchParams(navigation.searchParams); next.set("tab", tab.key);
           const active = qualityTab ? tab.key === "quality" : tab.key === "records";
           return <AppLink key={tab.key} href={`${paths.runReviews()}?${next}`} aria-current={active ? "page" : undefined} className={`border-b-2 py-3 text-body ${active ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>{tab.label}</AppLink>;
