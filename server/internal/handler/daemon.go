@@ -3295,14 +3295,21 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.ChatMessage = strings.Join(parts, "\n\n")
 		resp.Command = chatRuntimeCommand(unanswered)
-		controlHistory, controlHistoryErr := h.Queries.ListChatMessages(r.Context(), cs.ID)
-		if controlHistoryErr != nil {
-			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, controlHistoryErr, "chat control history", uuidToString(cs.ID))
+		if (runtime.Provider == "codex" || runtime.Provider == "codebuddy") && len(unanswered) > 0 {
+			selection, selectionErr := h.Queries.GetChatRuntimeSelection(r.Context(), db.GetChatRuntimeSelectionParams{
+				ChatSessionID: cs.ID, InputMessageID: unanswered[len(unanswered)-1].ID,
+			})
+			if selectionErr != nil {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, selectionErr, "chat runtime selection", uuidToString(cs.ID))
+			}
+			if selection.HasPlanMode {
+				resp.PlanMode = &selection.PlanMode
+			}
+			resp.NativeGoal = runtime.Provider == "codebuddy" && selection.NativeGoal
 		}
-		resp.PlanMode = chatPlanModeSelection(controlHistory)
-		resp.NativeGoal = runtime.Provider == "codebuddy" && chatUsesNativeGoal(controlHistory)
 		// DSH 以命令恢复未物化的会话；Codex 和 CodeBuddy 使用独立模式与原生会话状态。
 		if resp.Command == "" && runtime.Provider == "dsh" {
+			controlHistory, controlHistoryErr := h.Queries.ListChatMessages(r.Context(), cs.ID)
 			if controlHistoryErr == nil {
 				history := controlHistory
 				if chatPlanModeActive(history) {
@@ -6735,21 +6742,6 @@ func chatPlanModeActive(messages []db.ChatMessage) bool {
 	return active
 }
 
-// 模式和目标分别下发，避免设置目标时覆盖会话已选择的计划模式。
-func chatPlanModeSelection(messages []db.ChatMessage) *bool {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != "user" {
-			continue
-		}
-		line := strings.TrimSpace(messages[i].Content)
-		if line == "/plan" || strings.HasPrefix(line, "/plan ") {
-			active := line != "/plan off"
-			return &active
-		}
-	}
-	return nil
-}
-
 // latestReplayableGoalCommand returns the most recent goal-setting command and
 // its timestamp. A later clear/pause/complete/show suppresses replay.
 func latestReplayableGoalCommand(messages []db.ChatMessage) (string, time.Time) {
@@ -6774,18 +6766,4 @@ func latestReplayableGoalCommand(messages []db.ChatMessage) (string, time.Time) 
 		}
 	}
 	return "", time.Time{}
-}
-
-// Goal 会话的传输随聊天恢复，避免普通后续消息回到不处理 Goal 的 stream-json。
-func chatUsesNativeGoal(messages []db.ChatMessage) bool {
-	for _, message := range messages {
-		if message.Role != "user" {
-			continue
-		}
-		line := strings.TrimSpace(message.Content)
-		if line == "/goal" || strings.HasPrefix(line, "/goal ") {
-			return true
-		}
-	}
-	return false
 }
