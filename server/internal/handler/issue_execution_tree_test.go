@@ -787,3 +787,71 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 		t.Fatalf("issue_summary missing deep link: %+v", resp.IssueSummary)
 	}
 }
+
+// TestBuildIssueTimelineNodesUsesTaskUsage keeps run accounting sourced from
+// task_usage. Trace rows carry lifecycle only, so summing them reported zero
+// tokens for DSH and Codex runs on the run-review page.
+func TestBuildIssueTimelineNodesUsesTaskUsage(t *testing.T) {
+	root := issueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{{
+			ID:     "task-1",
+			Status: "completed",
+			Usage: []TaskUsageData{{
+				Provider:         "dsh",
+				Model:            "deepseek-account/deepseek-flash",
+				InputTokens:      100,
+				OutputTokens:     20,
+				CacheReadTokens:  80,
+				CacheWriteTokens: 5,
+			}},
+		}},
+	}
+	nodes := buildIssueTimelineNodes(root)
+	var taskNode *issueTimelineNodeResponse
+	for i := range nodes {
+		if nodes[i].NodeType == "agent_task" {
+			taskNode = &nodes[i]
+			break
+		}
+	}
+	if taskNode == nil {
+		t.Fatalf("no agent_task node in %+v", nodes)
+	}
+	if taskNode.InputTokens != 100 || taskNode.OutputTokens != 20 || taskNode.CacheReadTokens != 80 || taskNode.CacheWriteTokens != 5 {
+		t.Fatalf("task node usage = in:%d out:%d cache_read:%d cache_write:%d", taskNode.InputTokens, taskNode.OutputTokens, taskNode.CacheReadTokens, taskNode.CacheWriteTokens)
+	}
+	if taskNode.TraceEventCount != 0 {
+		t.Fatalf("trace event count should stay independent of usage, got %d", taskNode.TraceEventCount)
+	}
+}
+
+// TestBuildIssueTimelineNodesFallsBackToTraceUsage covers legacy runs where
+// usage was never recorded but trace rows still carry token fields.
+func TestBuildIssueTimelineNodesFallsBackToTraceUsage(t *testing.T) {
+	root := issueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{{ID: "task-1", Status: "completed"}},
+		TraceEvents: []TaskTraceEventResponse{{
+			ID:           "trace-1",
+			TaskID:       "task-1",
+			EventType:    "llm.response",
+			InputTokens:  7,
+			OutputTokens: 3,
+		}},
+	}
+	nodes := buildIssueTimelineNodes(root)
+	var taskNode *issueTimelineNodeResponse
+	for i := range nodes {
+		if nodes[i].NodeType == "agent_task" {
+			taskNode = &nodes[i]
+			break
+		}
+	}
+	if taskNode == nil {
+		t.Fatalf("no agent_task node in %+v", nodes)
+	}
+	if taskNode.InputTokens != 7 || taskNode.OutputTokens != 3 {
+		t.Fatalf("fallback usage = in:%d out:%d", taskNode.InputTokens, taskNode.OutputTokens)
+	}
+}

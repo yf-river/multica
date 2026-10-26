@@ -243,6 +243,10 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 			taskMessages = append(taskMessages, taskMessageToPayload(message, taskID, issueID))
 		}
 	}
+	// Per-run accounting lives in task_usage, not in task_trace_event: trace rows
+	// carry lifecycle only, so a tree built from them alone reports zero tokens.
+	// Attach the same usage shape the issue execution log uses.
+	h.hydrateTaskUsage(ctx, issue.ID, taskResp)
 	toolCallChains := buildToolCallChains(taskMessages)
 	toolCallSummary := buildToolCallSummary(toolCallChains)
 
@@ -531,11 +535,25 @@ func buildIssueTimelineNodes(root issueExecutionNodeResponse) []issueTimelineNod
 		if task.Agent != nil {
 			node.AgentName = task.Agent.Name
 		}
+		// Prefer per-run usage; trace events do not carry token columns for most
+		// runtimes and would otherwise report zero. Fall back to trace rows only
+		// when usage was never recorded.
+		if len(task.Usage) > 0 {
+			for _, usage := range task.Usage {
+				node.InputTokens += usage.InputTokens
+				node.OutputTokens += usage.OutputTokens
+				node.CacheReadTokens += usage.CacheReadTokens
+				node.CacheWriteTokens += usage.CacheWriteTokens
+			}
+		} else {
+			for _, event := range taskTraces {
+				node.InputTokens += event.InputTokens
+				node.OutputTokens += event.OutputTokens
+				node.CacheReadTokens += event.CacheReadTokens
+				node.CacheWriteTokens += event.CacheWriteTokens
+			}
+		}
 		for _, event := range taskTraces {
-			node.InputTokens += event.InputTokens
-			node.OutputTokens += event.OutputTokens
-			node.CacheReadTokens += event.CacheReadTokens
-			node.CacheWriteTokens += event.CacheWriteTokens
 			if node.ProjectID == "" {
 				node.ProjectID = ptrString(event.ProjectID)
 			}
