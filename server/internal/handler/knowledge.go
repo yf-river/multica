@@ -304,3 +304,34 @@ func (c *knowledgeClient) upload(ctx context.Context, workspaceID, filename stri
 	}
 	return json.RawMessage(raw), resp.StatusCode, nil
 }
+
+// DeleteKnowledgeResource removes one file or directory from the workspace
+// knowledge base. Workspace admins own destructive curation.
+// DELETE /api/workspaces/{id}/knowledge/resources?uri=...&recursive=false
+func (h *Handler) DeleteKnowledgeResource(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	if member.Role != "owner" && member.Role != "admin" {
+		writeError(w, http.StatusForbidden, "only workspace admins can delete knowledge resources")
+		return
+	}
+	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
+	prefix := "viking://resources/workspaces/" + workspaceID
+	if uri == "" || !strings.HasPrefix(uri, prefix) {
+		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
+		return
+	}
+	recursive := r.URL.Query().Get("recursive") == "true"
+	client := newKnowledgeClient()
+	raw, _, err := client.do(r.Context(), http.MethodDelete, "/api/v1/fs", url.Values{
+		"uri": {uri}, "recursive": {strconv.FormatBool(recursive)},
+	}, nil, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"uri": uri, "result": raw})
+}

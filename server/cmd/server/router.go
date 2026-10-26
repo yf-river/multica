@@ -1508,6 +1508,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/knowledge/search", h.SearchKnowledge)
 					r.Get("/knowledge/read", h.ReadKnowledge)
 					r.Post("/knowledge/resources", h.UploadKnowledgeResource)
+					r.Delete("/knowledge/resources", h.DeleteKnowledgeResource)
 					// 工作区 MCP 库——对成员可见，让 agent owner 能看到自己 agent 能加什么。
 					// 载荷只有名字与传输方式；存储的条目是只写的。
 					r.Get("/mcp-servers", h.ListWorkspaceMcpServers)

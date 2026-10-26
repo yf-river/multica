@@ -126,7 +126,8 @@ func init() {
 	knowledgeSearchCmd.Flags().String("path", "", "restrict the search to this workspace URI")
 	knowledgeReadCmd.Flags().Int("offset", 0, "starting line number")
 	knowledgeReadCmd.Flags().Int("limit", -1, "number of lines to read (-1 reads to the end)")
-	knowledgeCmd.AddCommand(knowledgeStatusCmd, knowledgeListCmd, knowledgeSearchCmd, knowledgeReadCmd, knowledgeAddCmd)
+	knowledgeRemoveCmd.Flags().Bool("recursive", false, "remove a directory recursively")
+	knowledgeCmd.AddCommand(knowledgeStatusCmd, knowledgeListCmd, knowledgeSearchCmd, knowledgeReadCmd, knowledgeAddCmd, knowledgeRemoveCmd)
 }
 
 var knowledgeReadCmd = &cobra.Command{
@@ -177,5 +178,28 @@ var knowledgeAddCmd = &cobra.Command{
 			return err
 		}
 		return printKnowledgeResult(cmd, result)
+	},
+}
+
+var knowledgeRemoveCmd = &cobra.Command{
+	Use:   "rm <uri>",
+	Short: "Remove a knowledge file or directory (workspace admins)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAPIClient(cmd)
+		if err != nil {
+			return err
+		}
+		if !strings.HasPrefix(args[0], "viking://") {
+			return fmt.Errorf("uri must start with viking://")
+		}
+		recursive, _ := cmd.Flags().GetBool("recursive")
+		path := fmt.Sprintf("/api/workspaces/%s/knowledge/resources?uri=%s&recursive=%t",
+			client.WorkspaceID, url.QueryEscape(args[0]), recursive)
+		if err := client.DeleteJSON(cmd.Context(), path); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "removed:", args[0])
+		return nil
 	},
 }
