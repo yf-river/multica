@@ -4,6 +4,7 @@ import {
   anonymizeUnresolvedAgentRows,
   UNRESOLVED_AGENTS_ROW_ID,
   aggregateAgentTokens,
+  aggregateModelUsage,
   aggregateDailyCost,
   aggregateDailyErrors,
   aggregateDailyTasks,
@@ -963,5 +964,32 @@ describe("costKnownByAgent", () => {
       new Set<string>(),
     );
     expect(map.get(DELETED_AGENTS_ROW_ID)).toBe(true);
+  });
+});
+
+describe("aggregateModelUsage", () => {
+  it("folds rows by provider and model and keeps tokens/tasks", () => {
+    const rows = aggregateModelUsage([
+      {
+        agent_id: "a1", provider: "dsh", model: "deepseek-flash",
+        input_tokens: 100, output_tokens: 20, cache_read_tokens: 80, cache_write_tokens: 0,
+        task_count: 2,
+      },
+      {
+        agent_id: "a2", provider: "dsh", model: "deepseek-flash",
+        input_tokens: 50, output_tokens: 10, cache_read_tokens: 40, cache_write_tokens: 0,
+        task_count: 1,
+      },
+      {
+        agent_id: "a1", provider: "codex", model: "gpt-6.1-sol",
+        input_tokens: 30, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0,
+        task_count: 1,
+      },
+    ]);
+    expect(rows).toHaveLength(2);
+    const dsh = rows.find((row) => row.provider === "dsh");
+    expect(dsh).toMatchObject({ model: "deepseek-flash", inputTokens: 150, outputTokens: 30, cacheReadTokens: 120, taskCount: 3 });
+    const codex = rows.find((row) => row.provider === "codex");
+    expect(codex).toMatchObject({ inputTokens: 30, outputTokens: 5, taskCount: 1 });
   });
 });

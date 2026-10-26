@@ -196,6 +196,54 @@ export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRo
   return Array.from(map.values()).toSorted((a, b) => b.cost - a.cost);
 }
 
+/** 按 (provider, model) 折叠用量行，供统计页的模型/运行时拆分使用。 */
+export interface ModelDashboardRow {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  taskCount: number;
+  cost: number;
+  uncostedTokens: number;
+}
+
+export function aggregateModelUsage(rows: DashboardUsageByAgent[]): ModelDashboardRow[] {
+  const map = new Map<string, ModelDashboardRow>();
+  for (const row of rows) {
+    const key = `${row.provider}\u0000${row.model}`;
+    const entry = map.get(key) ?? {
+      provider: row.provider,
+      model: row.model,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      taskCount: 0,
+      cost: 0,
+      uncostedTokens: 0,
+    };
+    entry.inputTokens += row.input_tokens;
+    entry.outputTokens += row.output_tokens;
+    entry.cacheReadTokens += row.cache_read_tokens;
+    entry.cacheWriteTokens += row.cache_write_tokens;
+    entry.taskCount += row.task_count;
+    entry.cost += estimateCost(row);
+    entry.uncostedTokens +=
+      (row.uncosted_input_tokens ?? 0) +
+      (row.uncosted_output_tokens ?? 0) +
+      (row.uncosted_cache_read_tokens ?? 0) +
+      (row.uncosted_cache_write_tokens ?? 0);
+    map.set(key, entry);
+  }
+  return Array.from(map.values()).toSorted(
+    (a, b) =>
+      b.inputTokens + b.outputTokens + b.cacheReadTokens + b.cacheWriteTokens -
+      (a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens),
+  );
+}
+
 /** 合并后的单 Agent 仪表盘行：token/成本 + 运行秒数 + 任务数。 */
 export interface AgentDashboardRow {
   agentId: string;

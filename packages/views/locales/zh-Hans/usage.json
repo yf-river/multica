@@ -108,5 +108,17 @@
   },
   "duration": {
     "less_than_minute": "<1分钟"
+  },
+  "models": {
+    "title": "模型与运行时",
+    "caption": "按 provider / model 拆分窗口内的 token、任务与缓存命中。",
+    "header_model": "模型",
+    "header_tasks": "任务",
+    "header_input": "输入",
+    "header_output": "输出",
+    "header_cache": "缓存读",
+    "header_cache_hit": "缓存命中",
+    "header_cost": "费用",
+    "uncosted": "（未计价 {tokens}）"
   }
 }

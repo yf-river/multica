@@ -43,6 +43,7 @@ import { useT } from "../../i18n";
 import {
   aggregateAgentFailures,
   aggregateAgentTokens,
+  aggregateModelUsage,
   aggregateDailyCost,
   aggregateDailyErrors,
   aggregateDailyTasks,
@@ -70,6 +71,7 @@ import {
 import { ProjectFilter, TimeRangeFilter } from "./dashboard-filters";
 import { UsageTrendCard } from "./usage-trend-card";
 import { Leaderboard } from "./leaderboard";
+import { ModelBreakdown } from "./model-breakdown";
 import { ErrorsTab } from "./errors-tab";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -226,6 +228,7 @@ export function DashboardPage() {
   const runTimeDailyRows = runTimeDailyQuery.data ?? EMPTY_RUNTIME_DAILY;
   const failureDailyRows = failuresDailyQuery.data ?? EMPTY_FAILURE_DAILY;
   const failureByAgentRows = failuresByAgentQuery.data ?? EMPTY_FAILURE_BY_AGENT;
+  const modelRows = useMemo(() => aggregateModelUsage(byAgentUsage), [byAgentUsage]);
 
   const queryClient = useQueryClient();
   // "Refreshing" 覆盖六个汇总任一在途的情况，无论刷新由什么触发（按钮、定时器、
@@ -612,6 +615,8 @@ export function DashboardPage() {
                   costKnown={costKnown}
                   costKnownByAgent={costKnownByAgent_}
                 />
+
+                <ModelBreakdown rows={modelRows} costKnown={costKnown} />
               </>
             )}
           </TabsContent>
