@@ -37,8 +37,10 @@ type ExecOptions struct {
 	Cwd                  string // 工作目录：agent 子进程在哪里启动
 	// Command is a runtime-native slash command (for example /plan or /goal).
 	// When set, the backend runs it against the session instead of a model turn.
-	Command string
-	Model   string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
+	Command     string
+	PlanMode    *bool  // 聊天控制面期望的计划模式；nil 表示没有显式选择。
+	CommandOnly bool   // 纯控制命令不启动模型生成。
+	Model       string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
 	// SystemPrompt 携带 Multica 的运行时简报（runtime brief），仅对少数无法
 	// 从磁盘读取该简报的 provider 有效。daemon 对其它所有 provider 都把它留空
 	// （见 daemon.providerNeedsInlineSystemPrompt），因为那份简报已经以"每次任务的

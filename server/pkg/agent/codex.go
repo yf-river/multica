@@ -1546,6 +1546,16 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			return
 		}
 		c.setThreadID(threadID)
+		commandOutput, commandErr := c.applyRuntimeCommand(runCtx, opts)
+		if commandErr != nil {
+			resCh <- Result{Status: "failed", Error: commandErr.Error(), SessionID: threadID, DurationMs: time.Since(startTime).Milliseconds()}
+			return
+		}
+		if opts.CommandOnly {
+			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: threadID})
+			resCh <- Result{Status: "completed", Output: commandOutput, SessionID: threadID, DurationMs: time.Since(startTime).Milliseconds()}
+			return
+		}
 		if resumed {
 			b.cfg.Logger.Info("codex thread resumed", "thread_id", threadID)
 		} else {
@@ -1569,6 +1579,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// Trump 要求三个注入点不得各自漂移）。
 		applyCodexReasoningEffort(turnParams, opts.ThinkingLevel)
 		applyCodexServiceTier(turnParams, opts.ServiceTier)
+		if err := applyCodexPlanMode(turnParams, opts); err != nil {
+			resCh <- Result{Status: "failed", Error: err.Error(), SessionID: threadID, DurationMs: time.Since(startTime).Milliseconds()}
+			return
+		}
 		waitingForTurn := true
 		var timeoutDiagnostic codexTimeoutDiagnostic
 		var processExitErr error
@@ -3358,6 +3372,10 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	switch method {
 	case "thread/tokenUsage/updated":
 		c.updateThreadTokenUsage(params)
+	case "thread/goal/updated", "thread/goal/cleared":
+		c.emitRuntime("goal", map[string]any{"event": method, "goal": params["goal"]})
+	case "turn/plan/updated":
+		c.emitRuntime("plan", map[string]any{"turn_id": params["turnId"], "plan": params["plan"], "explanation": params["explanation"]})
 
 	case "turn/started":
 		if turnID := extractNestedString(params, "turn", "id"); turnID != "" {
@@ -3598,6 +3616,14 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	}
 
 	switch {
+	case (method == "item/started" || method == "item/completed") && itemType == "contextCompaction":
+		phase := "start"
+		if method == "item/completed" {
+			phase = "end"
+		}
+		c.emitRuntime("compaction", map[string]any{"turn_id": params["turnId"], "item_id": itemID, "phase": phase})
+	case method == "item/completed" && itemType == "plan":
+		c.emitRuntime("plan", map[string]any{"turn_id": params["turnId"], "item_id": itemID, "text": item["text"], "phase": "completed"})
 	case method == "item/agentMessage/delta" && itemType == "agentMessage":
 		// JSON-RPC framing remains authoritative: handleLine invokes us only
 		// after a whole newline-delimited JSON event parsed successfully. Stream
@@ -3719,6 +3745,7 @@ func (c *codexClient) updateThreadTokenUsage(params map[string]any) {
 	total := codexRawTokenUsageFromV2(totalMap)
 	delta := codexRawTokenUsageFromV2(last)
 	c.usageMu.Lock()
+	duplicate := c.usageTotalSet && total == c.usageTotal
 	if c.usageTotalSet {
 		delta = subtractCodexRawTokenUsage(total, c.usageTotal)
 	}
@@ -3730,6 +3757,21 @@ func (c *codexClient) updateThreadTokenUsage(params map[string]any) {
 	c.usage.CacheReadTokens += delta.CachedInputTokens
 	c.usage.CacheWriteTokens += delta.CacheWriteInputTokens
 	c.usageMu.Unlock()
+	if !duplicate {
+		fields := map[string]any{
+			"turn_id": turnID, "scope": "turn_delta",
+			"input_tokens":  codexPlainInputTokens(delta.InputTokens, delta.CachedInputTokens, delta.CacheWriteInputTokens),
+			"output_tokens": delta.OutputTokens, "cache_read_tokens": delta.CachedInputTokens,
+			"cache_write_tokens": delta.CacheWriteInputTokens, "reasoning_tokens": delta.ReasoningOutputTokens,
+		}
+		if value, ok := last["totalTokens"]; ok {
+			fields["pressure_tokens"] = value
+		}
+		if window := codexInt64(tokenUsage, "modelContextWindow"); window > 0 {
+			fields["context_window"] = window
+		}
+		c.emitRuntime("context", fields)
+	}
 }
 
 func codexRawTokenUsageFromV2(usage map[string]any) codexRawTokenUsage {

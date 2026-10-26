@@ -63,12 +63,16 @@ var codebuddyBlockedArgs = map[string]blockedArgMode{
 // ExtraArgs 经 blocked 清单过滤后接上。ExtraArgs 是 daemon 自己注入的扩展参数，
 // CustomArgs 是用户配置的，二者分别过滤再拼接。
 func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
+	permissionMode := "bypassPermissions"
+	if opts.PlanMode != nil && *opts.PlanMode {
+		permissionMode = "plan"
+	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
 		"--verbose",
-		"--permission-mode", "bypassPermissions",
+		"--permission-mode", permissionMode,
 		// CodeBuddy 的交互式工具在 daemon 无头的 stream-json 传输下没有可渲染的 UI。
 		// AskUserQuestion 和 ExitPlanMode 都被排除在 CodeBuddy 的 permission-mode 终审
 		// 之外，所以 --permission-mode bypassPermissions 并不会自动批准它们——它们总会
@@ -232,13 +236,14 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
+	control := newCodebuddyControlClient(stdin)
 
 	// 把 prompt 放进独立 goroutine 写，防止死锁：CodeBuddy（同 Claude Code）会先把
 	// 启动横幅打到 stdout 再去读 stdin；若同步写，一旦管道缓冲填满就会卡死。写完 prompt
 	// 后 stdin 保持打开，这样运行中来的 control_request 事件还能被应答。
 	writeDone := make(chan error, 1)
 	go func() {
-		err := writeCodebuddyInput(stdin, prompt)
+		err := writeCodebuddyInput(control, prompt)
 		if err != nil {
 			closeStdin()
 		}
@@ -246,6 +251,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	}()
 
 	go func() {
+		defer control.close()
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
@@ -291,6 +297,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 				continue
 			}
 			eventCount++
+			control.observe(msg)
 
 			// `_requestId` 由子进程自己生成并写在 assistant/status/result 事件上，作为 provider 请求标识保存；
 			// AgentLens 的 trace/span 对应另行验收。取第一条非空值即可：同一个 CLI 进程只有一个
@@ -342,7 +349,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 					})
 				}
 			case "control_request":
-				b.handleControlRequest(msg, stdin)
+				b.handleControlRequest(msg, control)
+			case "control_response":
+				control.respond(msg.Response)
 			}
 		}
 		scanErr := scanner.Err()
@@ -469,7 +478,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		}
 	}()
 
-	return &Session{Messages: msgCh, Result: resCh}, nil
+	return &Session{Supplement: control.supplement, SupplementReady: control.ready, Messages: msgCh, Result: resCh}, nil
 }
 
 // handleAssistant 处理一条 assistant 事件：解析出内容块（文本 / 思考 / 工具调用），
@@ -514,6 +523,18 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 			u.CacheReadTokens += snapshot.CacheReadTokens - previous.CacheReadTokens
 			u.CacheWriteTokens += snapshot.CacheWriteTokens - previous.CacheWriteTokens
 			usage[content.Model] = u
+			if key.message != "" && snapshot != previous {
+				fields := map[string]any{
+					"session_id": msg.SessionID, "request_id": key.request, "item_id": key.message,
+					"model": content.Model, "scope": "request_delta",
+					"input_tokens":       snapshot.InputTokens - previous.InputTokens,
+					"output_tokens":      snapshot.OutputTokens - previous.OutputTokens,
+					"cache_read_tokens":  snapshot.CacheReadTokens - previous.CacheReadTokens,
+					"cache_write_tokens": snapshot.CacheWriteTokens - previous.CacheWriteTokens,
+					"pressure_tokens":    content.Usage.InputTokens + content.Usage.OutputTokens,
+				}
+				trySend(ch, runtimeTelemetry("codebuddy", "context", fields))
+			}
 		}
 	}
 
@@ -701,6 +722,7 @@ type codebuddySDKMessage struct {
 	// control_request 事件的字段
 	RequestID string          `json:"request_id,omitempty"`
 	Request   json.RawMessage `json:"request,omitempty"`
+	Response  json.RawMessage `json:"response,omitempty"`
 
 	// ProviderRequestID 是事件上的 `_requestId`：子进程为本次根请求生成的标识，
 	// 外部观测系统的具体解析对应须另行验证。它不是父进程环境里的

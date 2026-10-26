@@ -8065,6 +8065,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		TurnInterruptTimeout:       d.cfg.CodexTurnInterruptTimeout,
 		ThreadHandshakeTimeout:     d.cfg.CodexThreadHandshakeTimeout,
 		Command:                    task.Command,
+		PlanMode:                   task.PlanMode,
+		CommandOnly:                runtimeCommandOnly(task.Command, task.ChatMessage),
 		ResumeSessionID:            task.PriorSessionID,
 		// 门控后的意图：这里的 PriorSessionID 已经反映过 pre-flight resume 闸门
 		// （被丢弃的 resume 改经 prompt 浮出）。它能活到这里，backend 就必须在

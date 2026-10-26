@@ -491,9 +491,10 @@ type AgentTaskResponse struct {
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // 最近一次 @提及是否为线程内回复；告诉 agent 用 `multica chat thread` 还是 `multica chat history`
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // chat 任务的用户消息
 	Command                  string                 `json:"command,omitempty"`                     // 运行时原生斜杠命令（/plan、/goal）
-	ChatMessageIDs           []string               `json:"chat_message_ids,omitempty"`            // 封入本轮 chat 的用户消息 id
-	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // 用户消息上的附件——agent 逐个执行 `multica attachment download <id>`
-	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // 历史 is_agent_intro 会话的兼容字段；新建 agent 不再创建这类聊天
+	PlanMode                 *bool                  `json:"plan_mode,omitempty"`
+	ChatMessageIDs           []string               `json:"chat_message_ids,omitempty"`         // 封入本轮 chat 的用户消息 id
+	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"` // 用户消息上的附件——agent 逐个执行 `multica attachment download <id>`
+	ChatIntro                bool                   `json:"chat_intro,omitempty"`               // 历史 is_agent_intro 会话的兼容字段；新建 agent 不再创建这类聊天
 	// IsCompanion 与 LifeContext 标识受管控的 Life 聊天/后台运行。daemon 每次
 	// 运行都从 Multica 数据重建该上下文。
 	IsCompanion             bool            `json:"is_companion,omitempty"`

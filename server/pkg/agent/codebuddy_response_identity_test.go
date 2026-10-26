@@ -17,8 +17,17 @@ func TestCodebuddySDKResponseIdentityDoesNotDoubleCountOrInventTrace(t *testing.
 	if got := usage["deepseek-v4.1-flash"]; got != want {
 		t.Fatalf("usage = %+v, want %+v", got, want)
 	}
-	if len(ch) != 2 {
-		t.Fatalf("duplicate usage must not drop visible content: %d", len(ch))
+	visible, telemetry := 0, 0
+	for len(ch) > 0 {
+		switch (<-ch).Type {
+		case MessageText:
+			visible++
+		case MessageRuntime:
+			telemetry++
+		}
+	}
+	if visible != 2 || telemetry != 1 {
+		t.Fatalf("visible content or deduplicated telemetry lost: visible=%d telemetry=%d", visible, telemetry)
 	}
 	if streamIdentityComplete(usage, calls) {
 		t.Fatal("SDK response ID cannot prove external request identity")

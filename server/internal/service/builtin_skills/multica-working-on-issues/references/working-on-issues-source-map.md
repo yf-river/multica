@@ -264,3 +264,4 @@ Complete tool output pagination and search: `server/cmd/multica/cmd_issue.go` (`
 - 差异采集与附件输入基线：`internal/codediff/`、`internal/daemon/run_capture.go`、`cmd_attachment.go`；外部目录标记共享归属，不用当前工作树回填历史。
 - 完成材料冻结：`internal/supervision/round.go`；证据与阅读进度绑定完成轮次。
 - 操作和兼容边界：`docs/operations/environment-releases.md` 的 GONG-78 章节。
+- Runtime context pagination and metric scope: `server/internal/handler/task_context.go` and `server/pkg/agent/{runtime_telemetry,codex,codebuddy}.go`; `after` / `limit`, `has_more` / `next_cursor`; missing metrics stay unknown; context snapshots are distinct from model-call counts.

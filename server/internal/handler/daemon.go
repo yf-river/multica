@@ -3295,11 +3295,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.ChatMessage = strings.Join(parts, "\n\n")
 		resp.Command = chatRuntimeCommand(unanswered)
+		controlHistory, controlHistoryErr := h.Queries.ListChatMessages(r.Context(), cs.ID)
+		if controlHistoryErr == nil {
+			resp.PlanMode = chatPlanModeSelection(controlHistory)
+		}
 		// Plan mode is a chat-session mode, but a bare /plan task has no turn to
 		// persist it. Replay the toggle before the next message so the mode
 		// survives across tasks; /plan off arrives as its own command above.
 		if resp.Command == "" {
-			if history, historyErr := h.Queries.ListChatMessages(r.Context(), cs.ID); historyErr == nil {
+			if controlHistoryErr == nil {
+				history := controlHistory
 				if chatPlanModeActive(history) {
 					resp.Command = "/plan"
 				} else if goalLine, goalAt := latestReplayableGoalCommand(history); goalLine != "" && !goalAt.IsZero() {
@@ -6778,6 +6783,21 @@ func chatPlanModeActive(messages []db.ChatMessage) bool {
 		}
 	}
 	return active
+}
+
+// 模式和目标分别下发，避免设置目标时覆盖会话已选择的计划模式。
+func chatPlanModeSelection(messages []db.ChatMessage) *bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		line := strings.TrimSpace(messages[i].Content)
+		if line == "/plan" || strings.HasPrefix(line, "/plan ") {
+			active := line != "/plan off"
+			return &active
+		}
+	}
+	return nil
 }
 
 // latestReplayableGoalCommand returns the most recent goal-setting command and

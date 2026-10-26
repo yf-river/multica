@@ -2693,9 +2693,9 @@ export class ApiClient {
   }
 
   /** 读取一次运行的运行时上下文遥测（context / compaction 帧）。 */
-  async getTaskContext(issueId: string, taskId: string): Promise<TaskContextResponse> {
+  async getTaskContext(issueId: string, taskId: string, after?: string): Promise<TaskContextResponse> {
     const raw = await this.fetch<unknown>(
-      `/api/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(taskId)}/context`,
+      `/api/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(taskId)}/context${after ? `?after=${encodeURIComponent(after)}` : ""}`,
     );
     return parseWithFallback<TaskContextResponse>(
       raw,

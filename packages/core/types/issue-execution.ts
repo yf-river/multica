@@ -163,4 +163,6 @@ export interface TaskContextEvent {
 /** 单次运行的上下文遥测响应。 */
 export interface TaskContextResponse {
   events: TaskContextEvent[];
+  next_cursor?: string;
+  has_more?: boolean;
 }

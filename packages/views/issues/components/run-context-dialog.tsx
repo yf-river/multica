@@ -7,9 +7,10 @@
 // 这里只做只读汇总，不参与运行控制。
 
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { taskContextOptions } from "@multica/core/issues/queries";
-import type { TaskContextEvent } from "@multica/core/types/issue-execution";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { summarizeTaskContext } from "@multica/core/issues/runtime-context";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +18,7 @@ import {
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../i18n";
 
 interface RunContextDialogProps {
@@ -26,15 +28,13 @@ interface RunContextDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-function num(value: number | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function compact(value: number): string {
+function compact(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-function duration(ms: number): string {
+function duration(ms: number | undefined): string {
+  if (ms === undefined || !Number.isFinite(ms)) return "—";
   if (ms <= 0) return "0s";
   if (ms < 1000) return `${Math.round(ms)}ms`;
   const sec = ms / 1000;
@@ -42,47 +42,13 @@ function duration(ms: number): string {
   return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
 }
 
-function cacheRate(contexts: TaskContextEvent[]): number | null {
-  let read = 0;
-  let input = 0;
-  for (const event of contexts) {
-    read += num(event.cache_read_tokens);
-    input += num(event.input_tokens);
-  }
-  const total = read + input;
-  return total > 0 ? read / total : null;
-}
-
 export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunContextDialogProps) {
   const { t } = useT("issues");
-  const query = useQuery({ ...taskContextOptions(issueId, taskId), enabled: open && Boolean(issueId && taskId) });
-  const events = query.data?.events ?? [];
-  const contexts = useMemo(() => events.filter((event) => event.kind === "context"), [events]);
-  const compactions = useMemo(() => events.filter((event) => event.kind === "compaction"), [events]);
-
-  const summary = useMemo(() => {
-    let peak = 0;
-    let window = 0;
-    let modelMs = 0;
-    let input = 0;
-    let output = 0;
-    let read = 0;
-    let system = 0;
-    let tools = 0;
-    let messages = 0;
-    for (const event of contexts) {
-      peak = Math.max(peak, num(event.pressure_tokens));
-      window = Math.max(window, num(event.context_window));
-      modelMs += num(event.duration_ms);
-      input += num(event.input_tokens);
-      output += num(event.output_tokens);
-      read += num(event.cache_read_tokens);
-      system = num(event.breakdown?.system_tokens) || system;
-      tools = num(event.breakdown?.tools_tokens) || tools;
-      messages = num(event.breakdown?.message_tokens) || messages;
-    }
-    return { peak, window, modelMs, input, output, read, system, tools, messages, rate: cacheRate(contexts) };
-  }, [contexts]);
+  const wsId = useWorkspaceId();
+  const query = useInfiniteQuery({ ...taskContextOptions(wsId, issueId, taskId), enabled: open && Boolean(wsId && issueId && taskId) });
+  const events = useMemo(() => query.data?.pages.flatMap((page) => page.events) ?? [], [query.data]);
+  const summary = useMemo(() => summarizeTaskContext(events), [events]);
+  const { contexts, compactions } = summary;
 
   const recent = contexts.slice(-8).reverse();
 
@@ -94,7 +60,12 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
         </DialogHeader>
         {query.isLoading ? (
           <Skeleton className="h-40 w-full" />
-        ) : events.length === 0 ? (
+        ) : query.isError && events.length === 0 ? (
+          <div role="alert" className="space-y-2 py-4">
+            <p className="text-body">{t(($) => $.execution_log.context_load_error)}</p>
+            <Button variant="outline" onClick={() => void query.refetch()}>{t(($) => $.execution_log.context_retry)}</Button>
+          </div>
+        ) : events.length === 0 && !query.hasNextPage ? (
           <p className="py-6 text-body text-muted-foreground">{t(($) => $.execution_log.context_empty)}</p>
         ) : (
           <div className="space-y-4">
@@ -103,15 +74,15 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
               <Metric label={t(($) => $.execution_log.context_peak)} value={compact(summary.peak)} />
               <Metric label={t(($) => $.execution_log.context_window)} value={compact(summary.window)} />
               <Metric label={t(($) => $.execution_log.context_model_time)} value={duration(summary.modelMs)} />
-              <Metric label={t(($) => $.execution_log.context_cache_hit)} value={summary.rate === null ? "—" : `${Math.round(summary.rate * 100)}%`} />
+              <Metric label={t(($) => $.execution_log.context_cache_hit)} value={summary.rate === undefined ? "—" : `${Math.round(summary.rate * 100)}%`} />
               <Metric label={t(($) => $.execution_log.context_compactions)} value={String(compactions.filter((event) => event.phase === "end").length)} />
             </div>
             <div className="rounded-md border p-3 text-body">
               <div className="text-caption text-muted-foreground">{t(($) => $.execution_log.context_breakdown)}</div>
               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
-                <span>system {compact(summary.system)}</span>
-                <span>tools {compact(summary.tools)}</span>
-                <span>messages {compact(summary.messages)}</span>
+                <span>{t(($) => $.execution_log.context_system)} {compact(summary.system)}</span>
+                <span>{t(($) => $.execution_log.context_tools)} {compact(summary.tools)}</span>
+                <span>{t(($) => $.execution_log.context_messages)} {compact(summary.messages)}</span>
                 <span className="text-muted-foreground">
                   {t(($) => $.execution_log.context_tokens)}: {compact(summary.input)} / {compact(summary.output)} / {compact(summary.read)}
                 </span>
@@ -122,8 +93,8 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
                 {compactions.slice(-4).map((event, index) => (
                   <div key={`${event.at ?? index}-${event.phase ?? ""}`} className="text-caption text-muted-foreground">
                     {event.phase === "end"
-                      ? `${compact(num(event.before_tokens))} → ${compact(num(event.after_tokens))} ${event.reason ?? ""}`
-                      : `compaction start: ${compact(num(event.before_tokens))}`}
+                      ? `${compact(event.before_tokens)} → ${compact(event.after_tokens)} ${event.reason ?? ""}`
+                      : `${t(($) => $.execution_log.context_compaction_start)}: ${compact(event.before_tokens)}`}
                   </div>
                 ))}
               </div>
@@ -134,7 +105,7 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
                 <table className="w-full text-caption tabular-nums">
                   <thead>
                     <tr className="text-left text-muted-foreground">
-                      <th className="py-1 pr-2 font-normal">model</th>
+                      <th className="py-1 pr-2 font-normal">{t(($) => $.execution_log.context_model)}</th>
                       <th className="py-1 pr-2 font-normal">{t(($) => $.execution_log.context_duration)}</th>
                       <th className="py-1 pr-2 font-normal">{t(($) => $.execution_log.context_pressure)}</th>
                       <th className="py-1 pr-2 font-normal">{t(($) => $.execution_log.context_tokens)}</th>
@@ -144,10 +115,10 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
                     {recent.map((event, index) => (
                       <tr key={`${event.seq ?? index}`} className="border-t">
                         <td className="py-1 pr-2">{event.model ?? "—"}</td>
-                        <td className="py-1 pr-2">{duration(num(event.duration_ms))}</td>
-                        <td className="py-1 pr-2">{compact(num(event.pressure_tokens))}</td>
+                        <td className="py-1 pr-2">{typeof event.duration_ms === "number" ? duration(event.duration_ms) : "—"}</td>
+                        <td className="py-1 pr-2">{typeof event.pressure_tokens === "number" ? compact(event.pressure_tokens) : "—"}</td>
                         <td className="py-1 pr-2">
-                          {compact(num(event.input_tokens))} / {compact(num(event.output_tokens))} / {compact(num(event.cache_read_tokens))}
+                          {compact(event.input_tokens)} / {compact(event.output_tokens)} / {compact(event.cache_read_tokens)}
                         </td>
                       </tr>
                     ))}
@@ -155,6 +126,15 @@ export function RunContextDialog({ issueId, taskId, open, onOpenChange }: RunCon
                 </table>
               </div>
             </div>
+            {query.hasNextPage && (
+              <div className="space-y-2">
+                <p className="text-caption text-muted-foreground">{t(($) => $.execution_log.context_partial)}</p>
+                {query.isFetchNextPageError && <p role="alert" className="text-body">{t(($) => $.execution_log.context_load_error)}</p>}
+                <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+                  {query.isFetchingNextPage ? t(($) => $.execution_log.context_loading) : t(($) => $.execution_log.context_load_more)}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </DialogContent>

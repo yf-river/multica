@@ -168,9 +168,10 @@ type Task struct {
 	ChatInThread             bool                 `json:"chat_in_thread,omitempty"`              // 最新一次 @ 提及是楼层回复时为 true；决定 prompt 让 agent 先用哪条读取命令
 	ChatMessage              string               `json:"chat_message,omitempty"`                // chat 任务的用户消息内容
 	Command                  string               `json:"command,omitempty"`                     // 运行时原生斜杠命令（/plan、/goal）
-	ChatMessageIDs           []string             `json:"chat_message_ids,omitempty"`            // 封进本回合的用户消息 id
-	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // 关联到 chat 消息的附件；agent 用它们执行 `multica attachment download <id>`
-	ChatIntro                bool                 `json:"chat_intro,omitempty"`                  // 对历史 is_agent_intro 会话的兼容遗留；新建 agent 不再产生这类 chat
+	PlanMode                 *bool                `json:"plan_mode,omitempty"`
+	ChatMessageIDs           []string             `json:"chat_message_ids,omitempty"`         // 封进本回合的用户消息 id
+	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"` // 关联到 chat 消息的附件；agent 用它们执行 `multica attachment download <id>`
+	ChatIntro                bool                 `json:"chat_intro,omitempty"`               // 对历史 is_agent_intro 会话的兼容遗留；新建 agent 不再产生这类 chat
 	// IsCompanion 标记一种必须使用“受管辖的 Life 上下文”而非 provider 自有历史的
 	// chat 或后台认知任务。
 	IsCompanion  bool            `json:"is_companion,omitempty"`

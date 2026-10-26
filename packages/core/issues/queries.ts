@@ -174,8 +174,8 @@ export const issueKeys = {
   tasks: (issueId: string) => [...issueKeys.tasksAll(), issueId] as const,
   executionTreeAll: () => ["issues", "execution-tree"] as const,
   executionTree: (issueId: string) => [...issueKeys.executionTreeAll(), issueId] as const,
-  taskContext: (issueId: string, taskId: string) =>
-    [...issueKeys.executionTreeAll(), "context", issueId, taskId] as const,
+  taskContext: (wsId: string, issueId: string, taskId: string) =>
+    [...issueKeys.executionTreeAll(), "context", wsId, issueId, taskId] as const,
   sourceContextPreview: (wsId: string, anchorCommentId: string) =>
     ["source-context", "preview", wsId, anchorCommentId] as const,
 };
@@ -497,11 +497,13 @@ export function issueExecutionTreeOptions(issueId: string) {
 }
 
 /** 单次运行的上下文遥测：仅在打开运行详情时请求。 */
-export function taskContextOptions(issueId: string, taskId: string) {
-  return queryOptions({
-    queryKey: issueKeys.taskContext(issueId, taskId),
-    queryFn: () => api.getTaskContext(issueId, taskId),
-    enabled: Boolean(issueId && taskId),
+export function taskContextOptions(wsId: string, issueId: string, taskId: string) {
+  return infiniteQueryOptions({
+    queryKey: issueKeys.taskContext(wsId, issueId, taskId),
+    queryFn: ({ pageParam }) => api.getTaskContext(issueId, taskId, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.has_more === true && page.next_cursor ? page.next_cursor : undefined,
+    enabled: Boolean(wsId && issueId && taskId),
   });
 }
 
