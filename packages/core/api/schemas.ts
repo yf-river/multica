@@ -3425,6 +3425,8 @@ export const TestAgentControlCapabilitySchema = z.object({ available: z.boolean(
 export const TaskContextEventSchema = z.object({ kind: z.string() }).passthrough();
 export const TaskContextResponseSchema = z.object({
   events: z.array(TaskContextEventSchema),
+  next_cursor: z.string().optional(),
+  has_more: z.boolean().optional(),
 }).loose();
 
 /** 工作区知识库状态（失败时也返回 200，healthy=false）。 */

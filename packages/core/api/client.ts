@@ -253,6 +253,9 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
 import type { IssueExecutionTreeResponse, TaskContextResponse } from "../types/issue-execution";
+import type { InteractionAnswer, TaskInteraction, TaskInteractionList } from "../types/task-interaction";
+import { TaskInteractionSchema, TaskInteractionListSchema } from "./task-interaction-schema";
+import { RuntimeInputSchema, RuntimeInputPageSchema, RuntimeInputCapabilitiesSchema, type RuntimeInput, type RuntimeInputPage, type RuntimeInputCapabilities, type CreateRuntimeInput } from "./runtime-input-schema";
 import type { KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus, KnowledgeUploadResponse } from "../types/knowledge";
 import {
   AgentTaskListSchema,
@@ -2693,16 +2696,58 @@ export class ApiClient {
   }
 
   /** 读取一次运行的运行时上下文遥测（context / compaction 帧）。 */
-  async getTaskContext(issueId: string, taskId: string): Promise<TaskContextResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(taskId)}/context`,
-    );
-    return parseWithFallback<TaskContextResponse>(
-      raw,
-      TaskContextResponseSchema,
-      { events: [] },
-      { endpoint: "GET /api/issues/:id/tasks/:taskId/context" },
-    );
+  async getTaskContext(issueId: string, taskId: string, after?: string): Promise<TaskContextResponse> {
+    const path = issueId
+      ? `/api/issues/${encodeURIComponent(issueId)}/tasks/${encodeURIComponent(taskId)}/context`
+      : `/api/tasks/${encodeURIComponent(taskId)}/context`;
+    const raw = await this.fetch<unknown>(`${path}${after ? `?after=${encodeURIComponent(after)}` : ""}`);
+    const parsed = TaskContextResponseSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("Invalid runtime context response");
+    return parsed.data;
+  }
+
+  async getTaskInteractions(taskId: string): Promise<TaskInteractionList> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/interactions`);
+    return parseWithFallback(raw, TaskInteractionListSchema, { interactions: [], available: false }, {
+      endpoint: "GET /api/tasks/:taskId/interactions",
+    });
+  }
+
+  async getRuntimeInputCapabilities(taskId: string): Promise<RuntimeInputCapabilities> {
+    try {
+      const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/runtime-inputs/capabilities`);
+      return parseWithFallback(raw, RuntimeInputCapabilitiesSchema, { capabilities: [], available: false }, {
+        endpoint: "GET /api/tasks/:taskId/runtime-inputs/capabilities",
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return { capabilities: [], available: false };
+      throw error;
+    }
+  }
+
+  async getRuntimeInputs(taskId: string, cursor = ""): Promise<RuntimeInputPage> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/runtime-inputs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+    return parseWithFallback(raw, RuntimeInputPageSchema, { inputs: [], nextCursor: "", available: false }, {
+      endpoint: "GET /api/tasks/:taskId/runtime-inputs",
+    });
+  }
+
+  async createRuntimeInput(taskId: string, input: CreateRuntimeInput): Promise<RuntimeInput | null> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/runtime-inputs`, {
+      method: "POST", body: JSON.stringify(input),
+    });
+    return parseWithFallback(raw, RuntimeInputSchema.nullable(), null, {
+      endpoint: "POST /api/tasks/:taskId/runtime-inputs",
+    });
+  }
+
+  async respondTaskInteraction(taskId: string, interactionId: string, answer: InteractionAnswer): Promise<TaskInteraction | null> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/interactions/${encodeURIComponent(interactionId)}/respond`, {
+      method: "POST", body: JSON.stringify(answer),
+    });
+    return parseWithFallback(raw, TaskInteractionSchema.nullable(), null, {
+      endpoint: "POST /api/tasks/:taskId/interactions/:interactionId/respond",
+    });
   }
 
   /** 列出外部凭证配置；可按 provider 过滤。 */

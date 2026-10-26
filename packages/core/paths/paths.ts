@@ -18,6 +18,14 @@ export const LIFE_TABS = ["memory", "experiment", "observers", "chronicle"] as c
 export type LifeTab = (typeof LIFE_TABS)[number];
 
 /**
+ * 解析 `?tab=` 里的 life 标签；缺省或非法值回退到 `memory`（页面的默认标签）。
+ * 页面与侧边栏高亮共用这一处解析，避免两边对「当前标签」的判断漂移。
+ */
+export function parseLifeTab(value: string | null | undefined): LifeTab {
+  return LIFE_TABS.includes(value as LifeTab) ? (value as LifeTab) : "memory";
+}
+
+/**
  * `?focus=` 令牌：把 agent 的 Instructions 标签页滚到它的 conversation
  * starters 编辑器并闪烁提示。放在这里是因为它是 URL 词汇：`agentConversation
  * Starters()` 写它、标签页读它，共享常量才能防止两者漂移。

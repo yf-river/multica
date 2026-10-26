@@ -123,5 +123,44 @@
   },
   "navigation": {
     "open_in_new_tab": "在新标签页打开"
+  },
+  "runtime_input": {
+    "history": "本轮追加与控制",
+    "load_error": "暂时无法读取本轮输入。",
+    "empty": "没有追加或控制记录。",
+    "pending": "等待投递",
+    "delivering": "正在投递，等待原生确认",
+    "delivered": "已确认投递",
+    "uncertain": "投递结果未知，未自动重发",
+    "ended": "本轮已结束，未投递",
+    "failed": "投递失败",
+    "unknown": "输入状态暂时无法确认",
+    "load_older": "加载更早的输入",
+    "command_label": "控制本轮（/plan 或 /goal）",
+    "command_placeholder": "/goal pause",
+    "invalid_command": "请输入 /plan、/plan off 或 /goal 命令。",
+    "send_command": "发送控制命令",
+    "save_error": "未能确认命令是否保存。原文已保留，请核对记录后重试。"
+  },
+  "runtime_interaction": {
+    "all_history": "本次执行的输入与确认记录",
+    "load_error": "暂时无法读取待确认事项。",
+    "retry": "重试",
+    "history": "本次执行的问答与确认记录",
+    "saved": "回答已保存",
+    "expired": "请求已失效",
+    "declined": "已拒绝",
+    "allowed": "已允许",
+    "other_answer": "或填写自己的回答",
+    "answer": "回答",
+    "save_error": "回答未能保存，请重试；请求可能已结束。",
+    "unsupported": "此请求暂不支持在当前页面回答。",
+    "saving": "正在保存…",
+    "submit": "提交回答",
+    "execute": "开始执行",
+    "allow": "允许本次操作",
+    "deny": "拒绝",
+    "empty": "没有问答或确认记录。",
+    "unknown": "请求状态暂时无法确认"
   }
 }

@@ -171,6 +171,9 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 // Qwen:       写 {workDir}/QWEN.md（Qwen Code 的原生上下文文件；它也读 AGENTS.md，但用 QWEN.md 可避开跨运行时歧义）
 func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (string, error) {
 	content := buildMetaSkillContent(provider, ctx)
+	if provider == "codebuddy" && ctx.CodebuddyBriefViaHook {
+		return content, CleanupRuntimeConfig(workDir, provider)
+	}
 	path := runtimeConfigPath(workDir, provider)
 	if path == "" {
 		// 未知 provider——跳过配置注入，仅走提示词内联模式。

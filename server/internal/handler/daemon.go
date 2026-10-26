@@ -3296,11 +3296,23 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.ChatMessage = strings.Join(parts, "\n\n")
 		resp.Command = chatRuntimeCommand(unanswered)
-		// Plan mode is a chat-session mode, but a bare /plan task has no turn to
-		// persist it. Replay the toggle before the next message so the mode
-		// survives across tasks; /plan off arrives as its own command above.
-		if resp.Command == "" {
-			if history, historyErr := h.Queries.ListChatMessages(r.Context(), cs.ID); historyErr == nil {
+		if (runtime.Provider == "codex" || runtime.Provider == "codebuddy") && len(unanswered) > 0 {
+			selection, selectionErr := h.Queries.GetChatRuntimeSelection(r.Context(), db.GetChatRuntimeSelectionParams{
+				ChatSessionID: cs.ID, InputMessageID: unanswered[len(unanswered)-1].ID,
+			})
+			if selectionErr != nil {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, selectionErr, "chat runtime selection", uuidToString(cs.ID))
+			}
+			if selection.HasPlanMode {
+				resp.PlanMode = &selection.PlanMode
+			}
+			resp.NativeGoal = runtime.Provider == "codebuddy" && selection.NativeGoal
+		}
+		// DSH 以命令恢复未物化的会话；Codex 和 CodeBuddy 使用独立模式与原生会话状态。
+		if resp.Command == "" && runtime.Provider == "dsh" {
+			controlHistory, controlHistoryErr := h.Queries.ListChatMessages(r.Context(), cs.ID)
+			if controlHistoryErr == nil {
+				history := controlHistory
 				if chatPlanModeActive(history) {
 					resp.Command = "/plan"
 				} else if goalLine, goalAt := latestReplayableGoalCommand(history); goalLine != "" && !goalAt.IsZero() {
@@ -3760,6 +3772,9 @@ ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID)).Scan(&deliveryI
 		} else if !errors.Is(pauseErr, pgx.ErrNoRows) {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, pauseErr, "release resume", uuidToString(task.ID))
 		}
+	}
+	if err := h.resolveCodexSessionSource(r.Context(), *task, runtime, &resp); err != nil {
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, err, "native session source", uuidToString(task.ID))
 	}
 	// Last gate before dispatch: refuse to hand a worktree-mode local_directory
 	// task to a daemon that cannot implement the mode.
@@ -6381,61 +6396,11 @@ func (h *Handler) hydrateTaskTraces(ctx context.Context, issueID pgtype.UUID, re
 // Verifies the task belongs to the caller's workspace.
 func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
-	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
+	task, ok := h.loadTaskForUser(w, r, taskID)
 	if !ok {
 		return
 	}
-
-	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
-	if err != nil {
-		if !isNotFound(err) {
-			slog.Warn("get agent task failed", "task_id", taskID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to load task")
-			return
-		}
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-
-	// Verify the task belongs to the caller's workspace. A failed lookup is a
-	// 5xx here too: this endpoint does not drive the daemon's interrupt, but
-	// telling a reader "this task does not exist" because the DB blinked is
-	// the same lie, and it trains clients to give up on a retryable error.
-	wsID, err := h.TaskService.ResolveTaskWorkspaceIDChecked(r.Context(), task)
-	if err != nil {
-		slog.Warn("resolve task workspace failed", "task_id", taskID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to load task")
-		return
-	}
-	// Mismatch stays a 404 rather than a 403: a task in another workspace must
-	// be indistinguishable from one that does not exist.
-	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-	if task.IssueID.Valid {
-		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
-		if err != nil || !healthIssueVisible(issue, requestUserID(r)) {
-			writeError(w, 404, "task not found")
-			return
-		}
-	}
-
-	if task.ChatSessionID.Valid {
-		if r.Header.Get("X-Actor-Source") == "task_token" {
-			sourceID, valid := parseUUIDOrBadRequest(w, r.Header.Get("X-Task-ID"), "task_id")
-			if !valid {
-				return
-			}
-			source, err := h.Queries.GetAgentTask(r.Context(), sourceID)
-			if err != nil || !rerunSourceMatchesTaskScope(task, source) {
-				writeError(w, http.StatusForbidden, "not your chat session")
-				return
-			}
-		} else if _, ok := h.gateChatSessionForUser(w, r, requestUserID(r), wsID, uuidToString(task.ChatSessionID)); !ok {
-			return
-		}
-	}
+	taskUUID := task.ID
 
 	if r.URL.Query().Has("output_id") {
 		h.readTaskOutput(w, r, taskUUID)

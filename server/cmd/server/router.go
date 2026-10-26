@@ -1378,6 +1378,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
+		r.Post("/tasks/{taskId}/runtime-inputs/capabilities", h.RegisterTaskRuntimeCapability)
+		r.Post("/tasks/{taskId}/runtime-inputs/claim", h.ClaimTaskRuntimeInput)
+		r.Post("/tasks/{taskId}/runtime-inputs/{inputId}/ack", h.AckTaskRuntimeInput)
 		r.Post("/tasks/{taskId}/supplements/claim", h.ClaimTaskSupplement)
 		r.Post("/tasks/{taskId}/supplements/{commentId}/ack", h.AckTaskSupplement)
 		r.Post("/tasks/{taskId}/wait-local-directory", h.MarkTaskWaitingLocalDirectory)
@@ -1387,6 +1390,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/traces", h.ReportTaskTraces)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
+		r.Post("/tasks/{taskId}/interactions", h.CreateTaskInteraction)
+		r.Get("/tasks/{taskId}/interactions/{interactionId}", h.GetTaskInteractionByDaemon)
+		r.Post("/tasks/{taskId}/interactions/{interactionId}/expire", h.ExpireTaskInteraction)
+		r.Post("/tasks/{taskId}/interactions/{interactionId}/lease", h.RenewTaskInteractionLease)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
 		r.Post("/tasks/{taskId}/release-pause-ack", h.AckReleasePause)
@@ -1836,6 +1843,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/runs/{runId}/fail", h.FailUpstreamRun)
 			})
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/interactions", h.ListTaskInteractions)
+			r.Get("/api/tasks/{taskId}/runtime-inputs", h.ListTaskRuntimeInputs)
+			r.Get("/api/tasks/{taskId}/runtime-inputs/capabilities", h.GetTaskRuntimeCapabilities)
+			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/runtime-inputs", h.CreateTaskRuntimeInput)
+			r.Get("/api/tasks/{taskId}/context", h.GetTaskContextByUser)
+			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/interactions/{interactionId}/respond", h.RespondTaskInteraction)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
 			// Issue quick action（定义；运行在 /api/issues/{id}/quick-actions/{quickActionId}/run 之下）

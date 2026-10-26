@@ -6,13 +6,13 @@ package agent
 // system / result / log / control_request 等），prompt 作为一条 user 事件写进 stdin。
 //
 // 与 claude.go 的执行模型同构：stdin/stdout 并发读写避免管道死锁；写完后不关闭
-// stdin，保持开放以在运行中应答 control_request 的自动批准；用 runContext 实现
+// stdin，保持开放以在运行中应答 control_request；用 runContext 实现
 // 「零超时 = 不设截止时间」的语义。
 //
 // 执行流程：Execute 拼好参数拉起进程 → 独立 goroutine 先把 prompt 写进 stdin → 主
 // goroutine 循环读 stdout 事件：assistant 消息拆出文本/思考/工具调用并推送；user 消
-// 息里的 tool_result 回填工具结果；result 事件汇总终态与用量；control_request 一律
-// 自动批准 → 进程退出后用 finalizeStreamResult 把各类信号综合成最终状态
+// 息里的 tool_result 回填工具结果；result 事件汇总终态与用量；交互任务将权限请求
+// 交给用户确认 → 进程退出后用 finalizeStreamResult 把各类信号综合成最终状态
 // （completed/failed/timeout/aborted），连同会话 ID、token 用量一起放进 Result。
 //
 // 会话续跑用 --resume；daemon 判定续跑被拒（resumeWasRejected）时会在 Result 里置
@@ -33,7 +33,7 @@ import (
 // codebuddyBackend 实现 Backend 接口：以 --output-format stream-json 拉起 CodeBuddy
 // CLI（Claude Code 的一个分支）。
 // 与 claude.go 的执行模型一致：stdin/stdout 并发读写避免管道死锁；stdin 保持打开以便
-// 应答 control_request 的自动批准；用 runContext 实现「零超时 = 无截止时间」的语义。
+// 应答 control_request；用 runContext 实现「零超时 = 无截止时间」的语义。
 type codebuddyBackend struct {
 	cfg Config
 }
@@ -41,10 +41,20 @@ type codebuddyBackend struct {
 // codebuddyBlockedArgs 是 daemon 写死的参数清单，用户配置的 custom_args 不得覆盖它们。
 // 覆盖这些参数会破坏 daemon ↔ codebuddy 之间的通信协议，或绕过运行安全约束。
 var codebuddyBlockedArgs = map[string]blockedArgMode{
+	"--acp":          blockedStandalone,
+	"--serve":        blockedStandalone,
+	"--print":        blockedStandalone,
+	"--resume":       blockedWithValue,
+	"-r":             blockedWithValue,
+	"--continue":     blockedStandalone,
+	"-c":             blockedStandalone,
+	"--session-id":   blockedWithValue,
+	"--fork-session": blockedStandalone,
+
 	"-p":                       blockedStandalone, // 非交互模式
 	"--output-format":          blockedWithValue,  // stream-json 协议所必需
 	"--input-format":           blockedWithValue,  // stream-json 协议所必需
-	"--permission-mode":        blockedWithValue,  // 由 bypassPermissions 接管，保证自主运行
+	"--permission-mode":        blockedWithValue,  // 由本轮审批策略接管
 	"--mcp-config":             blockedWithValue,  // 由 daemon 依据 agent.mcp_config 注入
 	"--tools":                  blockedWithValue,  // 「生命认知」任务可能关掉内置工具
 	"--allowedTools":           blockedWithValue,  // 绝不让 custom_args 扩大 Life 的访问面
@@ -58,29 +68,22 @@ var codebuddyBlockedArgs = map[string]blockedArgMode{
 
 // buildCodebuddyArgs 根据 ExecOptions 拼出 codebuddy 的一次性命令行参数。
 //
-// 固定前缀保证走 stream-json 协议并以 bypassPermissions 无人值守运行；随后按需追加
+// 固定前缀设置 stream-json 协议与本轮审批策略；随后按需追加
 // 模型、思考强度、最大回合数、系统提示词、续跑会话等；最后把用户 custom_args 与
 // ExtraArgs 经 blocked 清单过滤后接上。ExtraArgs 是 daemon 自己注入的扩展参数，
 // CustomArgs 是用户配置的，二者分别过滤再拼接。
 func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
+	permissionMode := codebuddyPermissionMode(opts)
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
 		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		// CodeBuddy 的交互式工具在 daemon 无头的 stream-json 传输下没有可渲染的 UI。
-		// AskUserQuestion 和 ExitPlanMode 都被排除在 CodeBuddy 的 permission-mode 终审
-		// 之外，所以 --permission-mode bypassPermissions 并不会自动批准它们——它们总会
-		// 走到权限桥，然后卡住回合、等一个永远不会有人给的确认（GitHub #6012）。
-		// EnterPlanMode 与它们一起被禁用：留着它，模型会进入一个「进去后没有工具能出
-		// 来」的计划模式。计划形态的工作仍然会发生——计划以普通 assistant 输出的形式
-		// 写出，而不是挡在一个审批闸门后面。
-		//
-		// 每个工具名单独传一个值：--disallowedTools 是可变参数，CodeBuddy 用精确比对把
-		// 每项与工具名对照（PermissionUtils.matchPermissionRules），所以逗号拼起来的
-		// 字符串一条都匹配不上——尽管 CLI 自己的帮助文本声称可以。
-		"--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
+		"--permission-mode", permissionMode,
+	}
+	// 无人值守角色禁用需要人回答的工具；交互任务通过持久化问答桥接。
+	if opts.RequestInteraction == nil || opts.ApprovalPolicy == "never" {
+		args = append(args, "--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode")
 	}
 	if opts.LifeCognition {
 		// 后台认知禁用内置工具及用户 MCP，只加载本轮专用 MCP。
@@ -113,8 +116,30 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
-	args = append(args, filterCustomArgs(opts.ExtraArgs, codebuddyBlockedArgs, logger)...)
-	args = append(args, filterCustomArgs(opts.CustomArgs, codebuddyBlockedArgs, logger)...)
+	blockedArgs := codebuddyBlockedArgs
+	if opts.CodebuddySettingsPath != "" || opts.ApprovalPolicy == "never" {
+		blockedArgs = make(map[string]blockedArgMode, len(codebuddyBlockedArgs)+4)
+		for key, mode := range codebuddyBlockedArgs {
+			blockedArgs[key] = mode
+		}
+		if opts.CodebuddySettingsPath != "" {
+			blockedArgs["--settings"] = blockedWithValue
+		}
+		if opts.ApprovalPolicy == "never" {
+			blockedArgs["--dangerously-skip-permissions"] = blockedStandalone
+			blockedArgs["-y"] = blockedStandalone
+			blockedArgs["--subagent-permission-mode"] = blockedWithValue
+			blockedArgs["--permission-mode-before-plan"] = blockedWithValue
+		}
+	}
+	args = append(args, filterCustomArgs(opts.ExtraArgs, blockedArgs, logger)...)
+	args = append(args, filterCustomArgs(opts.CustomArgs, blockedArgs, logger)...)
+	if opts.CodebuddySettingsPath != "" {
+		args = append(args, "--settings", opts.CodebuddySettingsPath)
+	}
+	if opts.ApprovalPolicy == "never" {
+		args = append(args, "--subagent-permission-mode", "dontAsk", "--permission-mode-before-plan", "dontAsk")
+	}
 	return args
 }
 
@@ -128,7 +153,14 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 // 写 prompt 失败/扫描出错/CLI 有无回 result）得出最终状态 → 再把 stderr 尾部、协议观测
 // 日志、续跑被拒判定等收尾，最后把 Result 放进 resCh。结果与流式消息分别经两个
 // channel 返回。
+func codebuddyNativeRequested(opts ExecOptions) bool {
+	return opts.NativeGoal || (opts.CommandOnly && (opts.Command == "/plan" || opts.Command == "/plan off")) || strings.TrimSpace(opts.Command) == "/goal" || strings.HasPrefix(strings.TrimSpace(opts.Command), "/goal ")
+}
+
 func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if codebuddyNativeRequested(opts) {
+		return b.executeNative(ctx, prompt, opts)
+	}
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "codebuddy"
@@ -232,13 +264,20 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
+	control := newCodebuddyControlClient(stdin)
+	interactions := newInteractionBroker("codebuddy", runCtx, runtimeInteractionRequest(opts), func(msg Message) {
+		select {
+		case msgCh <- msg:
+		case <-runCtx.Done():
+		}
+	})
 
 	// 把 prompt 放进独立 goroutine 写，防止死锁：CodeBuddy（同 Claude Code）会先把
 	// 启动横幅打到 stdout 再去读 stdin；若同步写，一旦管道缓冲填满就会卡死。写完 prompt
 	// 后 stdin 保持打开，这样运行中来的 control_request 事件还能被应答。
 	writeDone := make(chan error, 1)
 	go func() {
-		err := writeCodebuddyInput(stdin, prompt)
+		err := writeCodebuddyInput(control, prompt)
 		if err != nil {
 			closeStdin()
 		}
@@ -246,9 +285,11 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	}()
 
 	go func() {
+		defer control.close()
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
+		defer interactions.stop()
 		if mcpConfigPath != "" {
 			defer cleanupMcpConfigTemp(mcpConfigPath)
 		}
@@ -260,6 +301,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		resultIsError := false
 		sawBackgroundTask := false
 		var sessionID string
+		lifecycle := newCodebuddyLifecycle(func(msg Message) { sendCodebuddyMessage(runCtx, msgCh, msg) })
 		var requestID string
 		usage := make(map[string]TokenUsage)
 		usageCalls := make(map[codebuddyUsageCall]TokenUsage)
@@ -291,58 +333,64 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 				continue
 			}
 			eventCount++
+			control.observe(msg)
+			rootEvent := lifecycle.observe(msg)
 
 			// `_requestId` 由子进程自己生成并写在 assistant/status/result 事件上，作为 provider 请求标识保存；
 			// AgentLens 的 trace/span 对应另行验收。取第一条非空值即可：同一个 CLI 进程只有一个
 			// 根请求，后续事件重复的是同一个值。绝不能拿父进程环境变量
 			// CODEBUDDY_ROOT_REQUEST_ID 顶替——那是 daemon 自己的请求标识。
-			if requestID == "" && msg.ProviderRequestID != "" {
+			if rootEvent && requestID == "" && msg.ProviderRequestID != "" {
 				requestID = msg.ProviderRequestID
 			}
 
-			// 初次SDK会话标识绑定根会话；其它信封的不同会话不能悄悄替换它。
-			if msg.SessionID != "" {
-				if sessionID != "" && msg.SessionID != sessionID {
-					b.cfg.Logger.Warn("codebuddy SDK session conflict", "root_session", sessionID, "event_session", msg.SessionID, "event_type", msg.Type)
-				}
-				if sessionID == "" || msg.Type == "result" {
-					sessionID = msg.SessionID
-				}
-			}
+			// 子调用和其它会话的终态不能覆盖主会话身份。
+			sessionID = lifecycle.sessionID
 
 			switch msg.Type {
 			case "assistant":
 				assistantEventCount++
-				turn := b.handleAssistant(msg, msgCh, usage, usageCalls)
+				turn := b.handleAssistant(runCtx, msg, msgCh, usage, usageCalls)
 				toolUseCount += turn.toolUses
 				if !turn.understood {
 					unreadableAssistantCount++
 				}
-				lastAssistantText = turn.resolveFallback(lastAssistantText)
+				if rootEvent {
+					lastAssistantText = turn.resolveFallback(lastAssistantText)
+				}
 			case "user":
-				b.handleUser(msg, msgCh)
+				b.handleUser(runCtx, msg, msgCh)
 			case "system":
 				// 无头执行不能在结果回传后继续接收后台任务通知。
 				if codebuddySystemIsBackgroundTask(msg.Subtype) {
 					sawBackgroundTask = true
 				}
-				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
+				sendCodebuddyMessage(runCtx, msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
+				if !rootEvent {
+					break
+				}
 				sawResult = true
 				finalResultText = msg.ResultText
 				resultIsError = msg.IsError
 				resultUsage = codebuddyResultUsage(msg, opts.Model)
-				closeStdin()
 			case "log":
 				if msg.Log != nil {
-					trySend(msgCh, Message{
+					sendCodebuddyMessage(runCtx, msgCh, Message{
 						Type:    MessageLog,
 						Level:   msg.Log.Level,
 						Content: msg.Log.Message,
 					})
 				}
 			case "control_request":
-				b.handleControlRequest(msg, stdin)
+				if interactions.request == nil || !handleCodebuddyInteraction(msg, control, interactions) {
+					b.handleControlRequest(msg, control, opts.ApprovalPolicy)
+				}
+			case "control_response":
+				control.respond(msg.Response)
+			}
+			if sawResult && len(lifecycle.children) == 0 {
+				closeStdin()
 			}
 		}
 		scanErr := scanner.Err()
@@ -363,6 +411,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		writeErr := <-writeDone
 
 		completionGuardError := ""
+		if len(lifecycle.children) > 0 {
+			completionGuardError = "codebuddy execution ended before foreground child calls completed"
+		}
 		if sawBackgroundTask {
 			completionGuardError = "codebuddy emitted a background task system event; Multica-managed runs require foreground execution (set CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS=1)"
 		}
@@ -469,7 +520,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		}
 	}()
 
-	return &Session{Messages: msgCh, Result: resCh}, nil
+	return &Session{Supplement: control.supplement, SupplementReady: control.ready, WaitingForInput: interactions.waiting, Messages: msgCh, Result: resCh}, nil
 }
 
 // handleAssistant 处理一条 assistant 事件：解析出内容块（文本 / 思考 / 工具调用），
@@ -478,7 +529,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 //
 // 理解不了正文时（JSON 解析失败或出现未知块类型），返回的 turn.understood 为 false，
 // 调用方就不会让旧回合的文本来顶替本回合。
-func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage, calls map[codebuddyUsageCall]TokenUsage) assistantTurn {
+func (b *codebuddyBackend) handleAssistant(ctx context.Context, msg codebuddySDKMessage, ch chan<- Message, usage map[string]TokenUsage, calls map[codebuddyUsageCall]TokenUsage) assistantTurn {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
 		// 正文读不懂：understood 保持 false，调用方会丢弃任何 fallback，而不是让更早的
@@ -514,6 +565,18 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 			u.CacheReadTokens += snapshot.CacheReadTokens - previous.CacheReadTokens
 			u.CacheWriteTokens += snapshot.CacheWriteTokens - previous.CacheWriteTokens
 			usage[content.Model] = u
+			if key.message != "" && snapshot != previous {
+				fields := map[string]any{
+					"session_id": msg.SessionID, "request_id": key.request, "item_id": key.message,
+					"model": content.Model, "scope": "request_delta",
+					"input_tokens":       snapshot.InputTokens - previous.InputTokens,
+					"output_tokens":      snapshot.OutputTokens - previous.OutputTokens,
+					"cache_read_tokens":  snapshot.CacheReadTokens - previous.CacheReadTokens,
+					"cache_write_tokens": snapshot.CacheWriteTokens - previous.CacheWriteTokens,
+					"pressure_tokens":    content.Usage.InputTokens + content.Usage.OutputTokens,
+				}
+				sendCodebuddyMessage(ctx, ch, runtimeTelemetry("codebuddy", "context", fields))
+			}
 		}
 	}
 
@@ -522,11 +585,11 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 		case "text":
 			if block.Text != "" {
 				assistantText.WriteString(block.Text)
-				trySend(ch, Message{Type: MessageText, Content: block.Text})
+				sendCodebuddyMessage(ctx, ch, Message{Type: MessageText, Content: block.Text})
 			}
 		case "thinking":
 			if block.Text != "" {
-				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
+				sendCodebuddyMessage(ctx, ch, Message{Type: MessageThinking, Content: block.Text})
 			}
 		case "tool_use":
 			toolUseCount++
@@ -534,7 +597,7 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 			if block.Input != nil {
 				_ = json.Unmarshal(block.Input, &input)
 			}
-			trySend(ch, Message{
+			sendCodebuddyMessage(ctx, ch, Message{
 				Type:   MessageToolUse,
 				Tool:   block.Name,
 				CallID: block.ID,
@@ -553,7 +616,7 @@ func (b *codebuddyBackend) handleAssistant(msg codebuddySDKMessage, ch chan<- Me
 
 // handleUser 处理一条 user 事件：把其中的 tool_result 块转成 MessageToolResult
 // 推送出去（按 tool_use_id 与之前的工具调用对上号）。
-func (b *codebuddyBackend) handleUser(msg codebuddySDKMessage, ch chan<- Message) {
+func (b *codebuddyBackend) handleUser(ctx context.Context, msg codebuddySDKMessage, ch chan<- Message) {
 	var content codebuddyMessageContent
 	if err := json.Unmarshal(msg.Message, &content); err != nil {
 		return
@@ -565,7 +628,7 @@ func (b *codebuddyBackend) handleUser(msg codebuddySDKMessage, ch chan<- Message
 			if block.Content != nil {
 				resultStr = string(block.Content)
 			}
-			trySend(ch, Message{
+			sendCodebuddyMessage(ctx, ch, Message{
 				Type:   MessageToolResult,
 				CallID: block.ToolUseID,
 				Output: resultStr,
@@ -574,10 +637,9 @@ func (b *codebuddyBackend) handleUser(msg codebuddySDKMessage, ch chan<- Message
 	}
 }
 
-// handleControlRequest 应答 control_request 事件：在自主/daemon 模式下自动批准所有
-// 工具调用——把批准响应写成 JSON 行写回 stdin。
-func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin interface{ Write([]byte) (int, error) }) {
-	// 自主/daemon 模式下自动批准所有工具使用。
+// handleControlRequest 把本轮审批策略的响应写回 stream-json 控制通道。
+func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin interface{ Write([]byte) (int, error) }, approvalPolicy string) {
+	// 后台角色拒绝审批，其余任务沿用已有自主运行策略。
 	var req codebuddyControlRequestPayload
 	if err := json.Unmarshal(msg.Request, &req); err != nil {
 		return
@@ -595,6 +657,10 @@ func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin i
 	// async_launched tool_result shape. Background work is disabled via
 	// CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS before tool execution.
 
+	allowed, behavior := approvalPolicy != "never", "allow"
+	if !allowed {
+		behavior = "deny"
+	}
 	response := map[string]any{
 		"type": "control_response",
 		"response": map[string]any{
@@ -604,8 +670,8 @@ func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin i
 				// CodeBuddy 的 SdkPermissionClient 读的是 `allowed`，键缺失即视为拒绝；
 				// `behavior` 是 Claude Code 的拼写，这个分支在其它权限路径上仍认它。
 				// 两个都发，避免一次「批准」被误读成「静默拒绝」。
-				"allowed":      true,
-				"behavior":     "allow",
+				"allowed":      allowed,
+				"behavior":     behavior,
 				"updatedInput": inputMap,
 			},
 		},
@@ -701,6 +767,7 @@ type codebuddySDKMessage struct {
 	// control_request 事件的字段
 	RequestID string          `json:"request_id,omitempty"`
 	Request   json.RawMessage `json:"request,omitempty"`
+	Response  json.RawMessage `json:"response,omitempty"`
 
 	// ProviderRequestID 是事件上的 `_requestId`：子进程为本次根请求生成的标识，
 	// 外部观测系统的具体解析对应须另行验证。它不是父进程环境里的
@@ -921,4 +988,14 @@ func mergeSubagentUsage(usage map[string]TokenUsage, observed map[codebuddyUsage
 		usage[call.Model] = merged
 	}
 	return usage
+}
+
+// 正常运行对完整输出施加背压；取消时解除等待，交给进程树回收。
+func sendCodebuddyMessage(ctx context.Context, ch chan<- Message, msg Message) bool {
+	select {
+	case ch <- msg:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

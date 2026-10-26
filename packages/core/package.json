@@ -21,6 +21,7 @@
     "./api/client": "./api/client.ts",
     "./external-credentials": "./external-credentials/index.ts",
     "./api/schema": "./api/schema.ts",
+    "./api/runtime-input-schema": "./api/runtime-input-schema.ts",
     "./api/schemas": "./api/schemas.ts",
     "./api/ws-client": "./api/ws-client.ts",
     "./config": "./config/index.ts",
@@ -41,6 +42,10 @@
     "./issues/batch": "./issues/batch.ts",
     "./issues/canonical-id": "./issues/canonical-id.ts",
     "./issues/queries": "./issues/queries.ts",
+    "./issues/runtime-context": "./issues/runtime-context.ts",
+    "./runtimes/interactions": "./runtimes/interactions.ts",
+    "./runtimes/inputs": "./runtimes/inputs.ts",
+    "./runtimes/input-draft-store": "./runtimes/input-draft-store.ts",
     "./issues/mutations": "./issues/mutations.ts",
     "./issues/timeline-sort": "./issues/timeline-sort.ts",
     "./issues/comment-deletion": "./issues/comment-deletion.ts",
@@ -166,7 +171,8 @@
     "./supervision/*": "./supervision/*.ts",
     "./upstream/queries": "./upstream/queries.ts",
     "./upstream/mutations": "./upstream/mutations.ts",
-    "./review/*": "./review/*.ts"
+    "./review/*": "./review/*.ts",
+    "./types/task-interaction": "./types/task-interaction.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",

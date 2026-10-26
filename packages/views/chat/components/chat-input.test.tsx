@@ -776,6 +776,26 @@ describe("ChatInput project context", () => {
     expect(screen.queryByRole("button", { name: "Queue message" })).not.toBeInTheDocument();
   });
 
+  it("lets the user add text to the current run using the existing composer", async () => {
+    const onSend = vi.fn<ChatInputOnSend>(async () => true);
+    renderInput({ isRunning: true, currentInputAvailable: true, allowSubmitWhileRunning: true, onSend, onStop: vi.fn() });
+    fireEvent.change(screen.getByRole("combobox", { name: "Send to" }), { target: { value: "current" } });
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "also check the return path" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add to current run" }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+    expect(onSend.mock.calls[0]?.[5]).toBe("current");
+  });
+
+  it("delivers a native pause as current-run control even without follow-up queues", async () => {
+    const onSend = vi.fn<ChatInputOnSend>(async () => true);
+    useChatStore.getState().inputDrafts.__draft_new__ = "/goal pause";
+    renderInput({ isRunning: true, nativeCommandsAvailable: true, onSend, onStop: vi.fn() });
+    fireEvent.click(screen.getByRole("button", { name: "Control current run" }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+    expect(onSend.mock.calls[0]?.[0]).toBe("/goal pause");
+    expect(onSend.mock.calls[0]?.[5]).toBe("current");
+  });
+
   it("keeps Stop available while queued content is uploading", async () => {
     let resolveUpload!: (value: UploadResult) => void;
     mockApiUploadFile.mockImplementation(

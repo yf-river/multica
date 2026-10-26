@@ -8,26 +8,10 @@ import (
 	"strings"
 )
 
-// 文件导读：本文件在 daemon 管理的任务会话里禁用 Codex 原生 multi-agent（父线程
-// 派生子 agent 的能力），并把开关写进 per-task 的 config.toml。用户可用环境变量
-// MULTICA_CODEX_MULTI_AGENT 逃生门重新开启。
+// 任务配置禁用 Codex 原生子代理；平台跟踪父线程，不能把未完成的子线程留在任务之外。
+// 配置只写入任务级 CODEX_HOME，用户的全局配置由用户管理。
+// 新建与恢复线程还会通过协议覆盖执行同一策略。
 
-// 背景
-//
-// 较新的 Codex `app-server` 版本默认启用 `features.multi_agent`，向模型暴露
-// spawn_agent / send_input / wait / resume_agent / close_agent 等工具，使一个 Codex
-// thread 能扇出嵌套子 agent。Multica daemon 目前每个任务只建模「父 Codex thread」：
-// 父线程一发出 `turn/completed` 任务就被标记结束，即使派生的子 agent 仍在运行或还没
-// 冲刷输出。结果是一类「提前完成」的失败，有价值的子 agent 成果被丢弃。
-//
-// 在 Codex 提供「父完成但子仍开着」的生命周期状态（带 drain/cancel 原语）、或 Multica
-// runtime 把子线程建模成头等任务实体之前，daemon 对 daemon 管理的任务会话默认禁用
-// Codex 原生 multi-agent。覆盖只动 per-task 的 `CODEX_HOME/config.toml`；用户全局的
-// `~/.codex/config.toml` 永不被改。
-//
-// 明确想在 Multica 任务里用 Codex 原生子 agent（并接受生命周期风险）的用户，可以在
-// daemon 环境里设 `MULTICA_CODEX_MULTI_AGENT=1` 保持启用。
-//
 // 布局说明
 //
 // TOML 拒绝重定义一个已创建的表——包括经点号键隐式创建的。因此受管块必须适配用户
@@ -38,11 +22,6 @@ import (
 //     重定义同一张 `features` 表，Codex 用的严格 TOML 解析器（toml-rs）会以
 //     `table 'features' already exists` 失败。
 //   - 否则，受管块放在文件顶部，用点号键形式 `features.multi_agent = false`。
-
-// MulticaCodexMultiAgentEnv 是用户可设、用来在 daemon 管理任务里保持 Codex 原生
-// multi-agent 启用的环境变量。任意真值（1、true、yes、on，不区分大小写）保持启用；
-// 其它一切（含未设置）都禁用。
-const MulticaCodexMultiAgentEnv = "MULTICA_CODEX_MULTI_AGENT"
 
 // multicaMultiAgentBeginMarker / multicaMultiAgentEndMarker 界定 multi-agent 专属的
 // 受管块。与 sandbox 块分开标记，使两者可各自独立演进与迁移。
@@ -67,17 +46,6 @@ var (
 	// 的可选空白）。
 	rootDottedMultiAgentRe = regexp.MustCompile(`^\s*features\s*\.\s*multi_agent\s*=`)
 )
-
-// codexMultiAgentEnabled 报告用户是否选择在 daemon 管理任务里保持 Codex 原生
-// multi-agent 开启。
-func codexMultiAgentEnabled() bool {
-	raw := strings.TrimSpace(os.Getenv(MulticaCodexMultiAgentEnv))
-	switch strings.ToLower(raw) {
-	case "1", "true", "yes", "on":
-		return true
-	}
-	return false
-}
 
 // renderMulticaMultiAgentBlock 返回 daemon 管理的 multi-agent 块。注入 `[features]`
 // 表内部时块体用 `multi_agent = false`，否则用 `features.multi_agent = false`。
@@ -167,20 +135,7 @@ func injectManagedBlockIntoFeaturesTable(content string) string {
 
 // ensureCodexMultiAgentConfig 把 daemon 管理的 multi-agent 块写进 per-task
 // config.toml，使 Codex 原生子 agent 保持禁用。幂等：连跑两次产出同一文件。
-//
-// MULTICA_CODEX_MULTI_AGENT 设成真值时本函数是空操作——用户已明确选择 Codex 原生
-// 子 agent 并接受生命周期风险。跨 prepare 运行来回切换该环境变量不受支持：per-task
-// 配置短命（每个任务重建），用户应在 daemon 启动时一次性设置。
 func ensureCodexMultiAgentConfig(configPath string, logger *slog.Logger) error {
-	if codexMultiAgentEnabled() {
-		if logger != nil {
-			logger.Info("codex multi-agent: leaving Codex native multi-agent untouched per MULTICA_CODEX_MULTI_AGENT",
-				"config_path", configPath,
-			)
-		}
-		return nil
-	}
-
 	data, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read config.toml: %w", err)

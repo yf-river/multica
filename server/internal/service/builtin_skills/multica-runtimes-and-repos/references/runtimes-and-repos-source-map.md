@@ -21,3 +21,4 @@
 - Configured repository locations use committed development branches for new worktrees, excluding uncommitted base-checkout files. Existing tasks continue their own branches. `server/internal/daemon/execenv/local_worktree.go` verifies the local remote identity, fetches the branch, and rejects divergent local/remote development branches.
 
 - `server/cmd/multica/cmd_daemon_dsh.go` 提供仅本机操作者可用的 `daemon dsh-retry`，核对所选 profile 的 daemon 身份后调用 loopback `/dsh-profile/retry`。`dsh_retry.go` 仅将持久化失败候选改为待重试并唤醒发现；制品身份与激活门禁由供给流程核对。
+- `server/pkg/db/queries/task_token.sql` 的 `GetTaskTokenByHash` 同时验证期限、任务执行状态和 `created_at >= dispatched_at`；`server/internal/middleware/auth.go` 在读取成功后才建立任务身份。`server/internal/handler/native_task_credential_test.go` 验证实际 HTTP 401、重新认领与配置变更后的旧凭据、事务回滚和新凭据。

@@ -1917,6 +1917,22 @@ type SysCronExecution struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TaskInteraction struct {
+	TaskID      pgtype.UUID        `json:"task_id"`
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	Provider    string             `json:"provider"`
+	Kind        string             `json:"kind"`
+	Request     []byte             `json:"request"`
+	Response    []byte             `json:"response"`
+	Status      string             `json:"status"`
+	AuthorID    pgtype.UUID        `json:"author_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	RespondedAt pgtype.Timestamptz `json:"responded_at"`
+}
+
 type TaskMessage struct {
 	ID        pgtype.UUID        `json:"id"`
 	TaskID    pgtype.UUID        `json:"task_id"`
@@ -1945,6 +1961,32 @@ type TaskProviderTrace struct {
 	Metadata         []byte             `json:"metadata"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskRuntimeCapability struct {
+	TaskID       pgtype.UUID        `json:"task_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	RuntimeID    pgtype.UUID        `json:"runtime_id"`
+	DispatchedAt pgtype.Timestamptz `json:"dispatched_at"`
+	Capabilities []string           `json:"capabilities"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type TaskRuntimeInput struct {
+	TaskID        pgtype.UUID        `json:"task_id"`
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	AuthorID      pgtype.UUID        `json:"author_id"`
+	Kind          string             `json:"kind"`
+	Content       string             `json:"content"`
+	Status        string             `json:"status"`
+	Output        string             `json:"output"`
+	FailureReason string             `json:"failure_reason"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ClaimedAt     pgtype.Timestamptz `json:"claimed_at"`
+	SettledAt     pgtype.Timestamptz `json:"settled_at"`
 }
 
 type TaskSupplement struct {

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
 
-const { detail, deletePin, invitationApi, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
+const { detail, deletePin, invitationApi, navigation, pins, sidebarState, summary, workspace, workspaces } = vi.hoisted(() => ({
   sidebarState: { setOpenMobile: vi.fn() },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
@@ -15,8 +15,11 @@ const { detail, deletePin, invitationApi, navigation, pins, sidebarState, summar
     invalidateQueries: vi.fn(),
     mutations: [] as Array<Record<string, unknown>>,
   },
-  navigation: { current: { pathname: "/acme/issues" } },
+  navigation: { current: { pathname: "/acme/issues", searchParams: new URLSearchParams() } },
   summary: { current: [] as { workspace_id: string; count: number }[] },
+  workspace: {
+    current: { id: "ws-1", name: "Acme", slug: "acme", settings: {} as Record<string, unknown> },
+  },
   workspaces: {
     current: [] as { id: string; name: string; slug: string; avatar_url: string | null }[],
   },
@@ -52,7 +55,13 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   Sidebar: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarFooter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SidebarGroup: ({
+    children,
+    "data-menu-group": menuGroup,
+  }: {
+    children: React.ReactNode;
+    "data-menu-group"?: string;
+  }) => <div data-menu-group={menuGroup}>{children}</div>,
   SidebarGroupContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -61,12 +70,14 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
     children,
     isActive,
     render,
+    className,
   }: {
     children: React.ReactNode;
     isActive?: boolean;
     render?: React.ReactElement<{ href?: string }>;
+    className?: string;
   }) => (
-    <button type="button" data-active={isActive ? "true" : undefined} data-href={render?.props.href}>
+    <button type="button" className={className} data-active={isActive ? "true" : undefined} data-href={render?.props.href}>
       {children}
     </button>
   ),
@@ -97,7 +108,11 @@ vi.mock("../auth", () => ({ useLogout: () => vi.fn() }));
 vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
-  useNavigation: () => ({ pathname: navigation.current.pathname, push: vi.fn() }),
+  useNavigation: () => ({
+    pathname: navigation.current.pathname,
+    searchParams: navigation.current.searchParams,
+    push: vi.fn(),
+  }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
 vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));
@@ -112,7 +127,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   // workspace/context hooks below are stubbed to control routes in tests.
   ...(await importOriginal<typeof import("@multica/core/paths")>()),
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues`, cooking: () => `/${slug}/cooking` }) },
-  useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
+  useCurrentWorkspace: () => workspace.current,
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     chat: () => "/acme/chat",
@@ -123,6 +138,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     agents: () => "/acme/agents",
     squads: () => "/acme/squads",
     usage: () => "/acme/usage",
+    knowledge: () => "/acme/knowledge",
     runReviews: () => "/acme/run-reviews",
     life: () => "/acme/life",
     cooking: () => "/acme/cooking",
@@ -249,14 +265,14 @@ describe("PinRow", () => {
 describe("mobile sheet dismissal", () => {
   beforeEach(() => {
     sidebarState.setOpenMobile.mockClear();
-    navigation.current = { pathname: "/acme/issues" };
+    navigation.current = { pathname: "/acme/issues", searchParams: new URLSearchParams() };
   });
 
   it("dismisses the sheet once the route changes", () => {
     const { rerender } = render(<AppSidebar />);
     sidebarState.setOpenMobile.mockClear();
 
-    navigation.current = { pathname: "/acme/inbox" };
+    navigation.current = { pathname: "/acme/inbox", searchParams: new URLSearchParams() };
     rerender(<AppSidebar />);
 
     expect(sidebarState.setOpenMobile).toHaveBeenCalledWith(false);
@@ -374,5 +390,88 @@ describe("Pending invitation self-heal", () => {
     }
     expect(invitationApi.accept).toHaveBeenCalledTimes(1);
     expect(invitationApi.decline).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The sidebar and the workspace-menu settings share WORKSPACE_MENU_GROUPS, so
+// these cover the sidebar-only rules: a fully hidden section takes its title
+// with it, and life tabs highlight from the URL (not stale window state).
+describe("workspace menu groups", () => {
+  beforeEach(() => {
+    navigation.current = { pathname: "/acme/issues", searchParams: new URLSearchParams() };
+    workspace.current.settings = {};
+    summary.current = [];
+    workspaces.current = [];
+    detail.current = { isPending: false, isError: false, data: null, error: null };
+  });
+
+  const navButtons = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button[data-href]"));
+
+  it("renders every navigation row with the same muted treatment", () => {
+    const { container } = render(<AppSidebar />);
+    const rows = navButtons(container);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.className).toContain("text-muted-foreground");
+    }
+    expect(container.querySelector('button[data-href="/acme/chat"]')?.className).toContain(
+      "text-muted-foreground",
+    );
+  });
+
+  it("drops a section title and its rows when every entry is hidden", () => {
+    workspace.current.settings = { hidden_menu_items: ["health", "meals", "goals"] };
+    const { container } = render(<AppSidebar />);
+    expect(container.querySelector('[data-menu-group="living"]')).toBeNull();
+    expect(container.querySelector('button[data-href="/acme/health"]')).toBeNull();
+    expect(container.querySelector('[data-menu-group="life"]')).not.toBeNull();
+  });
+
+  it("keeps the section title while one entry is still visible", () => {
+    workspace.current.settings = { hidden_menu_items: ["health", "meals"] };
+    const { container } = render(<AppSidebar />);
+    expect(container.querySelector('[data-menu-group="living"]')).not.toBeNull();
+    expect(container.querySelector('button[data-href="/acme/goals"]')).not.toBeNull();
+    expect(container.querySelector('button[data-href="/acme/health"]')).toBeNull();
+  });
+
+  it("treats the legacy aggregate life switch as hiding the whole life section", () => {
+    workspace.current.settings = { hidden_menu_items: ["life"] };
+    const { container } = render(<AppSidebar />);
+    expect(container.querySelector('[data-menu-group="life"]')).toBeNull();
+    expect(container.querySelector('button[data-href^="/acme/life"]')).toBeNull();
+  });
+
+  it("drops the unlabeled inbox section when that row is hidden", () => {
+    workspace.current.settings = { hidden_menu_items: ["inbox"] };
+    const { container } = render(<AppSidebar />);
+    expect(container.querySelector('[data-menu-group="personal"]')).toBeNull();
+    expect(container.querySelector('button[data-href="/acme/inbox"]')).toBeNull();
+  });
+
+  it("highlights only the life tab named in the URL", () => {
+    navigation.current = {
+      pathname: "/acme/life",
+      searchParams: new URLSearchParams("tab=experiment"),
+    };
+    const { container } = render(<AppSidebar />);
+    expect(
+      container.querySelector('button[data-href="/acme/life?tab=experiment"]'),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      container.querySelector('button[data-href="/acme/life?tab=memory"]'),
+    ).not.toHaveAttribute("data-active");
+  });
+
+  it("highlights the default memory tab when the URL has no tab", () => {
+    navigation.current = { pathname: "/acme/life", searchParams: new URLSearchParams() };
+    const { container } = render(<AppSidebar />);
+    expect(
+      container.querySelector('button[data-href="/acme/life?tab=memory"]'),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      container.querySelector('button[data-href="/acme/life?tab=experiment"]'),
+    ).not.toHaveAttribute("data-active");
   });
 });

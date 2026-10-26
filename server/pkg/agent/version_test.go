@@ -2,8 +2,29 @@ package agent
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
+
+func TestRuntimeInputCapabilitiesFollowResolvedProtocol(t *testing.T) {
+	for _, tc := range []struct {
+		provider, version string
+		nativeGoal        bool
+		want              []string
+	}{
+		{"codex", "0.164.0", false, []string{"text", "command"}},
+		{"codex", "0.163.0", true, []string{"text"}},
+		{"codebuddy", "2.176.0", false, []string{"text"}},
+		{"codebuddy", "2.176.0", true, []string{"text", "command"}},
+		{"codebuddy", "2.174.0", true, nil},
+		{"codex", "dev", true, nil},
+		{"claude", "2.200.0", true, nil},
+	} {
+		if got := RuntimeInputCapabilities(tc.provider, tc.version, tc.nativeGoal); !slices.Equal(got, tc.want) {
+			t.Errorf("%s %s native=%v: got %v want %v", tc.provider, tc.version, tc.nativeGoal, got, tc.want)
+		}
+	}
+}
 
 func TestTaskSupplementVersionGate(t *testing.T) {
 	for _, tc := range []struct {
@@ -11,6 +32,7 @@ func TestTaskSupplementVersionGate(t *testing.T) {
 		want              bool
 	}{
 		{"codex", "codex-cli 0.100.0", true}, {"codex", "0.99.0", false},
+		{"codebuddy", "2.176.0", true}, {"codebuddy", "2.174.0", false}, {"codebuddy", "dev", false},
 		{"claude", "2.1.110 (Claude Code)", false}, {"claude", "2.1.109", false},
 		{"codex", "", false}, {"claude", "dev", false}, {"kimi", "9.0.0", false},
 	} {

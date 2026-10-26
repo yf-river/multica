@@ -4494,6 +4494,46 @@ func (q *Queries) GetLatestTaskRolloutMissing(ctx context.Context, arg GetLatest
 	return session_rollout_missing, err
 }
 
+const getTaskSessionSource = `-- name: GetTaskSessionSource :one
+SELECT source.id
+FROM agent_task_queue current_task
+JOIN agent_task_queue source ON source.agent_id = current_task.agent_id
+  AND source.runtime_id = current_task.runtime_id
+JOIN agent a ON a.id = current_task.agent_id
+JOIN agent_runtime runtime ON runtime.id = current_task.runtime_id
+  AND runtime.workspace_id = a.workspace_id
+WHERE current_task.id = $1
+  AND source.session_id = $2::text
+  AND source.status IN ('completed', 'failed', 'cancelled')
+  AND source.created_at <= CURRENT_TIMESTAMP
+  AND COALESCE(source.completed_at, source.started_at, source.dispatched_at, source.created_at) <= CURRENT_TIMESTAMP
+  AND ($3::uuid IS NULL OR source.id = $3::uuid)
+  AND (
+    (current_task.chat_session_id IS NOT NULL
+      AND source.chat_session_id = current_task.chat_session_id
+      AND (current_task.channel_context_revision IS NULL
+        OR COALESCE(source.channel_context_revision, 1) = current_task.channel_context_revision))
+    OR (current_task.chat_session_id IS NULL AND source.chat_session_id IS NULL
+      AND current_task.issue_id IS NOT NULL AND source.issue_id = current_task.issue_id)
+  )
+ORDER BY COALESCE(source.completed_at, source.started_at, source.dispatched_at, source.created_at) DESC, source.id DESC
+LIMIT 1
+`
+
+type GetTaskSessionSourceParams struct {
+	TaskID       pgtype.UUID `json:"task_id"`
+	SessionID    string      `json:"session_id"`
+	SourceTaskID pgtype.UUID `json:"source_task_id"`
+}
+
+// 原生状态恢复沿已选定的会话查找原任务，不接受客户端提供的文件路径。
+func (q *Queries) GetTaskSessionSource(ctx context.Context, arg GetTaskSessionSourceParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getTaskSessionSource, arg.TaskID, arg.SessionID, arg.SourceTaskID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getWorkspaceAgentActivity30d = `-- name: GetWorkspaceAgentActivity30d :many
 SELECT
     atq.agent_id,

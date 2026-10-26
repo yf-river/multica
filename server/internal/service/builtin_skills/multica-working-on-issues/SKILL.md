@@ -422,6 +422,14 @@ is true. Search starts at `offset` and checks the full stored output. These
 records contain the provider-delivered output after secret redaction; historical
 outputs truncated before storage cannot be recovered through this command.
 
+Runtime context is available at `GET /api/issues/{id}/tasks/{taskId}/context`.
+Read `next_cursor` with the next request's `after` parameter while `has_more`
+is true; `limit` accepts 1–1000 rows. Summaries of one page cover only that page.
+Missing provider metrics are unknown, not zero. Context snapshots are not a
+reliable count of model calls; Codex may report a turn delta while CodeBuddy
+reports a request delta. Model duration and context composition are available
+only when the runtime actually reports them.
+
 ## Multica delivery ownership and release pauses
 
 For Multica code delivery, use `multica issue delivery` with the current verified `MULTICA_TASK_ID` when running as an Agent. An explicit `--execution` must equal that task ID; a missing or mismatched trusted identity is rejected. External member operators use a stable `CODEX_THREAD_ID` or `--execution` and renew their own owner lease. Reuse the existing delivery for the same plan and source commit. Inspect `owner` and delivery history before any recovery; another execution requires `recover-owner --recovery-evidence` and must not overwrite active work. Keep the existing source branch and acceptance evidence.

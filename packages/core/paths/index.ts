@@ -5,6 +5,7 @@ export {
   isGlobalPath,
   AGENT_FOCUS_CONVERSATION_STARTERS,
   LIFE_TABS,
+  parseLifeTab,
 } from "./paths";
 export type { WorkspacePaths, LifeTab } from "./paths";
 export { RESERVED_SLUGS, isReservedSlug } from "./reserved-slugs";

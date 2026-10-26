@@ -1,7 +1,11 @@
 {
- "version": 8,
+ "version": 9,
  "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
  "rules": [
+  {
+   "table": "task_interaction",
+   "sql": "DELETE FROM public.\"task_interaction\""
+  },
   {
    "table": "supervision_frozen_material",
    "sql": "DELETE FROM public.\"supervision_frozen_material\""

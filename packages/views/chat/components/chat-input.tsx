@@ -33,6 +33,8 @@ import type { Attachment, Project } from "@multica/core/types";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ClearablePillButton } from "../../common/pill-button";
 import { useT } from "../../i18n";
+import { isNativeRuntimeCommand } from "@multica/core/runtimes/inputs";
+import type { ChatDelivery } from "./use-chat-runtime-input";
 
 const logger = createLogger("chat.ui");
 const EMPTY_UPLOADS: DraftUpload[] = [];
@@ -65,6 +67,7 @@ interface ChatInputProps {
     commitInput: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
     draftAttachments: Attachment[],
     healthReportIds?: string[],
+    delivery?: ChatDelivery,
   ) => void | boolean | Promise<void | boolean>;
   restoreDraftRequest?: {
     id: string;
@@ -100,6 +103,8 @@ interface ChatInputProps {
   isRunning?: boolean;
   /** 只有服务端明确宣告支持后续排队时才允许运行中提交。 */
   allowSubmitWhileRunning?: boolean;
+  currentInputAvailable?: boolean;
+  nativeCommandsAvailable?: boolean;
   disabled?: boolean;
   /** 用户没有任何可用 agent 时为 true——禁用编辑器并显示不同的占位文案。
    *  与 `disabled` 分开，避免改动归档会话的文案。 */
@@ -155,6 +160,8 @@ export function ChatInput({
   onStop,
   isRunning,
   allowSubmitWhileRunning,
+  currentInputAvailable = false,
+  nativeCommandsAvailable = false,
   disabled,
   noAgent,
   agentArchived,
@@ -176,6 +183,7 @@ export function ChatInput({
   const { t: tEditor } = useT("editor");
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
+  const [delivery, setDelivery] = useState<ChatDelivery>("queue");
   const composerRef = useRef<HTMLDivElement>(null);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   // 两个 key，各自关心完全不同的事：
@@ -200,6 +208,10 @@ export function ChatInput({
   const draftKey = draftKeyOverride ?? activeSessionId ?? DRAFT_NEW_SESSION;
   // 选基础值——空字符串兜底保持引用稳定。
   const inputDraft = useChatStore((s) => s.inputDrafts[draftKey] ?? "");
+  const nativeCommand = Boolean(isRunning && nativeCommandsAvailable && isNativeRuntimeCommand(inputDraft));
+  const currentDelivery = Boolean(isRunning && (nativeCommand || (currentInputAvailable && delivery === "current")));
+  const canSubmitWhileRunning = allowSubmitWhileRunning || currentDelivery;
+  useEffect(() => setDelivery("queue"), [draftKey, isRunning]);
   const storeUploads = useChatStore(
     (s) => s.inputDraftAttachments[draftKey] ?? EMPTY_UPLOADS,
   );
@@ -420,11 +432,11 @@ export function ChatInput({
       editorScrubbedRef.current = false;
       // 这些状态禁用了 SubmitButton，但 Mod+Enter 会绕过它——所以只读或忙碌的
       // 输入框仍必须拒绝键盘路径。
-      if (disabled || noAgent || (isRunning && !allowSubmitWhileRunning)) {
+      if (disabled || noAgent || (isRunning && !canSubmitWhileRunning)) {
         logger.debug("input.send skipped", {
           disabled,
           noAgent,
-          runningWithoutQueueSupport: !!isRunning && !allowSubmitWhileRunning,
+          runningWithoutQueueSupport: !!isRunning && !canSubmitWhileRunning,
         });
         return false;
       }
@@ -491,12 +503,15 @@ export function ChatInput({
         draftKey: keyAtSend,
         attachmentCount: uniqueActiveIds.length,
       });
-      const accepted = await onSend(
+      const sendArgs = [
         content,
         uniqueActiveIds.length > 0 ? uniqueActiveIds : undefined,
         commitInput,
         draftAttachments.filter((attachment) => uniqueActiveIds.includes(attachment.id)),
-      );
+      ] as const;
+      const accepted = currentInputAvailable || nativeCommandsAvailable
+        ? await onSend(...sendArgs, undefined, nativeCommand ? "current" : delivery)
+        : await onSend(...sendArgs);
       // 调用方拒绝了发送（或抛错，useComposerSubmit 同样当作拒绝）：草稿从未
       // 被提交，所以它留在原地供重试。只有一次 commit——这里或调用方——会清掉它。
       if (accepted === false) return false;
@@ -517,7 +532,7 @@ export function ChatInput({
     onConversationStarterApplied?.();
     if (
       submitting || disabled || noAgent ||
-      (isRunning && !allowSubmitWhileRunning) ||
+      (isRunning && !canSubmitWhileRunning) ||
       editorDraftKeyRef.current !== draftKey
     ) return;
     if (gate.isBlocked()) {
@@ -541,7 +556,7 @@ export function ChatInput({
     setIsEmpty(!conversationStarterRequest.content.trim());
     void submit();
   }, [
-    allowSubmitWhileRunning,
+    canSubmitWhileRunning,
     commitDraft,
     conversationStarterRequest,
     disabled,
@@ -680,7 +695,7 @@ export function ChatInput({
             showBubbleMenu
           />
         </div>
-        {(uploadEnabled || projectSelectionEnabled || leftAdornment) && (
+        {(uploadEnabled || projectSelectionEnabled || leftAdornment || (isRunning && currentInputAvailable) || nativeCommand) && (
           <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1">
             {(uploadEnabled || projectSelectionEnabled) && (
               <ChatAddMenu
@@ -694,6 +709,17 @@ export function ChatInput({
               />
             )}
             {leftAdornment}
+            {isRunning && (currentInputAvailable || nativeCommand) && <select
+              aria-label={t(($) => $.input.delivery_label)}
+              className="h-8 max-w-32 rounded border bg-background px-2 text-caption focus-visible:outline-2 focus-visible:outline-ring"
+              value={nativeCommand ? "command" : delivery}
+              disabled={submitting || nativeCommand}
+              onChange={(event) => setDelivery(event.target.value === "current" ? "current" : "queue")}
+            >
+              <option value="queue">{t(($) => $.input.delivery_queue)}</option>
+              <option value="current">{t(($) => $.input.delivery_current)}</option>
+              {nativeCommand && <option value="command">{t(($) => $.input.command_send_tooltip)}</option>}
+            </select>}
           </div>
         )}
         <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
@@ -708,20 +734,20 @@ export function ChatInput({
             // 取消路径；附件节点仍是编辑器里可见的上传进度表面。
             running={
               !!isRunning &&
-              (!allowSubmitWhileRunning || hasNothingToSend || gate.uploading)
+              (!canSubmitWhileRunning || hasNothingToSend || gate.uploading)
             }
             onStop={onStop}
             tooltip={gate.uploading
               ? tEditor(($) => $.upload.in_progress)
               : isRunning
-                ? t(($) => $.input.queue_send_tooltip)
+                ? nativeCommand ? t(($) => $.input.command_send_tooltip) : currentDelivery ? t(($) => $.input.current_send_tooltip) : t(($) => $.input.queue_send_tooltip)
                 : sendShortcut
                   ? `${t(($) => $.input.send_tooltip)} · ${formatShortcut(sendShortcut)}`
                   : t(($) => $.input.send_tooltip)}
             ariaLabel={gate.uploading
               ? tEditor(($) => $.upload.in_progress)
               : isRunning
-                ? t(($) => $.input.queue_send_tooltip)
+                ? nativeCommand ? t(($) => $.input.command_send_tooltip) : currentDelivery ? t(($) => $.input.current_send_tooltip) : t(($) => $.input.queue_send_tooltip)
               : t(($) => $.input.send_tooltip)}
             stopTooltip={t(($) => $.input.stop_tooltip)}
             stopAriaLabel={t(($) => $.input.stop_tooltip)}

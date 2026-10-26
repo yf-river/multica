@@ -11,6 +11,10 @@ import (
 // WriteRuntimeProvenance 记录平台生成的提示来源与指纹，不复制可能包含凭据的正文。
 func WriteRuntimeProvenance(envRoot, workDir, provider, content string, ctx TaskContextForEnv) error {
 	hash := sha256.Sum256([]byte(content))
+	runtimeFile, delivery := runtimeConfigPath(workDir, provider), "runtime_file"
+	if provider == "codebuddy" && ctx.CodebuddyBriefViaHook {
+		runtimeFile, delivery = "", "native_hook"
+	}
 	skills := make([]string, 0, len(ctx.AgentSkills))
 	for _, skill := range modelVisibleSkills(ctx.AgentSkills) {
 		skills = append(skills, skill.Name)
@@ -28,7 +32,7 @@ func WriteRuntimeProvenance(envRoot, workDir, provider, content string, ctx Task
 		}
 	}
 	data, err := json.MarshalIndent(map[string]any{
-		"version": 1, "provider": provider, "runtime_file": runtimeConfigPath(workDir, provider),
+		"version": 1, "provider": provider, "runtime_file": runtimeFile, "delivery": delivery,
 		"sha256": hex.EncodeToString(hash[:]), "skills": skills,
 		"ancestor_instruction_candidates": ancestors,
 		"squad_leader":                    ctx.IsSquadLeader,
