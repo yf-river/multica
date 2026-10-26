@@ -91,5 +91,12 @@ ORDER BY seq ASC;
 DELETE FROM task_message
 WHERE task_id = $1;
 
+-- name: ListTaskRuntimeMessagesPage :many
+SELECT id, seq, content FROM task_message
+WHERE task_id = $1 AND type = 'runtime'
+  AND (seq, id) > (sqlc.arg('after_seq')::int, sqlc.arg('after_id')::uuid)
+ORDER BY seq ASC, id ASC
+LIMIT sqlc.arg('page_limit')::int;
+
 -- name: GetTaskMessageOutput :one
 SELECT output FROM task_message WHERE task_id = $1 AND id = $2;

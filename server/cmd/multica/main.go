@@ -14,6 +14,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 var (
@@ -111,6 +112,13 @@ func init() {
 // 识别）；否则清理过期更新产物后执行命令树，错误统一经 cli.FormatError 打印、
 // 退出码由 cli.ExitCodeFor 决定（errSilent 表示消息已打过，不再重复打印）。
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == agent.CodebuddyHookHelperArg {
+		if err := agent.RunCodebuddyHookHelper(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == execenv.PreparationHelperArg {
 		logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 		if err := execenv.RunPreparationHelper(os.Stdin, os.Stdout, logger); err != nil {

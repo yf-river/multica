@@ -132,9 +132,10 @@ type PrepareParams struct {
 // TaskContextForEnv 是任务上下文中「写上下文文件所需」的那部分子集。任务哪些
 // 信息会被写进 agent 工作目录里的简介/上下文文件，由这里的字段决定。
 type TaskContextForEnv struct {
-	IssueID          string
-	TriggerCommentID string // 触发本任务的评论 ID（on_assign 型任务为空）
-	TriggerThreadID  string // 触发线程的根评论 ID；为空时回退到 TriggerCommentID
+	CodebuddyBriefViaHook bool // 原生 ACP 从当前执行的 hook 取得简报，工作目录只承载人工正文
+	IssueID               string
+	TriggerCommentID      string // 触发本任务的评论 ID（on_assign 型任务为空）
+	TriggerThreadID       string // 触发线程的根评论 ID；为空时回退到 TriggerCommentID
 	// CommentReplyTargets 在一次评论任务「合并了横跨多个根线程的评论」时才会被设置
 	// （MUL-4348）。条目数 >=2 时，工作流的回复步骤会一对一线程地分发回复，而不是
 	// 走单一的 `--parent=trigger` 方式——这是为了让持久化的 brief 与每一轮的 prompt
@@ -285,7 +286,8 @@ type Environment struct {
 	CodexHome string
 	// ClaudeSettingsPath 是任务本地的一个 --settings JSON 文件，用来施加「禁用运行
 	// 时技能」策略，且不改动用户自己的 Claude 配置。
-	ClaudeSettingsPath string
+	ClaudeSettingsPath    string
+	CodebuddySettingsPath string
 	// CursorDataDir 是 per-task 的 Cursor 数据目录（仅 cursor provider 且 agent 有
 	// managed mcp_config 时设置）。daemon 把它导出为 CURSOR_DATA_DIR，使项目级的
 	// MCP 审批与用户持久的 ~/.cursor/projects 状态隔离。
@@ -591,6 +593,13 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		}
 		env.ClaudeSettingsPath = settingsPath
 	}
+	if params.Provider == "codebuddy" {
+		settingsPath, err := prepareCodebuddySkillSettings(envRoot, params.Task.DisabledRuntimeSkills, params.Task.AgentSkills)
+		if err != nil {
+			return nil, fmt.Errorf("execenv: prepare codebuddy skill settings: %w", err)
+		}
+		env.CodebuddySettingsPath = settingsPath
+	}
 
 	// 对 Hermes：仅当 agent 绑定了技能时，才把 HERMES_HOME 重定向到 per-task 的
 	// 兼容性 overlay。没有技能的 Hermes 任务保留用户真实 home，行为与原来完全一致。
@@ -829,6 +838,14 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		} else {
 			env.ClaudeSettingsPath = settingsPath
 		}
+	}
+	if params.Provider == "codebuddy" && env.RootDir != "" {
+		settingsPath, err := prepareCodebuddySkillSettings(env.RootDir, params.Task.DisabledRuntimeSkills, params.Task.AgentSkills)
+		if err != nil {
+			logger.Warn("execenv: refresh codebuddy skill settings failed; forcing fresh prepare", "error", err)
+			return nil
+		}
+		env.CodebuddySettingsPath = settingsPath
 	}
 
 	// 复用路径上重新禁用 Reasonix 的 `ask` 工具：上面的 CleanupSidecars 已移除上一

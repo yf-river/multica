@@ -3477,24 +3477,32 @@ func TestExecuteAndDrain_CodexInactivityReportsMCPToolResultTranscript(t *testin
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		mu.Lock()
-		var gotToolUse, gotToolResult bool
+		var gotToolUse, gotToolResult, gotTelemetry bool
 		for _, msg := range reported {
 			if msg.Seq == 1 && msg.Type == "tool_use" && msg.Tool == "web_search_exa" {
 				arguments, _ := msg.Input["arguments"].(map[string]any)
 				gotToolUse = msg.Input["server"] == "plugin-exa-search" && arguments["query"] == "latest Multica news"
 			}
-			if msg.Seq == 2 && msg.Type == "tool_result" && msg.Tool == "web_search_exa" && msg.Output == "completed\nduration: 1627 ms" {
+			if msg.Seq == 2 && msg.Type == "runtime" {
+				var telemetry struct {
+					Kind       string `json:"kind"`
+					CallID     string `json:"call_id"`
+					DurationMS int    `json:"duration_ms"`
+				}
+				gotTelemetry = json.Unmarshal([]byte(msg.Content), &telemetry) == nil && telemetry.Kind == "tool" && telemetry.CallID == "mcp-1" && telemetry.DurationMS == 1627
+			}
+			if msg.Seq == 3 && msg.Type == "tool_result" && msg.Tool == "web_search_exa" && msg.Output == "completed\nduration: 1627 ms" {
 				gotToolResult = true
 			}
 		}
 		mu.Unlock()
-		if gotToolUse && gotToolResult {
+		if gotToolUse && gotTelemetry && gotToolResult {
 			return
 		}
 		if time.Now().After(deadline) {
 			mu.Lock()
 			defer mu.Unlock()
-			t.Fatalf("expected MCP tool_use seq=1 and tool_result seq=2 in transcript, got %+v", reported)
+			t.Fatalf("expected MCP tool_use seq=1, native duration seq=2 and tool_result seq=3 in transcript, got %+v", reported)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

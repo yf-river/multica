@@ -150,6 +150,8 @@ export interface TaskContextEvent {
   projected_tokens?: number;
   breakdown?: {
     system_tokens?: number;
+    mcp_tokens?: number;
+    skills_tokens?: number;
     tools_tokens?: number;
     message_tokens?: number;
   };
@@ -163,4 +165,6 @@ export interface TaskContextEvent {
 /** 单次运行的上下文遥测响应。 */
 export interface TaskContextResponse {
   events: TaskContextEvent[];
+  next_cursor?: string;
+  has_more?: boolean;
 }

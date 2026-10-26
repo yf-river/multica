@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { Agent, ChatPendingTask, ChatSession, Project } from "@multica/core/types";
 
+vi.mock("./use-chat-runtime-input", () => ({ useChatRuntimeInput: () => ({ textAvailable: false, commandsAvailable: false, trySend: async () => undefined }) }));
+
 interface QueuedRestore {
   id: string;
   content: string;

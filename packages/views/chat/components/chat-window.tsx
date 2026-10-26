@@ -30,6 +30,7 @@ import {
 } from "@multica/core/agents";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useAppForeground } from "../../common/use-app-foreground";
+import { useChatRuntimeInput, type ChatDelivery } from "./use-chat-runtime-input";
 import {
   RowActionsMenu,
   handleRowActivationKey,
@@ -142,6 +143,7 @@ export function ChatWindow() {
     enabled: isOpen && !!activeSessionId,
   });
   const pendingTaskId = pendingTask?.task_id ?? null;
+  const { textAvailable: currentInputAvailable, commandsAvailable: nativeCommandsAvailable, trySend: trySendCurrentInput } = useChatRuntimeInput(wsId, pendingTaskId ?? "", isOpen && pendingTask?.status === "running" && isTaskMessageTaskId(pendingTaskId ?? ""));
   const stopRequestedBeforeTaskRef = useRef(false);
   // 持久化的"推迟取消"草稿恢复（#5219）。与聊天页控制器同一只 hook——
   // 跳过/采纳/消费/对账的状态机不能在两个输入框之间漂移。
@@ -396,6 +398,7 @@ export function ChatWindow() {
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
       healthReportIds: string[] = [],
+      delivery: ChatDelivery = "queue",
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -418,6 +421,11 @@ export function ChatWindow() {
           agentId: activeAgent.id,
         });
         return false;
+      }
+      const currentInput = await trySendCurrentInput(content, Boolean(attachmentIds?.length || healthReportIds.length), delivery);
+      if (currentInput !== undefined) {
+        if (currentInput) commitInput?.({ clearEditor: isStillOnComposeTarget(useChatStore.getState().activeSessionId, activeSessionId) });
+        return currentInput;
       }
       if (pendingTaskId && pendingTask?.supports_queue !== true) {
         apiLogger.warn("sendChatMessage skipped: server does not support follow-up queues", {
@@ -565,6 +573,7 @@ export function ChatWindow() {
       isAgentAccessRevoked,
       pendingTask,
       pendingTaskId,
+      trySendCurrentInput,
       ensureSession,
       cancelChatTask,
       qc,
@@ -904,6 +913,8 @@ export function ChatWindow() {
        *  完全没有 agent 时彻底锁死（上面的空状态带着 CTA）。 */}
       <ChatInput
         onSend={handleSend}
+        currentInputAvailable={currentInputAvailable}
+        nativeCommandsAvailable={nativeCommandsAvailable}
         restoreDraftRequest={restoreDraftRequest}
         conversationStarterRequest={conversationStarterRequest}
         onConversationStarterApplied={handleConversationStarterApplied}

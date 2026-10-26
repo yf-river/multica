@@ -1351,13 +1351,25 @@ func TestCodexRawItemMCPToolCall(t *testing.T) {
 	c, _, _ := newTestCodexClient(t)
 	c.notificationProtocol = "raw"
 
-	var messages []Message
+	var messages, telemetry []Message
 	c.onMessage = func(msg Message) {
-		messages = append(messages, msg)
+		if msg.Type == MessageRuntime {
+			telemetry = append(telemetry, msg)
+		} else {
+			messages = append(messages, msg)
+		}
 	}
 
 	c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"mcpToolCall","id":"mcp-1","server":"plugin-exa-search","tool":"web_search_exa","arguments":{"query":"latest Multica news","credentials":{"api_key":"sk-12345678901234567890"}},"status":"inProgress"}}}`)
 	c.handleLine(`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"mcpToolCall","id":"mcp-1","server":"plugin-exa-search","tool":"web_search_exa","arguments":{"query":"latest Multica news"},"status":"completed","durationMs":1429,"result":{"content":[{"type":"text","text":"private provider payload"}]}}}}`)
+
+	if len(telemetry) != 1 {
+		t.Fatalf("missing native tool duration: %+v", telemetry)
+	}
+	var measured map[string]any
+	if json.Unmarshal([]byte(telemetry[0].Content), &measured) != nil || measured["call_id"] != "mcp-1" || measured["duration_ms"] != float64(1429) {
+		t.Fatalf("incorrect measured tool duration: %s", telemetry[0].Content)
+	}
 
 	if len(messages) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(messages))

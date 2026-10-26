@@ -18,6 +18,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Backend 是通过编码智能体执行提示词的统一接口。
@@ -33,13 +35,18 @@ type Backend interface {
 
 // ExecOptions 配置单次执行（execute）的参数。
 type ExecOptions struct {
-	EnableTaskSupplement bool   // 已协商的运行内追加输入能力
-	Cwd                  string // 工作目录：agent 子进程在哪里启动
+	RuntimeInputClaim        *protocol.RuntimeInputClaim
+	RuntimeInputCapabilities []string
+	EnableTaskSupplement     bool   // 已协商的运行内追加输入能力
+	Cwd                      string // 工作目录：agent 子进程在哪里启动
 	// Command is a runtime-native slash command (for example /plan or /goal).
 	// When set, the backend runs it against the session instead of a model turn.
-	Command string
-	// ApprovalPolicy is the runtime approval stance for this run: "ask" (default)
-	// delegates to the configured answerer, "never" rejects every approval ask.
+	Command            string
+	PlanMode           *bool // 聊天控制面期望的计划模式；nil 表示没有显式选择。
+	NativeGoal         bool  // CodeBuddy Goal 会话使用原生控制协议，普通会话沿用 stream-json。
+	CommandOnly        bool  // 纯控制命令不启动模型生成。
+	RequestInteraction func(context.Context, protocol.InteractionPrompt) (protocol.InteractionAnswer, error)
+	// ApprovalPolicy 为 ask 时交给配置的回答器，never 拒绝审批请求。
 	ApprovalPolicy string
 	Model          string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
 	// SystemPrompt 携带 Multica 的运行时简报（runtime brief），仅对少数无法
@@ -51,6 +58,7 @@ type ExecOptions struct {
 	// 因此 backend 绝不能假设该字段一定有值：新增一个只读 SystemPrompt 的 backend，
 	// 会悄无声息地什么也拿不到。
 	SystemPrompt              string
+	CodebuddyRuntimeBrief     string        // 通过受管 UserPromptSubmit 投递的本轮任务简报
 	ThreadName                string        // 会话/线程名，用于命名 agent 侧的会话
 	MaxTurns                  int           // 最多允许的回合数；0 表示不限
 	Timeout                   time.Duration // 整体执行超时（墙钟时间）
@@ -112,7 +120,8 @@ type ExecOptions struct {
 	ServiceTier string
 	// ClaudeSettingsPath 是 daemon 拥有、按任务隔离的设置文件，通过 Claude Code 的
 	// --settings 参数传入。目前只携带限制性的运行时技能覆盖项；其它 provider 忽略它。
-	ClaudeSettingsPath string
+	ClaudeSettingsPath    string
+	CodebuddySettingsPath string // 任务专属技能禁用设置，同时用于 stream-json 与 ACP。
 	// LifeCognition 标记本次执行是否属于生命认知（life cognition）流水线。
 	// Provider 据此套用生命专属的上下文与输出契约。
 	LifeCognition bool
@@ -134,6 +143,10 @@ func runContext(ctx context.Context, timeout time.Duration) (context.Context, co
 
 // Session 表示一次正在运行中的 agent 执行，由两条只读通道构成。
 type Session struct {
+	WaitingForInput func() bool
+	// RunCommand 执行用户的原生控制命令，回执表示运行时已经确认。
+	RunCommand   func(context.Context, string) (string, error)
+	CommandReady func() bool
 	// Supplement delivers an additional human instruction to the currently
 	// active provider turn. Nil means the backend cannot safely do so.
 	// Adapters bound their own transport calls; a hook-based adapter may wait
@@ -275,14 +288,18 @@ type Result struct {
 
 // Config 配置一个 Backend 实例。
 type Config struct {
-	ExecutablePath string            // CLI 可执行文件路径
-	CLIVersion     string            // 与 ExecutablePath 配套检测到的版本；内置提供方按已发布协议归一化用量
-	Env            map[string]string // 额外的环境变量
-	Logger         *slog.Logger
-	TaskID         string
-	RuntimeID      string
-	DaemonVersion  string
-	CodexVersion   string
+	CodexPool          *CodexProcessPool
+	ResidentSessionKey string
+	CodexResumePath    string // 原生恢复必须命中的持久 rollout，按线程 ID 发起并校验回包文件身份
+	PinResidentHome    func() func()
+	ExecutablePath     string            // CLI 可执行文件路径
+	CLIVersion         string            // 与 ExecutablePath 配套检测到的版本；内置提供方按已发布协议归一化用量
+	Env                map[string]string // 额外的环境变量
+	Logger             *slog.Logger
+	TaskID             string
+	RuntimeID          string
+	DaemonVersion      string
+	CodexVersion       string
 	// BuiltinRuntime 表示 ExecutablePath 是 provider 自己发现的内置二进制，
 	// 而不是某个自定义运行时 profile 的命令。自定义 profile 仍以其协议族
 	// （protocol_family）作为 provider 身份，所以仅靠 provider 名区分不了两者：

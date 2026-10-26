@@ -444,48 +444,22 @@ model = "o3"
 	}
 }
 
-func TestEnsureCodexMultiAgentConfigEscapeHatch(t *testing.T) {
-	// Cannot run in parallel: mutates process env.
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-	original := `model = "o3"
-features.multi_agent = true
-`
-	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
-
-	t.Setenv(MulticaCodexMultiAgentEnv, "1")
-
-	if err := ensureCodexMultiAgentConfig(configPath, nil); err != nil {
-		t.Fatalf("ensureCodexMultiAgentConfig failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(configPath)
-	got := string(data)
-	if got != original {
-		t.Errorf("expected file untouched when escape hatch set\n--- got ---\n%s\n--- want ---\n%s", got, original)
-	}
-}
-
-func TestCodexMultiAgentEnabledTruthy(t *testing.T) {
-	for _, v := range []string{"1", "true", "TRUE", "yes", "On"} {
-		t.Run(v, func(t *testing.T) {
-			t.Setenv(MulticaCodexMultiAgentEnv, v)
-			if !codexMultiAgentEnabled() {
-				t.Errorf("expected %q to be truthy", v)
+func TestEnsureCodexMultiAgentConfigIgnoresEnvironmentOverride(t *testing.T) {
+	for _, value := range []string{"1", "true", "yes", "on", "false", ""} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("MULTICA_CODEX_MULTI_AGENT", value)
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(configPath, []byte("model = \"o3\"\nfeatures.multi_agent = true\n"), 0600); err != nil {
+				t.Fatal(err)
 			}
-		})
-	}
-}
-
-func TestCodexMultiAgentEnabledFalsy(t *testing.T) {
-	for _, v := range []string{"", "0", "false", "no", "off", "anything else"} {
-		t.Run(v, func(t *testing.T) {
-			t.Setenv(MulticaCodexMultiAgentEnv, v)
-			if codexMultiAgentEnabled() {
-				t.Errorf("expected %q to be falsy", v)
+			if err := ensureCodexMultiAgentConfig(configPath, nil); err != nil {
+				t.Fatal(err)
 			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireMultiAgentDisabled(t, parseTOML(t, string(data)))
 		})
 	}
 }

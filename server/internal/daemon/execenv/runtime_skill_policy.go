@@ -1,5 +1,5 @@
 // 运行时技能禁用策略：把"本任务禁用哪些技能"落成各 provider 真正会读的
-// 配置——Claude Code 用 claude-runtime-skill-settings.json 的 skillOverrides
+// 配置——Claude Code / CodeBuddy 使用任务专属 settings 的 skillOverrides
 // 与 permissions.deny；Codex 则在 config 里追加 [[skills.config]] 禁用块。
 
 package execenv
@@ -14,6 +14,7 @@ import (
 )
 
 const claudeRuntimeSkillSettingsFile = "claude-runtime-skill-settings.json"
+const codebuddyRuntimeSkillSettingsFile = "codebuddy-runtime-skill-settings.json"
 
 // RuntimeSkillRefForEnv 标识一个"运行时本地"技能，用于按 provider 过滤任务
 // 环境。provider 与 runtime 已由任务选定，所以这里只需发现根与 provider
@@ -42,7 +43,15 @@ func cleanRuntimeSkillKey(key string) (string, bool) {
 // 产出两层机制：skillOverrides 只对"个人/项目技能"完全隐藏生效；插件技能
 // 会忽略该设置，因此对每个键额外补发 permissions.deny，它才是插件的强制路径。
 func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv, workspaceSkills []SkillContextForEnv) (string, error) {
-	path := filepath.Join(envRoot, claudeRuntimeSkillSettingsFile)
+	return prepareSkillSettingsFile(filepath.Join(envRoot, claudeRuntimeSkillSettingsFile), disabled, workspaceSkills)
+}
+
+// CodeBuddy 的 skillOverrides 与 Skill 权限拒绝规则通过任务专属 --settings 生效。
+func prepareCodebuddySkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv, workspaceSkills []SkillContextForEnv) (string, error) {
+	return prepareSkillSettingsFile(filepath.Join(envRoot, codebuddyRuntimeSkillSettingsFile), disabled, workspaceSkills)
+}
+
+func prepareSkillSettingsFile(path string, disabled []RuntimeSkillRefForEnv, workspaceSkills []SkillContextForEnv) (string, error) {
 	if len(disabled) == 0 {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return "", err
@@ -75,7 +84,7 @@ func prepareClaudeSkillSettings(envRoot string, disabled []RuntimeSkillRefForEnv
 		if workspaceClaimsRuntimeSkill(invocationName, workspaceSkills) {
 			continue
 		}
-		// Claude Code 的 skillOverrides 能完全隐藏个人/项目技能；插件技能
+		// 两种 CLI 的 skillOverrides 能完全隐藏个人/项目技能；插件技能
 		// 会无视该设置，所以下面还要为每个键补发 permissions.deny——
 		// 那才是对插件的强制手段。
 		if skill.Root != "plugin" {

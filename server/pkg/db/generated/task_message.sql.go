@@ -304,3 +304,49 @@ func (q *Queries) ListTaskMessagesSince(ctx context.Context, arg ListTaskMessage
 	}
 	return items, nil
 }
+
+const listTaskRuntimeMessagesPage = `-- name: ListTaskRuntimeMessagesPage :many
+SELECT id, seq, content FROM task_message
+WHERE task_id = $1 AND type = 'runtime'
+  AND (seq, id) > ($2::int, $3::uuid)
+ORDER BY seq ASC, id ASC
+LIMIT $4::int
+`
+
+type ListTaskRuntimeMessagesPageParams struct {
+	TaskID    pgtype.UUID `json:"task_id"`
+	AfterSeq  int32       `json:"after_seq"`
+	AfterID   pgtype.UUID `json:"after_id"`
+	PageLimit int32       `json:"page_limit"`
+}
+
+type ListTaskRuntimeMessagesPageRow struct {
+	ID      pgtype.UUID `json:"id"`
+	Seq     int32       `json:"seq"`
+	Content pgtype.Text `json:"content"`
+}
+
+func (q *Queries) ListTaskRuntimeMessagesPage(ctx context.Context, arg ListTaskRuntimeMessagesPageParams) ([]ListTaskRuntimeMessagesPageRow, error) {
+	rows, err := q.db.Query(ctx, listTaskRuntimeMessagesPage,
+		arg.TaskID,
+		arg.AfterSeq,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTaskRuntimeMessagesPageRow{}
+	for rows.Next() {
+		var i ListTaskRuntimeMessagesPageRow
+		if err := rows.Scan(&i.ID, &i.Seq, &i.Content); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

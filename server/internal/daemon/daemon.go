@@ -407,6 +407,7 @@ type repoCacheBackend interface {
 // 它持有全部工作区状态、runtime 索引、并发控制原语与各类缓存，是
 // handleTask / runTask 以及各后台循环（心跳、同步、GC、自动更新）共享的核心对象。
 type Daemon struct {
+	codexPool  *agent.CodexProcessPool
 	cfg        Config
 	client     *Client
 	repoCache  repoCacheBackend
@@ -2000,6 +2001,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.preflightAuth(ctx); err != nil {
 		return err
 	}
+
+	if err := d.initCodexProcessPool(); err != nil {
+		return fmt.Errorf("prepare resident Codex processes: %w", err)
+	}
+	defer d.codexPool.Close()
 
 	// 关停时反注册所有 runtimes（用全新的 ctx，因为此时 ctx 已被取消）。
 	defer d.deregisterRuntimes()
@@ -7608,6 +7614,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 		}
 	}
+	var codexNativeState execenv.CodexNativeState
+	if provider == "codex" && !usesCustomProfileCommand && runtime.GOOS == "linux" && agent.CodexResidentSupported(codexVersion) {
+		var stateErr error
+		codexNativeState, stateErr = d.prepareCodexNativeState(prepareCtx, task, env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx))
+		if stateErr != nil {
+			return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("prepare Codex native state: %w", stateErr))
+		}
+	}
 	phaseRecorder.Mark(taskPhaseEnvironmentReady)
 	// Belt-and-suspenders: also mark whatever root we ended up with, in case
 	// future changes diverge from ResolveRootDir.
@@ -7798,6 +7812,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		stopPrepareLease()
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
 	}
+	stopPrepareLease()
 	if taskSupplementNegotiated {
 		// Register before provider launch so a hint cannot arrive in the gap
 		// between the committed server transition and turn/started. The row is
@@ -7806,7 +7821,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		_, unsubscribeSupplements := d.taskSupplementSignals.subscribe(task.ID)
 		defer unsubscribeSupplements()
 	}
-	stopPrepareLease()
+	var runtimeInputCapabilities []string
+	if task.StartClaimSupported && !runtimeCommandOnly(task.Command, task.ChatMessage) && (task.IssueID != "" || task.ChatSessionID != "") &&
+		(task.Agent == nil || (task.Agent.SystemKey != "quality_supervision" && task.Agent.SystemKey != "issue_review")) {
+		if offered := agent.RuntimeInputCapabilities(provider, resolvedVersion, task.NativeGoal); len(offered) > 0 {
+			call, stop := context.WithTimeout(prepareCtx, 3*time.Second)
+			runtimeInputCapabilities, err = d.client.RegisterTaskRuntimeCapability(call, task, offered)
+			stop()
+			if err != nil {
+				taskLog.Debug("runtime input capability not negotiated", "error", err)
+			}
+		}
+	}
 	prepareComplete = true
 	cancelPrepare()
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
@@ -7821,9 +7847,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// 注入 runtime 专属配置（meta skill），让 agent 发现 .agent_context/。
+	taskCtx.CodebuddyBriefViaHook = provider == "codebuddy" && agent.CodebuddyNativeHooksEnabled(
+		agent.Config{CLIVersion: resolvedVersion, BuiltinRuntime: !usesCustomProfileCommand},
+		agent.ExecOptions{NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
-		if provider == "codex" {
+		if provider == "codex" || taskCtx.CodebuddyBriefViaHook {
 			return TaskResult{}, fmt.Errorf("inject runtime config: %w", err)
 		}
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
@@ -7897,6 +7926,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.CodexHome != "" {
 		agentEnv["CODEX_HOME"] = env.CodexHome
 	}
+	if codexNativeState.SQLiteHome != "" {
+		agentEnv["CODEX_SQLITE_HOME"] = codexNativeState.SQLiteHome
+	}
 	// HOME 与 XDG base 目录在这里刻意不碰：gh、aws、kubectl、npm 等 provider 工具
 	// 继续解析 daemon 用户的既有状态（MUL-5578）。Multica CLI 是例外：
 	// MULTICA_TASK_CONFIG_ROOT 把它的隐式 profile 查找重定向到私有任务本地状态、
@@ -7953,18 +7985,23 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 通过统一 runtime 解析器解析 backend：内置 runtime 身份（如 "omp"）走
 	// NewRuntime 分派，协议族走 New。这是唯一的生产边界——daemon 从不直接调
 	// agent.New 或 agent.NewRuntime，两个工厂各自保持"恰好一个含义"。
-	backend, err := agent.ResolveBackend(provider, agent.Config{
-		ExecutablePath: entry.Path,
-		LaunchPrefix:   profileFixedArgs,
-		CLIVersion:     resolvedVersion,
-		Env:            agentEnv,
-		Logger:         d.logger,
-		TaskID:         task.ID,
-		RuntimeID:      task.RuntimeID,
-		DaemonVersion:  d.cfg.CLIVersion,
-		CodexVersion:   codexVersion,
-		BuiltinRuntime: !usesCustomProfileCommand,
-	})
+	backendConfig := agent.Config{
+		ExecutablePath:  entry.Path,
+		LaunchPrefix:    profileFixedArgs,
+		CLIVersion:      resolvedVersion,
+		Env:             agentEnv,
+		Logger:          d.logger,
+		TaskID:          task.ID,
+		RuntimeID:       task.RuntimeID,
+		DaemonVersion:   d.cfg.CLIVersion,
+		CodexVersion:    codexVersion,
+		BuiltinRuntime:  !usesCustomProfileCommand,
+		CodexResumePath: codexNativeState.ResumePath,
+	}
+	if provider == "codex" {
+		d.configureCodexResident(task, env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx), &backendConfig)
+	}
+	backend, err := agent.ResolveBackend(provider, backendConfig)
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
 	}
@@ -8060,6 +8097,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	execOpts := agent.ExecOptions{
+		RuntimeInputClaim:          &protocol.RuntimeInputClaim{RuntimeID: task.RuntimeID, DispatchedAt: task.DispatchedAt},
+		RuntimeInputCapabilities:   runtimeInputCapabilities,
 		ApprovalPolicy:             approvalPolicy,
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
@@ -8073,6 +8112,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		TurnInterruptTimeout:       d.cfg.CodexTurnInterruptTimeout,
 		ThreadHandshakeTimeout:     d.cfg.CodexThreadHandshakeTimeout,
 		Command:                    task.Command,
+		PlanMode:                   task.PlanMode,
+		NativeGoal:                 task.NativeGoal,
+		CommandOnly:                runtimeCommandOnly(task.Command, task.ChatMessage),
 		ResumeSessionID:            task.PriorSessionID,
 		// 门控后的意图：这里的 PriorSessionID 已经反映过 pre-flight resume 闸门
 		// （被丢弃的 resume 改经 prompt 浮出）。它能活到这里，backend 就必须在
@@ -8090,7 +8132,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ThinkingLevel:          thinkingLevel,
 		ServiceTier:            serviceTier,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
+		CodebuddySettingsPath:  env.CodebuddySettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
+	}
+	if taskCtx.CodebuddyBriefViaHook {
+		execOpts.CodebuddyRuntimeBrief = runtimeBrief
 	}
 	if task.SupervisionPrompt != "" {
 		// 监督模式显式传递 Agent 指令，避免依赖 CodeBuddy 的默认文件加载。
@@ -8138,6 +8184,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 每轮都臃肿。
 	if providerNeedsInlineSystemPrompt(provider) {
 		execOpts.SystemPrompt = runtimeBrief
+	}
+	if (provider == "codex" || provider == "codebuddy") && task.SupervisionPrompt == "" && task.ReviewCommit == "" && task.LifeJobID == "" && (task.ChatSessionID != "" || task.IssueID != "") {
+		execOpts.RequestInteraction = d.client.taskInteractionRequester(task.ID, provider)
 	}
 
 	// 来自"早于服务器侧生成"服务器的 quick-actions 刷新任务（MUL-5573）。这个
@@ -8212,7 +8261,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	providerTraceIDs := traceListForResult(result)
 	defer func() { taskResult.ProviderTraceIDs = providerTraceIDs }()
 
-	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
+	if backendConfig.CodexResumePath == "" && shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
 		firstUsage := result.Usage
 		firstTools := tools
@@ -8240,9 +8289,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		execOpts.ResumeContinuityNotice = ""
 		taskCtx.PriorSessionResumed = false
 		if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {
+			if taskCtx.CodebuddyBriefViaHook {
+				return TaskResult{Status: "failed", SessionID: firstResult.SessionID, Usage: buildTaskUsageEntries(provider, firstUsage)}, fmt.Errorf("prepare fresh CodeBuddy hook brief: %w", briefErr)
+			}
 			taskLog.Warn("execenv: re-inject cold runtime config for fresh retry failed (non-fatal)", "error", briefErr)
 		} else {
 			runtimeBrief = freshBrief
+			if taskCtx.CodebuddyBriefViaHook {
+				execOpts.CodebuddyRuntimeBrief = runtimeBrief
+				if err := execenv.WriteRuntimeProvenance(env.RootDir, env.WorkDir, provider, runtimeBrief, taskCtx); err != nil {
+					taskLog.Warn("write fresh native hook instruction provenance failed", "error", err)
+				}
+			}
 			if providerNeedsInlineSystemPrompt(provider) {
 				execOpts.SystemPrompt = runtimeBrief
 			}
@@ -8655,6 +8713,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	var firstEventLogged atomic.Bool
 	phaseRecorder.Mark(taskPhaseRuntimeStarted)
 	taskLog.Debug("backend started, draining messages")
+	if opts.RuntimeInputClaim != nil && len(opts.RuntimeInputCapabilities) > 0 {
+		inputCtx, stopInputs := context.WithCancel(agentCtx)
+		inputsDone := make(chan struct{})
+		go func() {
+			defer close(inputsDone)
+			d.runTaskRuntimeInputLoop(inputCtx, session, taskID, *opts.RuntimeInputClaim, opts.RuntimeInputCapabilities, taskLog)
+		}()
+		defer func() {
+			stopInputs()
+			<-inputsDone
+		}()
+	}
 
 	// Only negotiated sessions may claim additions. Stop and join delivery
 	// before the caller reports the task's terminal state to the server.
@@ -8718,7 +8788,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	var idleWatchdogThreshold atomic.Int64
 	idleWatchdogThreshold.Store(int64(idleWindow))
 	if idleWindow > 0 {
-		go d.runIdleWatchdog(agentCtx, idleWindow, d.cfg.AgentToolWatchdog, &lastActivityAt, &inFlightTools, &idleWatchdogFired, &idleWatchdogThreshold, agentCancel, session.Messages, taskLog)
+		go d.runIdleWatchdog(agentCtx, idleWindow, d.cfg.AgentToolWatchdog, &lastActivityAt, &inFlightTools, &idleWatchdogFired, &idleWatchdogThreshold, agentCancel, session.Messages, taskLog, session.WaitingForInput)
 	}
 
 	// drainFinished 在排空 goroutine 冲刷完最后一批消息后关闭，让下面的结果交接
@@ -9102,7 +9172,7 @@ func idleWatchdogTickInterval(window time.Duration) time.Duration {
 //
 // Polling rate comes from idleWatchdogTickInterval, so a run is force-stopped
 // somewhere between its budget and budget + tick, never earlier.
-func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger) {
+func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger, waitingForInput ...func() bool) {
 	ticker := time.NewTicker(idleWatchdogTickInterval(window))
 	defer ticker.Stop()
 	for {
@@ -9110,6 +9180,9 @@ func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow ti
 		case <-agentCtx.Done():
 			return
 		case <-ticker.C:
+			if len(waitingForInput) > 0 && waitingForInput[0] != nil && waitingForInput[0]() {
+				continue
+			}
 			// 挑选静默预算。在途工具预期会静默（一场长构建/安装/测试在 tool_use 与
 			// tool_result 之间不发任何东西），所以它用更大的 toolWindow；toolWindow
 			// <= 0 则完全禁用"在途"上界。

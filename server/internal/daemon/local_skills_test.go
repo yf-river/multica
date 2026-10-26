@@ -161,8 +161,8 @@ func TestListRuntimeLocalSkills_Codebuddy(t *testing.T) {
 	if skill.SourcePath != "~/.codebuddy/skills/review-helper" {
 		t.Fatalf("source_path = %q, want ~/.codebuddy/skills/review-helper", skill.SourcePath)
 	}
-	if skill.CanDisable {
-		t.Fatal("codebuddy runtime skill controls are not supported yet")
+	if !skill.CanDisable {
+		t.Fatal("codebuddy runtime skill controls must be available")
 	}
 }
 
@@ -1293,5 +1293,17 @@ func TestCollectLocalSkillFiles_ValidUTF8TextPassesThroughUntouched(t *testing.T
 		if f.Path == "notes.txt" && f.Content != body {
 			t.Errorf("notes.txt content = %q, want %q", f.Content, body)
 		}
+	}
+}
+
+func TestCodebuddySkillDiscoveryUsesConfiguredAccountDirectory(t *testing.T) {
+	home, config := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEBUDDY_CONFIG_DIR", config)
+	writeTestLocalSkill(t, filepath.Join(home, ".codebuddy", "skills"), "wrong-account", map[string]string{"SKILL.md": "---\nname: wrong-account\ndescription: other account\n---\nwrong"})
+	writeTestLocalSkill(t, filepath.Join(config, "skills"), "selected-account", map[string]string{"SKILL.md": "---\nname: selected-account\ndescription: selected account\n---\nselected"})
+	skills, supported, err := listRuntimeLocalSkills("codebuddy")
+	if err != nil || !supported || len(skills) != 1 || skills[0].Key != "selected-account" || !skills[0].CanDisable {
+		t.Fatalf("configured account skills: %+v supported=%v error=%v", skills, supported, err)
 	}
 }

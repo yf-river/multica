@@ -33,6 +33,8 @@ The chain is:
 6. daemon prepares a workdir and launches the provider CLI;
 7. `multica repo checkout` talks to the local daemon, not directly to GitHub.
 
+任务令牌只在当前派发轮次的 `dispatched` 或 `running` 状态有效。终止或重新排队后，旧令牌返回 401；重新领取任务须使用本轮发放的凭据。
+
 ## 访问与在线状态
 
 Agent 的调用权限与执行机器的使用权限分别判断。私有运行时只允许其所有者的 Agent 执行；工作区管理员的管理权限不代表可以借用私有机器。`runtime_access_denied` 需要修复绑定或共享设置，重复触发不会解决。

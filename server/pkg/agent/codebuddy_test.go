@@ -478,7 +478,7 @@ func TestCodebuddyHandleAssistantText(t *testing.T) {
 		}),
 	}
 
-	turn := b.handleAssistant(msg, ch, make(map[string]TokenUsage), make(map[codebuddyUsageCall]TokenUsage))
+	turn := b.handleAssistant(context.Background(), msg, ch, make(map[string]TokenUsage), make(map[codebuddyUsageCall]TokenUsage))
 	output, tools := turn.text, turn.toolUses
 
 	if output != "codebuddy says hi" {
@@ -544,7 +544,7 @@ func TestCodebuddyHandleUserToolResult(t *testing.T) {
 		}),
 	}
 
-	b.handleUser(msg, ch)
+	b.handleUser(context.Background(), msg, ch)
 
 	select {
 	case m := <-ch:
@@ -573,7 +573,7 @@ func TestCodebuddyHandleControlRequestApprovesInCodebuddyShape(t *testing.T) {
 		}),
 	}
 
-	b.handleControlRequest(msg, &written)
+	b.handleControlRequest(msg, &written, "")
 
 	var resp map[string]any
 	if err := json.Unmarshal(bytes.TrimSpace(written.Bytes()), &resp); err != nil {
@@ -772,5 +772,32 @@ func TestCodebuddyExecuteFailsOnBackgroundTaskStarted(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for result")
+	}
+}
+
+func TestCodebuddyManagedSkillSettingsSurviveBothTransports(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		opts := ExecOptions{CodebuddySettingsPath: "/task/skill-settings.json", ExtraArgs: []string{"--settings", "/inherited/settings.json"}, CustomArgs: []string{"--settings=/custom/settings.json", "--debug"}}
+		var args []string
+		if native {
+			args = codebuddyNativeArgs(opts, Config{Logger: slog.Default()})
+		} else {
+			args = buildCodebuddyArgs(opts, slog.Default())
+		}
+		count := 0
+		for i, arg := range args {
+			if arg == "--settings" {
+				count++
+				if i+1 >= len(args) || args[i+1] != opts.CodebuddySettingsPath {
+					t.Fatalf("managed skill policy replaced: %v", args)
+				}
+			}
+			if strings.Contains(arg, "/inherited/") || strings.Contains(arg, "/custom/") {
+				t.Fatalf("competing skill settings survived: %v", args)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("managed skill policy missing: %v", args)
+		}
 	}
 }

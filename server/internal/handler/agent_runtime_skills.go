@@ -131,12 +131,12 @@ func (h *Handler) SetAgentRuntimeSkillEnabled(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusNotFound, "runtime not found")
 		return
 	}
-	if rt.RuntimeMode != "local" || (rt.Provider != "codex" && rt.Provider != "claude") {
-		writeError(w, http.StatusBadRequest, "runtime skill controls are only supported for codex and claude")
+	if rt.RuntimeMode != "local" || (rt.Provider != "codex" && rt.Provider != "claude" && rt.Provider != "codebuddy") {
+		writeError(w, http.StatusBadRequest, "runtime skill controls are only supported for codex, claude and codebuddy")
 		return
 	}
 	root, key, plugin, valid := normalizeRuntimeSkillIdentity(req.Root, req.Key, req.Plugin)
-	if !valid || (root == "plugin" && rt.Provider != "claude") {
+	if !valid || (root == "plugin" && rt.Provider != "claude" && rt.Provider != "codebuddy") {
 		writeError(w, http.StatusBadRequest, "invalid runtime skill identity")
 		return
 	}

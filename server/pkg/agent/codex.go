@@ -1,7 +1,7 @@
 package agent
 
 // 角色定位：本文件是 Codex CLI 的适配层，实现了 Backend 接口：拉起 `codex
-// app-server --listen stdio://` 子进程，通过 stdin/stdout 上的 JSON-RPC 2.0 与之对话，
+// app-server` 子进程，通过 stdio 或独立 Unix WebSocket 上的 JSON-RPC 2.0 与之对话，
 // 把 codex 的 thread/turn 协议翻译成本包统一的 Message/Result/Session。
 
 // 职责边界：管「进程生命周期 + JSON-RPC 客户端」这一整条链——参数归一化、MCP 配置
@@ -920,6 +920,9 @@ func isCodexBareTomlKey(s string) bool {
 }
 
 func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if err := validateNativeControlOnly(opts); err != nil {
+		return nil, err
+	}
 	// Execute 是对外入口：先跑一次完整 attempt，返回的 Session 消息流里，若首轮因
 	// 可重试原因失败，则内部再自动补一次 attempt（initialize / model_catalog_refresh）。
 	firstSession, err := b.executeOnce(ctx, prompt, opts, 1)
@@ -944,6 +947,26 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		session := currentSession
 		sessionMu.RUnlock()
 		return session != nil && session.SupplementReady != nil && session.SupplementReady()
+	}
+	waitingForInput := func() bool {
+		sessionMu.RLock()
+		defer sessionMu.RUnlock()
+		return currentSession != nil && currentSession.WaitingForInput != nil && currentSession.WaitingForInput()
+	}
+	runCommand := func(commandCtx context.Context, command string) (string, error) {
+		sessionMu.RLock()
+		session := currentSession
+		sessionMu.RUnlock()
+		if session == nil || session.RunCommand == nil {
+			return "", errors.New("codex session no longer accepts commands")
+		}
+		return session.RunCommand(commandCtx, command)
+	}
+	commandReady := func() bool {
+		sessionMu.RLock()
+		session := currentSession
+		sessionMu.RUnlock()
+		return session != nil && session.CommandReady != nil && session.CommandReady()
 	}
 
 	go func() {
@@ -1037,7 +1060,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		}
 	}()
 
-	return &Session{Supplement: supplement, SupplementReady: supplementReady, Messages: msgCh, Result: resCh}, nil
+	return &Session{RunCommand: runCommand, CommandReady: commandReady, Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: waitingForInput, Messages: msgCh, Result: resCh}, nil
 }
 
 // executeOnce 真正拉起一次 codex app-server 进程并跑完一轮（进程生命周期 + JSON-RPC
@@ -1110,60 +1133,99 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		})
 	}
 	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
+	var resident *codexProcessLease
+	residentTransferred := false
+	if b.cfg.CodexPool != nil {
+		var err error
+		resident, err = b.cfg.CodexPool.acquire(runCtx, b.cfg, opts, runtimeCmd, codexArgs)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("acquire resident Codex: %w", err)
+		}
+	}
+	defer func() {
+		if resident != nil && !residentTransferred {
+			resident.release(false)
+		}
+	}()
 	// Keep the app-server alive long enough to handle turn/interrupt when the
 	// task context is cancelled. The lifecycle goroutine remains governed by
 	// runCtx and explicitly stops this process context during bounded cleanup.
-	processCtx, stopProcess := context.WithCancel(context.WithoutCancel(runCtx))
-	cmd := runtimeCmd.exec(processCtx, codexArgs...)
-	hideAgentWindow(cmd)
-	// 把 codex 放进独立的进程组，卡死后的清理能覆盖整棵进程树——codex 的 Node 壳加上
-	// 它拉起的原生 Rust app-server——而不只是直接子进程。否则杀掉带头进程会留下孤儿孙进程
-	// 持续吃内存直到 OS 回收；参见 #4520：thread/resume 期间发生 scanner 溢出时，旧行为会
-	// 无限泄漏 codex 进程。configureProcessGroup 在 Windows 上是空操作。
-	// 覆盖 exec.CommandContext 默认的取消行为：默认只向 cmd.Process（带头进程）发 SIGKILL，
-	// 我们改为给整个进程组发信号，让后代一起死。返回 nil 是避免 exec 记一条虚假错误；
-	// 若 kill 后仍有打开的管道，下方 cmd.WaitDelay 仍会兜底 cmd.Wait()。
-	cmd.Cancel = func() error {
-		if cmd.Process != nil {
-			signalProcessGroup(cmd, syscall.SIGKILL)
+	var cmd *exec.Cmd
+	var stdout io.ReadCloser
+	var stdin io.WriteCloser
+	var stderrBuf *stderrTail
+	var stream *codexResidentStream
+	var stopProcess func()
+	var pid int
+	if resident != nil {
+		var err error
+		stream, err = openCodexResidentStream(runCtx, resident.entry.socket)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("connect resident Codex: %w", err)
 		}
-		return nil
-	}
-	// 给 context 取消后的等待上界，防止卡死的子进程（或孙进程握着的打开管道）让
-	// cmd.Wait() 无限挂起。与其它长驻后端（claude、copilot、cursor 等）保持一致。
-	cmd.WaitDelay = codexProcessWaitDelay()
-	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(codexArgs, trustAgentCommandPositional(0, "app-server")))
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
+		stdout, stdin, stderrBuf = stream.reader, stream, resident.stderr
+		pid = resident.entry.cmd.Process.Pid
+		stopProcess = func() { _ = stream.Close(); resident.release(false) }
+		b.cfg.Logger.Info("codex resident lease", "native_pid", pid, "task_id", b.cfg.TaskID, "reused", resident.reused)
+	} else {
+		var err error
+		processCtx, stop := context.WithCancel(context.WithoutCancel(runCtx))
+		stopProcess = stop
+		cmd = runtimeCmd.exec(processCtx, codexArgs...)
+		hideAgentWindow(cmd)
+		// 把 codex 放进独立的进程组，卡死后的清理能覆盖整棵进程树——codex 的 Node 壳加上
+		// 它拉起的原生 Rust app-server——而不只是直接子进程。否则杀掉带头进程会留下孤儿孙进程
+		// 持续吃内存直到 OS 回收；参见 #4520：thread/resume 期间发生 scanner 溢出时，旧行为会
+		// 无限泄漏 codex 进程。configureProcessGroup 在 Windows 上是空操作。
+		// 覆盖 exec.CommandContext 默认的取消行为：默认只向 cmd.Process（带头进程）发 SIGKILL，
+		// 我们改为给整个进程组发信号，让后代一起死。返回 nil 是避免 exec 记一条虚假错误；
+		// 若 kill 后仍有打开的管道，下方 cmd.WaitDelay 仍会兜底 cmd.Wait()。
+		cmd.Cancel = func() error {
+			if cmd.Process != nil {
+				signalProcessGroup(cmd, syscall.SIGKILL)
+			}
+			return nil
+		}
+		// 给 context 取消后的等待上界，防止卡死的子进程（或孙进程握着的打开管道）让
+		// cmd.Wait() 无限挂起。与其它长驻后端（claude、copilot、cursor 等）保持一致。
+		cmd.WaitDelay = codexProcessWaitDelay()
+		b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(codexArgs, trustAgentCommandPositional(0, "app-server")))
+		if opts.Cwd != "" {
+			cmd.Dir = opts.Cwd
+		}
+		cmd.Env = buildEnv(b.cfg.Env)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		stopProcess()
-		return nil, fmt.Errorf("codex stdout pipe: %w", err)
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		cancel()
-		stopProcess()
-		return nil, fmt.Errorf("codex stdin pipe: %w", err)
-	}
-	// codex 的 stderr 可能含 auth/provider 诊断。只捕获一段有界尾部，并且只经脱敏器
-	// 出现在清理事件里。
-	stderrBuf := newStderrTail(io.Discard, codexStderrTailBytes)
-	cmd.Stderr = stderrBuf
+		stdout, err = cmd.StdoutPipe()
+		if err != nil {
+			cancel()
+			stopProcess()
+			return nil, fmt.Errorf("codex stdout pipe: %w", err)
+		}
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			cancel()
+			stopProcess()
+			return nil, fmt.Errorf("codex stdin pipe: %w", err)
+		}
+		// codex 的 stderr 可能含 auth/provider 诊断。只捕获一段有界尾部，并且只经脱敏器
+		// 出现在清理事件里。
+		stderrBuf = newStderrTail(io.Discard, codexStderrTailBytes)
+		cmd.Stderr = stderrBuf
 
-	// 启动并一步到位接管整棵进程树。Windows 上子进程以挂起方式创建并先放进 Job Object
-	// 再运行，让下方清理能覆盖 Node 壳、原生 app-server 及其底下的沙箱辅助进程，而不只是
-	// 直接子进程。Unix 上上面配置的进程组已覆盖这些，这里只是普通 Start。接管失败只记日志、
-	// 不算致命；无法恢复运行的子进程会被杀掉并在这一步报出来。
-	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
-		cancel()
-		stopProcess()
-		return nil, fmt.Errorf("start codex: %w", err)
+		// 启动并一步到位接管整棵进程树。Windows 上子进程以挂起方式创建并先放进 Job Object
+		// 再运行，让下方清理能覆盖 Node 壳、原生 app-server 及其底下的沙箱辅助进程，而不只是
+		// 直接子进程。Unix 上上面配置的进程组已覆盖这些，这里只是普通 Start。接管失败只记日志、
+		// 不算致命；无法恢复运行的子进程会被杀掉并在这一步报出来。
+		if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
+			cancel()
+			stopProcess()
+			return nil, fmt.Errorf("start codex: %w", err)
+		}
+		pid = cmd.Process.Pid
 	}
+	residentTransferred = true
 	activeLaunches := activeCodexLaunches.Add(1)
 	for {
 		maxSeen := maxActiveCodexLaunchesObserved.Load()
@@ -1177,7 +1239,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		codexVersion = "unknown"
 	}
 
-	b.cfg.Logger.Info("codex lifecycle", "phase", "spawn", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "process_group", cmd.Process.Pid, "cwd", opts.Cwd, "attempt", attempt, "active_launches", activeLaunches, "codex_version", codexVersion, "daemon_version", b.cfg.DaemonVersion)
+	launchPhase := "spawn"
+	if resident != nil && resident.reused {
+		launchPhase = "lease"
+	}
+	b.cfg.Logger.Info("codex lifecycle", "phase", launchPhase, "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "process_group", pid, "cwd", opts.Cwd, "attempt", attempt, "active_launches", activeLaunches, "codex_version", codexVersion, "daemon_version", b.cfg.DaemonVersion)
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
@@ -1214,12 +1280,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 	c = &codexClient{
 		cfg:                      b.cfg,
+		approvalPolicy:           opts.ApprovalPolicy,
 		stdin:                    stdin,
 		pending:                  make(map[int]*pendingRPC),
 		processDone:              make(chan struct{}),
 		handshakeTimeout:         handshakeTimeout,
 		threadHandshakeTimeout:   threadHandshakeTimeout,
-		pid:                      cmd.Process.Pid,
+		pid:                      pid,
 		attempt:                  attempt,
 		activeLaunches:           activeLaunches,
 		notificationProtocol:     "unknown",
@@ -1275,6 +1342,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			trySendString(semanticActivityCh, description)
 		},
 		onTurnDone: func(aborted bool) {
+			// 原生 Goal 的回合边界不是任务边界，续跑由 Codex 自己调度。
+			if !aborted && c.goalActive.Load() && c.getTurnError() == "" {
+				return
+			}
 			select {
 			case turnDone <- aborted:
 			default:
@@ -1282,6 +1353,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		},
 	}
 
+	if resident != nil {
+		c.threadConfig = resident.threadConfig
+		c.threadClosed = make(chan struct{})
+	}
+	c.cfg.CodexVersion = codexVersion
+	c.interactions = newInteractionBroker("codex", runCtx, runtimeInteractionRequest(opts), c.onMessage)
 	// 后台开始读 stdout
 	readerDone := make(chan struct{})
 	go func() {
@@ -1338,8 +1415,36 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	var cleanupConfirmed bool
 	var waitReturned bool
 	var cleanupWaitErr error
+	var residentCleanupErr error
 	drainAndWait := func() {
 		waitOnce.Do(func() {
+			c.commandReady.Store(false)
+			c.commandMu.Lock()
+			defer c.commandMu.Unlock()
+			if c.goalControlUncertain.Load() && c.getThreadID() != "" {
+				c.pauseGoalBeforeStop(c.getThreadID(), b.cfg.Logger)
+			}
+			if resident != nil {
+				residentCleanupErr = c.unloadResidentThread()
+				if err := reapCodexResidentExecution(resident.execution); err != nil {
+					residentCleanupErr = err
+				}
+				_ = stream.Close()
+				closed := false
+				select {
+				case <-readerDone:
+					closed = true
+				case <-time.After(codexGracefulShutdown()):
+					residentCleanupErr = errors.New("Codex resident event stream did not close")
+				}
+				<-stream.done
+				retained := residentCleanupErr == nil && closed
+				resident.release(retained)
+				cleanupConfirmed = !retained && waitProcessGroupGone(resident.entry.cmd, 3*time.Second)
+				b.cfg.Logger.Info("codex lifecycle", "phase", "cleanup", "task_id", b.cfg.TaskID, "pid", pid,
+					"reaped", cleanupConfirmed, "native_retained", retained, "transport_closed", closed)
+				return
+			}
 			stdin.Close()
 
 			grace := codexGracefulShutdown()
@@ -1363,7 +1468,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				// codex 没在宽限期内关闭 stdout。用 context 取消强制停机——cmd.Cancel
 				// 组杀整棵树，读取方在 stdout EOF 时解除阻塞，进入阶段 2。
 				b.cfg.Logger.Warn("codex did not close stdout after stdin EOF; forcing shutdown",
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"grace", grace.String(),
 				)
 				stopProcess()
@@ -1377,7 +1482,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				case <-readerDone:
 				case <-time.After(grace):
 					b.cfg.Logger.Warn("codex stdout reader remained open after bounded process wait",
-						"pid", cmd.Process.Pid,
+						"pid", pid,
 						"grace", grace.String(),
 					)
 				}
@@ -1392,7 +1497,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				// 干净回收。
 			case <-time.After(grace):
 				b.cfg.Logger.Warn("codex process still alive after reader exited; forcing shutdown",
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"grace", grace.String(),
 				)
 				stopProcess()
@@ -1413,8 +1518,8 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"phase", "cleanup",
 				"task_id", b.cfg.TaskID,
 				"runtime_id", b.cfg.RuntimeID,
-				"pid", cmd.Process.Pid,
-				"process_group", cmd.Process.Pid,
+				"pid", pid,
+				"process_group", pid,
 				"attempt", attempt,
 				"latency", time.Since(launchStarted).Round(time.Millisecond).String(),
 				"reaped", cleanupConfirmed,
@@ -1440,7 +1545,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		defer stopProcess()
 		defer close(msgCh)
 		defer close(resCh)
-		defer drainAndWait()
+		defer func() {
+			c.commandReady.Store(false)
+			cancel()
+			drainAndWait()
+			c.interactions.stop()
+		}()
 
 		startTime := time.Now()
 		finalStatus := "completed"
@@ -1448,7 +1558,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 		// 1. initialize 握手
 		initializeStarted := time.Now()
-		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_sent", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "active_launches", activeLaunches)
+		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_sent", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "attempt", attempt, "active_launches", activeLaunches)
 		_, err := c.request(runCtx, "initialize", map[string]any{
 			"clientInfo": map[string]any{
 				"name":    "multica-agent-sdk",
@@ -1489,16 +1599,24 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			} else if timedOut && cleanupConfirmed && !codexInitializeRetrySupported() {
 				finalError += "; retry suppressed: process-tree cleanup cannot be confirmed on this platform"
 			}
-			b.cfg.Logger.Warn("codex lifecycle", "phase", "initialize_failure", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", initializeLatency.Round(time.Millisecond).String(), "semantic_activity", semanticObserved.Load(), "cleanup_confirmed", cleanupConfirmed, "retry_safe", retrySafe)
+			b.cfg.Logger.Warn("codex lifecycle", "phase", "initialize_failure", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "attempt", attempt, "latency", initializeLatency.Round(time.Millisecond).String(), "semantic_activity", semanticObserved.Load(), "cleanup_confirmed", cleanupConfirmed, "retry_safe", retrySafe)
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds(), codexInitializeRetrySafe: retrySafe}
 			return
 		}
-		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_response", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", time.Since(initializeStarted).Round(time.Millisecond).String())
+		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_response", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "attempt", attempt, "latency", time.Since(initializeStarted).Round(time.Millisecond).String())
 		c.notify("initialized")
 
 		// 2. 新开一个线程，或为本次问题 resume 之前的线程。resume 失败时（线程在服务端
 		// 被回收、schema 漂移等）回退到全新线程，让任务仍能推进。
-		threadID, resumed, err := c.startOrResumeThread(runCtx, opts, b.cfg.Logger)
+		var threadID string
+		var resumed bool
+		c.unloadedGoalControl = codexUnloadedGoalControl(opts)
+		if c.unloadedGoalControl {
+			// Goal 查询和停止操作直接使用已物化会话；resume 会自动续跑 active Goal。
+			threadID, resumed = opts.ResumeSessionID, true
+		} else {
+			threadID, resumed, err = c.startOrResumeThread(runCtx, opts, b.cfg.Logger)
+		}
 		if err != nil {
 			var handshakeErr *codexHandshakeTimeoutError
 			timedOut := errors.As(err, &handshakeErr) && isCodexThreadSetupRPC(handshakeErr.Method)
@@ -1521,7 +1639,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					"phase", strings.ReplaceAll(c.threadSetupMethod, "/", "_")+"_failure",
 					"task_id", b.cfg.TaskID,
 					"runtime_id", b.cfg.RuntimeID,
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"attempt", attempt,
 					"active_launches", activeLaunches,
 					"method", c.threadSetupMethod,
@@ -1546,6 +1664,42 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			return
 		}
 		c.setThreadID(threadID)
+		if opts.Model == "" {
+			opts.Model = c.nativeThreadModel()
+		}
+		// 先建立带准确协作模式的用户回合，再激活 Goal。空闲线程上的
+		// goal/set 会自行启动回合，不能随后再发送一次 turn/start。
+		deferGoalCommand := !opts.CommandOnly && nativeGoalActivatingCommand(opts.Command)
+		if deferGoalCommand {
+			c.goalActive.Store(true)
+			c.goalEngaged.Store(true)
+		}
+		var commandOutput string
+		var commandErr error
+		if !deferGoalCommand {
+			commandOutput, commandErr = c.applyRuntimeCommand(runCtx, opts)
+		}
+		if commandErr != nil {
+			resCh <- Result{Status: "failed", Error: commandErr.Error(), SessionID: threadID, DurationMs: time.Since(startTime).Milliseconds()}
+			return
+		}
+		if opts.CommandOnly {
+			resumeID := threadID
+			if !resumed {
+				// 纯控制不物化 rollout；聊天控制选择由持久记录恢复。
+				resumeID = ""
+			}
+			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: resumeID})
+			if resident != nil {
+				drainAndWait()
+				if residentCleanupErr != nil {
+					resCh <- Result{Status: "failed", Error: residentCleanupErr.Error(), SessionID: resumeID, DurationMs: time.Since(startTime).Milliseconds()}
+					return
+				}
+			}
+			resCh <- Result{Status: "completed", Output: commandOutput, SessionID: resumeID, DurationMs: time.Since(startTime).Milliseconds()}
+			return
+		}
 		if resumed {
 			b.cfg.Logger.Info("codex thread resumed", "thread_id", threadID)
 		} else {
@@ -1569,6 +1723,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// Trump 要求三个注入点不得各自漂移）。
 		applyCodexReasoningEffort(turnParams, opts.ThinkingLevel)
 		applyCodexServiceTier(turnParams, opts.ServiceTier)
+		if err := applyCodexPlanMode(turnParams, opts); err != nil {
+			resCh <- Result{Status: "failed", Error: err.Error(), SessionID: threadID, DurationMs: time.Since(startTime).Milliseconds()}
+			return
+		}
 		waitingForTurn := true
 		var timeoutDiagnostic codexTimeoutDiagnostic
 		var processExitErr error
@@ -1580,6 +1738,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			)
 		}
 		finishTurn := func(aborted bool) {
+			c.commandMu.Lock()
+			defer c.commandMu.Unlock()
+			if !aborted && c.getTurnError() == "" && c.goalActive.Load() && c.getProcessErr() == nil {
+				return
+			}
+			c.commandReady.Store(false)
 			waitingForTurn = false
 			switch {
 			case aborted:
@@ -1591,8 +1755,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					finalError = "turn was aborted"
 				}
 			default:
-				if errMsg := c.getTurnError(); errMsg != "" {
+				if c.goalActive.Load() && c.getProcessErr() != nil {
+					finalStatus = "failed"
+					finalError = "codex exited before its native goal completed"
+				} else if errMsg := c.getTurnError(); errMsg != "" {
 					finishFirstItemWait("turn_failed")
+					finalStatus = "failed"
+					finalError = errMsg
+				} else if errMsg := c.goalStopError(); errMsg != "" {
+					finishFirstItemWait("goal_stopped")
 					finalStatus = "failed"
 					finalError = errMsg
 				} else {
@@ -1601,6 +1772,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			}
 		}
 		finishRunContextDone := func() {
+			c.commandReady.Store(false)
 			waitingForTurn = false
 			if runCtx.Err() == context.DeadlineExceeded {
 				finishFirstItemWait("execution_timeout")
@@ -1614,6 +1786,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		}
 		turnNotificationGate.arm()
 		_, err = c.request(runCtx, "turn/start", turnParams)
+		if err == nil && deferGoalCommand {
+			_, err = c.applyRuntimeCommand(runCtx, opts)
+			if err != nil {
+				c.setTurnError(err.Error())
+			}
+		}
 		if err != nil {
 			if runCtx.Err() != nil {
 				finishRunContextDone()
@@ -1652,10 +1830,16 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			firstTurnNoProgressTimerC = nil
 		}
 		defer stopFirstTurnNoProgressTimer()
+		if waitingForTurn {
+			c.commandReady.Store(true)
+		}
 
 		for waitingForTurn {
 			select {
 			case aborted := <-turnDone:
+				if !aborted && c.getTurnError() == "" && c.goalActive.Load() {
+					continue
+				}
 				finishTurn(aborted)
 			case <-guardianRateLimitTrip:
 				waitingForTurn = false
@@ -1684,6 +1868,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					stopFirstTurnNoProgressTimer()
 				}
 			case <-firstTurnNoProgressTimerC:
+				if c.interactions.waiting() {
+					firstTurnNoProgressTimer.Reset(firstTurnNoProgressTimeout)
+					continue
+				}
 				waitingForTurn = false
 				finishFirstItemWait("no_progress_timeout")
 				finalStatus = "timeout"
@@ -1697,13 +1885,17 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					Model:        opts.Model,
 				}
 				b.cfg.Logger.Warn(CodexFirstTurnNoProgressMarker,
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"thread_id", threadID,
 					"turn_id", turnID,
 					"timeout", firstTurnNoProgressTimeout.String(),
 					"last_activity", lastSemanticActivityDescription,
 				)
 			case <-semanticTimer.C:
+				if c.interactions.waiting() {
+					resetTimer(semanticTimer, semanticInactivityTimeout)
+					continue
+				}
 				waitingForTurn = false
 				finishFirstItemWait("semantic_inactivity_timeout")
 				finalStatus = "timeout"
@@ -1717,7 +1909,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					Model:        opts.Model,
 				}
 				b.cfg.Logger.Warn(CodexSemanticInactivityMarker,
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"thread_id", threadID,
 					"turn_id", turnID,
 					"timeout", semanticInactivityTimeout.String(),
@@ -1757,12 +1949,16 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		}
 
 		duration := time.Since(startTime)
-		b.cfg.Logger.Info("codex finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
+		b.cfg.Logger.Info("codex finished", "pid", pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
 		// 执行清理。drainAndWait 用两个有界阶段实现「先优雅后强杀」（见其声明）：
 		// 先等 reader，再等 cmd.Wait()，任一步超时则强制取消。干净停机让 codex 冲刷
 		// OTEL 遥测；卡死的进程则被进程组 SIGKILL 干掉。
 		drainAndWait()
+		if residentCleanupErr != nil {
+			finalStatus = "failed"
+			finalError = residentCleanupErr.Error()
+		}
 
 		if processExitErr != nil {
 			finalError = withAgentStderr(processExitErr.Error(), "codex", sanitizeCodexDiagnostic(stderrBuf.Tail()))
@@ -1783,7 +1979,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			cleanupConfirmed && codexInitializeRetrySupported()
 		if startupRefreshRetrySafe {
 			b.cfg.Logger.Warn("codex startup model catalog refresh failure is retry safe",
-				"pid", cmd.Process.Pid,
+				"pid", pid,
 				"thread_id", threadID,
 				"attempt", attempt,
 			)
@@ -1803,7 +1999,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"phase", "first_item_wait",
 				"task_id", b.cfg.TaskID,
 				"runtime_id", b.cfg.RuntimeID,
-				"pid", cmd.Process.Pid,
+				"pid", pid,
 				"attempt", attempt,
 				"active_launches", activeLaunches,
 				"method", "turn/start",
@@ -1885,7 +2081,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	supplementReady := func() bool {
 		return c.getThreadID() != "" && c.activeTurnID() != ""
 	}
-	return &Session{Supplement: supplement, SupplementReady: supplementReady, Messages: msgCh, Result: resCh}, nil
+	runCommand := func(commandCtx context.Context, command string) (string, error) {
+		return c.runLiveCommand(commandCtx, runCtx, command, opts)
+	}
+	return &Session{RunCommand: runCommand, CommandReady: c.commandReady.Load, Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: c.interactions.waiting, Messages: msgCh, Result: resCh}, nil
 }
 
 func supplementCodexTurn(ctx context.Context, c *codexClient, instruction string) error {
@@ -1951,6 +2150,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		// 字段。developerInstructions 保持 nil 的原因见下方 thread/start 的说明。
 		resumeParams := map[string]any{
 			"threadId":              priorThreadID,
+			"config":                c.currentThreadConfig(),
 			"cwd":                   opts.Cwd,
 			"model":                 nilIfEmpty(opts.Model),
 			"developerInstructions": nil,
@@ -1961,6 +2161,9 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		// 显式覆盖持久化的推理强度：不加这个，codex resume 会静默沿用旧会话建时的档位，
 		// 即使 agent 的 thinking_level 之后已被用户改过。参见 MUL-2339——resume 必须
 		// 服从「当前配置」而非「存下来的配置」。
+		if opts.ApprovalPolicy == "never" {
+			resumeParams["approvalPolicy"] = "never"
+		}
 		applyCodexReasoningEffort(resumeParams, opts.ThinkingLevel)
 		applyCodexServiceTier(resumeParams, opts.ServiceTier)
 		c.threadSetupMethod = "thread/resume"
@@ -1977,6 +2180,18 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		resumeResult, err := c.request(ctx, "thread/resume", resumeParams)
 		if err == nil {
 			if threadID := extractThreadID(resumeResult); threadID != "" {
+				if c.cfg.CodexResumePath != "" {
+					var restored struct {
+						Thread struct {
+							Path string `json:"path"`
+						} `json:"thread"`
+					}
+					if json.Unmarshal(resumeResult, &restored) != nil || !sameCodexResidentRollout(restored.Thread.Path, c.cfg.CodexResumePath) || threadID != priorThreadID {
+						logger.Warn("codex native resume identity mismatch", "expected_thread_id", priorThreadID, "actual_thread_id", threadID, "expected_path", c.cfg.CodexResumePath, "actual_path", restored.Thread.Path)
+						return "", false, errors.New("codex native resume did not use its persistent conversation rollout")
+					}
+				}
+				c.rememberNativeThreadModel(resumeResult)
 				logger.Info("codex lifecycle",
 					"phase", "thread_resume_response",
 					"task_id", c.cfg.TaskID,
@@ -1990,10 +2205,13 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 				)
 				return threadID, true, nil
 			}
+			if c.cfg.CodexResumePath != "" {
+				return "", false, errors.New("codex native resume did not return the original thread identity")
+			}
 			logger.Warn("codex thread/resume returned no thread ID; falling back to thread/start", "prior_thread_id", priorThreadID)
 		} else {
-			if isCodexTransportError(err) {
-				logger.Warn("codex thread/resume failed due to transport error; not falling back to thread/start", "prior_thread_id", priorThreadID, "error", err)
+			if isCodexTransportError(err) || c.cfg.CodexResumePath != "" {
+				logger.Warn("codex thread/resume failed; replacement thread is prohibited", "prior_thread_id", priorThreadID, "error", err)
 				return "", false, fmt.Errorf("codex thread/resume failed: %w", err)
 			}
 			logger.Warn("codex thread/resume failed; falling back to thread/start", "prior_thread_id", priorThreadID, "error", err)
@@ -2011,13 +2229,16 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"cwd":                    opts.Cwd,
 		"approvalPolicy":         nil,
 		"sandbox":                nil,
-		"config":                 nil,
+		"config":                 c.currentThreadConfig(),
 		"baseInstructions":       nil,
 		"developerInstructions":  nil,
 		"compactPrompt":          nil,
 		"includeApplyPatchTool":  nil,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
+	}
+	if opts.ApprovalPolicy == "never" {
+		startParams["approvalPolicy"] = "never"
 	}
 	applyCodexReasoningEffort(startParams, opts.ThinkingLevel)
 	applyCodexServiceTier(startParams, opts.ServiceTier)
@@ -2040,6 +2261,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 	if threadID == "" {
 		return "", false, fmt.Errorf("codex thread/start returned no thread ID")
 	}
+	c.rememberNativeThreadModel(startResult)
 	logger.Info("codex lifecycle",
 		"phase", "thread_start_response",
 		"task_id", c.cfg.TaskID,
@@ -2291,9 +2513,16 @@ func describeCodexSemanticActivity(msg Message) string {
 // ── codexClient: JSON-RPC 2.0 transport ──
 
 type codexClient struct {
+	threadConfig           map[string]any
+	threadClosed           chan struct{}
+	threadClosedOnce       sync.Once
+	approvalPolicy         string
 	cfg                    Config
 	stdin                  interface{ Write([]byte) (int, error) }
 	mu                     sync.Mutex
+	writeMu                sync.Mutex
+	interactions           *interactionBroker
+	runtimeToolCompletions map[string]bool
 	nextID                 int
 	pending                map[int]*pendingRPC
 	processDone            chan struct{}
@@ -2308,6 +2537,7 @@ type codexClient struct {
 	threadIDMu             sync.RWMutex
 	turnIDMu               sync.RWMutex
 	threadID               string
+	threadModel            string
 	lastTurnID             string
 	turnID                 string
 	onMessage              func(Message)
@@ -2345,6 +2575,20 @@ type codexClient struct {
 
 	notificationProtocol string // "unknown"、"legacy"、"raw"
 	turnCompleted        bool
+	completedWithoutID   bool
+	goalActive           atomic.Bool
+	unloadedGoalControl  bool
+	goalEngaged          atomic.Bool
+	goalMutationSequence atomic.Uint64
+	goalControlUncertain atomic.Bool
+	goalStatus           atomic.Value // string，原生目标停止原因
+	goalStateMu          sync.Mutex
+	goalRevision         uint64
+	goalConfirmations    map[chan struct{}]codexGoalConfirmation
+	commandMu            sync.Mutex
+	commandReady         atomic.Bool
+	settingsMu           sync.Mutex
+	settingsWaiters      map[chan struct{}]codexPlanSelection
 
 	usageMu       sync.Mutex
 	usage         TokenUsage // 由回合事件累积而来
@@ -2482,8 +2726,9 @@ func (c *codexClient) activeTurnID() string {
 }
 
 type pendingRPC struct {
-	ch     chan rpcResult
-	method string
+	ch               chan rpcResult
+	method           string
+	goalConfirmation chan struct{}
 }
 
 type rpcResult struct {
@@ -2545,6 +2790,15 @@ func codexRequestContextError(ctx context.Context) error {
 // reached that authoritative completion boundary; callers must force-stop the
 // process tree when it is false.
 func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, configuredTimeout time.Duration, logger *slog.Logger) bool {
+	c.commandReady.Store(false)
+	c.commandMu.Lock()
+	defer c.commandMu.Unlock()
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if (c.goalActive.Load() || c.goalControlUncertain.Load()) && threadID != "" {
+		c.pauseGoalBeforeStop(threadID, logger)
+	}
 	select {
 	case <-turnDone:
 		// Completion won the cancellation race; usage has already been captured.
@@ -2555,9 +2809,6 @@ func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, c
 	turnID := c.activeTurnID()
 	if threadID == "" || turnID == "" {
 		return false
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	interruptTimeout := configuredTimeout
 	if interruptTimeout <= 0 {
@@ -2586,7 +2837,7 @@ func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, c
 	}
 }
 
-func (c *codexClient) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+func (c *codexClient) request(ctx context.Context, method string, params any) (response json.RawMessage, requestErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -2595,6 +2846,8 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 	if timeout := c.handshakeTimeoutFor(method); timeout > 0 && isCodexHandshakeRPC(method) {
 		timeoutErr := &codexHandshakeTimeoutError{Method: method, Timeout: timeout}
 		requestCtx, cancelRequest = context.WithTimeoutCause(ctx, timeout, timeoutErr)
+	} else if strings.HasPrefix(method, "thread/goal/") {
+		requestCtx, cancelRequest = context.WithTimeout(ctx, 5*time.Second)
 	}
 	defer cancelRequest()
 
@@ -2611,8 +2864,14 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 	c.nextID++
 	id := c.nextID
 	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: method}
+	if method == "thread/goal/set" || method == "thread/goal/clear" {
+		pr.goalConfirmation = make(chan struct{}, 1)
+	}
 	c.pending[id] = pr
 	c.mu.Unlock()
+	if pr.goalConfirmation != nil {
+		defer func() { c.goalStateMu.Lock(); delete(c.goalConfirmations, pr.goalConfirmation); c.goalStateMu.Unlock() }()
+	}
 
 	msg := map[string]any{
 		"jsonrpc": "2.0",
@@ -2628,7 +2887,16 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 		return nil, err
 	}
 	data = append(data, '\n')
-	if _, err := c.stdin.Write(data); err != nil {
+	if pr.goalConfirmation != nil {
+		c.goalMutationSequence.Add(1)
+		c.goalControlUncertain.Store(true)
+		defer func() {
+			if requestErr == nil {
+				c.goalControlUncertain.Store(false)
+			}
+		}()
+	}
+	if _, err := c.write(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
@@ -2642,13 +2910,35 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 		c.cfg.Logger.Info("codex turn/start sent", "request_id", id, "thread_id", threadID)
 	}
 
+	returnResponse := func(res rpcResult) (json.RawMessage, error) {
+		if res.err == nil && pr.goalConfirmation != nil {
+			select {
+			case <-pr.goalConfirmation:
+				return res.result, nil
+			default:
+			}
+			select {
+			case <-pr.goalConfirmation:
+			case <-requestCtx.Done():
+				return nil, codexRequestContextError(requestCtx)
+			case <-processDone:
+				select {
+				case <-pr.goalConfirmation:
+					return res.result, nil
+				default:
+					return nil, errors.New("codex exited before confirming goal control")
+				}
+			}
+		}
+		return res.result, res.err
+	}
 	select {
 	case res := <-pr.ch:
-		return res.result, res.err
+		return returnResponse(res)
 	case <-processDone:
 		select {
 		case res := <-pr.ch:
-			return res.result, res.err
+			return returnResponse(res)
 		default:
 		}
 		c.mu.Lock()
@@ -2677,10 +2967,10 @@ func (c *codexClient) notify(method string) {
 	}
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	_, _ = c.write(data)
 }
 
-func (c *codexClient) respond(id int, result any) {
+func (c *codexClient) respond(id any, result any) {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -2688,10 +2978,10 @@ func (c *codexClient) respond(id int, result any) {
 	}
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	_, _ = c.write(data)
 }
 
-func (c *codexClient) respondError(id int, code int, message string) {
+func (c *codexClient) respondError(id any, code int, message string) {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -2702,7 +2992,7 @@ func (c *codexClient) respondError(id int, code int, message string) {
 	}
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	_, _ = c.write(data)
 }
 
 func (c *codexClient) closeAllPending(err error) {
@@ -2824,16 +3114,42 @@ func (c *codexClient) handleResponse(raw map[string]json.RawMessage) {
 		_ = json.Unmarshal(errData, &rpcErr)
 		pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d)", pr.method, rpcErr.Message, rpcErr.Code)}
 	} else {
+		if pr.goalConfirmation != nil {
+			if err := c.prepareGoalConfirmation(pr, raw["result"]); err != nil {
+				pr.ch <- rpcResult{err: err}
+				return
+			}
+		}
+		if pr.method == "turn/start" {
+			c.adoptTurnStartResponse(raw["result"])
+		}
 		pr.ch <- rpcResult{result: raw["result"]}
 	}
 }
 
 func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
-	var id int
-	_ = json.Unmarshal(raw["id"], &id)
+	id := raw["id"]
 
 	var method string
 	_ = json.Unmarshal(raw["method"], &method)
+	if c.approvalPolicy == "never" {
+		switch method {
+		case "item/commandExecution/requestApproval", "execCommandApproval", "item/fileChange/requestApproval", "applyPatchApproval":
+			c.respond(id, map[string]any{"decision": "decline"})
+			return
+		case "item/permissions/requestApproval":
+			c.respond(id, map[string]any{"permissions": map[string]any{}, "scope": "turn"})
+			return
+		case "item/tool/requestUserInput", "tool/requestUserInput":
+			c.respondError(id, -32000, "runtime policy prohibits requesting user input")
+			return
+		}
+	}
+	if c.interactions != nil && (method == "item/tool/requestUserInput" || method == "tool/requestUserInput" ||
+		(c.interactions.request != nil && (method == "item/commandExecution/requestApproval" || method == "item/fileChange/requestApproval" || method == "item/permissions/requestApproval" || method == "execCommandApproval" || method == "applyPatchApproval"))) {
+		c.handleInteractionRequest(id, method, raw["params"])
+		return
+	}
 
 	// daemon 模式下自动批准所有 exec/patch 类请求：没有人在屏幕前点「允许」。
 	switch method {
@@ -2844,6 +3160,10 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	case "item/permissions/requestApproval":
 		c.respond(id, codexPermissionsApprovalResponse(raw["params"], c.cfg.Logger))
 	case "mcpServer/elicitation/request":
+		if c.approvalPolicy == "never" {
+			c.respond(id, map[string]any{"action": "decline", "content": nil, "_meta": nil})
+			return
+		}
 		c.respond(id, map[string]any{"action": "accept", "content": nil, "_meta": nil})
 	default:
 		msg := fmt.Sprintf("unsupported codex app-server request: %s", method)
@@ -2905,6 +3225,19 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	if c.isNotificationFromOtherThread(params) {
 		return
 	}
+	if method == "thread/closed" && c.threadClosed != nil {
+		c.threadClosedOnce.Do(func() { close(c.threadClosed) })
+		return
+	}
+	if method == "serverRequest/resolved" && c.interactions != nil {
+		id, _ := json.Marshal(params["requestId"])
+		c.interactions.resolve(string(id))
+		return
+	}
+	// resume 的目标快照属于当前持久状态；即使历史回合通知被门挡住，
+	// 也必须在新回合结束前知道是否仍由原生 Goal 负责续跑。
+	c.observeGoalState(method, params)
+	c.observeThreadSettings(method, params)
 	if c.acceptNotification != nil && !c.acceptNotification(method, params) {
 		if c.onDiscardedNotification != nil {
 			c.onDiscardedNotification(method, params)
@@ -3358,9 +3691,14 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	switch method {
 	case "thread/tokenUsage/updated":
 		c.updateThreadTokenUsage(params)
+	case "turn/plan/updated":
+		c.emitRuntime("plan", map[string]any{"turn_id": params["turnId"], "plan": params["plan"], "explanation": params["explanation"]})
 
 	case "turn/started":
 		if turnID := extractNestedString(params, "turn", "id"); turnID != "" {
+			if turnID != c.usageTurnID() {
+				c.turnCompleted = false
+			}
 			c.setActiveTurnID(turnID)
 		}
 		if c.onMessage != nil {
@@ -3372,10 +3710,14 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		status := extractNestedString(params, "turn", "status")
 		threadID, _ := params["threadId"].(string)
 		c.cfg.Logger.Info("codex turn/completed received", "thread_id", threadID, "turn_id", turnID, "status", status)
-		if c.turnCompleted {
+		if c.turnCompleted || (turnID == "" && c.completedWithoutID) {
 			return
 		}
 		c.turnCompleted = true
+		if turnID == "" {
+			// 缺少 ID 的旧完成事件只能接收一次，无法归属到后续回合。
+			c.completedWithoutID = true
+		}
 		c.setActiveTurnID("")
 		aborted := status == "cancelled" || status == "canceled" ||
 			status == "aborted" || status == "interrupted"
@@ -3596,8 +3938,19 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	if item == nil && method != "item/agentMessage/delta" {
 		return
 	}
+	if method == "item/completed" && (itemType == "commandExecution" || itemType == "mcpToolCall" || itemType == "fileChange") {
+		c.emitToolDuration(params, item)
+	}
 
 	switch {
+	case (method == "item/started" || method == "item/completed") && itemType == "contextCompaction":
+		phase := "start"
+		if method == "item/completed" {
+			phase = "end"
+		}
+		c.emitRuntime("compaction", map[string]any{"turn_id": params["turnId"], "item_id": itemID, "phase": phase})
+	case method == "item/completed" && itemType == "plan":
+		c.emitRuntime("plan", map[string]any{"turn_id": params["turnId"], "item_id": itemID, "text": item["text"], "phase": "completed"})
 	case method == "item/agentMessage/delta" && itemType == "agentMessage":
 		// JSON-RPC framing remains authoritative: handleLine invokes us only
 		// after a whole newline-delimited JSON event parsed successfully. Stream
@@ -3719,6 +4072,7 @@ func (c *codexClient) updateThreadTokenUsage(params map[string]any) {
 	total := codexRawTokenUsageFromV2(totalMap)
 	delta := codexRawTokenUsageFromV2(last)
 	c.usageMu.Lock()
+	duplicate := c.usageTotalSet && total == c.usageTotal
 	if c.usageTotalSet {
 		delta = subtractCodexRawTokenUsage(total, c.usageTotal)
 	}
@@ -3730,6 +4084,21 @@ func (c *codexClient) updateThreadTokenUsage(params map[string]any) {
 	c.usage.CacheReadTokens += delta.CachedInputTokens
 	c.usage.CacheWriteTokens += delta.CacheWriteInputTokens
 	c.usageMu.Unlock()
+	if !duplicate {
+		fields := map[string]any{
+			"turn_id": turnID, "scope": "turn_delta",
+			"input_tokens":  codexPlainInputTokens(delta.InputTokens, delta.CachedInputTokens, delta.CacheWriteInputTokens),
+			"output_tokens": delta.OutputTokens, "cache_read_tokens": delta.CachedInputTokens,
+			"cache_write_tokens": delta.CacheWriteInputTokens, "reasoning_tokens": delta.ReasoningOutputTokens,
+		}
+		if value, ok := last["totalTokens"]; ok {
+			fields["pressure_tokens"] = value
+		}
+		if window := codexInt64(tokenUsage, "modelContextWindow"); window > 0 {
+			fields["context_window"] = window
+		}
+		c.emitRuntime("context", fields)
+	}
 }
 
 func codexRawTokenUsageFromV2(usage map[string]any) codexRawTokenUsage {
