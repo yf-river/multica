@@ -77,9 +77,10 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	var controlFailure string
 	var goalWasActive atomic.Bool
 	var humanStoppedGoal atomic.Bool
+	var childUpdate atomic.Bool
 	var client *hermesClient
 	emit := func(msg Message) {
-		if msg.Type == MessageText {
+		if msg.Type == MessageText && !childUpdate.Load() {
 			stateMu.Lock()
 			output.WriteString(msg.Content)
 			stateMu.Unlock()
@@ -130,21 +131,28 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			if envelope.Method == "session/update" && sid != "" && envelope.Params.SessionID != sid {
 				continue
 			}
+			var parentCallID string
+			_ = json.Unmarshal(envelope.Params.Update.Meta["codebuddy.ai/parentToolCallId"], &parentCallID)
+			childUpdate.Store(parentCallID != "")
 			if envelope.Method == "session/update" && accepting.Load() {
 				meta := envelope.Params.Update.Meta
 				var observed string
 				_ = json.Unmarshal(meta["codebuddy.ai/requestId"], &observed)
 				if observed != "" && (envelope.Params.Update.SessionUpdate == "agent_message_chunk" || envelope.Params.Update.SessionUpdate == "agent_thought_chunk" || envelope.Params.Update.SessionUpdate == "tool_call" || envelope.Params.Update.SessionUpdate == "tool_call_update") {
 					stateMu.Lock()
-					if requestID != observed {
-						output.Reset()
+					if parentCallID == "" {
+						if requestID != observed {
+							output.Reset()
+						}
+						requestID = observed
 					}
-					requestID = observed
 					requestIDs[observed] = true
 					stateMu.Unlock()
-					active.Store(true)
+					if parentCallID == "" {
+						active.Store(true)
+					}
 				}
-				if envelope.Params.Update.SessionUpdate == "turn_end" {
+				if envelope.Params.Update.SessionUpdate == "turn_end" && parentCallID == "" {
 					active.Store(false)
 				}
 			}

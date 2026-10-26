@@ -417,3 +417,22 @@ Codex 恢复后可以生成同目录、同名的可写 `.jsonl`；身份核对�
 
 该样本验证原生加载与模式更新；真实模型读取迁移后分页上下文仍需完成，不能替代
 完整业务对照、CodeBuddy 常驻池或固定 int / 生产验收。
+
+## 第二十阶段：CodeBuddy ACP 父子请求归属
+
+真实 2.176 的前台子调用工具名为 `Agent`。隔离账号中的一次真实调用完成了
+Agent → Bash → 父请求收尾；父 CID 为客户端指定的 UUIDv7，子 CID 为 UUIDv4。
+`SubagentStart/Stop` 提供同一原生会话和独立 agent_id；ACP 子消息提供
+`codebuddy.ai/parentToolCallId`。子调用早期工具帧可能仍携带父 CID，不能只凭
+CID 变化识别父子，也不能要求子 CID 必须为 UUIDv7。
+
+ACP 接入现在依据父调用字段隔离根请求：子消息继续写入执行记录与计量候选，
+但不替换根 CID、不清空父答复，也不结束父请求的补充指令入口。
+
+- `phase20-codebuddy-agent-generation.json`：真实前台子调用通过，原生进程退出。
+  初次只开放 `Task` 的探测未调用子代理，保留为 PARTIAL，不能算通过。
+- `phase20-codebuddy-regression.log`：CodeBuddy race 回归通过（11.532s）。新增协议
+  场景验证子调用结束后仍向父请求投递 steer，父输出和根 CID 正确，子正文仍可见。
+
+该样本验证前台子调用协议；常驻池仍需登记子代关联、解除旧凭据并验证 Goal 自动
+回合的代际归属，尚不能据此宣称平台常驻隔离或业务验收完成。

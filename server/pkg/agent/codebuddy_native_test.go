@@ -20,6 +20,11 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 	encoder := json.NewEncoder(os.Stdout)
 	paused := false
 	hasGoal, faulted := true, false
+	childFixture := os.Getenv("MULTICA_CODEBUDDY_NATIVE_CHILD_FIXTURE") == "1"
+	if childFixture {
+		hasGoal = false
+	}
+	var promptID json.RawMessage
 	condition := "fixture goal"
 	fault := os.Getenv("MULTICA_CODEBUDDY_NATIVE_CONTROL_FAULT")
 	for scanner.Scan() {
@@ -27,8 +32,9 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params struct {
-				Action    string `json:"action"`
-				Condition string `json:"condition"`
+				Action            string `json:"action"`
+				Condition         string `json:"condition"`
+				ExpectedRequestID string `json:"expectedRequestId"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &request) != nil {
@@ -67,12 +73,51 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 				_ = os.WriteFile(os.Getenv("MULTICA_CODEBUDDY_NATIVE_PAUSE_MARKER"), []byte("paused"), 0600)
 			}
 		case "session/prompt":
+			if childFixture {
+				promptID = append(json.RawMessage(nil), request.ID...)
+				for _, frame := range []struct{ kind, text, cid, parent string }{
+					{"agent_message_chunk", "parent answer", "parent-request", ""},
+					{"agent_message_chunk", "child answer", "child-request", "agent-call"},
+					{"turn_end", "", "child-request", "agent-call"},
+				} {
+					_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "native-session", "update": map[string]any{"sessionUpdate": frame.kind, "content": map[string]string{"type": "text", "text": frame.text}, "_meta": map[string]string{"codebuddy.ai/requestId": frame.cid, "codebuddy.ai/parentToolCallId": frame.parent}}}})
+				}
+				continue
+			}
 			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "native-session", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": "cancel-ready"}, "_meta": map[string]string{"codebuddy.ai/requestId": "native-request"}}}})
+			continue
+		case "session/steer":
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"steered": request.Params.ExpectedRequestID == "parent-request", "ownerRequestId": request.Params.ExpectedRequestID}})
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": promptID, "result": map[string]any{"stopReason": "end_turn"}})
 			continue
 		}
 		_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
 	}
 	os.Exit(0)
+}
+
+func TestCodebuddyNativeChildDoesNotReplaceParentTurn(t *testing.T) {
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyNativeFixtureProcess$", "--"}, Logger: slog.Default(), Env: map[string]string{"MULTICA_CODEBUDDY_NATIVE_FIXTURE": "1", "MULTICA_CODEBUDDY_NATIVE_CHILD_FIXTURE": "1", "CODEBUDDY_CONFIG_DIR": t.TempDir()}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "continue", ExecOptions{NativeGoal: true, Model: "flash", Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childVisible := false
+	for msg := range session.Messages {
+		if msg.Type == MessageText && msg.Content == "child answer" {
+			childVisible = true
+			if err := session.Supplement(ctx, "update the parent"); err != nil {
+				t.Errorf("child replaced the parent's steer target: %v", err)
+				cancel()
+			}
+		}
+	}
+	result := <-session.Result
+	if !childVisible || result.Status != "completed" || result.ProviderTraceID != "parent-request" || result.Output != "parent answer" {
+		t.Fatalf("child changed parent identity or final answer: child=%v result=%+v", childVisible, result)
+	}
 }
 
 func TestCodebuddyNativeLivePauseEndsIdleGoal(t *testing.T) {
