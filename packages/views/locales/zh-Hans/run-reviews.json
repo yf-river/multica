@@ -356,6 +356,7 @@
     "trace_supervisor_cost": "本任务全部监督执行用量（不计入目标执行）",
     "trace_supervisor_usage": "{{provider}} · {{model}} · {{tokens}} token",
     "trace_state": "{{runtime}} · AgentLens {{state}}",
-    "trace_supervisor_unknown": "尚无可核对的监督用量上报，不能当作用量为零。"
+    "trace_supervisor_unknown": "尚无可核对的监督用量上报，不能当作用量为零。",
+    "runtime_observation": "上下文：{requests} 次请求 · 峰值 {peak} / 窗口 {window} · 压缩 {compactions} 次 · 模型耗时 {duration} · 构成 {system}/{tools}/{messages}"
   }
 }

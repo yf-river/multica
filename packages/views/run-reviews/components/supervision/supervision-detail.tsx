@@ -40,6 +40,17 @@ import { errorText, moment } from "./supervision-shared";
  * questions: what was concluded, what is wrong, what evidence backs it up,
  * where reading stopped, then the audit trails.
  */
+function compactCount(value: number | undefined): string {
+  return new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(value ?? 0);
+}
+
+function shortDuration(ms: number | undefined): string {
+  if (!ms || ms <= 0) return "0s";
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
 export function SupervisionDetail({ issueId, canManage, enabled, close }: { issueId: string; canManage: boolean; enabled: boolean; close: () => void }) {
   const { t } = useT("run-reviews");
   const wsId = useWorkspaceId();
@@ -143,6 +154,20 @@ export function SupervisionDetail({ issueId, canManage, enabled, close }: { issu
                         </summary>
                         <p className="mt-2 break-all text-caption text-muted-foreground">{material.run_id} · {moment(material.queried_at)}</p>
                         <p className="mt-2 text-caption tabular-nums">{t(($) => $.supervision.trace_preparation_cost, { requests: material.preparation_http_requests, milliseconds: material.preparation_duration_ms, snapshots: material.local_snapshots })}</p>
+                        {material.runtime_observation && (
+                          <p className="mt-2 text-caption tabular-nums text-muted-foreground">
+                            {t(($) => $.supervision.runtime_observation, {
+                              requests: material.runtime_observation.requests,
+                              peak: compactCount(material.runtime_observation.peak_pressure_tokens),
+                              window: compactCount(material.runtime_observation.context_window),
+                              compactions: material.runtime_observation.compactions ?? 0,
+                              duration: shortDuration(material.runtime_observation.model_duration_ms),
+                              system: compactCount(material.runtime_observation.breakdown?.system_tokens),
+                              tools: compactCount(material.runtime_observation.breakdown?.tools_tokens),
+                              messages: compactCount(material.runtime_observation.breakdown?.message_tokens),
+                            })}
+                          </p>
+                        )}
                         {(material.gaps?.length ?? 0) > 0 && <ul className="mt-2 list-inside list-disc space-y-1 text-caption text-muted-foreground">{material.gaps.map((gap, index) => <li key={`${index}-${gap}`} className="break-words">{gap}</li>)}</ul>}
                         <Button variant="outline" className="mt-3" disabled={material.status === "pending" || material.status === "processing"} onClick={() => setEvidence({ kind: "trace_usage", id: material.id, run: material.run_id })}>{t(($) => $.supervision.trace_evidence)}</Button>
                       </details>
