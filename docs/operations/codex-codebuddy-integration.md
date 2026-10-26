@@ -746,6 +746,9 @@ Code Mode 计算桥、时钟、当前 MCP 的资源查询仍存在。文件补�
 GONG-99 的 int 六类任务 Agent `e47aaeed` 实际绑定 Codex 运行时 `b6ea8b7e`，
 模型为 `gpt-6.1-sol`；验收 JSON 的 codebuddy 标签与真实绑定不符。该组结果
 不能作为 CodeBuddy CLI 的六类业务对照，仍需补验。
+GONG-98 的 `gong98-int2/acceptance.json` 也将 codebuddy 项记录为同一 Codex
+运行时和 `gpt-6.1-sol`；其中 CodeBuddy 六类结果及 -28.0% 计时不作为真实
+CodeBuddy 验收依据。两组公开任务评论的表述与留存证据存在这一范围差异。
 
 任务分支已合入生产主线 `07531af70`，普通角色审批策略沿用主线，不夹带此前
 未发布的角色级 never 策略。合并后 `phase31-main-integration-race.log` 通过
