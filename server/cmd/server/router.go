@@ -1502,6 +1502,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// 增删改由下面管理组把关）。
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
+					// 工作区知识库（OpenViking 代理）：成员可读、搜索；写操作后续加入管理组。
+					r.Get("/knowledge", h.GetKnowledgeStatus)
+					r.Get("/knowledge/resources", h.ListKnowledgeResources)
+					r.Post("/knowledge/search", h.SearchKnowledge)
 					// 工作区 MCP 库——对成员可见，让 agent owner 能看到自己 agent 能加什么。
 					// 载荷只有名字与传输方式；存储的条目是只写的。
 					r.Get("/mcp-servers", h.ListWorkspaceMcpServers)

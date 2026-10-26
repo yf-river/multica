@@ -330,3 +330,4 @@ export type {
   SquadMemberStatusListResponse,
 } from "./squad";
 export type { ExternalCredentialProvider, ExternalCredentialProfile, CreateExternalCredentialProfileRequest, UpdateExternalCredentialProfileRequest, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse } from "./external-credential";
+export type { KnowledgeStatus, KnowledgeResourcesResponse, KnowledgeSearchResponse } from "./knowledge";

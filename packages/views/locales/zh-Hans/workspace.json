@@ -30,5 +30,18 @@
     "description": "该工作区不存在，或你没有访问权限。",
     "go_to_workspaces": "前往我的工作区",
     "sign_in_different": "使用其他账号登录"
+  },
+  "knowledge": {
+    "title": "知识库",
+    "subtitle": "工作区共享的 OpenViking 知识空间。",
+    "search_placeholder": "搜索知识库…",
+    "search": "搜索",
+    "searching": "搜索中…",
+    "browse": "浏览",
+    "status_ok": "已连接",
+    "status_down": "不可用",
+    "empty": "没有检索结果。",
+    "error": "知识库请求失败。",
+    "results": "检索结果"
   }
 }

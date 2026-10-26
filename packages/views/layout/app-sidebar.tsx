@@ -118,6 +118,7 @@ type NavKey =
   | "squads"
   | "usage"
   | "runReviews"
+  | "knowledge"
   | "runtimes"
   | "mcp"
   | "quickActions"
@@ -138,6 +139,7 @@ type NavLabelKey =
   | "squads"
   | "usage"
   | "run_reviews"
+  | "knowledge"
   | "runtimes"
   | "mcp"
   | "quick_actions"
@@ -160,6 +162,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "squads", labelKey: "squads" },
   { key: "usage", labelKey: "usage" },
   { key: "runReviews", labelKey: "run_reviews" },
+  { key: "knowledge", labelKey: "knowledge" },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [

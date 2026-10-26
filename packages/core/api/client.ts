@@ -253,11 +253,15 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile, ExternalCredentialProvider, TestExternalCredentialProfileRequest, TestExternalCredentialProfileResponse, UpdateExternalCredentialProfileRequest } from "../types/external-credential";
 import type { IssueExecutionTreeResponse, TaskContextResponse } from "../types/issue-execution";
+import type { KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus } from "../types/knowledge";
 import {
   AgentTaskListSchema,
   EMPTY_ISSUE_EXECUTION_TREE_RESPONSE,
   IssueExecutionTreeResponseSchema,
   TaskContextResponseSchema,
+  KnowledgeStatusSchema,
+  KnowledgeResourcesResponseSchema,
+  KnowledgeSearchResponseSchema,
   IssueTraceEventsResponseSchema,
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListSchema,
@@ -2643,6 +2647,34 @@ export class ApiClient {
       EMPTY_ISSUE_EXECUTION_TREE_RESPONSE as IssueExecutionTreeResponse,
       { endpoint: "GET /api/issues/:id/execution-tree" },
     );
+  }
+
+  /** 工作区知识库状态。 */
+  async getKnowledgeStatus(workspaceId: string): Promise<KnowledgeStatus> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge`);
+    return parseWithFallback<KnowledgeStatus>(raw, KnowledgeStatusSchema, { enabled: false, healthy: false }, {
+      endpoint: "GET /api/workspaces/:id/knowledge",
+    });
+  }
+
+  /** 列出工作区知识目录。 */
+  async listKnowledgeResources(workspaceId: string, uri?: string): Promise<KnowledgeResourcesResponse> {
+    const query = uri ? `?uri=${encodeURIComponent(uri)}` : "";
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/resources${query}`);
+    return parseWithFallback<KnowledgeResourcesResponse>(raw, KnowledgeResourcesResponseSchema, { uri: "", result: null }, {
+      endpoint: "GET /api/workspaces/:id/knowledge/resources",
+    });
+  }
+
+  /** 在工作区知识库内做语义搜索。 */
+  async searchKnowledge(workspaceId: string, query: string, limit = 10, path?: string): Promise<KnowledgeSearchResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/knowledge/search`, {
+      method: "POST",
+      body: JSON.stringify({ query, limit, path }),
+    });
+    return parseWithFallback<KnowledgeSearchResponse>(raw, KnowledgeSearchResponseSchema, { query, target_uri: "", result: null }, {
+      endpoint: "POST /api/workspaces/:id/knowledge/search",
+    });
   }
 
   /** 读取一次运行的运行时上下文遥测（context / compaction 帧）。 */

@@ -3426,3 +3426,23 @@ export const TaskContextEventSchema = z.object({ kind: z.string() }).passthrough
 export const TaskContextResponseSchema = z.object({
   events: z.array(TaskContextEventSchema),
 }).loose();
+
+/** 工作区知识库状态（失败时也返回 200，healthy=false）。 */
+export const KnowledgeStatusSchema = z.object({
+  enabled: z.boolean(),
+  healthy: z.boolean(),
+  base_url: z.string().optional(),
+  error: z.string().optional(),
+  health: z.unknown().optional(),
+}).loose();
+
+export const KnowledgeResourcesResponseSchema = z.object({
+  uri: z.string(),
+  result: z.unknown(),
+}).loose();
+
+export const KnowledgeSearchResponseSchema = z.object({
+  query: z.string(),
+  target_uri: z.string(),
+  result: z.unknown(),
+}).loose();
