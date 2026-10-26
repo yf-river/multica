@@ -69,7 +69,7 @@ func addDeliveryFlowCommands(group *cobra.Command) {
 		Args:  exactArgs(1),
 		RunE:  runDeliveryWait,
 	}
-	wait.Flags().String("until", "testing,awaiting_review,needs_changes,published,cancelled", "Comma separated phases that end the wait")
+	wait.Flags().String("until", "prepared,needs_changes", "Comma separated phases that end the wait; `prepared` means the candidate exists")
 	wait.Flags().Duration("timeout", 20*time.Minute, "Wait timeout")
 	wait.Flags().Duration("interval", 5*time.Second, "Poll interval")
 	wait.Flags().String("execution", "", "Stable execution id for this session")
@@ -336,7 +336,7 @@ func runDeliveryDeliver(cmd *cobra.Command, args []string) error {
 	}
 	if wait, _ := cmd.Flags().GetBool("wait"); wait {
 		timeout, _ := cmd.Flags().GetDuration("timeout")
-		return waitForPhase(ctx, client, path, []string{"testing", "awaiting_review", "needs_changes", "published", "cancelled"}, timeout, 5*time.Second)
+		return waitForPhase(ctx, client, path, []string{"prepared", "needs_changes"}, timeout, 5*time.Second)
 	}
 	return nil
 }
@@ -384,12 +384,19 @@ func waitForPhase(ctx context.Context, client *cli.APIClient, path string, until
 		if current != nil {
 			phase = current.Phase
 		}
-		if phase != last {
+		marker := phase + "|" + valueOr(current, func(r *deliveryRecord) string { return r.CandidateID }) + "|" + valueOr(current, func(r *deliveryRecord) string { return r.Error })
+		if marker != last {
 			fmt.Fprintf(os.Stderr, "phase=%s candidate=%s error=%s\n", phase, valueOr(current, func(r *deliveryRecord) string { return r.CandidateID }), valueOr(current, func(r *deliveryRecord) string { return r.Error }))
-			last = phase
+			last = marker
 		}
-		if targets[phase] {
-			return cli.PrintJSON(os.Stdout, compactDelivery(status))
+		if targets[phase] || (targets["prepared"] && current != nil && current.CandidateID != "") {
+			if printErr := cli.PrintJSON(os.Stdout, compactDelivery(status)); printErr != nil {
+				return printErr
+			}
+			if current != nil && current.Error != "" {
+				return fmt.Errorf("交付失败：%s", current.Error)
+			}
+			return nil
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("等待超时：当前阶段 %s", phase)

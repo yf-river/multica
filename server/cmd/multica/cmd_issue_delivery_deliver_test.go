@@ -100,10 +100,14 @@ func deliveryServer(t *testing.T, issueID string) (*httptest.Server, *[]recorded
 			current := reads
 			mu.Unlock()
 			phase := "waiting_int"
+			candidate := ""
 			if current > 1 {
 				phase = "testing"
 			}
-			_, _ = w.Write([]byte(`{"plan":{"id":"33333333-3333-4333-8333-333333333333","comment_revision":3},"deliveries":[{"id":"44444444-4444-4444-8444-444444444444","plan_id":"33333333-3333-4333-8333-333333333333","phase":"` + phase + `","source_commit":"` + issueID + `","revision":2,"candidate_id":""}]}`))
+			if current > 2 {
+				candidate = "55555555-5555-4555-8555-555555555555"
+			}
+			_, _ = w.Write([]byte(`{"plan":{"id":"33333333-3333-4333-8333-333333333333","comment_revision":3},"deliveries":[{"id":"44444444-4444-4444-8444-444444444444","plan_id":"33333333-3333-4333-8333-333333333333","phase":"` + phase + `","source_commit":"` + issueID + `","revision":2,"candidate_id":"` + candidate + `"}]}`))
 		case strings.HasSuffix(r.URL.Path, "/deliveries"):
 			mu.Lock()
 			deliveries++
@@ -239,10 +243,36 @@ func TestDeliveryWaitStopsAtTargetPhase(t *testing.T) {
 	if err = cmd.Flags().Set("interval", "1ms"); err != nil {
 		t.Fatal(err)
 	}
+	if err = cmd.Flags().Set("until", "prepared"); err != nil {
+		t.Fatal(err)
+	}
 	if err = cmd.RunE(cmd, []string{issueID}); err != nil {
 		t.Fatal(err)
 	}
-	if len(*requests) == 0 || (*requests)[0].Method != http.MethodGet {
-		t.Fatalf("expected a read-only wait, got %+v", *requests)
+	if len(*requests) < 3 || (*requests)[0].Method != http.MethodGet {
+		t.Fatalf("expected repeated read-only polls until the candidate exists, got %+v", *requests)
+	}
+}
+
+func TestDeliveryWaitDoesNotStopBeforeCandidate(t *testing.T) {
+	issueID := "11111111-1111-4111-8111-111111111111"
+	// The fake reports phase testing immediately but leaves candidate_id empty
+	// for the first reads; `prepared` must ignore that.
+	server, requests, _ := deliveryServer(t, strings.Repeat("a", 40))
+	setCLIClientEnv(t, server.URL)
+	cmd, _, err := issueCmd.Find([]string{"delivery", "wait"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for flag, value := range map[string]string{"until": "prepared", "timeout": "5s", "interval": "1ms"} {
+		if err = cmd.Flags().Set(flag, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = cmd.RunE(cmd, []string{issueID}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*requests) < 3 {
+		t.Fatalf("wait returned before the candidate existed: %d polls", len(*requests))
 	}
 }
