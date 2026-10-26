@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,16 +81,17 @@ func TestDshInteractionFlagReachesSubprocess(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			bin := writeDshFixture(t, `
-IFS= read -r command
 if [ "$MULTICA_DSH_INTERACTIONS" = "1" ]; then
- case "$command" in *'"human_interactions":true'*) ;; *) exit 8 ;; esac
  printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","capabilities":{"plan_review":true,"user_questions":true}}'
+ IFS= read -r command
+ case "$command" in *'"human_interactions":true'*) ;; *) exit 8 ;; esac
  printf '%s\n' '{"v":1,"type":"session","request_id":"flag-task","session_id":"native-session"}'
  printf '%s\n' '{"v":1,"type":"plan_review","request_id":"flag-task","session_id":"native-session","interaction":{"kind":"plan","call_id":"native-call","title":"Plan","questions":[],"plan_markdown":"# Wait"}}'
  printf '%s\n' '{"v":1,"type":"result","request_id":"flag-task","session_id":"native-session","status":"waiting_plan"}'
 elif [ "$MULTICA_DSH_INTERACTIONS" = "0" ]; then
- case "$command" in *'"human_interactions":true'*) exit 9 ;; esac
  printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","capabilities":{}}'
+ IFS= read -r command
+ case "$command" in *'"human_interactions":true'*) exit 9 ;; esac
  printf '%s\n' '{"v":1,"type":"result","request_id":"flag-task","status":"completed"}'
 else exit 10
 fi
@@ -116,5 +118,64 @@ fi
 				t.Fatal("shared backend configuration mutated")
 			}
 		})
+	}
+}
+
+func TestDshUnsupportedHumanInteractionNeverReceivesExecute(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	marker := filepath.Join(t.TempDir(), "executed")
+	bin := writeDshFixture(t, `
+printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","capabilities":{"plan_review":false}}'
+IFS= read -r command
+case "$command" in
+ *'"type":"execute"'*) printf unsafe > "$DSH_TEST_MARKER"; printf '%s\n' '{"v":1,"type":"result","request_id":"capability-task","status":"completed"}' ;;
+esac
+`)
+	backend, err := New("dsh", Config{ExecutablePath: bin, TaskID: "capability-task", Env: map[string]string{"DSH_TEST_MARKER": marker}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(context.Background(), "Plan a write", ExecOptions{Cwd: t.TempDir(), HumanInteractions: true, Command: "/plan", Timeout: 3 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status != "failed" || !strings.Contains(result.Error, "capabilities") {
+		t.Fatalf("unsupported bridge executed task: %#v", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("execute reached an unsupported bridge")
+	}
+}
+
+func TestDshCancellationBeforeReadyNeverReceivesExecute(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	marker := filepath.Join(t.TempDir(), "executed")
+	bin := writeDshFixture(t, `
+IFS= read -r command
+case "$command" in *'"type":"execute"'*) printf unsafe > "$DSH_TEST_MARKER" ;; esac
+`)
+	backend, err := New("dsh", Config{ExecutablePath: bin, Env: map[string]string{"DSH_TEST_MARKER": marker}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(context.Background(), "write", ExecOptions{Cwd: t.TempDir(), Timeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status != "timeout" {
+		t.Fatalf("startup cancellation lost: %#v", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("execute was sent before ready")
 	}
 }

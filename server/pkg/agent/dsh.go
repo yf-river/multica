@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -352,28 +353,37 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		Cwd: opts.Cwd, Prompt: prompt, Command: opts.Command, ApprovalPolicy: opts.ApprovalPolicy, ResumeSessionID: opts.ResumeSessionID,
 		Model: model, ReasoningEffort: opts.ThinkingLevel, MCPServers: mcpServers,
 	}
-	// json.Encoder 不保证并发安全；主流程写 execute 帧、下方取消 goroutine 可能写
+	// json.Encoder 不保证并发安全；解码循环写 execute 帧、取消 goroutine 可能写
 	// cancel 帧，因此所有写入都经 writeFrame 串行加锁。
 	var writeMu sync.Mutex
 	encoder := json.NewEncoder(stdin)
 	writeFrame := func(value any) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		if _, execute := value.(dshExecuteCommand); execute && runCtx.Err() != nil {
+			return runCtx.Err()
+		}
 		return encoder.Encode(value)
 	}
-	// execute 帧都发不出去说明进程侧已经坏了，直接整组杀掉，不留孤儿进程。
-	if err := writeFrame(command); err != nil {
-		signalProcessGroup(cmd, syscall.SIGKILL)
-		_ = cmd.Wait()
-		releaseProcessGroup(cmd)
-		cancel()
-		return nil, fmt.Errorf("send dsh execute command: %w", err)
-	}
-
 	b.cfg.Logger.Info("dsh started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 	procDone := make(chan struct{})
+	readyDone := make(chan struct{})
+	var startupTimedOut atomic.Bool
+	// ready 前不派发执行；模型任务本身不受这个启动时限限制。
+	go func() {
+		timer := time.NewTimer(30 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-readyDone:
+		case <-procDone:
+		case <-runCtx.Done():
+		case <-timer.C:
+			startupTimedOut.Store(true)
+			cancel()
+		}
+	}()
 
 	// 取消看门狗：runCtx 一到期（外部取消或超时）就先发 cancel 帧请求 dsh 优雅
 	// 收尾；超过 dshCancelGrace 还没退出就 SIGTERM；再超过 dshTerminateGrace
@@ -409,6 +419,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		defer func() { _ = stdin.Close() }()
 		started := time.Now()
 		state := dshRunState{usage: make(map[string]TokenUsage)}
+		executeSent := false
 		scanner := newAgentStreamScanner(stdout)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
@@ -423,6 +434,45 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				continue
 			}
 			state.frameCount++
+			if !executeSent {
+				if runCtx.Err() != nil {
+					continue
+				}
+				if frame.Type != "ready" {
+					if frame.Type == "protocol_error" {
+						handleDshFrame(frame, requestID, msgCh, &state)
+						cancel()
+					} else if frame.Type == "result" {
+						state.protocolError = "dsh returned a result before accepting an execution"
+						cancel()
+					}
+					continue
+				}
+				handleDshFrame(frame, requestID, msgCh, &state)
+				if state.protocolError == "" && !state.ready {
+					state.protocolError = "dsh returned an invalid ready frame"
+				}
+				if state.protocolError == "" && opts.HumanInteractions && (!state.planReview || !state.userQuestions) {
+					state.protocolError = "dsh human interaction capabilities are unavailable; execution was not sent"
+				}
+				if state.protocolError != "" {
+					cancel()
+					continue
+				}
+				if runCtx.Err() != nil {
+					continue
+				}
+				if err := writeFrame(command); err != nil {
+					if runCtx.Err() == nil {
+						state.protocolError = fmt.Sprintf("send dsh execute command: %v", err)
+					}
+					cancel()
+					continue
+				}
+				executeSent = true
+				close(readyDone)
+				continue
+			}
 			handleDshFrame(frame, requestID, msgCh, &state)
 		}
 		scanErr := scanner.Err()
@@ -438,6 +488,10 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			// 进程结束仍没收到 result 帧：按失败归类，越具体的原因越优先。
 			result = &Result{Status: "failed", SessionID: state.sessionID, Usage: state.usage}
 			switch {
+			case state.protocolError != "":
+				result.Error = state.protocolError
+			case startupTimedOut.Load():
+				result.Status, result.Error = "timeout", "dsh did not send a ready frame within 30 seconds"
 			case errors.Is(runCtx.Err(), context.DeadlineExceeded):
 				result.Status = "timeout"
 				result.Error = fmt.Sprintf("dsh timed out after %s", opts.Timeout)
@@ -446,8 +500,6 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				result.Error = "dsh execution cancelled"
 			case scanErr != nil:
 				result.Error = fmt.Sprintf("read dsh event stream: %v", scanErr)
-			case state.protocolError != "":
-				result.Error = state.protocolError
 			case !state.ready:
 				result.Error = "dsh exited before the runtime protocol became ready"
 			case exitErr != nil:
@@ -455,6 +507,9 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			default:
 				result.Error = "dsh exited without a terminal result"
 			}
+		}
+		if state.protocolError != "" {
+			result.Status, result.Error, result.PendingInteraction = "failed", state.protocolError, nil
 		}
 		if result.Status == "waiting_plan" || result.Status == "waiting_input" {
 			if !opts.HumanInteractions || scanErr != nil || exitErr != nil || runCtx.Err() != nil || !state.ready || state.protocolError != "" {
