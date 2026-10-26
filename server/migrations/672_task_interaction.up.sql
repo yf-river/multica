@@ -10,6 +10,6 @@ CREATE TABLE task_interaction (
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'responded', 'expired')),
     author_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '24 hours',
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '60 seconds',
     responded_at TIMESTAMPTZ
 );
