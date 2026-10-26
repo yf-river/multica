@@ -950,6 +950,21 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		defer sessionMu.RUnlock()
 		return currentSession != nil && currentSession.WaitingForInput != nil && currentSession.WaitingForInput()
 	}
+	runCommand := func(commandCtx context.Context, command string) (string, error) {
+		sessionMu.RLock()
+		session := currentSession
+		sessionMu.RUnlock()
+		if session == nil || session.RunCommand == nil {
+			return "", errors.New("codex session no longer accepts commands")
+		}
+		return session.RunCommand(commandCtx, command)
+	}
+	commandReady := func() bool {
+		sessionMu.RLock()
+		session := currentSession
+		sessionMu.RUnlock()
+		return session != nil && session.CommandReady != nil && session.CommandReady()
+	}
 
 	go func() {
 		defer func() {
@@ -1042,7 +1057,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		}
 	}()
 
-	return &Session{Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: waitingForInput, Messages: msgCh, Result: resCh}, nil
+	return &Session{RunCommand: runCommand, CommandReady: commandReady, Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: waitingForInput, Messages: msgCh, Result: resCh}, nil
 }
 
 // executeOnce 真正拉起一次 codex app-server 进程并跑完一轮（进程生命周期 + JSON-RPC
@@ -1450,7 +1465,14 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		defer stopProcess()
 		defer close(msgCh)
 		defer close(resCh)
-		defer func() { cancel(); drainAndWait(); c.interactions.stop() }()
+		defer func() {
+			c.commandReady.Store(false)
+			c.commandMu.Lock()
+			defer c.commandMu.Unlock()
+			cancel()
+			drainAndWait()
+			c.interactions.stop()
+		}()
 
 		startTime := time.Now()
 		finalStatus := "completed"
@@ -1623,6 +1645,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			)
 		}
 		finishTurn := func(aborted bool) {
+			c.commandMu.Lock()
+			defer c.commandMu.Unlock()
+			if !aborted && c.getTurnError() == "" && c.goalActive.Load() && c.getProcessErr() == nil {
+				return
+			}
+			c.commandReady.Store(false)
 			waitingForTurn = false
 			switch {
 			case aborted:
@@ -1634,7 +1662,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					finalError = "turn was aborted"
 				}
 			default:
-				if errMsg := c.getTurnError(); errMsg != "" {
+				if c.goalActive.Load() && c.getProcessErr() != nil {
+					finalStatus = "failed"
+					finalError = "codex exited before its native goal completed"
+				} else if errMsg := c.getTurnError(); errMsg != "" {
 					finishFirstItemWait("turn_failed")
 					finalStatus = "failed"
 					finalError = errMsg
@@ -1648,6 +1679,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			}
 		}
 		finishRunContextDone := func() {
+			c.commandReady.Store(false)
 			waitingForTurn = false
 			if runCtx.Err() == context.DeadlineExceeded {
 				finishFirstItemWait("execution_timeout")
@@ -1663,6 +1695,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		_, err = c.request(runCtx, "turn/start", turnParams)
 		if err == nil && deferGoalCommand {
 			_, err = c.applyRuntimeCommand(runCtx, opts)
+			if err != nil {
+				c.setTurnError(err.Error())
+			}
 		}
 		if err != nil {
 			if runCtx.Err() != nil {
@@ -1702,6 +1737,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			firstTurnNoProgressTimerC = nil
 		}
 		defer stopFirstTurnNoProgressTimer()
+		if waitingForTurn {
+			c.commandReady.Store(true)
+		}
 
 		for waitingForTurn {
 			select {
@@ -1946,7 +1984,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	supplementReady := func() bool {
 		return c.getThreadID() != "" && c.activeTurnID() != ""
 	}
-	return &Session{Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: c.interactions.waiting, Messages: msgCh, Result: resCh}, nil
+	runCommand := func(commandCtx context.Context, command string) (string, error) {
+		return c.runLiveCommand(commandCtx, runCtx, command, opts)
+	}
+	return &Session{RunCommand: runCommand, CommandReady: c.commandReady.Load, Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: c.interactions.waiting, Messages: msgCh, Result: resCh}, nil
 }
 
 func supplementCodexTurn(ctx context.Context, c *codexClient, instruction string) error {
@@ -2416,6 +2457,11 @@ type codexClient struct {
 	goalActive           atomic.Bool
 	goalEngaged          atomic.Bool
 	goalStatus           atomic.Value // string，原生目标停止原因
+	goalStateMu          sync.Mutex
+	goalRevision         uint64
+	goalConfirmations    map[chan struct{}]codexGoalConfirmation
+	commandMu            sync.Mutex
+	commandReady         atomic.Bool
 	settingsMu           sync.Mutex
 	settingsWaiters      map[chan struct{}]codexPlanSelection
 
@@ -2555,8 +2601,9 @@ func (c *codexClient) activeTurnID() string {
 }
 
 type pendingRPC struct {
-	ch     chan rpcResult
-	method string
+	ch               chan rpcResult
+	method           string
+	goalConfirmation chan struct{}
 }
 
 type rpcResult struct {
@@ -2618,6 +2665,9 @@ func codexRequestContextError(ctx context.Context) error {
 // reached that authoritative completion boundary; callers must force-stop the
 // process tree when it is false.
 func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, configuredTimeout time.Duration, logger *slog.Logger) bool {
+	c.commandReady.Store(false)
+	c.commandMu.Lock()
+	defer c.commandMu.Unlock()
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -2679,6 +2729,8 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 	if timeout := c.handshakeTimeoutFor(method); timeout > 0 && isCodexHandshakeRPC(method) {
 		timeoutErr := &codexHandshakeTimeoutError{Method: method, Timeout: timeout}
 		requestCtx, cancelRequest = context.WithTimeoutCause(ctx, timeout, timeoutErr)
+	} else if strings.HasPrefix(method, "thread/goal/") {
+		requestCtx, cancelRequest = context.WithTimeout(ctx, 5*time.Second)
 	}
 	defer cancelRequest()
 
@@ -2695,8 +2747,14 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 	c.nextID++
 	id := c.nextID
 	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: method}
+	if method == "thread/goal/set" || method == "thread/goal/clear" {
+		pr.goalConfirmation = make(chan struct{}, 1)
+	}
 	c.pending[id] = pr
 	c.mu.Unlock()
+	if pr.goalConfirmation != nil {
+		defer func() { c.goalStateMu.Lock(); delete(c.goalConfirmations, pr.goalConfirmation); c.goalStateMu.Unlock() }()
+	}
 
 	msg := map[string]any{
 		"jsonrpc": "2.0",
@@ -2726,13 +2784,35 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 		c.cfg.Logger.Info("codex turn/start sent", "request_id", id, "thread_id", threadID)
 	}
 
+	returnResponse := func(res rpcResult) (json.RawMessage, error) {
+		if res.err == nil && pr.goalConfirmation != nil {
+			select {
+			case <-pr.goalConfirmation:
+				return res.result, nil
+			default:
+			}
+			select {
+			case <-pr.goalConfirmation:
+			case <-requestCtx.Done():
+				return nil, codexRequestContextError(requestCtx)
+			case <-processDone:
+				select {
+				case <-pr.goalConfirmation:
+					return res.result, nil
+				default:
+					return nil, errors.New("codex exited before confirming goal control")
+				}
+			}
+		}
+		return res.result, res.err
+	}
 	select {
 	case res := <-pr.ch:
-		return res.result, res.err
+		return returnResponse(res)
 	case <-processDone:
 		select {
 		case res := <-pr.ch:
-			return res.result, res.err
+			return returnResponse(res)
 		default:
 		}
 		c.mu.Lock()
@@ -2908,6 +2988,12 @@ func (c *codexClient) handleResponse(raw map[string]json.RawMessage) {
 		_ = json.Unmarshal(errData, &rpcErr)
 		pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d)", pr.method, rpcErr.Message, rpcErr.Code)}
 	} else {
+		if pr.goalConfirmation != nil {
+			if err := c.prepareGoalConfirmation(pr, raw["result"]); err != nil {
+				pr.ch <- rpcResult{err: err}
+				return
+			}
+		}
 		if pr.method == "turn/start" {
 			c.adoptTurnStartResponse(raw["result"])
 		}
@@ -3458,8 +3544,6 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	switch method {
 	case "thread/tokenUsage/updated":
 		c.updateThreadTokenUsage(params)
-	case "thread/goal/updated", "thread/goal/cleared":
-		c.emitRuntime("goal", map[string]any{"event": method, "goal": params["goal"]})
 	case "turn/plan/updated":
 		c.emitRuntime("plan", map[string]any{"turn_id": params["turnId"], "plan": params["plan"], "explanation": params["explanation"]})
 

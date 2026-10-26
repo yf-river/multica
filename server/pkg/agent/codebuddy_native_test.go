@@ -17,6 +17,7 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
+	paused := false
 	for scanner.Scan() {
 		var request struct {
 			ID     json.RawMessage `json:"id"`
@@ -33,7 +34,13 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 		case "session/new", "session/load":
 			result = map[string]any{"sessionId": "native-session", "models": map[string]string{"currentModelId": "flash"}}
 		case codebuddyGoalControlMethod:
-			result = map[string]any{"ok": true, "applied": request.Params.Action, "hasGoal": true, "runInFlight": false, "activeGoal": map[string]any{"condition": "fixture goal", "paused": request.Params.Action == "pause"}}
+			if request.Params.Action == "pause" {
+				paused = true
+			}
+			if request.Params.Action == "resume" || request.Params.Action == "set" {
+				paused = false
+			}
+			result = map[string]any{"ok": true, "applied": request.Params.Action, "hasGoal": true, "runInFlight": false, "activeGoal": map[string]any{"condition": "fixture goal", "paused": paused}}
 			if request.Params.Action == "pause" {
 				_ = os.WriteFile(os.Getenv("MULTICA_CODEBUDDY_NATIVE_PAUSE_MARKER"), []byte("paused"), 0600)
 			}
@@ -44,6 +51,43 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 		_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
 	}
 	os.Exit(0)
+}
+
+func TestCodebuddyNativeLivePauseEndsIdleGoal(t *testing.T) {
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyNativeFixtureProcess$", "--"}, Logger: slog.Default(), Env: map[string]string{"MULTICA_CODEBUDDY_NATIVE_FIXTURE": "1", "CODEBUDDY_CONFIG_DIR": t.TempDir()}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "", ExecOptions{NativeGoal: true, Command: "/goal fixture goal", Model: "flash", Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for range session.Messages {
+		}
+	}()
+	for !session.CommandReady() {
+		select {
+		case <-ctx.Done():
+			t.Fatal("native command gate did not open")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if _, err := session.RunCommand(ctx, "/plan"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.RunCommand(ctx, "/goal pause"); err != nil {
+		t.Fatal(err)
+	}
+	result := <-session.Result
+	<-drained
+	if result.Status != "completed" || session.CommandReady() {
+		t.Fatalf("paused idle goal did not finish: %+v", result)
+	}
+	if _, err := session.RunCommand(ctx, "/goal resume"); err == nil {
+		t.Fatal("terminal execution accepted a new goal")
+	}
 }
 
 func TestCodebuddyNativeCancellationPausesGoalBeforeProcessExit(t *testing.T) {

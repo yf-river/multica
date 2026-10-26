@@ -21,11 +21,17 @@ func codexGoalActivatingCommand(command string) bool {
 }
 
 func (c *codexClient) observeGoalState(method string, params map[string]any) {
+	if method != "thread/goal/cleared" && method != "thread/goal/updated" {
+		return
+	}
+	c.goalStateMu.Lock()
 	switch method {
 	case "thread/goal/cleared":
+		c.goalRevision++
 		c.goalActive.Store(false)
 		c.goalStatus.Store("")
 	case "thread/goal/updated":
+		c.goalRevision++
 		goal, _ := params["goal"].(map[string]any)
 		status, _ := goal["status"].(string)
 		c.goalStatus.Store(status)
@@ -33,6 +39,24 @@ func (c *codexClient) observeGoalState(method string, params map[string]any) {
 		if status == "active" {
 			c.goalEngaged.Store(true)
 		}
+	}
+	for confirmed, want := range c.goalConfirmations {
+		matches := method == "thread/goal/cleared" && want.cleared
+		if method == "thread/goal/updated" && !want.cleared {
+			goal, _ := params["goal"].(map[string]any)
+			matches = goal["objective"] == want.objective && goal["status"] == want.status
+		}
+		if matches {
+			select {
+			case confirmed <- struct{}{}:
+			default:
+			}
+		}
+	}
+	c.goalStateMu.Unlock()
+	c.emitRuntime("goal", map[string]any{"event": method, "goal": params["goal"], "thread_id": params["threadId"]})
+	if (method == "thread/goal/cleared" || method == "thread/goal/updated") && c.commandReady.Load() && c.goalEngaged.Load() && !c.goalActive.Load() && c.activeTurnID() == "" && c.onTurnDone != nil {
+		c.onTurnDone(false)
 	}
 }
 
@@ -50,6 +74,12 @@ func (c *codexClient) goalStopError() string {
 }
 
 func (c *codexClient) applyRuntimeCommand(ctx context.Context, opts ExecOptions) (string, error) {
+	c.commandMu.Lock()
+	defer c.commandMu.Unlock()
+	return c.applyRuntimeCommandUnlocked(ctx, opts)
+}
+
+func (c *codexClient) applyRuntimeCommandUnlocked(ctx context.Context, opts ExecOptions) (string, error) {
 	command := strings.TrimSpace(opts.Command)
 	if command == "" {
 		return "", nil
@@ -96,7 +126,7 @@ func (c *codexClient) applyRuntimeCommand(ctx context.Context, opts ExecOptions)
 			} `json:"goal"`
 		}
 		if json.Unmarshal(current, &state) == nil && state.Goal != nil && state.Goal.Objective == action && state.Goal.Status == "active" {
-			c.emitRuntime("goal", map[string]any{"state": json.RawMessage(current)})
+			c.emitRuntime("control", map[string]any{"event": "thread/goal/get", "state": json.RawMessage(current)})
 			return codexGoalSummary(current), nil
 		}
 		params["objective"] = action
@@ -109,7 +139,7 @@ func (c *codexClient) applyRuntimeCommand(ctx context.Context, opts ExecOptions)
 	if err != nil {
 		return "", fmt.Errorf("codex goal control failed: %w", err)
 	}
-	c.emitRuntime("goal", map[string]any{"event": method, "state": json.RawMessage(result)})
+	c.emitRuntime("control", map[string]any{"event": method, "state": json.RawMessage(result)})
 	if action == "clear" {
 		return "已清除目标。", nil
 	}

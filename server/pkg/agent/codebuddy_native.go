@@ -69,6 +69,10 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	var output strings.Builder
 	var accepting atomic.Bool
 	var active atomic.Bool
+	var commandReady atomic.Bool
+	var commandMu sync.Mutex
+	var goalWasActive atomic.Bool
+	var humanStoppedGoal atomic.Bool
 	var client *hermesClient
 	emit := func(msg Message) {
 		if msg.Type == MessageText {
@@ -163,6 +167,50 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		}
 		return nil
 	}
+	runCommand := func(ctx context.Context, command string) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		commandMu.Lock()
+		defer commandMu.Unlock()
+		if !commandReady.Load() || runCtx.Err() != nil {
+			return "", errors.New("CodeBuddy execution no longer accepts commands")
+		}
+		stateMu.RLock()
+		sid := sessionID
+		stateMu.RUnlock()
+		call, stop := context.WithTimeout(context.WithoutCancel(runCtx), 5*time.Second)
+		defer stop()
+		command = strings.TrimSpace(command)
+		if command == "/plan" || command == "/plan off" {
+			mode, output := "plan", "已进入计划模式。"
+			if command == "/plan off" {
+				mode, output = "bypassPermissions", "已退出计划模式。"
+			}
+			if _, err := client.request(call, "session/set_mode", map[string]any{"sessionId": sid, "modeId": mode}); err != nil {
+				return "", err
+			}
+			emit(runtimeTelemetry("codebuddy", "control", map[string]any{"action": "mode", "mode": mode, "session_id": sid}))
+			return output, nil
+		}
+		action, condition, err := codebuddyGoalAction(command)
+		if err != nil {
+			return "", err
+		}
+		goal, err := requestCodebuddyGoal(call, client, sid, action, condition)
+		if err != nil {
+			return "", err
+		}
+		if goal.HasGoal && goal.ActiveGoal != nil && !goal.ActiveGoal.Paused {
+			goalWasActive.Store(true)
+			humanStoppedGoal.Store(false)
+		}
+		if action == "pause" || action == "clear" {
+			humanStoppedGoal.Store(true)
+		}
+		emitCodebuddyGoal(client, sid, action, goal)
+		return codebuddyGoalSummary(goal), nil
+	}
 	go func() {
 		defer stopProcess()
 		defer cancel()
@@ -171,8 +219,10 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		defer broker.stop()
 		started := time.Now()
 		result := Result{Status: "failed"}
-		goalWasActive := false
 		defer func() {
+			commandReady.Store(false)
+			commandMu.Lock()
+			defer commandMu.Unlock()
 			active.Store(false)
 			// 取消必须先让原生 Goal 停止续跑，避免恢复同一会话时悄悄重新开始。
 			if result.Status != "completed" && result.SessionID != "" {
@@ -227,7 +277,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			for _, call := range calls {
 				emit(runtimeTelemetry("codebuddy", "context", map[string]any{"session_id": result.SessionID, "request_id": call.CID, "item_id": call.MessageID, "model": call.Model, "scope": "request_delta", "source": "sdk_log", "input_tokens": call.Usage.InputTokens, "output_tokens": call.Usage.OutputTokens, "cache_read_tokens": call.Usage.CacheReadTokens, "cache_write_tokens": call.Usage.CacheWriteTokens}))
 			}
-			if goalWasActive && len(requestIDs) > 0 {
+			if goalWasActive.Load() && len(requestIDs) > 0 {
 				emit(runtimeTelemetry("codebuddy", "accounting", map[string]any{"scope": "observed_provider_calls", "goal_evaluator_usage": "unknown"}))
 			}
 			cancel()
@@ -313,7 +363,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				return
 			}
 			emitCodebuddyGoal(client, sid, action, goal)
-			goalWasActive = goal.HasGoal && goal.ActiveGoal != nil && !goal.ActiveGoal.Paused
+			goalWasActive.Store(goal.HasGoal && goal.ActiveGoal != nil && !goal.ActiveGoal.Paused)
 			if opts.CommandOnly || action == "snapshot" || action == "pause" || action == "clear" || !goal.HasGoal {
 				result.Status = "completed"
 				result.Output = codebuddyGoalSummary(goal)
@@ -335,7 +385,8 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				fail(err)
 				return
 			}
-			goalWasActive = before.HasGoal && before.ActiveGoal != nil && !before.ActiveGoal.Paused
+			goalWasActive.Store(before.HasGoal && before.ActiveGoal != nil && !before.ActiveGoal.Paused)
+			commandReady.Store(true)
 			raw, err := client.request(runCtx, "session/prompt", map[string]any{"sessionId": sid, "prompt": []map[string]string{{"type": "text", "text": prompt}}})
 			if err != nil {
 				fail(err)
@@ -355,12 +406,33 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				return
 			}
 		}
-		goal, err = waitCodebuddyGoal(runCtx, client, sid)
-		if err != nil {
-			fail(err)
-			return
+		commandReady.Store(true)
+		for {
+			goal, err = waitCodebuddyGoal(runCtx, client, sid)
+			if err != nil {
+				fail(err)
+				return
+			}
+			commandMu.Lock()
+			// 收尾与用户命令共用一个门，避免刚接受的新目标被旧快照结束。
+			poll, stop := context.WithTimeout(runCtx, 5*time.Second)
+			latest, snapshotErr := requestCodebuddyGoal(poll, client, sid, "snapshot", "")
+			stop()
+			if snapshotErr != nil {
+				commandMu.Unlock()
+				fail(snapshotErr)
+				return
+			}
+			goal = latest
+			if goal.RunInFlight || (goal.HasGoal && goal.ActiveGoal != nil && !goal.ActiveGoal.Paused) {
+				commandMu.Unlock()
+				continue
+			}
+			commandReady.Store(false)
+			commandMu.Unlock()
+			break
 		}
-		if goalWasActive && goal.Recap != nil && goal.Recap.Latest != nil && !goal.Recap.Latest.OK && !goal.HasGoal {
+		if goalWasActive.Load() && !humanStoppedGoal.Load() && goal.Recap != nil && goal.Recap.Latest != nil && !goal.Recap.Latest.OK && !goal.HasGoal {
 			fail(fmt.Errorf("CodeBuddy goal could not complete: %s", goal.Recap.Latest.Reason))
 			return
 		}
@@ -370,7 +442,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		}
 		result.Status = "completed"
 	}()
-	return &Session{Messages: messages, Result: results, WaitingForInput: broker.waiting, Supplement: supplement, SupplementReady: active.Load}, nil
+	return &Session{RunCommand: runCommand, CommandReady: commandReady.Load, Messages: messages, Result: results, WaitingForInput: broker.waiting, Supplement: supplement, SupplementReady: active.Load}, nil
 }
 
 func codebuddyNativeArgs(opts ExecOptions, cfg Config) []string {

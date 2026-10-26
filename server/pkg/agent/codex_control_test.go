@@ -61,7 +61,22 @@ func TestCodexGoalCommandsPreserveNativeAccounting(t *testing.T) {
 				if request.Method == "thread/goal/set" && request.Params["origin"] != "user" {
 					t.Fatal("explicit user provenance missing")
 				}
-				c.handleLine(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"goal":{"objective":"existing objective","status":"active","tokensUsed":123}}}`, request.ID))
+				if request.Method == "thread/goal/clear" {
+					c.handleLine(fmt.Sprintf(`{"id":%d,"result":{"cleared":true}}`, request.ID))
+					c.handleLine(`{"method":"thread/goal/cleared","params":{"threadId":"current"}}`)
+				} else {
+					status, objective := "active", "existing objective"
+					if value, ok := request.Params["status"].(string); ok {
+						status = value
+					}
+					if value, ok := request.Params["objective"].(string); ok {
+						objective = value
+					}
+					c.handleLine(fmt.Sprintf(`{"id":%d,"result":{"goal":{"objective":%q,"status":%q,"tokensUsed":123}}}`, request.ID, objective, status))
+					if request.Method == "thread/goal/set" {
+						c.handleLine(fmt.Sprintf(`{"method":"thread/goal/updated","params":{"threadId":"current","goal":{"objective":%q,"status":%q}}}`, objective, status))
+					}
+				}
 			}
 			c.stdin = stdin
 			if _, err := c.applyRuntimeCommand(context.Background(), ExecOptions{Command: test.command}); err != nil {
@@ -93,11 +108,11 @@ echo '{"id":4,"result":{"goal":null}}'
 read line
 case "$line" in *'"method":"thread/goal/set"'*) ;; *) exit 13;; esac
 echo '{"id":5,"result":{"goal":{"status":"active","objective":"finish"}}}'
-echo '{"method":"thread/goal/updated","params":{"threadId":"goal-thread","goal":{"status":"active"}}}'
+echo '{"method":"thread/goal/updated","params":{"threadId":"goal-thread","goal":{"status":"active","objective":"finish"}}}'
 sleep 0.1
 echo '{"method":"turn/started","params":{"threadId":"goal-thread","turn":{"id":"second"}}}'
 echo '{"method":"item/completed","params":{"threadId":"goal-thread","item":{"type":"agentMessage","id":"b","text":"goal completed","phase":"final_answer"}}}'
-echo '{"method":"thread/goal/updated","params":{"threadId":"goal-thread","goal":{"status":"complete"}}}'
+echo '{"method":"thread/goal/updated","params":{"threadId":"goal-thread","goal":{"status":"complete","objective":"finish"}}}'
 echo '{"method":"turn/completed","params":{"threadId":"goal-thread","turn":{"id":"second","status":"completed"}}}'
 while read line; do exit 14; done
 `)
@@ -129,7 +144,12 @@ func TestCodexGoalPausePrecedesTurnCancellation(t *testing.T) {
 		if request.Method == "thread/goal/set" && (request.Params["status"] != "paused" || request.Params["origin"] != "automatic") {
 			t.Fatal("cancellation used incorrect goal state or provenance")
 		}
-		c.handleLine(fmt.Sprintf(`{"id":%d,"result":{}}`, request.ID))
+		if request.Method == "thread/goal/set" {
+			c.handleLine(fmt.Sprintf(`{"id":%d,"result":{"goal":{"objective":"existing","status":"paused"}}}`, request.ID))
+			c.handleLine(`{"method":"thread/goal/updated","params":{"threadId":"goal-thread","goal":{"objective":"existing","status":"paused"}}}`)
+		} else {
+			c.handleLine(fmt.Sprintf(`{"id":%d,"result":{}}`, request.ID))
+		}
 		if request.Method == "turn/interrupt" {
 			done <- true
 		}
@@ -222,5 +242,37 @@ func TestCodexResumedGoalAdoptsLiveTurnFromStartResponse(t *testing.T) {
 	c.adoptTurnStartResponse(response)
 	if c.activeTurnID() != "" || !c.turnCompleted {
 		t.Fatal("late turn/start response reopened a completed native turn")
+	}
+}
+
+func TestCodexLiveGoalKeepsFastNativeLimitState(t *testing.T) {
+	c, _, _ := newTestCodexClient(t)
+	c.setThreadID("live-thread")
+	c.setActiveTurnID("live-turn")
+	c.commandReady.Store(true)
+	stdin := &fakeStdinWithHook{}
+	stdin.afterWrite = func() {
+		lines := stdin.Lines()
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		json.Unmarshal([]byte(lines[len(lines)-1]), &request)
+		if request.Method == "thread/goal/get" {
+			c.handleLine(fmt.Sprintf(`{"id":%d,"result":{"goal":null}}`, request.ID))
+			return
+		}
+		c.handleLine(fmt.Sprintf(`{"id":%d,"result":{"goal":{"objective":"new objective","status":"active"}}}`, request.ID))
+		c.handleLine(`{"method":"thread/goal/updated","params":{"threadId":"live-thread","goal":{"objective":"new objective","status":"active"}}}`)
+		c.handleLine(`{"method":"thread/goal/updated","params":{"threadId":"live-thread","goal":{"objective":"new objective","status":"usageLimited"}}}`)
+	}
+	c.stdin = stdin
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.runLiveCommand(ctx, ctx, "/goal new objective", ExecOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if c.goalActive.Load() || c.goalStopError() != "codex native goal stopped: usageLimited" {
+		t.Fatal("control reply overwrote the newer native limit state")
 	}
 }

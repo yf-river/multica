@@ -141,6 +141,9 @@ func runContext(ctx context.Context, timeout time.Duration) (context.Context, co
 // Session 表示一次正在运行中的 agent 执行，由两条只读通道构成。
 type Session struct {
 	WaitingForInput func() bool
+	// RunCommand 执行用户的原生控制命令，回执表示运行时已经确认。
+	RunCommand   func(context.Context, string) (string, error)
+	CommandReady func() bool
 	// Supplement delivers an additional human instruction to the currently
 	// active provider turn. Nil means the backend cannot safely do so.
 	// Adapters bound their own transport calls; a hook-based adapter may wait
