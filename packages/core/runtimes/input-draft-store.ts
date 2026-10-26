@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { CreateRuntimeInput } from "../api/runtime-input-schema";
 import { registerDraftCleanup } from "../drafts/cleanup-registry";
 import { defaultStorage } from "../platform/storage";
+import { createSafeId } from "../utils";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../platform/workspace-storage";
 
 type InputDraft = CreateRuntimeInput & { updatedAt: number };
@@ -18,7 +19,7 @@ export const useRuntimeInputDraftStore = create<InputDraftStore>()(persist((set,
   reserve: (taskId, kind, content) => {
     const existing = get().drafts[taskId];
     if (existing?.kind === kind && existing.content === content) return { id: existing.id, kind, content };
-    const input = { id: crypto.randomUUID(), kind, content };
+    const input = { id: createSafeId(), kind, content };
     set((state) => ({ drafts: { ...state.drafts, [taskId]: { ...input, updatedAt: Date.now() } } }));
     return input;
   },

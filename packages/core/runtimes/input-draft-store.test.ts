@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useRuntimeInputDraftStore as store } from "./input-draft-store";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 
@@ -8,7 +8,21 @@ beforeEach(async () => {
   await Promise.resolve();
   store.setState({ drafts: {} });
 });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
 describe("runtime input retry identity", () => {
+  it("reserves a persistent UUID on HTTP origins without randomUUID", async () => {
+    vi.stubGlobal("crypto", { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) });
+    const first = store.getState().reserve("http-task", "text", "追加验收要求");
+    expect(first.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    const storage = store.persist.getOptions().storage!;
+    const persisted = await storage.getItem("multica_runtime_input_drafts");
+    expect(persisted).toBeTruthy();
+    store.setState({ drafts: {} });
+    await storage.setItem("multica_runtime_input_drafts", persisted!);
+    await store.persist.rehydrate();
+    expect(store.getState().reserve("http-task", "text", "追加验收要求").id).toBe(first.id);
+  });
   it("retains the request identity through persistence and rehydration", async () => {
     const first = store.getState().reserve("task", "command", "/goal pause");
     const storage = store.persist.getOptions().storage!;
