@@ -466,18 +466,24 @@ class ReleaseTests(unittest.TestCase):
             manifest.parent.mkdir(parents=True);manifest.write_text('{}')
             metadata={'daemon_profile_path':'/isolated-agent/.multica/profiles/verify/profile.json'}
             configured={'HOME':'/isolated-agent','MULTICA_ENV_ID':'verify-3'}
-            env=r.dsh_runtime_environment('verify-3',release,configured,metadata)
+            env=r.dsh_runtime_environment(release,configured,metadata)
             self.assertEqual(env['MULTICA_DSH_PROFILE_STATE'],'/isolated-agent/.multica/profiles/verify/dsh-runtime')
             self.assertEqual(env['MULTICA_DSH_ARTIFACT_DIR'],str(manifest.parent))
             self.assertNotIn('MULTICA_DSH_PROFILE_STATE',configured)
             for target in ('int','prod'):
-                self.assertEqual(r.dsh_runtime_environment(target,release,configured,metadata)['MULTICA_DSH_PROFILE_STATE'],str(r.RUN/'state'/target/'dsh-runtime'))
+                profile=release/target
+                state=profile/'dsh-runtime';state.mkdir(parents=True)
+                active=state/'active.json';active.write_text('{"active":{"bridge_version":"0.3.0"}}')
+                prior=active.read_bytes()
+                result=r.dsh_runtime_environment(release,configured,{'daemon_profile_path':str(profile/'profile.json')})
+                self.assertEqual(result['MULTICA_DSH_PROFILE_STATE'],str(state))
+                self.assertEqual((Path(result['MULTICA_DSH_PROFILE_STATE'])/'active.json').read_bytes(),prior)
             configured['MULTICA_DSH_PROFILE_STATE']='/explicit/isolated-state'
-            self.assertEqual(r.dsh_runtime_environment('verify-3',release,configured,metadata)['MULTICA_DSH_PROFILE_STATE'],'/explicit/isolated-state')
+            self.assertEqual(r.dsh_runtime_environment(release,configured,metadata)['MULTICA_DSH_PROFILE_STATE'],'/explicit/isolated-state')
             configured['MULTICA_DSH_MANAGED_PROFILE']='0'
-            self.assertEqual(r.dsh_runtime_environment('verify-3',release,configured,metadata),configured)
+            self.assertEqual(r.dsh_runtime_environment(release,configured,metadata),configured)
             configured.pop('MULTICA_DSH_MANAGED_PROFILE');manifest.unlink()
-            self.assertEqual(r.dsh_runtime_environment('verify-3',release,configured,metadata),configured)
+            self.assertEqual(r.dsh_runtime_environment(release,configured,metadata),configured)
 
     def test_dsh_interaction_migrations_require_exact_review(self):
         source=Path(__file__).parent.parent/'server/migrations'

@@ -777,13 +777,12 @@ def check_readiness(metadata,timeout=30,prior_readiness=None):
         return
     metadata['readiness']=dict(http_status=200,body=ready(url,timeout=timeout))
 
-def dsh_runtime_environment(env, release, configured, metadata):
+def dsh_runtime_environment(release, configured, metadata):
     daemon_env=dict(configured)
     if (release/'runtimes/dsh/manifest.json').is_file() and daemon_env.get('MULTICA_DSH_MANAGED_PROFILE')!='0':
         daemon_env['MULTICA_DSH_ARTIFACT_DIR']=str(release/'runtimes/dsh')
-        # 验收 daemon 的普通账号只能在自身 profile 下维护 bridge 状态。
-        state=(Path(metadata['daemon_profile_path']).parent/'dsh-runtime'
-               if env in VERIFICATION_ENVS else RUN/'state'/env/'dsh-runtime')
+        # 与 daemon 内置供给使用同一目录，沿用当前代和 N-1，且隔离账号可写。
+        state=Path(metadata['daemon_profile_path']).parent/'dsh-runtime'
         daemon_env.setdefault('MULTICA_DSH_PROFILE_STATE',str(state))
     return daemon_env
 
@@ -804,7 +803,7 @@ def launch(env, release, cfg, m,prior_readiness=None):
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
     # 以 CLI 管理的 profile 启动；PID 来自健康端点，不猜测子进程。
-    daemon_env=dsh_runtime_environment(env,release,cfg['daemon'],m)
+    daemon_env=dsh_runtime_environment(release,cfg['daemon'],m)
     run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=daemon_env,stdout=subprocess.DEVNULL,**service_credentials(daemon_env))
     h=ready(health_url(env)+'/health')
     if h['profile']!=m['daemon_profile']: raise RuntimeError('Daemon profile 不匹配')
