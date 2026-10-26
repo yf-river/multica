@@ -166,3 +166,73 @@ func TestCodexNativeSupervisionToolBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexRealSupervisionMCPOnly(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
+		t.Skip("real supervision model smoke is opt-in")
+	}
+	executable, sourceHome, multica, root := os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_HOME"), os.Getenv("MULTICA_SUPERVISION_SMOKE_PATH"), os.Getenv("MULTICA_CODEX_POLICY_SMOKE_ROOT")
+	if executable == "" || sourceHome == "" || multica == "" || root == "" {
+		t.Fatal("explicit CLI, test account home, MCP binary and private artifact root required")
+	}
+	version, err := DetectVersion(t.Context(), NewCommand(executable, nil))
+	if err != nil || !codexSupervisionVersionSupported(version) {
+		t.Fatal("actual Codex release is not the verified supervision version")
+	}
+	dir, err := os.MkdirTemp(root, "codex-real-supervision-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Retained real supervision artifacts: %s", dir)
+	work, home, source := filepath.Join(dir, "work"), filepath.Join(dir, "codex-home"), filepath.Join(dir, "source")
+	for _, folder := range []string{work, home, source} {
+		if err := os.Mkdir(folder, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"auth.json", "config.toml", "models_cache.json"} {
+		raw, err := os.ReadFile(filepath.Join(sourceHome, name))
+		if err != nil {
+			t.Fatalf("read explicit test account metadata %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(home, name), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker, err := newCodebuddyGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "source.txt"), []byte(marker), 0600); err != nil {
+		t.Fatal(err)
+	}
+	audit, manifest := filepath.Join(dir, "audit.jsonl"), filepath.Join(dir, "manifest.json")
+	data, _ := json.Marshal(map[string]any{"local_audit": audit, "roots": []any{map[string]any{"id": "authorized", "path": source}}})
+	if err := os.WriteFile(manifest, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"supervision": map[string]any{"command": multica, "args": []string{"supervision-mcp", manifest}}}})
+	backend := &codexBackend{cfg: Config{ExecutablePath: executable, BuiltinRuntime: true, CodexVersion: version, TaskID: "owned-real-supervision", Logger: slog.Default(), Env: map[string]string{"CODEX_HOME": home}}}
+	session, err := backend.Execute(t.Context(), "Use supervision_read exactly once with root=authorized, path=source.txt, offset=0, reason=verify the authorized source. Reply only with the exact source text returned by that tool.", ExecOptions{Cwd: work, Model: "gpt-6.1-sol", ThinkingLevel: "low", MCPToolsOnly: true, ApprovalPolicy: "never", Timeout: 120 * time.Second, McpConfig: mcp, SystemPrompt: "Inspect the authorized source through the dedicated supervision MCP. Return its text exactly. Use no other tools."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := 0
+	for msg := range session.Messages {
+		if msg.Type == MessageToolUse {
+			tools++
+			if !strings.Contains(msg.Tool, "supervision_read") {
+				t.Errorf("supervision used an unrelated tool: %s", msg.Tool)
+			}
+		}
+	}
+	result := <-session.Result
+	if result.Status != "completed" || strings.TrimSpace(result.Output) != marker || tools != 1 || len(result.Usage) == 0 {
+		t.Fatalf("real supervision failed: status=%s error=%s source_matches=%v tools=%d models=%d", result.Status, result.Error, strings.TrimSpace(result.Output) == marker, tools, len(result.Usage))
+	}
+	raw, err := os.ReadFile(audit)
+	if err != nil || !strings.Contains(string(raw), marker) || !strings.Contains(string(raw), "supervision_read") {
+		t.Fatal("actual scoped MCP did not persist the authorized source read audit")
+	}
+	t.Logf("Real Codex %s supervision passed; tools=%d models=%d duration_ms=%d source_matches=true actual_MCP_audit=true", version, tools, len(result.Usage), result.DurationMs)
+}
