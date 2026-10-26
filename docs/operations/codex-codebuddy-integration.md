@@ -307,3 +307,34 @@ PID，MCP 均未继承任务令牌。探测只加载自有空工具 MCP，未发
 这些结果提供了可用的原生上下文入口；任务凭据、MCP、技能、简报、前台子调用和 Goal
 必须一起纳入平台 lease 生命周期。常驻池接入、Goal 自动轮次与子调用的 generation
 绑定、完整隔离恢复、业务对照、int / 生产验收仍未完成。
+
+## 第十六阶段：Codex 常驻进程与任务轮次隔离
+
+内置 Codex 0.164+ 在 Linux daemon 中使用有界原生进程池，容量沿用任务并发设置，
+空闲两分钟回收。每轮独立 WebSocket 连接，线程配置携带当前任务的 shell 环境和
+MCP 凭据；常驻进程环境与默认配置排除任务身份、令牌和临时目录。用户配置或账号
+变化会替换进程。自定义 runtime、未知或旧版本及其他平台沿用原有执行路径。
+
+归还租约前确认 Goal 已暂停、当前 turn 已结束、后台终端已关闭、线程卸载完成且
+loaded 集合为空；未知状态回收进程，不把它交给下一轮。任务工具进程按随机轮次
+标识回收。进程记录绑定 UID、PID 启动时刻与随机所有权，daemon 重启只清理本池
+遗留进程；缓存期间固定相关环境和存储，防止 GC 回收正在引用的资源。
+
+验证证据位于控制仓库 `.run/evidence/codex-codebuddy-integration/`：
+
+- `phase16-resident-controls-ws.log`：原生控制路径通过，前两轮同 PID，配置改变后
+  替换 PID，无模型调用。
+- `phase16-resident-model-environments.log`：真实模型三轮通过（27.51s），同一原生
+  PID；逐轮验证 shell 与测试 MCP 环境为 FIRST、SECOND、EMPTY，并确认 MCP 进程
+  收尾与实际 usage。测试 MCP 只证明环境切换，未覆盖真实知识库业务。
+- `phase16-resident-goal-persistence.log`：原任务 home 内，关闭并重建池后恢复原生
+  Goal 通过。`phase16-codex-cross-home-goal-probe.json` 另证实：只共享 rollout、
+  换任务 home 会丢失 Goal，不能用前一条通过掩盖该缺口。
+- 池的并发、容量、取消、空闲回收、崩溃遗留恢复和环境配置 race 检查通过；daemon
+  GC 固定检查通过。Codex 回归通过（73.645s），排除已在原始基线复现的截止时间
+  用例；agent/daemon vet 通过。原生 Unix 入口是 WebSocket，初次 raw proxy 探测
+  失败保留取证。
+
+当前复用仍要求相同任务 home；跨任务 home 的稳定 SQLite、rollout 路径衔接与资源
+配置归一化尚待实施。CodeBuddy 平台常驻池、完整性能对照、固定 int、生产和浏览器
+业务验收也未完成，本阶段不代表完整计划交付。

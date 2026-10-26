@@ -407,6 +407,7 @@ type repoCacheBackend interface {
 // 它持有全部工作区状态、runtime 索引、并发控制原语与各类缓存，是
 // handleTask / runTask 以及各后台循环（心跳、同步、GC、自动更新）共享的核心对象。
 type Daemon struct {
+	codexPool  *agent.CodexProcessPool
 	cfg        Config
 	client     *Client
 	repoCache  repoCacheBackend
@@ -2000,6 +2001,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.preflightAuth(ctx); err != nil {
 		return err
 	}
+
+	if err := d.initCodexProcessPool(); err != nil {
+		return fmt.Errorf("prepare resident Codex processes: %w", err)
+	}
+	defer d.codexPool.Close()
 
 	// 关停时反注册所有 runtimes（用全新的 ctx，因为此时 ctx 已被取消）。
 	defer d.deregisterRuntimes()
@@ -7965,7 +7971,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// 通过统一 runtime 解析器解析 backend：内置 runtime 身份（如 "omp"）走
 	// NewRuntime 分派，协议族走 New。这是唯一的生产边界——daemon 从不直接调
 	// agent.New 或 agent.NewRuntime，两个工厂各自保持"恰好一个含义"。
-	backend, err := agent.ResolveBackend(provider, agent.Config{
+	backendConfig := agent.Config{
 		ExecutablePath: entry.Path,
 		LaunchPrefix:   profileFixedArgs,
 		CLIVersion:     resolvedVersion,
@@ -7976,7 +7982,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		DaemonVersion:  d.cfg.CLIVersion,
 		CodexVersion:   codexVersion,
 		BuiltinRuntime: !usesCustomProfileCommand,
-	})
+	}
+	if provider == "codex" {
+		d.configureCodexResident(task, env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx), &backendConfig)
+	}
+	backend, err := agent.ResolveBackend(provider, backendConfig)
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
 	}

@@ -1,7 +1,7 @@
 package agent
 
 // 角色定位：本文件是 Codex CLI 的适配层，实现了 Backend 接口：拉起 `codex
-// app-server --listen stdio://` 子进程，通过 stdin/stdout 上的 JSON-RPC 2.0 与之对话，
+// app-server` 子进程，通过 stdio 或独立 Unix WebSocket 上的 JSON-RPC 2.0 与之对话，
 // 把 codex 的 thread/turn 协议翻译成本包统一的 Message/Result/Session。
 
 // 职责边界：管「进程生命周期 + JSON-RPC 客户端」这一整条链——参数归一化、MCP 配置
@@ -1133,60 +1133,99 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		})
 	}
 	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
+	var resident *codexProcessLease
+	residentTransferred := false
+	if b.cfg.CodexPool != nil {
+		var err error
+		resident, err = b.cfg.CodexPool.acquire(runCtx, b.cfg, opts, runtimeCmd, codexArgs)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("acquire resident Codex: %w", err)
+		}
+	}
+	defer func() {
+		if resident != nil && !residentTransferred {
+			resident.release(false)
+		}
+	}()
 	// Keep the app-server alive long enough to handle turn/interrupt when the
 	// task context is cancelled. The lifecycle goroutine remains governed by
 	// runCtx and explicitly stops this process context during bounded cleanup.
-	processCtx, stopProcess := context.WithCancel(context.WithoutCancel(runCtx))
-	cmd := runtimeCmd.exec(processCtx, codexArgs...)
-	hideAgentWindow(cmd)
-	// 把 codex 放进独立的进程组，卡死后的清理能覆盖整棵进程树——codex 的 Node 壳加上
-	// 它拉起的原生 Rust app-server——而不只是直接子进程。否则杀掉带头进程会留下孤儿孙进程
-	// 持续吃内存直到 OS 回收；参见 #4520：thread/resume 期间发生 scanner 溢出时，旧行为会
-	// 无限泄漏 codex 进程。configureProcessGroup 在 Windows 上是空操作。
-	// 覆盖 exec.CommandContext 默认的取消行为：默认只向 cmd.Process（带头进程）发 SIGKILL，
-	// 我们改为给整个进程组发信号，让后代一起死。返回 nil 是避免 exec 记一条虚假错误；
-	// 若 kill 后仍有打开的管道，下方 cmd.WaitDelay 仍会兜底 cmd.Wait()。
-	cmd.Cancel = func() error {
-		if cmd.Process != nil {
-			signalProcessGroup(cmd, syscall.SIGKILL)
+	var cmd *exec.Cmd
+	var stdout io.ReadCloser
+	var stdin io.WriteCloser
+	var stderrBuf *stderrTail
+	var stream *codexResidentStream
+	var stopProcess func()
+	var pid int
+	if resident != nil {
+		var err error
+		stream, err = openCodexResidentStream(runCtx, resident.entry.socket)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("connect resident Codex: %w", err)
 		}
-		return nil
-	}
-	// 给 context 取消后的等待上界，防止卡死的子进程（或孙进程握着的打开管道）让
-	// cmd.Wait() 无限挂起。与其它长驻后端（claude、copilot、cursor 等）保持一致。
-	cmd.WaitDelay = codexProcessWaitDelay()
-	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(codexArgs, trustAgentCommandPositional(0, "app-server")))
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
+		stdout, stdin, stderrBuf = stream.reader, stream, resident.stderr
+		pid = resident.entry.cmd.Process.Pid
+		stopProcess = func() { _ = stream.Close(); resident.release(false) }
+		b.cfg.Logger.Info("codex resident lease", "native_pid", pid, "task_id", b.cfg.TaskID, "reused", resident.reused)
+	} else {
+		var err error
+		processCtx, stop := context.WithCancel(context.WithoutCancel(runCtx))
+		stopProcess = stop
+		cmd = runtimeCmd.exec(processCtx, codexArgs...)
+		hideAgentWindow(cmd)
+		// 把 codex 放进独立的进程组，卡死后的清理能覆盖整棵进程树——codex 的 Node 壳加上
+		// 它拉起的原生 Rust app-server——而不只是直接子进程。否则杀掉带头进程会留下孤儿孙进程
+		// 持续吃内存直到 OS 回收；参见 #4520：thread/resume 期间发生 scanner 溢出时，旧行为会
+		// 无限泄漏 codex 进程。configureProcessGroup 在 Windows 上是空操作。
+		// 覆盖 exec.CommandContext 默认的取消行为：默认只向 cmd.Process（带头进程）发 SIGKILL，
+		// 我们改为给整个进程组发信号，让后代一起死。返回 nil 是避免 exec 记一条虚假错误；
+		// 若 kill 后仍有打开的管道，下方 cmd.WaitDelay 仍会兜底 cmd.Wait()。
+		cmd.Cancel = func() error {
+			if cmd.Process != nil {
+				signalProcessGroup(cmd, syscall.SIGKILL)
+			}
+			return nil
+		}
+		// 给 context 取消后的等待上界，防止卡死的子进程（或孙进程握着的打开管道）让
+		// cmd.Wait() 无限挂起。与其它长驻后端（claude、copilot、cursor 等）保持一致。
+		cmd.WaitDelay = codexProcessWaitDelay()
+		b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(codexArgs, trustAgentCommandPositional(0, "app-server")))
+		if opts.Cwd != "" {
+			cmd.Dir = opts.Cwd
+		}
+		cmd.Env = buildEnv(b.cfg.Env)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		stopProcess()
-		return nil, fmt.Errorf("codex stdout pipe: %w", err)
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		cancel()
-		stopProcess()
-		return nil, fmt.Errorf("codex stdin pipe: %w", err)
-	}
-	// codex 的 stderr 可能含 auth/provider 诊断。只捕获一段有界尾部，并且只经脱敏器
-	// 出现在清理事件里。
-	stderrBuf := newStderrTail(io.Discard, codexStderrTailBytes)
-	cmd.Stderr = stderrBuf
+		stdout, err = cmd.StdoutPipe()
+		if err != nil {
+			cancel()
+			stopProcess()
+			return nil, fmt.Errorf("codex stdout pipe: %w", err)
+		}
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			cancel()
+			stopProcess()
+			return nil, fmt.Errorf("codex stdin pipe: %w", err)
+		}
+		// codex 的 stderr 可能含 auth/provider 诊断。只捕获一段有界尾部，并且只经脱敏器
+		// 出现在清理事件里。
+		stderrBuf = newStderrTail(io.Discard, codexStderrTailBytes)
+		cmd.Stderr = stderrBuf
 
-	// 启动并一步到位接管整棵进程树。Windows 上子进程以挂起方式创建并先放进 Job Object
-	// 再运行，让下方清理能覆盖 Node 壳、原生 app-server 及其底下的沙箱辅助进程，而不只是
-	// 直接子进程。Unix 上上面配置的进程组已覆盖这些，这里只是普通 Start。接管失败只记日志、
-	// 不算致命；无法恢复运行的子进程会被杀掉并在这一步报出来。
-	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
-		cancel()
-		stopProcess()
-		return nil, fmt.Errorf("start codex: %w", err)
+		// 启动并一步到位接管整棵进程树。Windows 上子进程以挂起方式创建并先放进 Job Object
+		// 再运行，让下方清理能覆盖 Node 壳、原生 app-server 及其底下的沙箱辅助进程，而不只是
+		// 直接子进程。Unix 上上面配置的进程组已覆盖这些，这里只是普通 Start。接管失败只记日志、
+		// 不算致命；无法恢复运行的子进程会被杀掉并在这一步报出来。
+		if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
+			cancel()
+			stopProcess()
+			return nil, fmt.Errorf("start codex: %w", err)
+		}
+		pid = cmd.Process.Pid
 	}
+	residentTransferred = true
 	activeLaunches := activeCodexLaunches.Add(1)
 	for {
 		maxSeen := maxActiveCodexLaunchesObserved.Load()
@@ -1200,7 +1239,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		codexVersion = "unknown"
 	}
 
-	b.cfg.Logger.Info("codex lifecycle", "phase", "spawn", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "process_group", cmd.Process.Pid, "cwd", opts.Cwd, "attempt", attempt, "active_launches", activeLaunches, "codex_version", codexVersion, "daemon_version", b.cfg.DaemonVersion)
+	launchPhase := "spawn"
+	if resident != nil && resident.reused {
+		launchPhase = "lease"
+	}
+	b.cfg.Logger.Info("codex lifecycle", "phase", launchPhase, "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "process_group", pid, "cwd", opts.Cwd, "attempt", attempt, "active_launches", activeLaunches, "codex_version", codexVersion, "daemon_version", b.cfg.DaemonVersion)
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
@@ -1243,7 +1286,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		processDone:              make(chan struct{}),
 		handshakeTimeout:         handshakeTimeout,
 		threadHandshakeTimeout:   threadHandshakeTimeout,
-		pid:                      cmd.Process.Pid,
+		pid:                      pid,
 		attempt:                  attempt,
 		activeLaunches:           activeLaunches,
 		notificationProtocol:     "unknown",
@@ -1310,6 +1353,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		},
 	}
 
+	if resident != nil {
+		c.threadConfig = resident.threadConfig
+		c.threadClosed = make(chan struct{})
+	}
 	c.cfg.CodexVersion = codexVersion
 	c.interactions = newInteractionBroker("codex", runCtx, runtimeInteractionRequest(opts), c.onMessage)
 	// 后台开始读 stdout
@@ -1368,6 +1415,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	var cleanupConfirmed bool
 	var waitReturned bool
 	var cleanupWaitErr error
+	var residentCleanupErr error
 	drainAndWait := func() {
 		waitOnce.Do(func() {
 			c.commandReady.Store(false)
@@ -1375,6 +1423,27 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			defer c.commandMu.Unlock()
 			if c.goalControlUncertain.Load() && c.getThreadID() != "" {
 				c.pauseGoalBeforeStop(c.getThreadID(), b.cfg.Logger)
+			}
+			if resident != nil {
+				residentCleanupErr = c.unloadResidentThread()
+				if err := reapCodexResidentExecution(resident.execution); err != nil {
+					residentCleanupErr = err
+				}
+				_ = stream.Close()
+				closed := false
+				select {
+				case <-readerDone:
+					closed = true
+				case <-time.After(codexGracefulShutdown()):
+					residentCleanupErr = errors.New("Codex resident event stream did not close")
+				}
+				<-stream.done
+				retained := residentCleanupErr == nil && closed
+				resident.release(retained)
+				cleanupConfirmed = !retained && waitProcessGroupGone(resident.entry.cmd, 3*time.Second)
+				b.cfg.Logger.Info("codex lifecycle", "phase", "cleanup", "task_id", b.cfg.TaskID, "pid", pid,
+					"reaped", cleanupConfirmed, "native_retained", retained, "transport_closed", closed)
+				return
 			}
 			stdin.Close()
 
@@ -1399,7 +1468,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				// codex 没在宽限期内关闭 stdout。用 context 取消强制停机——cmd.Cancel
 				// 组杀整棵树，读取方在 stdout EOF 时解除阻塞，进入阶段 2。
 				b.cfg.Logger.Warn("codex did not close stdout after stdin EOF; forcing shutdown",
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"grace", grace.String(),
 				)
 				stopProcess()
@@ -1413,7 +1482,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				case <-readerDone:
 				case <-time.After(grace):
 					b.cfg.Logger.Warn("codex stdout reader remained open after bounded process wait",
-						"pid", cmd.Process.Pid,
+						"pid", pid,
 						"grace", grace.String(),
 					)
 				}
@@ -1428,7 +1497,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				// 干净回收。
 			case <-time.After(grace):
 				b.cfg.Logger.Warn("codex process still alive after reader exited; forcing shutdown",
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"grace", grace.String(),
 				)
 				stopProcess()
@@ -1449,8 +1518,8 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"phase", "cleanup",
 				"task_id", b.cfg.TaskID,
 				"runtime_id", b.cfg.RuntimeID,
-				"pid", cmd.Process.Pid,
-				"process_group", cmd.Process.Pid,
+				"pid", pid,
+				"process_group", pid,
 				"attempt", attempt,
 				"latency", time.Since(launchStarted).Round(time.Millisecond).String(),
 				"reaped", cleanupConfirmed,
@@ -1489,7 +1558,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 		// 1. initialize 握手
 		initializeStarted := time.Now()
-		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_sent", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "active_launches", activeLaunches)
+		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_sent", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "attempt", attempt, "active_launches", activeLaunches)
 		_, err := c.request(runCtx, "initialize", map[string]any{
 			"clientInfo": map[string]any{
 				"name":    "multica-agent-sdk",
@@ -1530,11 +1599,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			} else if timedOut && cleanupConfirmed && !codexInitializeRetrySupported() {
 				finalError += "; retry suppressed: process-tree cleanup cannot be confirmed on this platform"
 			}
-			b.cfg.Logger.Warn("codex lifecycle", "phase", "initialize_failure", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", initializeLatency.Round(time.Millisecond).String(), "semantic_activity", semanticObserved.Load(), "cleanup_confirmed", cleanupConfirmed, "retry_safe", retrySafe)
+			b.cfg.Logger.Warn("codex lifecycle", "phase", "initialize_failure", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "attempt", attempt, "latency", initializeLatency.Round(time.Millisecond).String(), "semantic_activity", semanticObserved.Load(), "cleanup_confirmed", cleanupConfirmed, "retry_safe", retrySafe)
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds(), codexInitializeRetrySafe: retrySafe}
 			return
 		}
-		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_response", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", time.Since(initializeStarted).Round(time.Millisecond).String())
+		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_response", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "attempt", attempt, "latency", time.Since(initializeStarted).Round(time.Millisecond).String())
 		c.notify("initialized")
 
 		// 2. 新开一个线程，或为本次问题 resume 之前的线程。resume 失败时（线程在服务端
@@ -1562,7 +1631,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					"phase", strings.ReplaceAll(c.threadSetupMethod, "/", "_")+"_failure",
 					"task_id", b.cfg.TaskID,
 					"runtime_id", b.cfg.RuntimeID,
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"attempt", attempt,
 					"active_launches", activeLaunches,
 					"method", c.threadSetupMethod,
@@ -1613,6 +1682,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				resumeID = ""
 			}
 			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: resumeID})
+			if resident != nil {
+				drainAndWait()
+				if residentCleanupErr != nil {
+					resCh <- Result{Status: "failed", Error: residentCleanupErr.Error(), SessionID: resumeID, DurationMs: time.Since(startTime).Milliseconds()}
+					return
+				}
+			}
 			resCh <- Result{Status: "completed", Output: commandOutput, SessionID: resumeID, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
@@ -1801,7 +1877,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					Model:        opts.Model,
 				}
 				b.cfg.Logger.Warn(CodexFirstTurnNoProgressMarker,
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"thread_id", threadID,
 					"turn_id", turnID,
 					"timeout", firstTurnNoProgressTimeout.String(),
@@ -1825,7 +1901,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					Model:        opts.Model,
 				}
 				b.cfg.Logger.Warn(CodexSemanticInactivityMarker,
-					"pid", cmd.Process.Pid,
+					"pid", pid,
 					"thread_id", threadID,
 					"turn_id", turnID,
 					"timeout", semanticInactivityTimeout.String(),
@@ -1865,12 +1941,16 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		}
 
 		duration := time.Since(startTime)
-		b.cfg.Logger.Info("codex finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
+		b.cfg.Logger.Info("codex finished", "pid", pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
 		// 执行清理。drainAndWait 用两个有界阶段实现「先优雅后强杀」（见其声明）：
 		// 先等 reader，再等 cmd.Wait()，任一步超时则强制取消。干净停机让 codex 冲刷
 		// OTEL 遥测；卡死的进程则被进程组 SIGKILL 干掉。
 		drainAndWait()
+		if residentCleanupErr != nil {
+			finalStatus = "failed"
+			finalError = residentCleanupErr.Error()
+		}
 
 		if processExitErr != nil {
 			finalError = withAgentStderr(processExitErr.Error(), "codex", sanitizeCodexDiagnostic(stderrBuf.Tail()))
@@ -1891,7 +1971,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			cleanupConfirmed && codexInitializeRetrySupported()
 		if startupRefreshRetrySafe {
 			b.cfg.Logger.Warn("codex startup model catalog refresh failure is retry safe",
-				"pid", cmd.Process.Pid,
+				"pid", pid,
 				"thread_id", threadID,
 				"attempt", attempt,
 			)
@@ -1911,7 +1991,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"phase", "first_item_wait",
 				"task_id", b.cfg.TaskID,
 				"runtime_id", b.cfg.RuntimeID,
-				"pid", cmd.Process.Pid,
+				"pid", pid,
 				"attempt", attempt,
 				"active_launches", activeLaunches,
 				"method", "turn/start",
@@ -2062,7 +2142,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		// 字段。developerInstructions 保持 nil 的原因见下方 thread/start 的说明。
 		resumeParams := map[string]any{
 			"threadId":              priorThreadID,
-			"config":                codexSubagentConfig(c.cfg.CodexVersion),
+			"config":                c.currentThreadConfig(),
 			"cwd":                   opts.Cwd,
 			"model":                 nilIfEmpty(opts.Model),
 			"developerInstructions": nil,
@@ -2127,7 +2207,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"cwd":                    opts.Cwd,
 		"approvalPolicy":         nil,
 		"sandbox":                nil,
-		"config":                 codexSubagentConfig(c.cfg.CodexVersion),
+		"config":                 c.currentThreadConfig(),
 		"baseInstructions":       nil,
 		"developerInstructions":  nil,
 		"compactPrompt":          nil,
@@ -2411,6 +2491,9 @@ func describeCodexSemanticActivity(msg Message) string {
 // ── codexClient: JSON-RPC 2.0 transport ──
 
 type codexClient struct {
+	threadConfig           map[string]any
+	threadClosed           chan struct{}
+	threadClosedOnce       sync.Once
 	approvalPolicy         string
 	cfg                    Config
 	stdin                  interface{ Write([]byte) (int, error) }
@@ -3117,6 +3200,10 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	// started/turnID；若让别的线程先到，可能把主回合 ID 顶掉，让后续主线 item/完成事件
 	// 看着像过期数据。
 	if c.isNotificationFromOtherThread(params) {
+		return
+	}
+	if method == "thread/closed" && c.threadClosed != nil {
+		c.threadClosedOnce.Do(func() { close(c.threadClosed) })
 		return
 	}
 	if method == "serverRequest/resolved" && c.interactions != nil {

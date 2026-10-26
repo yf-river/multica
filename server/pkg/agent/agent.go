@@ -287,14 +287,17 @@ type Result struct {
 
 // Config 配置一个 Backend 实例。
 type Config struct {
-	ExecutablePath string            // CLI 可执行文件路径
-	CLIVersion     string            // 与 ExecutablePath 配套检测到的版本；内置提供方按已发布协议归一化用量
-	Env            map[string]string // 额外的环境变量
-	Logger         *slog.Logger
-	TaskID         string
-	RuntimeID      string
-	DaemonVersion  string
-	CodexVersion   string
+	CodexPool          *CodexProcessPool
+	ResidentSessionKey string
+	PinResidentHome    func() func()
+	ExecutablePath     string            // CLI 可执行文件路径
+	CLIVersion         string            // 与 ExecutablePath 配套检测到的版本；内置提供方按已发布协议归一化用量
+	Env                map[string]string // 额外的环境变量
+	Logger             *slog.Logger
+	TaskID             string
+	RuntimeID          string
+	DaemonVersion      string
+	CodexVersion       string
 	// BuiltinRuntime 表示 ExecutablePath 是 provider 自己发现的内置二进制，
 	// 而不是某个自定义运行时 profile 的命令。自定义 profile 仍以其协议族
 	// （protocol_family）作为 provider 身份，所以仅靠 provider 名区分不了两者：
