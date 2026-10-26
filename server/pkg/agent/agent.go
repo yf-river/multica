@@ -44,7 +44,9 @@ type ExecOptions struct {
 	NativeGoal         bool  // CodeBuddy Goal 会话使用原生控制协议，普通会话沿用 stream-json。
 	CommandOnly        bool  // 纯控制命令不启动模型生成。
 	RequestInteraction func(context.Context, protocol.InteractionPrompt) (protocol.InteractionAnswer, error)
-	Model              string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
+	// ApprovalPolicy 为 ask 时交给配置的回答器，never 拒绝审批请求。
+	ApprovalPolicy string
+	Model          string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
 	// SystemPrompt 携带 Multica 的运行时简报（runtime brief），仅对少数无法
 	// 从磁盘读取该简报的 provider 有效。daemon 对其它所有 provider 都把它留空
 	// （见 daemon.providerNeedsInlineSystemPrompt），因为那份简报已经以"每次任务的

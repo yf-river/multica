@@ -260,6 +260,7 @@ type AgentData struct {
 	Model                 string                     `json:"model,omitempty"`
 	ThinkingLevel         string                     `json:"thinking_level,omitempty"`
 	ServiceTier           string                     `json:"service_tier,omitempty"`
+	SystemKey             string                     `json:"system_key,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkillData `json:"disabled_runtime_skills,omitempty"`
 	// RuntimeConfig 是 agent 记录上按 provider 存放的 runtime_config JSON，claim
 	// 端点原样转发。各 provider 可自行解码自己的字段；其余后端忽略它。

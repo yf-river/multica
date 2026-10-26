@@ -254,10 +254,11 @@ func (h *Handler) UploadKnowledgeResource(w http.ResponseWriter, r *http.Request
 	}
 	root := "viking://resources/workspaces/" + workspaceID
 	payload := map[string]any{
-		"temp_file_id": envelope.Result.TempFileID,
-		"parent":       root,
-		"reason":       "Uploaded from Multica knowledge",
-		"wait":         false,
+		"temp_file_id":  envelope.Result.TempFileID,
+		"parent":        root,
+		"create_parent": true,
+		"reason":        "Uploaded from Multica knowledge",
+		"wait":          false,
 	}
 	added, _, err := client.do(r.Context(), http.MethodPost, "/api/v1/resources", nil, payload, workspaceID)
 	if err != nil {
