@@ -18,7 +18,8 @@ func TestCodebuddyRealResidentPreparationComparison(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_STARTUP_BENCHMARK") != "1" {
 		t.Skip("five cold and three warm real model calls are opt-in")
 	}
-	executable, home, destination := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME"), os.Getenv("MULTICA_CODEBUDDY_POOL_BENCH_RESULT")
+	runtime := codebuddyRealSmokeRuntime(t)
+	executable, home, destination := runtime.Path, runtime.Home, os.Getenv("MULTICA_CODEBUDDY_POOL_BENCH_RESULT")
 	if executable == "" || home == "" || destination == "" {
 		t.Fatal("explicit CLI, isolated account home and private result path required")
 	}
@@ -55,7 +56,7 @@ func TestCodebuddyRealResidentPreparationComparison(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: "2.176.0", Logger: slog.Default(), CodebuddyPool: pool, ResidentSessionKey: "owned-startup-comparison", TaskID: fmt.Sprintf("startup-%d", index), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_TASK_ID": fmt.Sprintf("startup-%d", index)}}
+		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: runtime.Version, Logger: slog.Default(), CodebuddyPool: pool, ResidentSessionKey: "owned-startup-comparison", TaskID: fmt.Sprintf("startup-%d", index), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_TASK_ID": fmt.Sprintf("startup-%d", index)}}
 		session, err := (&codebuddyBackend{cfg: cfg}).Execute(t.Context(), "Reply with exactly this marker: "+marker, ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", ResumeSessionID: sid, SystemPrompt: "Reply only with the marker requested in the current prompt. Do not use tools or delegate.", Timeout: 80 * time.Second})
 		if err != nil {
 			t.Fatal(err)
@@ -90,7 +91,7 @@ func TestCodebuddyRealResidentPreparationComparison(t *testing.T) {
 			entry.Tokens += usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 		}
 		samples = append(samples, entry)
-		raw, _ := json.MarshalIndent(map[string]any{"runtime": "codebuddy", "cli": "2.176.0", "model": "deepseek-v4.1-flash", "case": "text marker; actual model inference", "samples": samples}, "", "  ")
+		raw, _ := json.MarshalIndent(map[string]any{"runtime": "codebuddy", "cli": runtime.Version, "executable_sha256": runtime.SHA256, "model": "deepseek-v4.1-flash", "case": "text marker; actual model inference", "samples": samples}, "", "  ")
 		if err := os.WriteFile(destination, raw, 0600); err != nil {
 			t.Fatal(err)
 		}

@@ -538,7 +538,7 @@ owner 和 execution 标记用于恢复清理，环境目录在进程存活期间
 
 控制仓库私有证据：
 
-- `phase24-native-same-session-fixed.log`：真实 2.176 / Flash 三轮通过，均为
+- `phase24-native-same-session-fixed.log`：真实 2.177 / Flash 三轮通过，均为
   同一 PID、同一 SID。各轮随机环境值和简报标记正确，MCP 的任务凭据摘要
   正确，任务结束后 MCP 退出，根进程未持有任务凭据，每轮有实际模型用量。
   三轮耗时分别为 9.603s、4.518s、5.432s；这不是完整性能对照矩阵。
@@ -566,7 +566,7 @@ owner 和 execution 标记用于恢复清理，环境目录在进程存活期间
 - `phase25-settings-tests.log`：CodeBuddy race 回归通过（16.980s）。
 - `phase25-settings-final-tests.log`：人工 hook、权限、环境、任务技能禁用、
   inline JSON、路径解析、无效来源拒绝及设置内容指纹检查通过。
-- `phase25-native-human-settings.log`：真实 2.176 / Flash 同 PID、同 SID 三轮
+- `phase25-native-human-settings.log`：真实 2.177 / Flash 同 PID、同 SID 三轮
   执行通过（10.375s、4.778s、5.027s）。人工 Bash hook 每轮真实执行一次，
   受管环境和简报仍为当前轮，MCP 凭据与回收检查通过，逐调用用量存在。
   人工与任务设置各包含独立权限拒绝项；合并结构由定向测试核对。
@@ -585,7 +585,7 @@ Agent ID 和已结束子回合仍被拒绝。恢复执行继续从当前租约�
 
 - `phase26-native-child-resume.log`：保留首次失败；实际恢复与 Bash 环境正确，
   但旧解析器拒绝多回合子会话，缺少子链路，未计为通过。
-- `phase26-native-child-resume-fixed.log`：真实 2.176 / Flash 两轮通过，
+- `phase26-native-child-resume-fixed.log`：真实 2.177 / Flash 两轮通过，
   首次前台子调用 15.439s，恢复原子 Agent 11.595s。同一父 PID 和 SID，
   每轮子 Bash 证明当前环境，父输出独立，实际逐调用用量和子链路存在。
 - `phase26-scoped-accounting-tests.log`：hook 的恢复授权与旧代际拒绝、
@@ -603,7 +603,7 @@ CodeBuddy 监督使用私有任务配置目录，保留模型定义、默认模�
 `alwaysLoad=true`，使其无需内置 ToolSearch 即可使用。原生 Goal 与常驻租约不能
 进入这条路径。普通任务和交付审查继续使用各自的工具与人工设置。
 
-- `phase27-codebuddy-project-hook-surface.log`：真实 2.176 CLI 将请求发到自有
+- `phase27-codebuddy-project-hook-surface.log`：真实 2.177 CLI 将请求发到自有
   本地采集端，主提示词存在，实际工具列表只有指定 MCP 工具，人工与项目启动
   hook 均未执行。模型端是本地 HTTP 采集器，没有真实推理。
 - `phase27-native-supervision-mcp.log`：真实 Flash 推理和 Multica 自身的监督
@@ -623,7 +623,7 @@ Codex 角色权限、知识库和监督平台闭环、完整业务与性能矩�
 
 ## 第二十八阶段：CodeBuddy 启动对照与模型配置失效
 
-使用相同 2.176 / Flash 配置，串行执行五次新进程冷启动和三轮同 PID、同 SID
+使用相同 2.177 / Flash 配置，串行执行五次新进程冷启动和三轮同 PID、同 SID
 热会话。每次均有真实模型输出与用量；从实际 process 遥测读取准备和握手耗时，
 不从模型耗时倒推。对照案例为精确回复当前随机文本，不调用工具，不代表六类
 业务或原基线 stream-json 与新 ACP 之间的完整对照。
@@ -646,3 +646,29 @@ race 检查通过；`phase28-vet.log` 的 Agent Go vet 通过。
 
 Codex 监督工具范围、知识库和监督平台闭环、两种运行时六类任务对照、固定 int
 和生产业务验收仍未完成。
+
+## 第二十九阶段：实际 CLI 身份与固定制品复验
+
+现场版本复核发现安装路径仍为 `versions/2.172.1/codebuddy`，文件在 2026-10-27
+00:31 更新，实际报告 **2.177.0**。第二十四至二十八阶段的新测试在此之后执行，
+测试配置中的 `CLIVersion=2.176.0` 是过时声明。相关文字已纠正；原始日志与
+第二十八阶段 JSON 保留，其 `cli` 字段不能作为实际版本证明。
+
+真实测试统一解析实际执行路径，调用版本检测，记录 SHA-256，并在结束时核对
+二进制未变。测试使用任务私有的固定二进制副本，并关闭该测试子进程的原生自动
+更新；不依赖可变安装路径或目录名推断版本。
+
+固定版本为 2.177.0，SHA-256 为
+`a246ed8113ae5d49ac57665a2a577dec36e9e330f90255a5039ea0c07bf324b7`。
+`phase29-codebuddy-pinned-validation.log` 六项真实检查全部通过：
+
+- 原生 Goal 循环和计划审批。审批回答来自测试回调，不代表真实用户批准。
+- 三轮同 PID、同 SID 任务，当前环境和简报、人工 hook、MCP 凭据与回收。
+- 同一父进程恢复原前台子 Agent、换发当前环境和主子计量。
+- 专用监督 MCP 读取授权来源、保存本地审计，并隔离人工启动 hook。
+- 五次冷启动与三轮热会话，实际模型结果和进程身份对账。
+
+固定制品的启动对照见 `phase29-codebuddy-pinned-startup-comparison.json`：
+准备与握手中位数 **1,483 → 18 ms**，整轮耗时 **5,982 → 2,798 ms**，
+已观察 token **21,894 → 22,019**（+0.6%）。该固定版本结果作为当前启动小样的
+验收依据；完整业务矩阵、Codex 监督隔离、固定 int 和生产验收仍待完成。

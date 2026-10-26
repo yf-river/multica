@@ -16,7 +16,8 @@ func TestCodebuddyRealSupervisionMCPOnly(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real supervision MCP smoke is opt-in")
 	}
-	executable, home, multica := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME"), os.Getenv("MULTICA_SUPERVISION_SMOKE_PATH")
+	runtime := codebuddyRealSmokeRuntime(t)
+	executable, home, multica := runtime.Path, runtime.Home, os.Getenv("MULTICA_SUPERVISION_SMOKE_PATH")
 	if executable == "" || home == "" || multica == "" {
 		t.Fatal("explicit CLI, isolated account home and Multica MCP binary required")
 	}
@@ -49,7 +50,7 @@ func TestCodebuddyRealSupervisionMCPOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"supervision": map[string]any{"command": multica, "args": []string{"supervision-mcp", manifest}, "alwaysLoad": true}}})
-	backend := &codebuddyBackend{cfg: Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: "2.176.0", Env: env, Logger: slog.Default()}}
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: runtime.Version, Env: env, Logger: slog.Default()}}
 	session, err := backend.Execute(t.Context(), "Use supervision_read exactly once with root=authorized, path=source.txt, offset=0, reason=verify the authorized source. Then reply only with the exact text returned by that tool. Use no other tools.", ExecOptions{Cwd: work, MCPToolsOnly: true, ApprovalPolicy: "never", Timeout: 100 * time.Second, McpConfig: mcp, SystemPrompt: "Inspect only the authorized source through the dedicated supervision MCP. Return the requested source text exactly."})
 	if err != nil {
 		t.Fatal(err)

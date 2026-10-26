@@ -22,7 +22,8 @@ func TestCodebuddyRealResidentTaskGenerations(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real resident model smoke is opt-in")
 	}
-	executable, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	executable, home := runtime.Path, runtime.Home
 	if executable == "" || home == "" {
 		t.Fatal("explicit executable and isolated account home required")
 	}
@@ -80,7 +81,7 @@ for line in sys.stdin:
 		}
 		token := fmt.Sprintf("owned-smoke-token-%d", round)
 		proof, mcpProof := filepath.Join(work, fmt.Sprintf("proof-%d", round)), filepath.Join(work, fmt.Sprintf("mcp-%d.json", round))
-		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: "2.176.0", CodebuddyPool: pool, ResidentSessionKey: "owned-resident-three-turn-smoke", TaskID: fmt.Sprintf("owned-warm-%d", round), Logger: logger, Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_POOL_PROBE": marker, "MULTICA_TOKEN": token, "MULTICA_TASK_ID": fmt.Sprintf("owned-warm-%d", round)}}
+		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: runtime.Version, CodebuddyPool: pool, ResidentSessionKey: "owned-resident-three-turn-smoke", TaskID: fmt.Sprintf("owned-warm-%d", round), Logger: logger, Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_POOL_PROBE": marker, "MULTICA_TOKEN": token, "MULTICA_TASK_ID": fmt.Sprintf("owned-warm-%d", round)}}
 		mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"resident-proof": map[string]any{"command": "python3", "args": []string{probe, mcpProof}}}})
 		opts := ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", ResumeSessionID: sid, Timeout: 80 * time.Second, McpConfig: mcp, SystemPrompt: "Follow the current task brief. Use only the requested single Bash command. Do not read files or delegate.", CodebuddyRuntimeBrief: "Current task brief marker: " + briefMarker + ". Ignore markers in prior task briefs."}
 		opts.CustomArgs = []string{"--settings", "human-settings.json"}
@@ -182,7 +183,8 @@ func TestCodebuddyRealResidentForegroundAgentResume(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
 		t.Skip("real foreground Agent resume smoke is opt-in")
 	}
-	executable, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	runtime := codebuddyRealSmokeRuntime(t)
+	executable, home := runtime.Path, runtime.Home
 	if executable == "" || home == "" {
 		t.Fatal("explicit executable and isolated account home required")
 	}
@@ -204,7 +206,7 @@ func TestCodebuddyRealResidentForegroundAgentResume(t *testing.T) {
 		if round > 0 {
 			prompt = "Use Agent exactly once with resume=" + child + " to resume that existing foreground child. Ask it to use Bash exactly once to execute this command verbatim: " + command + ". Wait for it to finish, then reply exactly CHILD_RESUME_OK. Do not create a new child, use background, other tools, read files, or delegate further."
 		}
-		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: "2.176.0", Logger: slog.Default(), CodebuddyPool: pool, ResidentSessionKey: "owned-resident-child-resume", TaskID: fmt.Sprintf("child-resume-%d", round), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_TASK_ID": fmt.Sprintf("child-resume-%d", round), "MULTICA_CHILD_RESUME_PROBE": marker}}
+		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: runtime.Version, Logger: slog.Default(), CodebuddyPool: pool, ResidentSessionKey: "owned-resident-child-resume", TaskID: fmt.Sprintf("child-resume-%d", round), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_TASK_ID": fmt.Sprintf("child-resume-%d", round), "MULTICA_CHILD_RESUME_PROBE": marker}}
 		opts := ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", ResumeSessionID: sid, Timeout: 110 * time.Second, SystemPrompt: "Execute only the requested foreground Agent acceptance check. Do not inspect unrelated files."}
 		session, err := (&codebuddyBackend{cfg: cfg}).Execute(t.Context(), prompt, opts)
 		if err != nil {
