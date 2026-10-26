@@ -70,7 +70,7 @@ if [ "$3" = "--probe" ]; then
   if [ -f '`+filepath.Join(root, "probe-count")+`' ]; then count=$(cat '`+filepath.Join(root, "probe-count")+`'); fi
   count=$((count + 1))
   printf '%s' "$count" > '`+filepath.Join(root, "probe-count")+`'
-  if [ '`+mode+`' = 'post-probe-failure' ] && [ "$count" -gt 1 ]; then exit 8; fi
+  if [ '`+mode+`' = 'post-probe-failure' ] && [ "$count" -gt 2 ]; then exit 8; fi
   printf '%s\n' '{"v":1,"type":"probe","runtime":"dsh","protocol_version":1,"plugin_version":"0.3.0"}'
   exit 0
 fi

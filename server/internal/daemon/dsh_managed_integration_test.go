@@ -59,5 +59,8 @@ func TestDshManagedRealSupplySmoke(t *testing.T) {
 	if state.Active.SHA256 != m.SHA256 || readDshSupplyStatus(root).Status != "active" {
 		t.Fatal("wrong activated artifact")
 	}
+	if !state.Active.HostSnapshot || state.Active.DSHPath == path {
+		t.Fatal("real Node host did not activate an independent DSH snapshot")
+	}
 	t.Logf("real staging install/probe/plain/context/plan/resume/activation passed; bridge=%s sha256=%s", m.BridgeVersion, m.SHA256)
 }

@@ -40,6 +40,8 @@ type Manifest struct {
 type Generation struct {
 	Profile       string    `json:"profile"`
 	DSHPath       string    `json:"dsh_path"`
+	SourceDSHPath string    `json:"source_dsh_path,omitempty"`
+	HostSnapshot  bool      `json:"host_snapshot,omitempty"`
 	DSHVersion    string    `json:"dsh_version"`
 	BridgeVersion string    `json:"bridge_version"`
 	SHA256        string    `json:"sha256"`

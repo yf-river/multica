@@ -26,11 +26,13 @@ type dshSupplyStatus struct {
 }
 
 type dshSupplyHealth struct {
-	Status                string `json:"status"`
-	BridgeVersion         string `json:"bridge_version,omitempty"`
-	DSHVersion            string `json:"dsh_version,omitempty"`
-	SHA256                string `json:"sha256,omitempty"`
-	PreviousBridgeVersion string `json:"previous_bridge_version,omitempty"`
+	Status                       string `json:"status"`
+	BridgeVersion                string `json:"bridge_version,omitempty"`
+	DSHVersion                   string `json:"dsh_version,omitempty"`
+	SHA256                       string `json:"sha256,omitempty"`
+	PreviousBridgeVersion        string `json:"previous_bridge_version,omitempty"`
+	DSHSnapshotAvailable         bool   `json:"dsh_snapshot_available"`
+	PreviousDSHSnapshotAvailable bool   `json:"previous_dsh_snapshot_available"`
 }
 
 func managedDshHealth() *dshSupplyHealth {
@@ -52,8 +54,10 @@ func managedDshHealth() *dshSupplyHealth {
 		view.BridgeVersion = state.Active.BridgeVersion
 		view.DSHVersion = state.Active.DSHVersion
 		view.SHA256 = state.Active.SHA256
+		view.DSHSnapshotAvailable = state.Active.HostSnapshot
 		if state.Previous != nil {
 			view.PreviousBridgeVersion = state.Previous.BridgeVersion
+			view.PreviousDSHSnapshotAvailable = state.Previous.HostSnapshot
 		}
 	}
 	return view
@@ -92,7 +96,7 @@ func (d *Daemon) prepareManagedDsh(path, version string) {
 		d.logger.Warn("DSH managed state unreadable", "error", err)
 		return
 	}
-	if state != nil && state.Active.SHA256 == manifest.SHA256 && state.Active.DSHVersion == version && state.Active.DSHPath == path {
+	if state != nil && state.Active.SHA256 == manifest.SHA256 && state.Active.DSHVersion == version && (state.Active.SourceDSHPath == path || state.Active.DSHPath == path) {
 		return
 	}
 	identity := manifest.SHA256 + ":" + version + ":" + path
@@ -136,7 +140,7 @@ func (d *Daemon) supplyManagedDsh(ctx context.Context, root, artifacts, path, ve
 	}
 	if status.Identity != identity {
 		status = dshSupplyStatus{Status: "preparing", Identity: identity, Generation: dshprofile.Generation{
-			Profile: dshprofile.ProfileName(root, identity+uuid.NewString()), DSHPath: path, DSHVersion: version, BridgeVersion: m.BridgeVersion, SHA256: m.SHA256,
+			Profile: dshprofile.ProfileName(root, identity+uuid.NewString()), DSHPath: path, SourceDSHPath: path, DSHVersion: version, BridgeVersion: m.BridgeVersion, SHA256: m.SHA256,
 		}}
 	}
 	if !dshprofile.Supports(version, m.DSHRange) {
@@ -155,6 +159,32 @@ func (d *Daemon) supplyManagedDsh(ctx context.Context, root, artifacts, path, ve
 		output, e := processtree.CombinedOutput(ctx, cmd, 5*time.Second)
 		if e != nil {
 			return fail(fmt.Errorf("DSH staging install: %w: %s", e, dshProvisionOutput(output)))
+		}
+		frame, e := inspectManagedDsh(ctx, status.Generation)
+		if e != nil {
+			return fail(e)
+		}
+		if frame.Host != nil {
+			if frame.Host.Version != version {
+				return fail(errors.New("DSH detected version differs from running host"))
+			}
+			home := os.Getenv("DSH_HOME")
+			if home == "" {
+				userHome, e := os.UserHomeDir()
+				if e != nil {
+					return fail(e)
+				}
+				home = filepath.Join(userHome, ".dsh")
+			}
+			pinned, e := dshprofile.SnapshotHost(ctx, filepath.Join(home, "multica-runtime", "hosts"), *frame.Host)
+			if errors.Is(e, dshprofile.ErrBusy) {
+				return e
+			}
+			if e != nil {
+				return fail(e)
+			}
+			status.Generation.DSHPath = pinned
+			status.Generation.HostSnapshot = true
 		}
 		if err = probeManagedDsh(ctx, status.Generation); err != nil {
 			return fail(err)
@@ -210,18 +240,35 @@ func (d *Daemon) supplyManagedDsh(ctx context.Context, root, artifacts, path, ve
 }
 
 func probeManagedDsh(ctx context.Context, g dshprofile.Generation) error {
+	_, err := inspectManagedDsh(ctx, g)
+	return err
+}
+
+func inspectManagedDsh(ctx context.Context, g dshprofile.Generation) (dshProbeFrame, error) {
 	ctx, cancel := context.WithTimeout(ctx, dshProbeTimeout)
 	defer cancel()
 	cmd := exec.Command(g.DSHPath, "--profile", g.Profile, "--probe")
 	output, err := processtree.Output(ctx, cmd, time.Second)
 	if err != nil {
-		return fmt.Errorf("DSH staging probe failed: %w", err)
+		return dshProbeFrame{}, fmt.Errorf("DSH staging probe failed: %w", err)
 	}
 	frame, ok := parseDshProbeFrame(string(output))
 	if !ok || frame.Version != 1 || frame.Runtime != "dsh" || frame.ProtocolVersion != agent.DshProtocolVersion || frame.PluginVersion != g.BridgeVersion {
-		return errors.New("DSH staging protocol or bridge identity mismatch")
+		return dshProbeFrame{}, errors.New("DSH staging protocol or bridge identity mismatch")
 	}
-	return nil
+	return frame, nil
+}
+
+func managedDshVersion(fallback string) string {
+	root, _, enabled := dshSupplyConfig()
+	if !enabled {
+		return fallback
+	}
+	state, err := dshprofile.Read(root)
+	if err == nil && state != nil {
+		return state.Active.DSHVersion
+	}
+	return fallback
 }
 
 func smokeManagedDsh(ctx context.Context, root string, g dshprofile.Generation, logger *slog.Logger) error {

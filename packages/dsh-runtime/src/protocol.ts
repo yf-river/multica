@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { RuntimeHost } from './host.js'
 
 export const PROTOCOL_VERSION = 1 as const
 export const MAX_COMMAND_BYTES = 8 * 1024 * 1024
@@ -40,7 +41,7 @@ export interface ExecuteCommand {
   /** A slash command to run against the resumed session instead of a model turn. */
   command?: string
   /** Runtime approval stance; 'never' turns every approval ask into a rejection. */
-  approval_policy?: 'ask' | 'never' 
+  approval_policy?: 'ask' | 'never'
   resume_session_id?: string
   model?: ModelSelectionInput
   reasoning_effort?: string
@@ -79,12 +80,15 @@ export type OutboundFrame =
       thinking: true
       usage: true
       tools: true
-      context: true
-      compaction: true
+      context: boolean
+      compaction: boolean
+      commands?: boolean
+      plan_review?: boolean
+      services?: Record<string, boolean>
       mcp: ['stdio', 'streamable-http']
     }
   }
-  | { v: typeof PROTOCOL_VERSION; type: 'probe'; runtime: 'dsh'; plugin_version: string; protocol_version: number }
+  | { v: typeof PROTOCOL_VERSION; type: 'probe'; runtime: 'dsh'; plugin_version: string; protocol_version: number; services?: Record<string, boolean>; host?: RuntimeHost }
   | { v: typeof PROTOCOL_VERSION; type: 'models'; models: RuntimeModelFrame[] }
   | { v: typeof PROTOCOL_VERSION; type: 'session'; request_id: string; session_id: string; resumed: boolean }
   | { v: typeof PROTOCOL_VERSION; type: 'text'; request_id: string; content: string }

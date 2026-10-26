@@ -32,6 +32,8 @@ import {
 } from './protocol.js'
 import { installMulticaTerminalEnvironment } from './environment.js'
 import { settleCancelled as settleCancelledAgent, waitForQuiescence, type SubagentLifecycle } from './lifecycle.js'
+import { detectServices, enforceReadOnly, type ServiceLookup } from './capabilities.js'
+import { runtimeHost } from './host.js'
 
 export const name = 'multica-dsh-runtime'
 export const inject = ['cmdlineArgs', 'agents', 'agentDefaultModel', 'sessions', 'llm']
@@ -503,15 +505,8 @@ async function createOrResumeAgent(
 
 function applyRoleSandboxPolicy(active: ActiveRun, agent: Agent): void {
   if (active.command.approval_policy !== 'never') return
-  // Read-only roles reject approval asks and switch the session sandbox to
-  // read-only. This is the enforced file policy for bash/fs/terminal calls; an
-  // ask to widen it then fails closed under the never policy.
-  ;(active.ctx?.get('approval') as any)?.setPolicy?.(agent, 'never')
-  try {
-    ;(agent.session as any).append?.('sandbox/mode', { mode: 'read-only' })
-  } catch {
-    // Older DSH sessions may not accept the event; approval still rejects.
-  }
+  const scope = active.ctx as unknown as { get: ServiceLookup } | undefined
+  enforceReadOnly(name => scope?.get(name), agent)
 }
 
 async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<number> {
@@ -525,6 +520,7 @@ async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<num
     const created = await createOrResumeAgent(ctx, active, selection)
     handle = created.handle
     active.agent = handle.agent
+    applyRoleSandboxPolicy(active, handle.agent)
     await handle.agent.whenIdle()
     const line = active.command.command ?? ''
     // /plan <message> is split into the mode toggle plus a normal user turn:
@@ -735,6 +731,7 @@ async function stdio(ctx: Context): Promise<number> {
     }
   })
 
+  const services = detectServices(name => (ctx as unknown as { get: ServiceLookup }).get(name))
   writeFrame({
     v: PROTOCOL_VERSION,
     type: 'ready',
@@ -747,8 +744,11 @@ async function stdio(ctx: Context): Promise<number> {
       thinking: true,
       usage: true,
       tools: true,
-      context: true,
-      compaction: true,
+      context: services.session_projections,
+      compaction: services.compaction,
+      commands: services.commands,
+      plan_review: false,
+      services,
       mcp: ['stdio', 'streamable-http'],
     },
   })
@@ -778,12 +778,15 @@ async function run(ctx: Context): Promise<void> {
   try {
     const mode = parseMode(cmdlineArgs.get())
     if (mode === 'probe') {
+      const host = await runtimeHost()
       writeFrame({
         v: PROTOCOL_VERSION,
         type: 'probe',
         runtime: 'dsh',
         plugin_version: PLUGIN_VERSION,
         protocol_version: PROTOCOL_VERSION,
+        services: detectServices(name => (ctx as unknown as { get: ServiceLookup }).get(name)),
+        ...(host === undefined ? {} : { host }),
       })
       code = 0
     } else if (mode === 'list-models') {

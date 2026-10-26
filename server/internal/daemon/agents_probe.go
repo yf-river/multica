@@ -334,11 +334,12 @@ func executableCandidate(path string) bool {
 // dshProbeFrame is the discovery frame a Multica-capable DSH profile prints for
 // `--probe`. Only these fields are read; the bundle owns everything else.
 type dshProbeFrame struct {
-	Version         int    `json:"v"`
-	Type            string `json:"type"`
-	Runtime         string `json:"runtime"`
-	ProtocolVersion int    `json:"protocol_version"`
-	PluginVersion   string `json:"plugin_version"`
+	Version         int              `json:"v"`
+	Type            string           `json:"type"`
+	Runtime         string           `json:"runtime"`
+	ProtocolVersion int              `json:"protocol_version"`
+	PluginVersion   string           `json:"plugin_version"`
+	Host            *dshprofile.Host `json:"host,omitempty"`
 }
 
 // dshProbeVerdict is what `dsh --profile multica --probe` actually said.

@@ -84,9 +84,11 @@ DSH 精确测试版本为 `0.2.1-rc.3`；依赖锁用于复现构建，不锁定
 - daemon 认领/准备屏障和跨进程共享执行锁共同阻止运行时切换。
   已验证但忙碌的候选等待空闲，续接不重复安装或消耗模型调用。
   安装或激活失败保留/恢复旧活动记录，同一失败候选持久隔离。
-- 活动记录保留 N-1 bridge/profile；DSH 可执行路径和精确测试版本随代次固定。
-  外部 DSH 安装目录被手工原地覆盖时，路径记录本身不等于旧安装备份；
-  通用 DSH 安装备份/恢复仍是交付缺口，不能据此声称跨 DSH 版本回退已验收。
+- 活动记录保留 N-1 bridge/profile。可识别的 Node/npm 安装保存独立 Node 与 DSH
+  包快照（包含依赖及逐文件校验清单），启动器只引用快照文件；活动与上一代记录
+  固定精确 DSH 版本、原安装来源和快照路径。快照缓存跨本机环境复用，不复制用户
+  profile、home 或凭据。未知或 Electron 安装没有已验证的独立宿主快照时，健康信息
+  明确返回 `dsh_snapshot_available=false`；不能声称该安装支持跨 DSH 版本回退。
 - 发布器从运行包派生本环境 artifact/state 路径，`MULTICA_DSH_MANAGED_PROFILE=0`
   停用受控供给并恢复原 `multica` 入口；旧 profile 和外部 bridge 目录尚未删除。
   健康接口返回供给状态及活动版本/哈希，不返回路径和凭据。
@@ -101,3 +103,19 @@ DSH 自身的模型列表诊断可能混入 stdout，Go adapter 继续按既有�
 当前阶段没有生产发布授权，生产仍以现场健康版本为准。后续 DSH 问答与计划卡片
 复用 `feature/codex-codebuddy-integration` 的公共交互与轨迹组件，
 不额外建立平行审批表或通用界面；DSH 的挂起续跑行为单独扩展。
+
+
+### 能力探测与宿主恢复补充
+
+- probe/ready 根据实际服务方法报告 commands、userQuestions、sessionProjections、
+  approval、sandboxPolicy 和 compaction。optional 服务缺失不使启动崩溃。
+  人工计划评审尚未接入，因此 `plan_review=false`，不会把底层服务存在冒充 UI 能力。
+- 必需只读策略验证实际沙箱结果，缺失能力或设置失败直接拒绝；普通执行和斜杠命令
+  都经过同一前置检查。显式 Agent 能力设置和真实写入拒绝验收属于后续 B2/C。
+- 本机旧 DSH 目录的 launcher 仍引用当前安装目录，不能直接作为独立回退入口。
+  新宿主快照包含 62958 个文件身份，独立启动返回 `0.2.1-rc.3`，基于该快照的真实
+  普通任务、context、plan 开关、session 恢复及激活通过。首次复制和 smoke 共163.90秒；
+  后续候选复用经过校验的宿主快照。
+- 单元测试验证原安装与 Node 文件被移除后，快照启动器仍可运行；外部依赖链接被拒绝。
+  Linux 定向 race 检查通过，Windows 锁与快照代码已交叉编译；Windows 真实执行仍待 CI。
+- bridge 当前28项单元测试通过。上述检查不代替固定 int 及生产业务验收。
