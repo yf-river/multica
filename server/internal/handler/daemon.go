@@ -3295,6 +3295,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		resp.ChatMessage = strings.Join(parts, "\n\n")
 		resp.Command = chatRuntimeCommand(unanswered)
+		// Plan mode is a chat-session mode, but a bare /plan task has no turn to
+		// persist it. Replay the toggle before the next message so the mode
+		// survives across tasks; /plan off arrives as its own command above.
+		if resp.Command == "" {
+			if history, historyErr := h.Queries.ListChatMessages(r.Context(), cs.ID); historyErr == nil && chatPlanModeActive(history) {
+				resp.Command = "/plan"
+			}
+		}
 
 		// Fail closed: a task-owned direct task that resolves to no user text
 		// (and is not the agent's proactive intro) must never dispatch an
@@ -6732,7 +6740,7 @@ func chatRuntimeCommand(messages []db.ChatMessage) string {
 		if line == "" {
 			continue
 		}
-		if line == "/plan" || line == "/plan off" {
+		if line == "/plan" || line == "/plan off" || strings.HasPrefix(line, "/plan ") {
 			return line
 		}
 		if line == "/goal" || strings.HasPrefix(line, "/goal ") {
@@ -6741,4 +6749,23 @@ func chatRuntimeCommand(messages []db.ChatMessage) string {
 		return ""
 	}
 	return ""
+}
+
+// chatPlanModeActive reports whether the latest explicit plan-mode command in
+// the session is an entry (not off). Only user messages matter.
+func chatPlanModeActive(messages []db.ChatMessage) bool {
+	active := false
+	for _, message := range messages {
+		if message.Role != "user" {
+			continue
+		}
+		line := strings.TrimSpace(message.Content)
+		switch {
+		case line == "/plan off":
+			active = false
+		case line == "/plan" || strings.HasPrefix(line, "/plan "):
+			active = true
+		}
+	}
+	return active
 }
