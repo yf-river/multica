@@ -21,6 +21,7 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	paused := false
+	danglingTool := os.Getenv("MULTICA_CODEBUDDY_NATIVE_DANGLING_TOOL") == "1"
 	hasGoal, faulted := true, false
 	childFixture := os.Getenv("MULTICA_CODEBUDDY_NATIVE_CHILD_FIXTURE") == "1"
 	if childFixture {
@@ -58,6 +59,9 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 		case "session/new", "session/load":
 			result = map[string]any{"sessionId": "native-session", "models": map[string]string{"currentModelId": "flash"}}
 		case codebuddyGoalControlMethod:
+			if danglingTool && request.Params.Action == "set" {
+				_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "native-session", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "unfinished-bash", "title": "Bash", "status": "in_progress", "rawInput": map[string]any{"command": "sleep 20"}}}})
+			}
 			if request.Params.Action == "set" && request.Params.Condition != "" {
 				condition, hasGoal = request.Params.Condition, true
 			}
@@ -289,5 +293,39 @@ func TestCodebuddyNativeCancellationPausesGoalBeforeProcessExit(t *testing.T) {
 	saved, err := os.ReadFile(marker)
 	if err != nil || string(saved) != "paused" {
 		t.Fatalf("native goal was not paused before shutdown: %v", err)
+	}
+}
+
+func TestCodebuddyNativeGoalPauseInterruptsUnfinishedForegroundTool(t *testing.T) {
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyNativeFixtureProcess$", "--"}, Logger: slog.Default(), Env: map[string]string{"MULTICA_CODEBUDDY_NATIVE_FIXTURE": "1", "MULTICA_CODEBUDDY_NATIVE_DANGLING_TOOL": "1", "CODEBUDDY_CONFIG_DIR": t.TempDir()}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "", ExecOptions{Command: "/goal wait for confirmation", NativeGoal: true, Model: "flash", Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := false
+	for message := range session.Messages {
+		if !observed && message.Type == MessageToolUse {
+			observed = true
+			for !session.CommandReady() {
+				select {
+				case <-ctx.Done():
+					t.Fatal("command gate unavailable")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			output, err := session.RunCommand(ctx, "/goal pause")
+			if err != nil || !strings.Contains(output, "暂停") {
+				t.Fatalf("native pause was not confirmed: %q %v", output, err)
+			}
+		}
+	}
+	result := <-session.Result
+	if !observed || result.Status != "cancelled" || !strings.Contains(result.Error, "stopped by user") {
+		t.Fatalf("intentional goal pause was reported as a failure: observed=%v result=%+v", observed, result)
+	}
+	if session.CommandReady() {
+		t.Fatal("interrupted execution still accepts commands")
 	}
 }

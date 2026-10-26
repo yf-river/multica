@@ -585,6 +585,13 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			return
 		}
 		if err := waitCodebuddyNativeTools(runCtx, client); err != nil {
+			// 原生暂停可能结束回合却不补发工具终态；明确的人为停止按取消收尾，
+			// 未完成工具由现有租约回收流程终止，持久目标仍可续接。
+			if humanStoppedGoal.Load() && runCtx.Err() == nil {
+				result.Status = "cancelled"
+				result.Error = "CodeBuddy goal stopped by user before foreground tools completed"
+				return
+			}
 			fail(err)
 			return
 		}
