@@ -94,3 +94,38 @@ func TestCodexRealNativeGoalLoop(t *testing.T) {
 	}
 	t.Logf("Native Codex goal completed; reported_models=%d duration_ms=%d", len(result.Usage), result.DurationMs)
 }
+
+func TestCodexRealPlanModeControl(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
+		t.Skip("native control smoke is opt-in")
+	}
+	path := os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_PATH")
+	if path == "" {
+		t.Fatal("explicit executable required")
+	}
+	backend := &codexBackend{cfg: Config{ExecutablePath: path, Env: map[string]string{"CODEX_HOME": t.TempDir()}, Logger: slog.Default()}}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	thread := ""
+	cwd := t.TempDir()
+	for _, command := range []string{"/plan", "/plan off"} {
+		model := ""
+		if command == "/plan off" {
+			model = "gpt-6.1-sol"
+		}
+		session, err := backend.Execute(ctx, "", ExecOptions{Command: command, CommandOnly: true, Cwd: cwd, Model: model, ThinkingLevel: "low", ResumeSessionID: thread, Timeout: 25 * time.Second, ExtraArgs: []string{"--disable", "multi_agent"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range session.Messages {
+		}
+		result := <-session.Result
+		if result.Status != "completed" || len(result.Usage) != 0 {
+			t.Fatalf("native plan control failed: status=%s error=%s", result.Status, result.Error)
+		}
+		if thread != "" && result.SessionID != thread {
+			t.Fatal("plan control lost native thread")
+		}
+		thread = result.SessionID
+	}
+}

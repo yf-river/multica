@@ -160,3 +160,67 @@ func TestCodexGoalStopReasonsAreNotSuccess(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexPlanRequiresMatchingNativeSettings(t *testing.T) {
+	for _, kind := range []string{"confirmed", "ack_only", "wrong_model", "wrong_thread"} {
+		t.Run(kind, func(t *testing.T) {
+			c, _, _ := newTestCodexClient(t)
+			c.setThreadID("plan-thread")
+			stdin := &fakeStdinWithHook{}
+			stdin.afterWrite = func() {
+				lines := stdin.Lines()
+				var request struct {
+					ID     int    `json:"id"`
+					Method string `json:"method"`
+				}
+				if err := json.Unmarshal([]byte(lines[len(lines)-1]), &request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Method != "thread/settings/update" {
+					t.Fatalf("wrong native mode method %s", request.Method)
+				}
+				c.handleLine(fmt.Sprintf(`{"id":%d,"result":{}}`, request.ID))
+				if kind == "ack_only" {
+					return
+				}
+				thread, model := "plan-thread", "resolved-model"
+				if kind == "wrong_thread" {
+					thread = "other-thread"
+				}
+				if kind == "wrong_model" {
+					model = "other-model"
+				}
+				c.handleLine(fmt.Sprintf(`{"method":"thread/settings/updated","params":{"threadId":%q,"threadSettings":{"collaborationMode":{"mode":"default","settings":{"model":%q,"reasoning_effort":"low"}}}}}`, thread, model))
+			}
+			c.stdin = stdin
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+			defer cancel()
+			_, err := c.applyRuntimeCommand(ctx, ExecOptions{Command: "/plan off", Model: "resolved-model", ThinkingLevel: "low"})
+			if (err == nil) != (kind == "confirmed") {
+				t.Fatalf("plan setting acknowledgement %s: %v", kind, err)
+			}
+		})
+	}
+}
+
+func TestCodexResumedGoalAdoptsLiveTurnFromStartResponse(t *testing.T) {
+	c, _, _ := newTestCodexClient(t)
+	c.setThreadID("resumed-thread")
+	gate := &codexTurnNotificationGate{}
+	c.acceptNotification = gate.accept
+	c.handleLine(`{"method":"turn/started","params":{"threadId":"resumed-thread","turn":{"id":"native-goal-turn"}}}`)
+	if c.activeTurnID() != "" {
+		t.Fatal("resume-time event crossed the closed gate")
+	}
+	gate.arm()
+	response := json.RawMessage(`{"turn":{"id":"native-goal-turn","status":"inProgress"}}`)
+	c.adoptTurnStartResponse(response)
+	if c.activeTurnID() != "native-goal-turn" {
+		t.Fatal("steered native Goal lost its active turn identity")
+	}
+	c.handleLine(`{"method":"turn/completed","params":{"threadId":"resumed-thread","turn":{"id":"native-goal-turn","status":"completed"}}}`)
+	c.adoptTurnStartResponse(response)
+	if c.activeTurnID() != "" || !c.turnCompleted {
+		t.Fatal("late turn/start response reopened a completed native turn")
+	}
+}

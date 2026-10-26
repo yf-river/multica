@@ -147,7 +147,8 @@ func SupportsTaskSupplement(provider, version string) bool {
 		// v0.100.0 exposes turn/steer with the expectedTurnId precondition.
 		minimum = "0.100.0"
 	case "codebuddy":
-		minimum = "2.140.0"
+		// 控制协议和原生确认字段按实际 CLI 2.176.0 验证。
+		minimum = "2.176.0"
 	default:
 		return false
 	}

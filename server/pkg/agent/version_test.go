@@ -11,7 +11,7 @@ func TestTaskSupplementVersionGate(t *testing.T) {
 		want              bool
 	}{
 		{"codex", "codex-cli 0.100.0", true}, {"codex", "0.99.0", false},
-		{"codebuddy", "2.140.0", true}, {"codebuddy", "2.139.0", false}, {"codebuddy", "dev", false},
+		{"codebuddy", "2.176.0", true}, {"codebuddy", "2.174.0", false}, {"codebuddy", "dev", false},
 		{"claude", "2.1.110 (Claude Code)", false}, {"claude", "2.1.109", false},
 		{"codex", "", false}, {"claude", "dev", false}, {"kimi", "9.0.0", false},
 	} {

@@ -55,6 +55,9 @@ func (c *codexClient) applyRuntimeCommand(ctx context.Context, opts ExecOptions)
 		return "", nil
 	}
 	if command == "/plan" || command == "/plan off" || strings.HasPrefix(command, "/plan ") {
+		if err := c.setPlanMode(ctx, opts); err != nil {
+			return "", err
+		}
 		if command == "/plan off" {
 			return "已退出计划模式。", nil
 		}

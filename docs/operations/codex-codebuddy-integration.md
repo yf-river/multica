@@ -160,3 +160,18 @@ CodeBuddy 技能开关从 Agent 配置、claim、隔离环境到两条 CLI 启�
 - Agent 全包 103.809s、execenv 全包 23.093s 通过；相关 daemon 定向检查、API 检查与 Go vet 通过。
 
 运行中控制、真正的进程复用、角色默认提示词和监督优化、完整业务对照与发布仍在范围内。
+
+
+## 第八阶段：原生设置回执与追加消息协商
+
+- CodeBuddy issue 追加消息的能力登记和提交 SQL 同时允许 CodeBuddy；此前服务端白名单使适配器无法进入真实投递流程。
+- 追加消息的协商、去重、收尾、权限和终态等完整 PostgreSQL 检查通过，保留旧 daemon / 不支持 runtime 的关闭行为。
+- CodeBuddy steer 能力仅向本次已实测的 2.176.0 及以上版本开放，未验证版本不宣称支持。
+- Codex `/plan` 通过原生 `thread/settings/update` 更新，等待同线程、同模式和同模型的 `thread/settings/updated`；仅 RPC 排队回执不能当作成功。
+- 模型未显式指定时使用原生 thread 响应中的实际模型；空线程的纯计划控制不发布尚未物化的 resume 指针，聊天模式由持久控制记录恢复。
+- Codex 0.164.0 的完整实验协议 schema 已现场生成，验证模式控制字段和方法；真实纯计划控制覆盖默认与显式模型，未调用模型。
+- 独立账号副本的强制进程退出探测证明，active Goal 跨进程保存并在 resume 后自行运行至 complete，客户端未发送 turn/start。
+- 原生 turn/start 对已有回合执行 steer；适配器读取其权威回执补齐当前回合身份，拒绝迟到回执重新打开已完成回合。
+- Codex 定向全量检查 65.126s、相关 race 和真实计划控制检查通过。
+
+强制退出探测属于 CLI 层证据；完整 Multica 的运行中控制和重启业务验收仍待完成。

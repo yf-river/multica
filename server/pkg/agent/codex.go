@@ -1556,6 +1556,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			return
 		}
 		c.setThreadID(threadID)
+		if opts.Model == "" {
+			opts.Model = c.nativeThreadModel()
+		}
 		// 先建立带准确协作模式的用户回合，再激活 Goal。空闲线程上的
 		// goal/set 会自行启动回合，不能随后再发送一次 turn/start。
 		deferGoalCommand := !opts.CommandOnly && codexGoalActivatingCommand(opts.Command)
@@ -1573,8 +1576,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			return
 		}
 		if opts.CommandOnly {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: threadID})
-			resCh <- Result{Status: "completed", Output: commandOutput, SessionID: threadID, DurationMs: time.Since(startTime).Milliseconds()}
+			resumeID := threadID
+			if !resumed && (opts.Command == "/plan" || opts.Command == "/plan off") {
+				// 空线程的设置变更不物化 rollout；聊天模式由控制面持久记录恢复。
+				resumeID = ""
+			}
+			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: resumeID})
+			resCh <- Result{Status: "completed", Output: commandOutput, SessionID: resumeID, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
 		if resumed {
@@ -2030,6 +2038,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		resumeResult, err := c.request(ctx, "thread/resume", resumeParams)
 		if err == nil {
 			if threadID := extractThreadID(resumeResult); threadID != "" {
+				c.rememberNativeThreadModel(resumeResult)
 				logger.Info("codex lifecycle",
 					"phase", "thread_resume_response",
 					"task_id", c.cfg.TaskID,
@@ -2093,6 +2102,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 	if threadID == "" {
 		return "", false, fmt.Errorf("codex thread/start returned no thread ID")
 	}
+	c.rememberNativeThreadModel(startResult)
 	logger.Info("codex lifecycle",
 		"phase", "thread_start_response",
 		"task_id", c.cfg.TaskID,
@@ -2364,6 +2374,7 @@ type codexClient struct {
 	threadIDMu             sync.RWMutex
 	turnIDMu               sync.RWMutex
 	threadID               string
+	threadModel            string
 	lastTurnID             string
 	turnID                 string
 	onMessage              func(Message)
@@ -2405,6 +2416,8 @@ type codexClient struct {
 	goalActive           atomic.Bool
 	goalEngaged          atomic.Bool
 	goalStatus           atomic.Value // string，原生目标停止原因
+	settingsMu           sync.Mutex
+	settingsWaiters      map[chan struct{}]codexPlanSelection
 
 	usageMu       sync.Mutex
 	usage         TokenUsage // 由回合事件累积而来
@@ -2895,6 +2908,9 @@ func (c *codexClient) handleResponse(raw map[string]json.RawMessage) {
 		_ = json.Unmarshal(errData, &rpcErr)
 		pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d)", pr.method, rpcErr.Message, rpcErr.Code)}
 	} else {
+		if pr.method == "turn/start" {
+			c.adoptTurnStartResponse(raw["result"])
+		}
 		pr.ch <- rpcResult{result: raw["result"]}
 	}
 }
@@ -2988,6 +3004,7 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	// resume 的目标快照属于当前持久状态；即使历史回合通知被门挡住，
 	// 也必须在新回合结束前知道是否仍由原生 Goal 负责续跑。
 	c.observeGoalState(method, params)
+	c.observeThreadSettings(method, params)
 	if c.acceptNotification != nil && !c.acceptNotification(method, params) {
 		if c.onDiscardedNotification != nil {
 			c.onDiscardedNotification(method, params)
