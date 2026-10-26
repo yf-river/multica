@@ -161,6 +161,14 @@
     "allow": "允许本次操作",
     "deny": "拒绝",
     "empty": "没有问答或确认记录。",
-    "unknown": "请求状态暂时无法确认"
+    "unknown": "请求状态暂时无法确认",
+    "approve_plan": "批准并执行",
+    "keep_planning": "继续规划",
+    "cancel_plan": "取消",
+    "plan_feedback": "补充意见（可选）",
+    "plan_approved": "已批准",
+    "planning_continued": "已继续规划",
+    "cancelled": "已取消",
+    "waiting_plan": "等待你确认计划"
   }
 }

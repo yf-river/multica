@@ -300,6 +300,9 @@ const STATUS_TONE: Record<AgentTask["status"], string> = {
   // 与 queued/dispatched 同色——视觉上"停住"让用户看出任务被停放，
   // 但由状态标签加以区分。
   waiting_local_directory: "text-warning",
+  // 等待人工计划/回答时同样停在 warning，由状态标签区分具体原因。
+  waiting_plan: "text-warning",
+  waiting_input: "text-warning",
   running: "text-info",
   completed: "text-success",
   failed: "text-destructive",

@@ -136,7 +136,7 @@ describe("runtime interaction", () => {
       },
     });
     show();
-    fireEvent.click(screen.getByText(common.runtime_interaction.history));
+    fireEvent.click(screen.getByText(common.runtime_interaction.all_history));
     expect(screen.getByText("Existing answer")).toBeVisible();
     expect(screen.getByText(common.runtime_interaction.saved)).toBeVisible();
     expect(screen.getByText(common.runtime_interaction.expired)).toBeVisible();

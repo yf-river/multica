@@ -51,7 +51,6 @@ import type {
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { buildTimeline } from "../../common/task-transcript";
 import { traceToolArgSummary } from "../../common/task-transcript/trace-event-presenter";
-import { TaskInteractionPanel } from "../../common/task-interaction-panel";
 import { RuntimeInputPanel } from "../../common/runtime-input-panel";
 import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
