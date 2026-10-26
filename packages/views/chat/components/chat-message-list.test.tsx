@@ -15,6 +15,9 @@ import zhHansChat from "../../locales/zh-Hans/chat.json";
 // renders its Footer but NO data rows under jsdom's zero-height viewport, so
 // these tests must stub it to see rows at all. computeItemKey is still applied
 // here — it is what expresses the live -> persisted identity.
+// 卡片的问答行为由 task-interaction-panel.test.tsx 覆盖；此套验证列表身份与滚动。
+vi.mock("../../common/task-interaction-panel", () => ({ TaskInteractionPanel: ({ taskId }: { taskId: string }) => <div data-testid={`task-interactions-${taskId}`} /> }));
+
 vi.mock("react-virtuoso", () => ({
   Virtuoso: ({
     data,
@@ -110,6 +113,32 @@ function pushTaskMessage(qc: QueryClient, msg: TaskMessagePayload) {
     );
   });
 }
+
+describe("ChatMessageList interaction history", () => {
+  it("loads historical decisions only when the user opens that turn", () => {
+    const latestId = "d246e07c-4429-4625-838c-f48d47fed10e";
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(chatKeys.taskMessages(TASK_ID), []);
+    qc.setQueryData(chatKeys.taskMessages(latestId), []);
+    render(
+      <I18nProvider locale="zh-Hans" resources={{ "zh-Hans": { chat: zhHansChat } }}>
+        <QueryClientProvider client={qc}>
+          <ChatMessageList
+            messages={[
+              { id: "old-plan", chat_session_id: "s", role: "assistant", content: "计划已确认", task_id: TASK_ID, created_at: "2026-10-26T00:00:00Z" },
+              { id: "executed", chat_session_id: "s", role: "assistant", content: "已执行", task_id: latestId, created_at: "2026-10-26T00:01:00Z" },
+            ]}
+            pendingTask={null}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(screen.queryByTestId(`task-interactions-${TASK_ID}`)).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: "查看过程" })[0]!);
+    expect(screen.getByTestId(`task-interactions-${TASK_ID}`)).toBeInTheDocument();
+  });
+});
 
 describe("ChatMessageList live follow (#6697)", () => {
   it("follows appended output immediately only while Virtuoso is at the live end", () => {

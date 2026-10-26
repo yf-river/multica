@@ -1,15 +1,18 @@
 {
-  "bridgeVersion": "0.3.0",
+  "bridgeVersion": "0.3.2",
   "protocolVersion": 1,
   "dshRange": ">=0.2.1-rc.3 <0.3.0",
   "capabilities": [
     "commands-v1",
-    "context-v1"
+    "context-v1",
+    "plan-review-v1",
+    "user-questions-v1"
   ],
   "smoke": [
     "probe",
     "plain-task",
     "plan-command",
-    "context-frame"
+    "context-frame",
+    "plan-review"
   ]
 }

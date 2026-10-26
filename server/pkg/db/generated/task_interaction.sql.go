@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createSuspendedTaskInteraction = `-- name: CreateSuspendedTaskInteraction :one
+INSERT INTO task_interaction (task_id, id, workspace_id, issue_id, provider, kind, request, delivery_mode, expires_at)
+VALUES ($1, $2, $3, $4, 'dsh', $5, $6, 'suspended', now() + interval '24 hours')
+RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id
+`
+
+type CreateSuspendedTaskInteractionParams struct {
+	TaskID      pgtype.UUID `json:"task_id"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	Kind        string      `json:"kind"`
+	Request     []byte      `json:"request"`
+}
+
+func (q *Queries) CreateSuspendedTaskInteraction(ctx context.Context, arg CreateSuspendedTaskInteractionParams) (TaskInteraction, error) {
+	row := q.db.QueryRow(ctx, createSuspendedTaskInteraction,
+		arg.TaskID,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.IssueID,
+		arg.Kind,
+		arg.Request,
+	)
+	var i TaskInteraction
+	err := row.Scan(
+		&i.TaskID,
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.Provider,
+		&i.Kind,
+		&i.Request,
+		&i.Response,
+		&i.Status,
+		&i.AuthorID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
+	)
+	return i, err
+}
+
 const createTaskInteraction = `-- name: CreateTaskInteraction :one
 INSERT INTO task_interaction (task_id, id, workspace_id, issue_id, provider, kind, request)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -18,7 +63,7 @@ ON CONFLICT (task_id, id) DO UPDATE SET id = EXCLUDED.id
 WHERE task_interaction.request = EXCLUDED.request
   AND task_interaction.provider = EXCLUDED.provider
   AND task_interaction.kind = EXCLUDED.kind
-RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at
+RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id
 `
 
 type CreateTaskInteractionParams struct {
@@ -56,8 +101,20 @@ func (q *Queries) CreateTaskInteraction(ctx context.Context, arg CreateTaskInter
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
 	)
 	return i, err
+}
+
+const expirePendingTaskInteractionsByTask = `-- name: ExpirePendingTaskInteractionsByTask :exec
+UPDATE task_interaction SET status = 'expired'
+WHERE task_id = ANY($1::uuid[]) AND status = 'pending'
+`
+
+func (q *Queries) ExpirePendingTaskInteractionsByTask(ctx context.Context, taskIds []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, expirePendingTaskInteractionsByTask, taskIds)
+	return err
 }
 
 const expireTaskInteraction = `-- name: ExpireTaskInteraction :exec
@@ -75,8 +132,102 @@ func (q *Queries) ExpireTaskInteraction(ctx context.Context, arg ExpireTaskInter
 	return err
 }
 
+const getAgentTaskForInteractionUpdate = `-- name: GetAgentTaskForInteractionUpdate :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision FROM agent_task_queue WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) GetAgentTaskForInteractionUpdate(ctx context.Context, id pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getAgentTaskForInteractionUpdate, id)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+	)
+	return i, err
+}
+
+const getSuspendedTaskInteraction = `-- name: GetSuspendedTaskInteraction :one
+SELECT task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id FROM task_interaction WHERE task_id = $1 AND delivery_mode = 'suspended'
+ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+func (q *Queries) GetSuspendedTaskInteraction(ctx context.Context, taskID pgtype.UUID) (TaskInteraction, error) {
+	row := q.db.QueryRow(ctx, getSuspendedTaskInteraction, taskID)
+	var i TaskInteraction
+	err := row.Scan(
+		&i.TaskID,
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.Provider,
+		&i.Kind,
+		&i.Request,
+		&i.Response,
+		&i.Status,
+		&i.AuthorID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
+	)
+	return i, err
+}
+
 const getTaskInteraction = `-- name: GetTaskInteraction :one
-SELECT task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at FROM task_interaction WHERE task_id = $1 AND id = $2
+SELECT task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id FROM task_interaction WHERE task_id = $1 AND id = $2
 `
 
 type GetTaskInteractionParams struct {
@@ -101,12 +252,85 @@ func (q *Queries) GetTaskInteraction(ctx context.Context, arg GetTaskInteraction
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
 	)
 	return i, err
 }
 
+const getTaskInteractionFollowup = `-- name: GetTaskInteractionFollowup :one
+SELECT task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id FROM task_interaction WHERE followup_task_id = $1
+`
+
+func (q *Queries) GetTaskInteractionFollowup(ctx context.Context, followupTaskID pgtype.UUID) (TaskInteraction, error) {
+	row := q.db.QueryRow(ctx, getTaskInteractionFollowup, followupTaskID)
+	var i TaskInteraction
+	err := row.Scan(
+		&i.TaskID,
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.Provider,
+		&i.Kind,
+		&i.Request,
+		&i.Response,
+		&i.Status,
+		&i.AuthorID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
+	)
+	return i, err
+}
+
+const hasNewerInteractionTask = `-- name: HasNewerInteractionTask :one
+SELECT EXISTS (
+    SELECT 1 FROM agent_task_queue newer JOIN agent_task_queue source ON source.id = $1
+    WHERE newer.agent_id = source.agent_id
+      AND ((source.chat_session_id IS NOT NULL AND newer.chat_session_id = source.chat_session_id)
+        OR (source.chat_session_id IS NULL AND source.issue_id IS NOT NULL AND newer.issue_id = source.issue_id))
+      AND (newer.created_at, newer.id) > (source.created_at, source.id)
+) AS has_newer
+`
+
+func (q *Queries) HasNewerInteractionTask(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasNewerInteractionTask, id)
+	var has_newer bool
+	err := row.Scan(&has_newer)
+	return has_newer, err
+}
+
+const listExpiredSuspendedTaskInteractions = `-- name: ListExpiredSuspendedTaskInteractions :many
+SELECT task_id FROM task_interaction
+WHERE delivery_mode = 'suspended' AND status = 'pending' AND expires_at <= now()
+ORDER BY expires_at, task_id
+LIMIT 32
+`
+
+func (q *Queries) ListExpiredSuspendedTaskInteractions(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listExpiredSuspendedTaskInteractions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var task_id pgtype.UUID
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskInteractions = `-- name: ListTaskInteractions :many
-SELECT task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at FROM task_interaction WHERE task_id = $1
+SELECT task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id FROM task_interaction WHERE task_id = $1
 ORDER BY created_at, id
 `
 
@@ -133,6 +357,8 @@ func (q *Queries) ListTaskInteractions(ctx context.Context, taskID pgtype.UUID) 
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.RespondedAt,
+			&i.DeliveryMode,
+			&i.FollowupTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -144,11 +370,80 @@ func (q *Queries) ListTaskInteractions(ctx context.Context, taskID pgtype.UUID) 
 	return items, nil
 }
 
+const markTaskInteractionContinuation = `-- name: MarkTaskInteractionContinuation :one
+UPDATE agent_task_queue
+SET context = COALESCE(context, '{}'::jsonb) || '{"dsh_interaction_continuation": true}'::jsonb
+WHERE id = $1 AND status = 'queued'
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision
+`
+
+func (q *Queries) MarkTaskInteractionContinuation(ctx context.Context, id pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, markTaskInteractionContinuation, id)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+	)
+	return i, err
+}
+
 const renewTaskInteractionLease = `-- name: RenewTaskInteractionLease :one
 UPDATE task_interaction SET expires_at = now() + interval '60 seconds'
 WHERE task_interaction.task_id = $1 AND task_interaction.id = $2 AND task_interaction.status = 'pending' AND task_interaction.expires_at > now()
   AND EXISTS (SELECT 1 FROM agent_task_queue WHERE agent_task_queue.id = task_interaction.task_id AND agent_task_queue.status = 'running')
-RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at
+RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id
 `
 
 type RenewTaskInteractionLeaseParams struct {
@@ -173,6 +468,127 @@ func (q *Queries) RenewTaskInteractionLease(ctx context.Context, arg RenewTaskIn
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
+	)
+	return i, err
+}
+
+const resolveSuspendedAgentTask = `-- name: ResolveSuspendedAgentTask :one
+UPDATE agent_task_queue SET status = $1
+WHERE id = $2 AND status IN ('waiting_plan', 'waiting_input')
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision
+`
+
+type ResolveSuspendedAgentTaskParams struct {
+	Status string      `json:"status"`
+	ID     pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ResolveSuspendedAgentTask(ctx context.Context, arg ResolveSuspendedAgentTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, resolveSuspendedAgentTask, arg.Status, arg.ID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
+	)
+	return i, err
+}
+
+const resolveSuspendedTaskInteraction = `-- name: ResolveSuspendedTaskInteraction :one
+UPDATE task_interaction
+SET response = $1, author_id = $2, status = 'responded',
+    responded_at = now(), followup_task_id = $3
+WHERE task_id = $4 AND id = $5 AND delivery_mode = 'suspended'
+  AND status = 'pending' AND expires_at > now()
+RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id
+`
+
+type ResolveSuspendedTaskInteractionParams struct {
+	Response       []byte      `json:"response"`
+	AuthorID       pgtype.UUID `json:"author_id"`
+	FollowupTaskID pgtype.UUID `json:"followup_task_id"`
+	TaskID         pgtype.UUID `json:"task_id"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ResolveSuspendedTaskInteraction(ctx context.Context, arg ResolveSuspendedTaskInteractionParams) (TaskInteraction, error) {
+	row := q.db.QueryRow(ctx, resolveSuspendedTaskInteraction,
+		arg.Response,
+		arg.AuthorID,
+		arg.FollowupTaskID,
+		arg.TaskID,
+		arg.ID,
+	)
+	var i TaskInteraction
+	err := row.Scan(
+		&i.TaskID,
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.Provider,
+		&i.Kind,
+		&i.Request,
+		&i.Response,
+		&i.Status,
+		&i.AuthorID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
 	)
 	return i, err
 }
@@ -180,7 +596,7 @@ func (q *Queries) RenewTaskInteractionLease(ctx context.Context, arg RenewTaskIn
 const respondTaskInteraction = `-- name: RespondTaskInteraction :one
 UPDATE task_interaction SET response = $3, author_id = $4, status = 'responded', responded_at = now()
 WHERE task_id = $1 AND id = $2 AND status = 'pending' AND expires_at > now()
-RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at
+RETURNING task_id, id, workspace_id, issue_id, provider, kind, request, response, status, author_id, created_at, expires_at, responded_at, delivery_mode, followup_task_id
 `
 
 type RespondTaskInteractionParams struct {
@@ -212,6 +628,93 @@ func (q *Queries) RespondTaskInteraction(ctx context.Context, arg RespondTaskInt
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RespondedAt,
+		&i.DeliveryMode,
+		&i.FollowupTaskID,
+	)
+	return i, err
+}
+
+const suspendAgentTaskForInteraction = `-- name: SuspendAgentTaskForInteraction :one
+UPDATE agent_task_queue
+SET status = $1, completed_at = now(), result = $2,
+    session_id = $3, work_dir = $4,
+    prepare_lease_expires_at = NULL
+WHERE id = $5 AND status = 'running'
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision
+`
+
+type SuspendAgentTaskForInteractionParams struct {
+	Status    string      `json:"status"`
+	Result    []byte      `json:"result"`
+	SessionID pgtype.Text `json:"session_id"`
+	WorkDir   pgtype.Text `json:"work_dir"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) SuspendAgentTaskForInteraction(ctx context.Context, arg SuspendAgentTaskForInteractionParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, suspendAgentTaskForInteraction,
+		arg.Status,
+		arg.Result,
+		arg.SessionID,
+		arg.WorkDir,
+		arg.ID,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.BranchName,
+		&i.DurableWorkDir,
+		&i.ChannelContextRevision,
 	)
 	return i, err
 }

@@ -74,8 +74,8 @@ if [ "$3" = "--probe" ]; then
   printf '%s\n' '{"v":1,"type":"probe","runtime":"dsh","protocol_version":1,"plugin_version":"0.3.0"}'
   exit 0
 fi
+printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","protocol_version":1}'
 IFS= read -r command
-printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh"}'
 case "$command" in
   *'"command":"/plan'* ) ;;
   * ) printf '%s\n' '{"v":1,"type":"context","session_id":"canary","duration_ms":1,"input_tokens":1,"output_tokens":1}' ;;

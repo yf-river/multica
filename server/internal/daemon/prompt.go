@@ -229,6 +229,12 @@ func buildDeliveryContextBlock(d DeliveryContextData) string {
 // 关、也与宿主机无关（每个 OS → 写 UTF-8 文件、用 `--content-file` 发），因为它防的
 // shell 层损坏并不专属于某个 provider 或主机（MUL-2904, #4182）。
 func BuildPrompt(task Task, provider string, options ...PromptOption) string {
+	if provider == "dsh" && task.InteractionContinuation {
+		if task.ChatSessionID != "" {
+			return task.ChatMessage
+		}
+		return task.TriggerCommentContent
+	}
 	// 裸计划开关只调用原生命令；运行简报仍写入任务目录，不作为新的模型输入。
 	if provider == "dsh" && task.SupervisionPrompt == "" && task.LifeJobID == "" && task.ReviewCommit == "" && task.ChatSessionID != "" && len(task.ChatMessageAttachments) == 0 &&
 		(task.Command == "/plan" || task.Command == "/plan off") && strings.TrimSpace(task.ChatMessage) == task.Command {

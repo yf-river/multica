@@ -356,7 +356,7 @@ RETURNING id, workspace_id, owner_id, daemon_id, provider;
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
 WHERE (runtime_id = ANY(@runtime_ids::uuid[]) OR agent_id = ANY(@agent_ids::uuid[]))
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING *;
 
 -- name: ListNonOwnerActiveTasksByRuntime :many
@@ -369,7 +369,7 @@ FROM agent_task_queue AS task
 JOIN agent ON agent.id = task.agent_id
 WHERE task.runtime_id = @runtime_id
   AND agent.owner_id IS DISTINCT FROM @runtime_owner_id
-  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 ORDER BY task.id;
 
 -- name: ListNonOwnerActiveTasksByRuntimeForUpdate :many
@@ -380,7 +380,7 @@ FROM agent_task_queue AS task
 JOIN agent ON agent.id = task.agent_id
 WHERE task.runtime_id = @runtime_id
   AND agent.owner_id IS DISTINCT FROM @runtime_owner_id
-  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 ORDER BY task.id
 FOR UPDATE OF task;
 
@@ -400,7 +400,7 @@ WHERE EXISTS (
     WHERE task.chat_session_id = cs.id
       AND task.runtime_id = @runtime_id
       AND agent.owner_id IS DISTINCT FROM @runtime_owner_id
-      AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+      AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 )
 ORDER BY cs.id
 FOR UPDATE OF cs NOWAIT;
@@ -421,7 +421,7 @@ FROM agent
 WHERE task.agent_id = agent.id
   AND task.runtime_id = @runtime_id
   AND agent.owner_id IS DISTINCT FROM @runtime_owner_id
-  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING task.*;
 
 -- name: CountUndrainedTasksByRuntimeOrAgent :one

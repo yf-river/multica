@@ -5131,7 +5131,7 @@ func ResumeUnsafeFailure(failureReason, errorText string) bool {
 // 且关联了 issue 或 chat 会话。FailTask 的事务内重试与孤儿清扫器的 MaybeRetryFailedTask 共用，保证两者对
 // “哪些失败会重跑”判断一致。
 func retryEligible(failureReason string, t db.AgentTaskQueue) bool {
-	return retryableReasons[failureReason] &&
+	return !isDSHInteractionContinuation(t) && retryableReasons[failureReason] &&
 		t.Attempt < retryAttemptCeiling(failureReason, t.MaxAttempts) &&
 		!t.AutopilotRunID.Valid &&
 		(t.IssueID.Valid || t.ChatSessionID.Valid || isSourceContextQuickCreateTask(t))
@@ -5384,6 +5384,9 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		sourceTask, err := s.Queries.GetAgentTask(ctx, sourceTaskID)
 		if err != nil {
 			return nil, fmt.Errorf("load source task: %w", err)
+		}
+		if isDSHInteractionContinuation(sourceTask) {
+			return nil, ErrInteractionContinuationRerun
 		}
 		if !sourceTask.IssueID.Valid || util.UUIDToString(sourceTask.IssueID) != util.UUIDToString(issueID) {
 			return nil, fmt.Errorf("source task does not belong to this issue")
@@ -5821,6 +5824,9 @@ func SettleTerminalTaskState(ctx context.Context, q *db.Queries, tasks ...db.Age
 	ids := make([]pgtype.UUID, 0, len(tasks))
 	for _, task := range tasks {
 		ids = append(ids, task.ID)
+	}
+	if err := q.ExpirePendingTaskInteractionsByTask(ctx, ids); err != nil {
+		return fmt.Errorf("expire terminal task interactions: %w", err)
 	}
 	if _, err := q.SettleTerminalTaskSupplements(ctx, ids); err != nil {
 		return fmt.Errorf("settle terminal task supplements: %w", err)

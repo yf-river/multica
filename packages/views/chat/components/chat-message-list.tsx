@@ -3,6 +3,8 @@
 // 开场建议 chips / 新手引导卡片 / 状态 pill / 吸底滚动等。
 "use client";
 
+import { TaskInteractionPanel } from "../../common/task-interaction-panel";
+
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
@@ -581,6 +583,7 @@ function AssistantMessage({
           isStreaming={!message}
         />
       )}
+      {canFetchTaskMessages && taskId && (isPending || canRegenerateQuickActions || processRequested) && <TaskInteractionPanel taskId={taskId} active={isPending} />}
       {isNoResponse ? (
         <NoResponseNotice />
       ) : message && timeline.length === 0 ? (

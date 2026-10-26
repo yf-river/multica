@@ -714,6 +714,17 @@ def reviewed_curated_nullable_columns(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def reviewed_dsh_interaction_changes(migration):
+    # 默认值和新增列不回填旧数据；约束只扩展已有取值，回退前须清退等待人工的任务。
+    reviewed = {
+        '674_task_interaction_lease.up.sql': 'dd5fe5d3328d15dcda9614b337ca51b799586f3f836edf5c151df0e64b5734e7',
+        '681_task_interaction_continuation.up.sql': 'bfc10ed40926a386de0bd6b7309fdede8a1ce3d0a72cbaa868de2228d443a462',
+        '682_task_interaction_dsh.up.sql': '568e79e51669e15b736d0dc62cebb4edd69325ca61ca7dba02a292afa0bedb22',
+        '683_task_waiting_human.up.sql': '5b7e8aec9b6725fd049ee7815e6762df2154c064131617336523a74ddd3daade',
+    }
+    return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
+
+
 def additive_statement(statement):
     # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
     return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
@@ -729,7 +740,7 @@ def validate_pending_migrations(release, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             if additive_statement(statement): continue
-            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration) or reviewed_curated_nullable_columns(migration):
+            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration) or reviewed_curated_nullable_columns(migration) or reviewed_dsh_interaction_changes(migration):
                 continue
             raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
 def prepare_database(release, cfg, previous):
@@ -766,6 +777,16 @@ def check_readiness(metadata,timeout=30,prior_readiness=None):
         return
     metadata['readiness']=dict(http_status=200,body=ready(url,timeout=timeout))
 
+def dsh_runtime_environment(release, configured, metadata):
+    daemon_env=dict(configured)
+    if (release/'runtimes/dsh/manifest.json').is_file() and daemon_env.get('MULTICA_DSH_MANAGED_PROFILE')!='0':
+        daemon_env['MULTICA_DSH_ARTIFACT_DIR']=str(release/'runtimes/dsh')
+        # 与 daemon 内置供给使用同一目录，沿用当前代和 N-1，且隔离账号可写。
+        state=Path(metadata['daemon_profile_path']).parent/'dsh-runtime'
+        daemon_env.setdefault('MULTICA_DSH_PROFILE_STATE',str(state))
+    return daemon_env
+
+
 def launch(env, release, cfg, m,prior_readiness=None):
     result={}
     m['pids']=result
@@ -782,10 +803,7 @@ def launch(env, release, cfg, m,prior_readiness=None):
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
     # 以 CLI 管理的 profile 启动；PID 来自健康端点，不猜测子进程。
-    daemon_env=dict(cfg['daemon'])
-    if (release/'runtimes/dsh/manifest.json').is_file() and daemon_env.get('MULTICA_DSH_MANAGED_PROFILE')!='0':
-        daemon_env['MULTICA_DSH_ARTIFACT_DIR']=str(release/'runtimes/dsh')
-        daemon_env['MULTICA_DSH_PROFILE_STATE']=str(RUN/'state'/env/'dsh-runtime')
+    daemon_env=dsh_runtime_environment(release,cfg['daemon'],m)
     run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=daemon_env,stdout=subprocess.DEVNULL,**service_credentials(daemon_env))
     h=ready(health_url(env)+'/health')
     if h['profile']!=m['daemon_profile']: raise RuntimeError('Daemon profile 不匹配')

@@ -56,6 +56,8 @@ export function useStatusLabel(status: AgentTask["status"], failureReason?: stri
   const { t } = useT("issues");
   if (failureReason === "release_pause") return t(($) => $.execution_log.status_release_paused);
   switch (status) {
+    case "waiting_plan": return t(($) => $.execution_log.status_waiting_plan);
+    case "waiting_input": return t(($) => $.execution_log.status_waiting_input);
     case "queued": return t(($) => $.execution_log.status_queued);
     case "dispatched": return t(($) => $.execution_log.status_dispatched);
     case "waiting_local_directory":

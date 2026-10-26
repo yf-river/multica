@@ -46,6 +46,10 @@ type ExecOptions struct {
 	NativeGoal         bool  // CodeBuddy Goal 会话使用原生控制协议，普通会话沿用 stream-json。
 	CommandOnly        bool  // 纯控制命令不启动模型生成。
 	RequestInteraction func(context.Context, protocol.InteractionPrompt) (protocol.InteractionAnswer, error)
+	// HumanInteractions 启用结束进程后续跑的 DSH 人工交互。
+	HumanInteractions bool
+	// PlanDecision 为 approved|keep_planning，必须恢复原生会话。
+	PlanDecision string
 	// ApprovalPolicy 为 ask 时交给配置的回答器，never 拒绝审批请求。
 	ApprovalPolicy string
 	Model          string // 期望使用的模型名；留空表示用运行时/CLI 自己的默认模型
@@ -222,12 +226,13 @@ const CostUSDTicksPerUSD = 10_000_000_000
 
 // Result 是 agent 会话结束后的最终结果。
 type Result struct {
-	Status     string                // "completed"、"failed"、"aborted"、"timeout"、"cancelled"
-	Output     string                // backend 挑出来的、面向用户的最终输出
-	Error      string                // 失败时的错误信息
-	DurationMs int64                 // 本次运行耗时（毫秒）
-	SessionID  string                // 后端会话 id
-	Usage      map[string]TokenUsage // 按模型名索引的 token 用量
+	PendingInteraction *protocol.SuspendedInteraction // 仅在进程完成原生工具收尾后有效
+	Status             string                         // "completed"、"failed"、"aborted"、"timeout"、"cancelled"
+	Output             string                         // backend 挑出来的、面向用户的最终输出
+	Error              string                         // 失败时的错误信息
+	DurationMs         int64                          // 本次运行耗时（毫秒）
+	SessionID          string                         // 后端会话 id
+	Usage              map[string]TokenUsage          // 按模型名索引的 token 用量
 	// ProviderTraceID 是本次子进程自己声明的根请求 id（CodeBuddy 为 stream-json
 	// 事件上的 `_requestId`），不是父进程环境变量里继承来的值。与外部观测系统的
 	// trace/span 对应需另行验证。一次 CLI 进程

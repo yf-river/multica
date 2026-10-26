@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/multica-ai/multica/server/internal/service"
 	"net/http"
 	"reflect"
 	"time"
@@ -16,12 +18,12 @@ func interactionResponse(row db.TaskInteraction, taskStatus string) protocol.Tas
 	var prompt protocol.InteractionPrompt
 	_ = json.Unmarshal(row.Request, &prompt)
 	status := row.Status
-	if status == "pending" && (taskStatus != "running" || !row.ExpiresAt.Time.After(time.Now())) {
+	if status == "pending" && (!interactionTaskAcceptsInput(row, taskStatus) || !row.ExpiresAt.Time.After(time.Now())) {
 		status = "expired"
 	}
 	result := protocol.TaskInteraction{
 		ID: uuidToString(row.ID), TaskID: uuidToString(row.TaskID), Provider: row.Provider,
-		Prompt: prompt, Status: status, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
+		Prompt: prompt, Status: status, DeliveryMode: row.DeliveryMode, FollowupTaskID: uuidToString(row.FollowupTaskID), CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
 		ExpiresAt: row.ExpiresAt.Time.UTC().Format(time.RFC3339Nano),
 	}
 	if row.Status == "responded" {
@@ -212,6 +214,49 @@ func (h *Handler) RespondTaskInteraction(w http.ResponseWriter, r *http.Request)
 		writeError(w, 400, "invalid interaction answer")
 		return
 	}
+	current, err := h.Queries.GetTaskInteraction(r.Context(), db.GetTaskInteractionParams{TaskID: task.ID, ID: id})
+	if err != nil {
+		if isNotFound(err) {
+			writeError(w, 404, "interaction not found")
+		} else {
+			writeError(w, 500, "failed to read interaction")
+		}
+		return
+	}
+	if current.DeliveryMode == "suspended" {
+		agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
+		if err != nil {
+			writeError(w, 500, "failed to load interaction agent")
+			return
+		}
+		if !h.canInvokeAgent(r.Context(), agent, "member", userID, userID, uuidToString(current.WorkspaceID)) {
+			writeError(w, 403, "agent invocation is not allowed")
+			return
+		}
+		var prompt protocol.InteractionPrompt
+		if json.Unmarshal(current.Request, &prompt) != nil {
+			writeError(w, 500, "invalid persisted interaction")
+			return
+		}
+		if err := prompt.ValidateContinuation(answer); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		row, err := h.TaskService.RespondSuspendedInteraction(r.Context(), task.ID, id, author, answer)
+		if err != nil {
+			switch {
+			case errors.Is(err, service.ErrInteractionConflict):
+				writeError(w, 409, err.Error())
+			case errors.Is(err, service.ErrInteractionNotAllowed):
+				writeError(w, 403, err.Error())
+			default:
+				writeError(w, 500, "failed to create interaction continuation")
+			}
+			return
+		}
+		writeJSON(w, 200, interactionResponse(row, task.Status))
+		return
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "failed to answer interaction")
@@ -267,4 +312,11 @@ func (h *Handler) RespondTaskInteraction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, 200, interactionResponse(row, status))
+}
+
+func interactionTaskAcceptsInput(row db.TaskInteraction, status string) bool {
+	if row.DeliveryMode == "suspended" {
+		return row.Provider == "dsh" && ((row.Kind == "plan" && status == "waiting_plan") || (row.Kind == "question" && status == "waiting_input"))
+	}
+	return status == "running"
 }

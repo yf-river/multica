@@ -21,6 +21,11 @@ sql:
       - "migrations/668_task_supplements.up.sql"
       - "migrations/672_task_interaction.up.sql"
       - "migrations/675_task_runtime_input.up.sql"
+      - "migrations/681_task_interaction_continuation.up.sql"
+      - "migrations/682_task_interaction_dsh.up.sql"
+      - "migrations/683_task_waiting_human.up.sql"
+      - "migrations/684_task_interaction_followup.up.sql"
+      - "migrations/685_task_interaction_expiry.up.sql"
     gen:
       go:
         package: "db"

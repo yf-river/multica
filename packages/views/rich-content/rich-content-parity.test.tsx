@@ -21,6 +21,9 @@ const { resolveIssueIdentifierMock, mermaidRenderMock } = vi.hoisted(() => ({
   mermaidRenderMock: vi.fn(),
 }));
 
+// 交互卡片有独立组件验收；此套只比较富文本在各入口的渲染。
+vi.mock("../common/task-interaction-panel", () => ({ TaskInteractionPanel: () => null }));
+
 vi.mock("../issues/hooks", () => ({
   useResolveIssueIdentifier: (identifier: string) =>
     resolveIssueIdentifierMock(identifier),

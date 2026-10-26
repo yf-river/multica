@@ -91,7 +91,10 @@ type IssueStatusData struct {
 // Task 表示一条从服务器认领（claim）到的任务。
 // Agent 数据（name、skills）由 claim 端点填充。
 type Task struct {
-	ReviewCommit string `json:"review_commit,omitempty"`
+	InteractionSourceTaskID string `json:"interaction_source_task_id,omitempty"`
+	InteractionContinuation bool   `json:"interaction_continuation,omitempty"`
+	PlanDecision            string `json:"plan_decision,omitempty"`
+	ReviewCommit            string `json:"review_commit,omitempty"`
 	// 工作区调查开关控制额外会话证据提取。
 	CaptureExecutionEvidence bool   `json:"capture_execution_evidence,omitempty"`
 	ReleaseResumeTaskID      string `json:"release_resume_task_id,omitempty"`
@@ -368,13 +371,14 @@ type TaskTraceEntry struct {
 
 // TaskResult 是一次任务执行的结果。
 type TaskResult struct {
-	CodeDiff   *codediff.Diff `json:"code_diff,omitempty"`
-	Status     string         `json:"status"`
-	Comment    string         `json:"comment"`
-	BranchName string         `json:"branch_name,omitempty"`
-	EnvType    string         `json:"env_type,omitempty"`
-	SessionID  string         `json:"session_id,omitempty"` // 供将来续接用的 Claude 会话 ID
-	WorkDir    string         `json:"work_dir,omitempty"`   // 执行期间使用的工作目录
+	PendingInteraction *protocol.SuspendedInteraction `json:"interaction,omitempty"`
+	CodeDiff           *codediff.Diff                 `json:"code_diff,omitempty"`
+	Status             string                         `json:"status"`
+	Comment            string                         `json:"comment"`
+	BranchName         string                         `json:"branch_name,omitempty"`
+	EnvType            string                         `json:"env_type,omitempty"`
+	SessionID          string                         `json:"session_id,omitempty"` // 供将来续接用的 Claude 会话 ID
+	WorkDir            string                         `json:"work_dir,omitempty"`   // 执行期间使用的工作目录
 	// DurableWorkDir 仅在“一次性本地 worktree 被定稿并确认已删除”后取代 WorkDir。
 	// 为空时 WorkDir 依然权威。
 	DurableWorkDir string `json:"durable_work_dir,omitempty"`
