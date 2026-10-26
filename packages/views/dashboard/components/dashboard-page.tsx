@@ -72,6 +72,7 @@ import { ProjectFilter, TimeRangeFilter } from "./dashboard-filters";
 import { UsageTrendCard } from "./usage-trend-card";
 import { Leaderboard } from "./leaderboard";
 import { ModelBreakdown } from "./model-breakdown";
+import { EfficiencyCard } from "./efficiency-card";
 import { ErrorsTab } from "./errors-tab";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -310,6 +311,10 @@ export function DashboardPage() {
     () => aggregateDailyCost(dailyUsageInWindow),
     [dailyUsageInWindow, pricings],
   );
+  const cacheHitRate = useMemo(() => {
+    const denom = totals.input + totals.cacheRead;
+    return denom > 0 ? totals.cacheRead / denom : null;
+  }, [totals]);
   const dailyTokens = useMemo(
     () => aggregateDailyTokens(dailyUsageInWindow),
     [dailyUsageInWindow],
@@ -527,7 +532,7 @@ export function DashboardPage() {
             ) : (
               <>
                 {/* KPI 行——与运行时用量区同款的三分栏卡片网格，扩到四个磁贴。 */}
-                <div className="grid grid-cols-1 divide-y rounded-lg border bg-card sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
+                <div className="grid grid-cols-1 divide-y rounded-lg border bg-card sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-3">
                   <KpiCard
                     label={t(($) => $.kpi.cost_label, { days })}
                     value={
@@ -592,6 +597,22 @@ export function DashboardPage() {
                       failed: runTimeTotals.failedCount,
                     })}
                   />
+                  <KpiCard
+                    label={t(($) => $.kpi.cache_label, { days })}
+                    value={cacheHitRate === null ? "—" : `${Math.round(cacheHitRate * 100)}%`}
+                    hint={t(($) => $.kpi.cache_hint, {
+                      read: formatTokens(totals.cacheRead),
+                      input: formatTokens(totals.input),
+                    })}
+                  />
+                  <KpiCard
+                    label={t(($) => $.kpi.failure_label, { days })}
+                    value={`${Math.round(failureTotals.rate * 100)}%`}
+                    hint={t(($) => $.kpi.failure_hint, {
+                      failed: failureTotals.failed,
+                      total: failureTotals.total,
+                    })}
+                  />
                 </div>
 
                 <UsageTrendCard
@@ -617,6 +638,7 @@ export function DashboardPage() {
                 />
 
                 <ModelBreakdown rows={modelRows} costKnown={costKnown} />
+                <EfficiencyCard rows={runTimeRows} />
               </>
             )}
           </TabsContent>

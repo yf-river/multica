@@ -18,7 +18,11 @@
     "run_time_hint": "共 {{tasks}} 个任务",
     "tasks_label": "任务数 · {{days}}天",
     "tasks_hint": "失败 {{failed}} 个",
-    "cost_partial_hint": "部分用量没有可定价来源，金额只含已定价部分"
+    "cost_partial_hint": "部分用量没有可定价来源，金额只含已定价部分",
+    "cache_label": "缓存命中 · {days}D",
+    "cache_hint": "缓存读 {read} / 输入 {input}",
+    "failure_label": "失败率 · {days}D",
+    "failure_hint": "{failed} / {total} 个终态任务"
   },
   "dim": {
     "label": "维度",
@@ -120,5 +124,14 @@
     "header_cache_hit": "缓存命中",
     "header_cost": "费用",
     "uncosted": "（未计价 {tokens}）"
+  },
+  "efficiency": {
+    "title": "运行效率",
+    "caption": "窗口内终态任务的平均耗时、成功/失败/取消与用量覆盖率。",
+    "avg_time": "平均耗时",
+    "success": "成功",
+    "failed": "失败",
+    "cancelled": "取消",
+    "metered": "用量覆盖"
   }
 }
