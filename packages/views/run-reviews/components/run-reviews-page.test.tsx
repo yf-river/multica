@@ -16,6 +16,11 @@ const mockState = vi.hoisted(() => ({
   params: new URLSearchParams(),
 }));
 
+vi.mock("./quality-supervision", () => ({
+  QualitySupervision: () => <div>质量监督内容</div>,
+  SupervisionEvidencePanel: () => null,
+}));
+
 vi.mock("@multica/core/issues/queries", () => ({
   issueDetailOptions: (_ws: string, id: string) => ({ queryKey: ["issues", "detail", id], queryFn: () => mockState.getIssue(id) }),
   issueListOptions: () => ({
@@ -110,38 +115,12 @@ beforeEach(() => {
   mockState.params = new URLSearchParams();
 });
 
+
 describe("RunReviewsPage", () => {
-  it("loads the linked issue outside the first page without choosing another issue", async () => {
-    mockState.params = new URLSearchParams({ issue: "older-issue" });
-    mockState.listIssues.mockResolvedValue([issue]);
-    mockState.getIssue.mockResolvedValue({ ...issue, id: "older-issue", title: "首屏之外的原任务" });
+  it("renders quality supervision only after the task-level records were removed", async () => {
     renderPage();
-    expect(await screen.findByRole("heading", { name: "首屏之外的原任务" })).toBeInTheDocument();
-    expect(mockState.getExecutionTree).toHaveBeenCalledWith("older-issue");
-    expect(mockState.getExecutionTree).not.toHaveBeenCalledWith("issue-1");
-  });
-  it("renders the current empty state without historical fixtures", async () => {
-    renderPage();
-
-    expect(screen.getByRole("heading", { name: "运行复盘" })).toBeInTheDocument();
-    expect(await screen.findByText("暂无任务。请先通过界面或 API 创建任务。")).toBeInTheDocument();
-    expect(screen.getByText("选择一条任务查看完整链路。")).toBeInTheDocument();
-  });
-
-  it("orchestrates the selected issue review sections from the execution tree", async () => {
-    mockState.listIssues.mockResolvedValue([issue]);
-    renderPage();
-
-    expect(await screen.findByRole("heading", { name: "登录失败复盘" })).toBeInTheDocument();
-    expect(screen.getByText("账号平台", { selector: "span" })).toBeInTheDocument();
-    expect(screen.getByText("状态 进行中")).toBeInTheDocument();
-    expect(screen.getByText("子任务 1/3")).toBeInTheDocument();
-    expect(screen.getByText("运行 2")).toBeInTheDocument();
-    expect(screen.getByText("项目：账号平台")).toBeInTheDocument();
-    expect(screen.getByText("任务：无运行任务")).toBeInTheDocument();
-    expect(screen.getByText("横向时序图")).toBeInTheDocument();
-    expect(screen.getByText("节点表")).toBeInTheDocument();
-    expect(screen.getByText("事件流")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("搜索事件、智能体、工具、结果或任务")).toBeInTheDocument();
+    expect(await screen.findByText("质量监督内容")).toBeInTheDocument();
+    expect(screen.queryByText("暂无任务。请先通过界面或 API 创建任务。")).toBeNull();
+    expect(screen.queryByRole("link", { name: "运行记录" })).toBeNull();
   });
 });

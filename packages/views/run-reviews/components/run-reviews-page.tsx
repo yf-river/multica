@@ -102,10 +102,7 @@ export function RunReviewsPage() {
   // 保留 URL 参数兼容，但本页始终渲染质量监督；旧的 ?issue=/?tab=records 链接
   // 会落到这里而不再展示重复的任务列表。
   const qualityTab = true;
-  const legacyIssue = navigation.searchParams.get("issue");
-  useEffect(() => {
-    if (legacyIssue) navigation.replace(paths.issueDetail(legacyIssue));
-  }, [legacyIssue, navigation, paths]);
+
   const issuesQuery = useQuery({ ...issueListOptions(wsId, { sort_by: "created_at", sort_direction: "desc" }), enabled: !qualityTab });
   const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
   const requestedIssue = useQuery({ ...issueDetailOptions(wsId, selectedIssueId ?? ""), enabled: !qualityTab && Boolean(selectedIssueId) && !issues.some((issue) => issue.id === selectedIssueId) });
