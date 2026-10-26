@@ -78,7 +78,7 @@ func CodebuddyResidentSupported(version string) bool {
 
 // CodebuddyNativeHooksEnabled 与执行分派共用判断，供 daemon 选择简报投递方式。
 func CodebuddyNativeHooksEnabled(cfg Config, opts ExecOptions) bool {
-	return codebuddyManagedHooksSupported(cfg) && (codebuddyNativeRequested(opts) || cfg.CodebuddyPool != nil)
+	return codebuddyManagedHooksSupported(cfg) && (codebuddyNativeRequested(opts) || cfg.CodebuddyPool != nil) && codebuddyTaskHooksPermitted(cfg, opts)
 }
 
 func newCodebuddyHooks(ctx context.Context, env map[string]string, opts ExecOptions) (_ *codebuddyHooks, err error) {

@@ -170,6 +170,17 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	if opts.MCPToolsOnly && (codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil) {
 		return nil, errors.New("CodeBuddy MCP-only supervision requires an isolated one-shot execution")
 	}
+	if (codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil) && !codebuddyTaskHooksPermitted(b.cfg, opts) {
+		if opts.NativeGoal || strings.HasPrefix(strings.TrimSpace(opts.Command), "/goal") {
+			return nil, errors.New("CodeBuddy native Goal requires task hooks; current settings disable hooks or cannot be verified")
+		}
+		// 此副本只改变本轮分派，配置和共享池仍由 daemon 持有。
+		if b.cfg.CodebuddyPool != nil {
+			isolated := *b
+			isolated.cfg.CodebuddyPool = nil
+			return isolated.Execute(ctx, prompt, opts)
+		}
+	}
 	if codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil {
 		return b.executeNative(ctx, prompt, opts)
 	}

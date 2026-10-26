@@ -4,9 +4,51 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 )
+
+// 人工关闭 hooks 时，普通执行采用完整任务环境与原生指令文件，避免常驻根进程
+// 在没有轮次环境投递器的情况下执行。无法解析的原生设置交由 CLI 自身处理。
+func codebuddyTaskHooksPermitted(cfg Config, opts ExecOptions) bool {
+	settings, err := codebuddyHookSettings(opts)
+	if err != nil || codebuddySettingsDisableHooks(settings) {
+		return false
+	}
+	config := resolveSDKConfigDir(cfg.Env)
+	if config == "" {
+		return false
+	}
+	paths := []string{filepath.Join(config, "settings.json")}
+	for dir := opts.Cwd; dir != ""; dir = filepath.Dir(dir) {
+		paths = append(paths, filepath.Join(dir, ".codebuddy", "settings.json"), filepath.Join(dir, ".codebuddy", "settings.local.json"))
+		if dir == filepath.Dir(dir) {
+			break
+		}
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		var settings map[string]json.RawMessage
+		if err != nil || json.Unmarshal(raw, &settings) != nil || settings == nil || codebuddySettingsDisableHooks(settings) {
+			return false
+		}
+	}
+	return true
+}
+
+func codebuddySettingsDisableHooks(settings map[string]json.RawMessage) bool {
+	for _, key := range []string{"disableAllHooks", "allowManagedHooksOnly"} {
+		var disabled bool
+		if json.Unmarshal(settings[key], &disabled) == nil && disabled {
+			return true
+		}
+	}
+	return false
+}
 
 // 自定义参数沿用 CLI 的最后一次 --settings；任务策略叠加在该设置之上。
 // hooks、权限列表等数组合并，防止托管设置覆盖人工规则。

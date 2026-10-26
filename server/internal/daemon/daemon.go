@@ -7854,9 +7854,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	// 注入 runtime 专属配置（meta skill），让 agent 发现 .agent_context/。
 	if provider == "codebuddy" {
-		hookConfig := agent.Config{CLIVersion: resolvedVersion, BuiltinRuntime: !usesCustomProfileCommand}
+		hookEnv := map[string]string{}
+		layerCustomEnvAndHermesHome(hookEnv, agentEnvOverrides, "", nil)
+		hookConfig := agent.Config{CLIVersion: resolvedVersion, BuiltinRuntime: !usesCustomProfileCommand, Env: hookEnv}
 		d.configureCodebuddyResident(task, env, &hookConfig)
-		taskCtx.CodebuddyBriefViaHook = task.SupervisionPrompt == "" && agent.CodebuddyNativeHooksEnabled(hookConfig, agent.ExecOptions{NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
+		taskCtx.CodebuddyBriefViaHook = task.SupervisionPrompt == "" && agent.CodebuddyNativeHooksEnabled(hookConfig, agent.ExecOptions{Cwd: env.WorkDir, ExtraArgs: defaultArgsForProvider(d.cfg, provider), CustomArgs: agentCustomArgs, CodebuddySettingsPath: env.CodebuddySettingsPath, NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
 	}
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {

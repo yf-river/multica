@@ -156,7 +156,7 @@ func (p *CodebuddyProcessPool) stop(e *codebuddyPoolEntry) {
 }
 
 func (p *CodebuddyProcessPool) acquire(ctx context.Context, cfg Config, opts ExecOptions) (*codebuddyProcessLease, error) {
-	if !codebuddyManagedHooksSupported(cfg) || cfg.ResidentSessionKey == "" || cfg.TaskID == "" {
+	if !codebuddyManagedHooksSupported(cfg) || !codebuddyTaskHooksPermitted(cfg, opts) || cfg.ResidentSessionKey == "" || cfg.TaskID == "" {
 		return nil, errors.New("CodeBuddy resident execution requires a supported builtin and logical task identity")
 	}
 	keyBytes := sha256.Sum256([]byte(cfg.ResidentSessionKey + "\x00" + opts.Cwd + "\x00" + resolveSDKConfigDir(cfg.Env)))

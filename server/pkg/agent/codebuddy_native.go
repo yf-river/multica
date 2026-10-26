@@ -35,7 +35,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	}
 	runCtx, cancel := runContext(ctx, opts.Timeout)
 	var hooks *codebuddyHooks
-	if b.cfg.CodebuddyPool == nil && codebuddyManagedHooksSupported(b.cfg) {
+	if b.cfg.CodebuddyPool == nil && CodebuddyNativeHooksEnabled(b.cfg, opts) {
 		hooks, err = newCodebuddyHooks(runCtx, b.cfg.Env, opts)
 		if err != nil {
 			cancel()
@@ -75,7 +75,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		stdout, stdin = resident.reader, resident
 		mcp = codebuddyResidentMCP(mcp, b.cfg, resident.execution)
 	} else {
-		if hooks == nil && codebuddyManagedHooksSupported(b.cfg) {
+		if hooks == nil && CodebuddyNativeHooksEnabled(b.cfg, opts) {
 			hooks, err = newCodebuddyHooks(runCtx, b.cfg.Env, opts)
 			if err != nil {
 				cancel()
