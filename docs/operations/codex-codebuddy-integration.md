@@ -384,3 +384,20 @@ loaded 集合为空；未知状态回收进程，不把它交给下一轮。任�
 真实模型读取迁移后分页上下文仍待通过；压缩 rollout 的迁移兼容、active Goal 的
 无加载纯查询、完整业务与性能矩阵也需继续处理。CodeBuddy 平台常驻池、角色与知识库
 监督优化、固定 int、生产与浏览器验收尚未完成。
+
+## 第十八阶段：Goal 查询与停止操作不加载线程
+
+已物化会话的 Goal 查询、暂停、完成和清除直接调用原生 Goal API，不经过
+`thread/resume`；后者会续跑 active Goal。控制结束仅确认 loaded 集合为空，
+不把读取状态当成需要暂停原目标的执行。激活目标仍走完整执行与计量生命周期。
+
+- `phase18-stored-goal-tests.log`：协议与 race 检查确认查询没有 thread/resume，
+  清理没有隐式暂停，激活命令与普通执行不会进入纯控制路径。
+- `phase18-native-unloaded-goal-controls.log`：真实 0.164 查询后 Goal 仍为 active，
+  随后的暂停、完成和清除逐项核对原生数据库；turn 数始终为 0，usage 条目为 0，
+  原生进程保留，通过（2.99s）。该样本没有模型回合。
+- `phase18-codex-regression.log`：Codex race 回归通过（74.138s），排除此前已在
+  原始基线复现的截止时间用例。
+
+压缩历史兼容、真实模型分页上下文恢复、CodeBuddy 常驻池、完整隔离和业务对照、
+固定 int 与生产验收仍待继续完成。

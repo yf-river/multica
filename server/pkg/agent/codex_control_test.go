@@ -4,9 +4,70 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestCodexStoredGoalQueryDoesNotResumeThread(t *testing.T) {
+	fake := writeFakeCodexAppServer(t, `read line
+case "$line" in *'"method":"initialize"'*) ;; *) exit 11;; esac
+echo '{"id":1,"result":{}}'
+read line
+read line
+case "$line" in *'"method":"thread/goal/get"'*) ;; *) exit 12;; esac
+echo '{"id":2,"result":{"goal":{"objective":"existing objective","status":"active","tokensUsed":123}}}'
+while read line; do exit 13; done
+`)
+	result := executeFakeCodex(t, fake, ExecOptions{Command: "/goal show", CommandOnly: true, ResumeSessionID: "stored-thread"})
+	if result.Status != "completed" || result.SessionID != "stored-thread" || !strings.Contains(result.Output, "进行中") || len(result.Usage) != 0 {
+		t.Fatalf("stored Goal query used the model lifecycle: %+v", result)
+	}
+}
+
+func TestCodexUnloadedGoalControlSelection(t *testing.T) {
+	for _, command := range []string{"/goal", "/goal show", "/goal pause", "/goal clear", "/goal complete"} {
+		opts := ExecOptions{Command: command, CommandOnly: true, ResumeSessionID: "stored"}
+		if !codexUnloadedGoalControl(opts) {
+			t.Fatalf("non-activating stored Goal control loaded its thread: %s", command)
+		}
+		opts.ResumeSessionID = ""
+		if codexUnloadedGoalControl(opts) {
+			t.Fatal("control selected a nonexistent stored session")
+		}
+	}
+	for _, command := range []string{"/goal resume", "/goal new objective", "/plan", "/goalkeeper"} {
+		if codexUnloadedGoalControl(ExecOptions{Command: command, CommandOnly: true, ResumeSessionID: "stored"}) {
+			t.Fatalf("selected an activating or unrelated command: %s", command)
+		}
+	}
+}
+
+func TestCodexUnloadedGoalCleanupPreservesActiveState(t *testing.T) {
+	client, _, _ := newTestCodexClient(t)
+	client.threadID = "stored"
+	client.unloadedGoalControl = true
+	client.goalActive.Store(true)
+	stdin := &fakeStdinWithHook{}
+	stdin.afterWrite = func() {
+		lines := stdin.Lines()
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Method != "thread/loaded/list" {
+			t.Fatalf("read-only cleanup mutated the stored Goal: %s", request.Method)
+		}
+		client.handleLine(fmt.Sprintf(`{"id":%d,"result":{"data":[],"nextCursor":null}}`, request.ID))
+	}
+	client.stdin = stdin
+	if err := client.unloadResidentThread(); err != nil || !client.goalActive.Load() {
+		t.Fatalf("stored active Goal changed during detach: %v", err)
+	}
+}
 
 func TestCodexPlanModeUsesCurrentModelAndEffort(t *testing.T) {
 	for _, active := range []bool{true, false} {

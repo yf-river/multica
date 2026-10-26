@@ -48,6 +48,12 @@ func (c *codexClient) unloadResidentThread() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
+	if c.unloadedGoalControl {
+		if c.activeTurnID() != "" {
+			return errors.New("Codex unloaded goal control unexpectedly started a turn")
+		}
+		return c.verifyResidentThreadsUnloaded(ctx)
+	}
 	if c.goalActive.Load() || c.goalControlUncertain.Load() {
 		c.pauseGoalBeforeStop(threadID, c.cfg.Logger)
 		if c.goalActive.Load() || c.goalControlUncertain.Load() {
@@ -81,7 +87,11 @@ func (c *codexClient) unloadResidentThread() error {
 	default:
 		return errors.New("Codex resident thread detach state is unknown")
 	}
-	raw, err = c.request(ctx, "thread/loaded/list", map[string]any{})
+	return c.verifyResidentThreadsUnloaded(ctx)
+}
+
+func (c *codexClient) verifyResidentThreadsUnloaded(ctx context.Context) error {
+	raw, err := c.request(ctx, "thread/loaded/list", map[string]any{})
 	if err != nil {
 		return errors.New("Codex resident loaded threads could not be verified")
 	}

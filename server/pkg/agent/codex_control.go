@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+func codexUnloadedGoalControl(opts ExecOptions) bool {
+	command := strings.TrimSpace(opts.Command)
+	return opts.CommandOnly && opts.ResumeSessionID != "" && (command == "/goal" || strings.HasPrefix(command, "/goal ")) && !nativeGoalActivatingCommand(command)
+}
+
 func (c *codexClient) observeGoalState(method string, params map[string]any) {
 	if method != "thread/goal/cleared" && method != "thread/goal/updated" {
 		return

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -34,20 +35,8 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 	if err != nil || !agent.CodexResidentSupported(version) {
 		t.Fatalf("native version: %v", err)
 	}
-	copyAccount := func(home string) {
-		t.Helper()
-		for _, name := range []string{"config.toml", "auth.json"} {
-			data, err := os.ReadFile(filepath.Join(account, name))
-			if err != nil {
-				t.Fatalf("read isolated account %s: %v", name, err)
-			}
-			if err := os.WriteFile(filepath.Join(home, name), data, 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
 	source := t.TempDir()
-	copyAccount(source)
+	copyCodexNativeSmokeAccount(t, account, source)
 	secret, thread := "", ""
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") == "1" {
 		secret = rand.Text()
@@ -67,7 +56,7 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 		}
 		thread = result.SessionID
 	}
-	thread = createPausedCodexGoalFixture(t, ctx, executable, source, thread)
+	thread = createCodexGoalFixture(t, ctx, executable, source, thread, "paused")
 	store, poolRoot, cwd := t.TempDir(), filepath.Join(t.TempDir(), "pool"), t.TempDir()
 	pool, err := agent.NewCodexProcessPool(poolRoot, 1, time.Minute, slog.Default())
 	if err != nil {
@@ -86,7 +75,7 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 			defer transcript.Close()
 		}
 		home := t.TempDir()
-		copyAccount(home)
+		copyCodexNativeSmokeAccount(t, account, home)
 		state, err := PrepareCodexNativeState(ctx, home, source, store, "owned-runtime", thread, pool.RetireHome)
 		if err != nil || state.ResumePath == "" {
 			t.Fatalf("round=%d prepare native state: %v", round, err)
@@ -148,7 +137,7 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 }
 
 // 原生 API 建立暂停目标，没有 turn/start，也没有模型调用或人工修改原生数据库。
-func createPausedCodexGoalFixture(t *testing.T, ctx context.Context, executable, home, thread string) string {
+func createCodexGoalFixture(t *testing.T, ctx context.Context, executable, home, thread, status string) string {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, executable, "app-server", "--listen", "stdio://", "-c", "thread_unload_delay_secs=0")
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+home, "CODEX_SQLITE_HOME="+home)
@@ -219,10 +208,108 @@ func createPausedCodexGoalFixture(t *testing.T, ctx context.Context, executable,
 			t.Fatal("native fixture returned invalid loaded threads")
 		}
 		if len(*loaded.Data) == 0 {
+			if status != "paused" {
+				request(id+1, "thread/goal/set", map[string]any{"threadId": thread, "status": status, "origin": "user"})
+			}
 			return thread
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatal("native fixture did not unload its source thread")
 	return thread
+}
+
+func copyCodexNativeSmokeAccount(t *testing.T, account, home string) {
+	t.Helper()
+	for _, name := range []string{"config.toml", "auth.json"} {
+		data, err := os.ReadFile(filepath.Join(account, name))
+		if err != nil {
+			t.Fatalf("read isolated account %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(home, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCodexRealStoredActiveGoalQueryDoesNotRunOrPause(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
+		t.Skip("real native active Goal query is opt-in")
+	}
+	executable, account := os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_HOME")
+	if executable == "" || account == "" {
+		t.Fatal("explicit CLI and isolated account required")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	version, err := agent.DetectVersion(ctx, agent.NewCommand(executable, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, home, store := t.TempDir(), t.TempDir(), t.TempDir()
+	copyCodexNativeSmokeAccount(t, account, source)
+	copyCodexNativeSmokeAccount(t, account, home)
+	thread := createCodexGoalFixture(t, ctx, executable, source, "", "active")
+	pool, err := agent.NewCodexProcessPool(filepath.Join(t.TempDir(), "pool"), 1, time.Minute, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	state, err := PrepareCodexNativeState(ctx, home, source, store, "owned-runtime", thread, pool.RetireHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := agent.ResolveBackend("codex", agent.Config{ExecutablePath: executable, CodexVersion: version, TaskID: "owned-active-goal-query", Logger: slog.Default(), CodexPool: pool, ResidentSessionKey: "owned-active-goal-query", CodexResumePath: state.ResumePath, Env: map[string]string{"CODEX_HOME": home, "CODEX_SQLITE_HOME": state.SQLiteHome}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(ctx, "", agent.ExecOptions{Cwd: home, Command: "/goal show", CommandOnly: true, ResumeSessionID: thread, Timeout: 25 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status != "completed" || result.SessionID != thread || !strings.Contains(result.Output, "进行中") || len(result.Usage) != 0 {
+		t.Fatalf("active Goal query changed its lifecycle: status=%s error=%s output=%s", result.Status, result.Error, result.Output)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(state.SQLiteHome, "goals_1.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var status string
+	if err := database.QueryRowContext(ctx, "SELECT status FROM thread_goals WHERE thread_id=?", thread).Scan(&status); err != nil || status != "active" {
+		t.Fatalf("query paused or replaced the original Goal: %s %v", status, err)
+	}
+	for _, control := range []struct{ command, status string }{{"/goal pause", "paused"}, {"/goal complete", "complete"}, {"/goal clear", ""}} {
+		session, err := backend.Execute(ctx, "", agent.ExecOptions{Cwd: home, Command: control.command, CommandOnly: true, ResumeSessionID: thread, Timeout: 15 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range session.Messages {
+		}
+		result := <-session.Result
+		if result.Status != "completed" || result.SessionID != thread || len(result.Usage) != 0 {
+			t.Fatalf("stored control %s failed: %s %s", control.command, result.Status, result.Error)
+		}
+		err = database.QueryRowContext(ctx, "SELECT status FROM thread_goals WHERE thread_id=?", thread).Scan(&status)
+		if control.status == "" {
+			if err != sql.ErrNoRows {
+				t.Fatalf("clear retained a native Goal: %v", err)
+			}
+		} else if err != nil || status != control.status {
+			t.Fatalf("stored control %s status=%s error=%v", control.command, status, err)
+		}
+	}
+	history, err := sql.Open("sqlite", filepath.Join(state.SQLiteHome, "thread_history_1.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+	var turns int
+	if err := history.QueryRowContext(ctx, "SELECT count(*) FROM thread_turns WHERE thread_id=?", thread).Scan(&turns); err != nil || turns != 0 {
+		t.Fatalf("query started native model turns: %d %v", turns, err)
+	}
+	t.Log("query_preserved_active=true pause_complete_clear_confirmed=true native_turns=0 model_usage_entries=0 resident_retained=true")
 }

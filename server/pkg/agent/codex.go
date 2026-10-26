@@ -1608,7 +1608,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 		// 2. 新开一个线程，或为本次问题 resume 之前的线程。resume 失败时（线程在服务端
 		// 被回收、schema 漂移等）回退到全新线程，让任务仍能推进。
-		threadID, resumed, err := c.startOrResumeThread(runCtx, opts, b.cfg.Logger)
+		var threadID string
+		var resumed bool
+		c.unloadedGoalControl = codexUnloadedGoalControl(opts)
+		if c.unloadedGoalControl {
+			// Goal 查询和停止操作直接使用已物化会话；resume 会自动续跑 active Goal。
+			threadID, resumed = opts.ResumeSessionID, true
+		} else {
+			threadID, resumed, err = c.startOrResumeThread(runCtx, opts, b.cfg.Logger)
+		}
 		if err != nil {
 			var handshakeErr *codexHandshakeTimeoutError
 			timedOut := errors.As(err, &handshakeErr) && isCodexThreadSetupRPC(handshakeErr.Method)
@@ -2568,6 +2576,7 @@ type codexClient struct {
 	turnCompleted        bool
 	completedWithoutID   bool
 	goalActive           atomic.Bool
+	unloadedGoalControl  bool
 	goalEngaged          atomic.Bool
 	goalMutationSequence atomic.Uint64
 	goalControlUncertain atomic.Bool
