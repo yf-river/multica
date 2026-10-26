@@ -55,6 +55,7 @@ import type {
 } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { useAppForeground } from "../../common/use-app-foreground";
+import { useChatRuntimeInput, type ChatDelivery } from "./use-chat-runtime-input";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
@@ -250,6 +251,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
       : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
+  const { textAvailable: currentInputAvailable, commandsAvailable: nativeCommandsAvailable, trySend: trySendCurrentInput } = useChatRuntimeInput(wsId, pendingTaskId ?? "", isActive && pendingTask?.status === "running" && isTaskMessageTaskId(pendingTaskId ?? ""));
   const stopRequestedBeforeTaskRef = useRef(false);
   // 持久化的"推迟取消"草稿恢复（#5219）。完整的生命周期——拉取、提供、
   // 跳过再提供、采纳、消费、对账——都在这只 hook 里，与悬浮聊天窗口共享。
@@ -474,6 +476,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
       healthReportIds: string[] = [],
+      delivery: ChatDelivery = "queue",
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -497,6 +500,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
           agentId: activeAgent.id,
         });
         return false;
+      }
+      const currentInput = await trySendCurrentInput(content, Boolean(attachmentIds?.length || healthReportIds.length), delivery);
+      if (currentInput !== undefined) {
+        if (currentInput) commitInput?.({ clearEditor: isStillOnComposeTarget(useChatStore.getState().activeSessionId, activeSessionId) });
+        return currentInput;
       }
       if (pendingTaskId && pendingTask?.supports_queue !== true) {
         apiLogger.warn("sendChatMessage skipped: server does not support follow-up queues", {
@@ -641,6 +649,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       isAgentAccessRevoked,
       pendingTask,
       pendingTaskId,
+      trySendCurrentInput,
       isAgentRuntimeBound,
       ensureSession,
       cancelChatTask,
@@ -823,6 +832,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     pendingTask,
     pendingTaskId,
     showSkeleton,
+    currentInputAvailable,
+    nativeCommandsAvailable,
     hasMessages,
     firstItemIndex,
     hasOlderMessages: !!hasOlderMessages,

@@ -28,6 +28,12 @@ deleted_task_messages AS (
 deleted_task_interactions AS (
     DELETE FROM task_interaction WHERE task_id IN (SELECT id FROM batch)
 ),
+deleted_task_runtime_inputs AS (
+    DELETE FROM task_runtime_input WHERE task_id IN (SELECT id FROM batch)
+),
+deleted_task_runtime_capabilities AS (
+    DELETE FROM task_runtime_capability WHERE task_id IN (SELECT id FROM batch)
+),
 deleted_task_tokens AS (
     DELETE FROM task_token WHERE task_id IN (SELECT id FROM batch)
 ),
@@ -339,6 +345,12 @@ deleted_orphan_task_supplements AS (
 ),
 deleted_orphan_task_interactions AS (
     DELETE FROM task_interaction WHERE workspace_id = $1
+),
+deleted_orphan_task_runtime_inputs AS (
+    DELETE FROM task_runtime_input WHERE workspace_id = $1
+),
+deleted_orphan_task_runtime_capabilities AS (
+    DELETE FROM task_runtime_capability WHERE workspace_id = $1
 ),
 deleted_orphan_task_supplement_capabilities AS (
     DELETE FROM task_supplement_capability WHERE workspace_id = $1

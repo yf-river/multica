@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestChatRuntimeSelectionSealedInputAndPlanApproval(t *testing.T) {
@@ -62,4 +63,36 @@ func TestChatRuntimeSelectionSealedInputAndPlanApproval(t *testing.T) {
 	if err != nil || got.HasPlanMode || got.NativeGoal {
 		t.Fatalf("selection crossed chat boundary: %+v error=%v", got, err)
 	}
+}
+
+func TestChatRuntimeSelectionUsesConfirmedLiveCommands(t *testing.T) {
+	f, claim := runtimeInputFixture(t, "codebuddy")
+	chatID := dbfx.ChatSession(t, f.agentID)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET issue_id=NULL,chat_session_id=$2 WHERE id=$1`, f.taskID, chatID)
+	messageID := dbfx.Insert(t, "chat_message", testutil.Cols{"chat_session_id": chatID, "role": "user", "content": "continue", "task_id": f.taskID})
+	registerRuntimeInput(t, f, claim, []string{"command"}, 200)
+	check := func(hasPlan, plan, goal bool) {
+		t.Helper()
+		row, err := testHandler.Queries.GetChatRuntimeSelection(t.Context(), db.GetChatRuntimeSelectionParams{ChatSessionID: parseUUID(chatID), InputMessageID: parseUUID(messageID)})
+		if err != nil || row.HasPlanMode != hasPlan || row.PlanMode != plan || row.NativeGoal != goal {
+			t.Fatalf("live controls not restored: %+v error=%v", row, err)
+		}
+	}
+	id := uuid.NewString()
+	createRuntimeInput(t, f.taskID, id, "command", "/plan", 201)
+	check(false, false, false)
+	claimRuntimeInput(t, f.taskID, claim, []string{"command"}, 200)
+	check(false, false, false)
+	ackRuntimeInput(t, f.taskID, id, protocol.RuntimeInputAck{RuntimeInputClaim: claim, Status: "delivered"}, 200)
+	check(true, true, false)
+	id = uuid.NewString()
+	createRuntimeInput(t, f.taskID, id, "command", "/goal finish work", 201)
+	claimRuntimeInput(t, f.taskID, claim, []string{"command"}, 200)
+	ackRuntimeInput(t, f.taskID, id, protocol.RuntimeInputAck{RuntimeInputClaim: claim, Status: "delivered"}, 200)
+	check(true, true, true)
+	id = uuid.NewString()
+	createRuntimeInput(t, f.taskID, id, "command", "/plan off", 201)
+	claimRuntimeInput(t, f.taskID, claim, []string{"command"}, 200)
+	ackRuntimeInput(t, f.taskID, id, protocol.RuntimeInputAck{RuntimeInputClaim: claim, Status: "failed", FailureReason: "delivery_unknown"}, 200)
+	check(true, true, true)
 }

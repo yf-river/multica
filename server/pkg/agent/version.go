@@ -157,6 +157,26 @@ func SupportsTaskSupplement(provider, version string) bool {
 	return err == nil && !detected.lessThan(floor)
 }
 
+// 普通 CodeBuddy 流提供 steer；原生控制只存在于采用 ACP 的 Goal 会话。
+func RuntimeInputCapabilities(provider, version string, nativeGoal bool) []string {
+	if !SupportsTaskSupplement(provider, version) {
+		return nil
+	}
+	capabilities := []string{"text"}
+	if provider == "codebuddy" {
+		if nativeGoal {
+			capabilities = append(capabilities, "command")
+		}
+		return capabilities
+	}
+	detected, _ := parseSemver(version)
+	minimum, _ := parseSemver("0.164.0")
+	if !detected.lessThan(minimum) {
+		capabilities = append(capabilities, "command")
+	}
+	return capabilities
+}
+
 // versionRe matches version strings like "2.1.100", "v2.0.0", or
 // "2.1.100 (Claude Code)" — it extracts the first three numeric components.
 var versionRe = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)

@@ -35,8 +35,10 @@ type Backend interface {
 
 // ExecOptions 配置单次执行（execute）的参数。
 type ExecOptions struct {
-	EnableTaskSupplement bool   // 已协商的运行内追加输入能力
-	Cwd                  string // 工作目录：agent 子进程在哪里启动
+	RuntimeInputClaim        *protocol.RuntimeInputClaim
+	RuntimeInputCapabilities []string
+	EnableTaskSupplement     bool   // 已协商的运行内追加输入能力
+	Cwd                      string // 工作目录：agent 子进程在哪里启动
 	// Command is a runtime-native slash command (for example /plan or /goal).
 	// When set, the backend runs it against the session instead of a model turn.
 	Command            string

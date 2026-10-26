@@ -7798,6 +7798,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		stopPrepareLease()
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
 	}
+	stopPrepareLease()
 	if taskSupplementNegotiated {
 		// Register before provider launch so a hint cannot arrive in the gap
 		// between the committed server transition and turn/started. The row is
@@ -7806,7 +7807,18 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		_, unsubscribeSupplements := d.taskSupplementSignals.subscribe(task.ID)
 		defer unsubscribeSupplements()
 	}
-	stopPrepareLease()
+	var runtimeInputCapabilities []string
+	if task.StartClaimSupported && !runtimeCommandOnly(task.Command, task.ChatMessage) && (task.IssueID != "" || task.ChatSessionID != "") &&
+		(task.Agent == nil || (task.Agent.SystemKey != "quality_supervision" && task.Agent.SystemKey != "issue_review")) {
+		if offered := agent.RuntimeInputCapabilities(provider, resolvedVersion, task.NativeGoal); len(offered) > 0 {
+			call, stop := context.WithTimeout(prepareCtx, 3*time.Second)
+			runtimeInputCapabilities, err = d.client.RegisterTaskRuntimeCapability(call, task, offered)
+			stop()
+			if err != nil {
+				taskLog.Debug("runtime input capability not negotiated", "error", err)
+			}
+		}
+	}
 	prepareComplete = true
 	cancelPrepare()
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
@@ -8060,6 +8072,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	execOpts := agent.ExecOptions{
+		RuntimeInputClaim:          &protocol.RuntimeInputClaim{RuntimeID: task.RuntimeID, DispatchedAt: task.DispatchedAt},
+		RuntimeInputCapabilities:   runtimeInputCapabilities,
 		ApprovalPolicy:             approvalPolicy,
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
@@ -8662,6 +8676,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	var firstEventLogged atomic.Bool
 	phaseRecorder.Mark(taskPhaseRuntimeStarted)
 	taskLog.Debug("backend started, draining messages")
+	if opts.RuntimeInputClaim != nil && len(opts.RuntimeInputCapabilities) > 0 {
+		inputCtx, stopInputs := context.WithCancel(agentCtx)
+		inputsDone := make(chan struct{})
+		go func() {
+			defer close(inputsDone)
+			d.runTaskRuntimeInputLoop(inputCtx, session, taskID, *opts.RuntimeInputClaim, opts.RuntimeInputCapabilities, taskLog)
+		}()
+		defer func() {
+			stopInputs()
+			<-inputsDone
+		}()
+	}
 
 	// Only negotiated sessions may claim additions. Stop and join delivery
 	// before the caller reports the task's terminal state to the server.

@@ -20,6 +20,7 @@ sql:
       - "migrations/667_task_message_call_id.up.sql"
       - "migrations/668_task_supplements.up.sql"
       - "migrations/672_task_interaction.up.sql"
+      - "migrations/675_task_runtime_input.up.sql"
     gen:
       go:
         package: "db"

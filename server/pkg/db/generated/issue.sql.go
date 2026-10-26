@@ -398,6 +398,12 @@ cleared_task_supplements AS (
 cleared_task_interactions AS (
  DELETE FROM task_interaction WHERE issue_id IN (SELECT target.id FROM target)
 ),
+cleared_task_runtime_inputs AS (
+ DELETE FROM task_runtime_input WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_task_runtime_capabilities AS (
+ DELETE FROM task_runtime_capability WHERE task_id IN (SELECT id FROM agent_task_queue WHERE issue_id IN (SELECT target.id FROM target))
+),
 cleared_task_supplement_capabilities AS (
  DELETE FROM task_supplement_capability WHERE issue_id IN (SELECT target.id FROM target)
 ),

@@ -1,6 +1,7 @@
 "use client";
 
 import { TaskInteractionPanel } from "../../common/task-interaction-panel";
+import { RuntimeInputPanel } from "../../common/runtime-input-panel";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Gauge, ListTree, Loader2, RotateCcw, Square } from "lucide-react";
@@ -431,6 +432,7 @@ export function ActiveTaskRow({
       />
     </RowShell>
     {task.status === "running" && <TaskInteractionPanel taskId={task.id} active />}
+    {task.status === "running" && <RuntimeInputPanel taskId={task.id} active showControls />}
     </div>
   );
 }

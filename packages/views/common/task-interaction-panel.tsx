@@ -8,6 +8,7 @@ import type { TaskInteraction } from "@multica/core/types/task-interaction";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../i18n";
+import { RuntimeInputPanel } from "./runtime-input-panel";
 
 export function TaskInteractionPanel({ taskId, active, showEmpty = false }: { taskId: string; active: boolean; showEmpty?: boolean }) {
   const wsId = useWorkspaceId();
@@ -84,7 +85,7 @@ export function TaskInteractionHistory({ taskId, active }: { taskId: string; act
   const { t } = useT("common");
   const [expanded, setExpanded] = useState(false);
   return <details className="max-h-[40dvh] overflow-y-auto border-b px-4 py-2 text-body" onToggle={(event) => setExpanded(event.currentTarget.open)}>
-    <summary className="cursor-pointer rounded py-1 text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring">{t(($) => $.runtime_interaction.history)}</summary>
-    {expanded && <div className="py-2"><TaskInteractionPanel taskId={taskId} active={active} showEmpty /></div>}
+    <summary className="cursor-pointer rounded py-1 text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring">{t(($) => $.runtime_interaction.all_history)}</summary>
+    {expanded && <div className="space-y-3 py-2"><TaskInteractionPanel taskId={taskId} active={active} showEmpty /><RuntimeInputPanel taskId={taskId} active={false} /></div>}
   </details>;
 }

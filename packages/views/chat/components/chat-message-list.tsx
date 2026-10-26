@@ -50,6 +50,7 @@ import type { ChatTimelineItem } from "@multica/core/chat";
 import { buildTimeline } from "../../common/task-transcript";
 import { traceToolArgSummary } from "../../common/task-transcript/trace-event-presenter";
 import { TaskInteractionPanel } from "../../common/task-interaction-panel";
+import { RuntimeInputPanel } from "../../common/runtime-input-panel";
 import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { FOLLOW_EDGE_THRESHOLD } from "../../common/task-transcript/transcript-follow";
@@ -155,6 +156,7 @@ function ChatListFooter({ context }: { context?: ChatListContext }) {
       {context?.pendingTask?.status === "running" && isTaskMessageTaskId(context.pendingTask.task_id) && (
         <TaskInteractionPanel taskId={context.pendingTask.task_id} active={context.active} />
       )}
+      {context?.pendingTask?.status === "running" && isTaskMessageTaskId(context.pendingTask.task_id) && <RuntimeInputPanel taskId={context.pendingTask.task_id} active={context.active} />}
       {context?.showStatusPill && context.pendingTask ? (
         <TaskStatusPill
           pendingTask={context.pendingTask}

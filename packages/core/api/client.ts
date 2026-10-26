@@ -255,6 +255,7 @@ import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile,
 import type { IssueExecutionTreeResponse, TaskContextResponse } from "../types/issue-execution";
 import type { InteractionAnswer, TaskInteraction, TaskInteractionList } from "../types/task-interaction";
 import { TaskInteractionSchema, TaskInteractionListSchema } from "./task-interaction-schema";
+import { RuntimeInputSchema, RuntimeInputPageSchema, RuntimeInputCapabilitiesSchema, type RuntimeInput, type RuntimeInputPage, type RuntimeInputCapabilities, type CreateRuntimeInput } from "./runtime-input-schema";
 import type { KnowledgeResourcesResponse, KnowledgeSearchResponse, KnowledgeStatus, KnowledgeUploadResponse } from "../types/knowledge";
 import {
   AgentTaskListSchema,
@@ -2709,6 +2710,34 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/interactions`);
     return parseWithFallback(raw, TaskInteractionListSchema, { interactions: [], available: false }, {
       endpoint: "GET /api/tasks/:taskId/interactions",
+    });
+  }
+
+  async getRuntimeInputCapabilities(taskId: string): Promise<RuntimeInputCapabilities> {
+    try {
+      const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/runtime-inputs/capabilities`);
+      return parseWithFallback(raw, RuntimeInputCapabilitiesSchema, { capabilities: [], available: false }, {
+        endpoint: "GET /api/tasks/:taskId/runtime-inputs/capabilities",
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return { capabilities: [], available: false };
+      throw error;
+    }
+  }
+
+  async getRuntimeInputs(taskId: string, cursor = ""): Promise<RuntimeInputPage> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/runtime-inputs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+    return parseWithFallback(raw, RuntimeInputPageSchema, { inputs: [], nextCursor: "", available: false }, {
+      endpoint: "GET /api/tasks/:taskId/runtime-inputs",
+    });
+  }
+
+  async createRuntimeInput(taskId: string, input: CreateRuntimeInput): Promise<RuntimeInput | null> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/runtime-inputs`, {
+      method: "POST", body: JSON.stringify(input),
+    });
+    return parseWithFallback(raw, RuntimeInputSchema.nullable(), null, {
+      endpoint: "POST /api/tasks/:taskId/runtime-inputs",
     });
   }
 

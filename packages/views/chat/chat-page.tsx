@@ -311,6 +311,8 @@ export function ChatPage() {
 
       <ChatInput
         onSend={c.handleSend}
+        currentInputAvailable={c.currentInputAvailable}
+        nativeCommandsAvailable={c.nativeCommandsAvailable}
         restoreDraftRequest={c.restoreDraftRequest}
         conversationStarterRequest={c.conversationStarterRequest}
         onConversationStarterApplied={c.handleConversationStarterApplied}

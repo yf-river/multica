@@ -28,6 +28,12 @@ WITH boundary AS (
       )
       AND (btrim(m.content, E' \t\n\r') = '/plan' OR btrim(m.content, E' \t\n\r') LIKE '/plan %'
         OR btrim(m.content, E' \t\n\r') = '/goal' OR btrim(m.content, E' \t\n\r') LIKE '/goal %')
+    UNION ALL
+    -- 已确认投递的运行中控制直接作用于原生会话，续接该输入时也必须恢复其选择。
+    SELECT btrim(i.content, E' \t\n\r'), i.settled_at, i.id
+    FROM task_runtime_input i JOIN agent_task_queue t ON t.id = i.task_id CROSS JOIN boundary b
+    WHERE i.chat_session_id = $1 AND t.chat_session_id = i.chat_session_id
+      AND t.created_at <= b.created_at AND i.kind = 'command' AND i.status = 'delivered'
 ), plan_selections AS (
     SELECT command <> '/plan off' AS active, created_at, id FROM user_controls
     WHERE command = '/plan' OR command LIKE '/plan %'
