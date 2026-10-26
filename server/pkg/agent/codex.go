@@ -1237,6 +1237,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 	c = &codexClient{
 		cfg:                      b.cfg,
+		approvalPolicy:           opts.ApprovalPolicy,
 		stdin:                    stdin,
 		pending:                  make(map[int]*pendingRPC),
 		processDone:              make(chan struct{}),
@@ -1309,7 +1310,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		},
 	}
 
-	c.interactions = newInteractionBroker("codex", runCtx, opts.RequestInteraction, c.onMessage)
+	c.interactions = newInteractionBroker("codex", runCtx, runtimeInteractionRequest(opts), c.onMessage)
 	// 后台开始读 stdout
 	readerDone := make(chan struct{})
 	go func() {
@@ -2070,6 +2071,9 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		// 显式覆盖持久化的推理强度：不加这个，codex resume 会静默沿用旧会话建时的档位，
 		// 即使 agent 的 thinking_level 之后已被用户改过。参见 MUL-2339——resume 必须
 		// 服从「当前配置」而非「存下来的配置」。
+		if opts.ApprovalPolicy == "never" {
+			resumeParams["approvalPolicy"] = "never"
+		}
 		applyCodexReasoningEffort(resumeParams, opts.ThinkingLevel)
 		applyCodexServiceTier(resumeParams, opts.ServiceTier)
 		c.threadSetupMethod = "thread/resume"
@@ -2128,6 +2132,9 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"includeApplyPatchTool":  nil,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
+	}
+	if opts.ApprovalPolicy == "never" {
+		startParams["approvalPolicy"] = "never"
 	}
 	applyCodexReasoningEffort(startParams, opts.ThinkingLevel)
 	applyCodexServiceTier(startParams, opts.ServiceTier)
@@ -2402,6 +2409,7 @@ func describeCodexSemanticActivity(msg Message) string {
 // ── codexClient: JSON-RPC 2.0 transport ──
 
 type codexClient struct {
+	approvalPolicy         string
 	cfg                    Config
 	stdin                  interface{ Write([]byte) (int, error) }
 	mu                     sync.Mutex
@@ -3016,6 +3024,19 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 
 	var method string
 	_ = json.Unmarshal(raw["method"], &method)
+	if c.approvalPolicy == "never" {
+		switch method {
+		case "item/commandExecution/requestApproval", "execCommandApproval", "item/fileChange/requestApproval", "applyPatchApproval":
+			c.respond(id, map[string]any{"decision": "decline"})
+			return
+		case "item/permissions/requestApproval":
+			c.respond(id, map[string]any{"permissions": map[string]any{}, "scope": "turn"})
+			return
+		case "item/tool/requestUserInput", "tool/requestUserInput":
+			c.respondError(id, -32000, "runtime policy prohibits requesting user input")
+			return
+		}
+	}
 	if c.interactions != nil && (method == "item/tool/requestUserInput" || method == "tool/requestUserInput" ||
 		(c.interactions.request != nil && (method == "item/commandExecution/requestApproval" || method == "item/fileChange/requestApproval" || method == "item/permissions/requestApproval" || method == "execCommandApproval" || method == "applyPatchApproval"))) {
 		c.handleInteractionRequest(id, method, raw["params"])
@@ -3031,6 +3052,10 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	case "item/permissions/requestApproval":
 		c.respond(id, codexPermissionsApprovalResponse(raw["params"], c.cfg.Logger))
 	case "mcpServer/elicitation/request":
+		if c.approvalPolicy == "never" {
+			c.respond(id, map[string]any{"action": "decline", "content": nil, "_meta": nil})
+			return
+		}
 		c.respond(id, map[string]any{"action": "accept", "content": nil, "_meta": nil})
 	default:
 		msg := fmt.Sprintf("unsupported codex app-server request: %s", method)

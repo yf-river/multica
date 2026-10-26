@@ -86,7 +86,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		}
 		sendCodebuddyMessage(runCtx, messages, msg)
 	}
-	broker := newInteractionBroker("codebuddy", runCtx, opts.RequestInteraction, emit)
+	broker := newInteractionBroker("codebuddy", runCtx, runtimeInteractionRequest(opts), emit)
 	client = &hermesClient{cfg: b.cfg, stdin: stdin, pending: make(map[int]*pendingRPC), pendingTools: make(map[string]*pendingToolCall), onMessage: emit,
 		acceptNotification: func(string) bool { return accepting.Load() }, toolStartCarriesFinalInput: true,
 		onRequestSent: func(method string) {
@@ -194,7 +194,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		if command == "/plan" || command == "/plan off" {
 			mode, output := "plan", "已进入计划模式。"
 			if command == "/plan off" {
-				mode, output = "bypassPermissions", "已退出计划模式。"
+				mode, output = codebuddyPermissionMode(ExecOptions{ApprovalPolicy: opts.ApprovalPolicy}), "已退出计划模式。"
 			}
 			if _, err := client.request(call, "session/set_mode", map[string]any{"sessionId": sid, "modeId": mode}); err != nil {
 				return "", err
@@ -375,10 +375,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				return
 			}
 		}
-		mode := "bypassPermissions"
-		if opts.PlanMode != nil && *opts.PlanMode {
-			mode = "plan"
-		}
+		mode := codebuddyPermissionMode(opts)
 		if _, err := client.request(setup, "session/set_mode", map[string]any{"sessionId": sid, "modeId": mode}); err != nil {
 			fail(err)
 			return

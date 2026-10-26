@@ -54,7 +54,7 @@ var codebuddyBlockedArgs = map[string]blockedArgMode{
 	"-p":                       blockedStandalone, // 非交互模式
 	"--output-format":          blockedWithValue,  // stream-json 协议所必需
 	"--input-format":           blockedWithValue,  // stream-json 协议所必需
-	"--permission-mode":        blockedWithValue,  // 由 bypassPermissions 接管，保证自主运行
+	"--permission-mode":        blockedWithValue,  // 由本轮审批策略接管
 	"--mcp-config":             blockedWithValue,  // 由 daemon 依据 agent.mcp_config 注入
 	"--tools":                  blockedWithValue,  // 「生命认知」任务可能关掉内置工具
 	"--allowedTools":           blockedWithValue,  // 绝不让 custom_args 扩大 Life 的访问面
@@ -68,15 +68,12 @@ var codebuddyBlockedArgs = map[string]blockedArgMode{
 
 // buildCodebuddyArgs 根据 ExecOptions 拼出 codebuddy 的一次性命令行参数。
 //
-// 固定前缀保证走 stream-json 协议并以 bypassPermissions 无人值守运行；随后按需追加
+// 固定前缀设置 stream-json 协议与本轮审批策略；随后按需追加
 // 模型、思考强度、最大回合数、系统提示词、续跑会话等；最后把用户 custom_args 与
 // ExtraArgs 经 blocked 清单过滤后接上。ExtraArgs 是 daemon 自己注入的扩展参数，
 // CustomArgs 是用户配置的，二者分别过滤再拼接。
 func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
-	permissionMode := "bypassPermissions"
-	if opts.PlanMode != nil && *opts.PlanMode {
-		permissionMode = "plan"
-	}
+	permissionMode := codebuddyPermissionMode(opts)
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -85,7 +82,7 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		"--permission-mode", permissionMode,
 	}
 	// 无人值守角色禁用需要人回答的工具；交互任务通过持久化问答桥接。
-	if opts.RequestInteraction == nil {
+	if opts.RequestInteraction == nil || opts.ApprovalPolicy == "never" {
 		args = append(args, "--disallowedTools", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode")
 	}
 	if opts.LifeCognition {
@@ -120,17 +117,28 @@ func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
 	blockedArgs := codebuddyBlockedArgs
-	if opts.CodebuddySettingsPath != "" {
-		blockedArgs = make(map[string]blockedArgMode, len(codebuddyBlockedArgs)+1)
+	if opts.CodebuddySettingsPath != "" || opts.ApprovalPolicy == "never" {
+		blockedArgs = make(map[string]blockedArgMode, len(codebuddyBlockedArgs)+4)
 		for key, mode := range codebuddyBlockedArgs {
 			blockedArgs[key] = mode
 		}
-		blockedArgs["--settings"] = blockedWithValue
+		if opts.CodebuddySettingsPath != "" {
+			blockedArgs["--settings"] = blockedWithValue
+		}
+		if opts.ApprovalPolicy == "never" {
+			blockedArgs["--dangerously-skip-permissions"] = blockedStandalone
+			blockedArgs["-y"] = blockedStandalone
+			blockedArgs["--subagent-permission-mode"] = blockedWithValue
+			blockedArgs["--permission-mode-before-plan"] = blockedWithValue
+		}
 	}
 	args = append(args, filterCustomArgs(opts.ExtraArgs, blockedArgs, logger)...)
 	args = append(args, filterCustomArgs(opts.CustomArgs, blockedArgs, logger)...)
 	if opts.CodebuddySettingsPath != "" {
 		args = append(args, "--settings", opts.CodebuddySettingsPath)
+	}
+	if opts.ApprovalPolicy == "never" {
+		args = append(args, "--subagent-permission-mode", "dontAsk", "--permission-mode-before-plan", "dontAsk")
 	}
 	return args
 }
@@ -253,7 +261,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 	control := newCodebuddyControlClient(stdin)
-	interactions := newInteractionBroker("codebuddy", runCtx, opts.RequestInteraction, func(msg Message) {
+	interactions := newInteractionBroker("codebuddy", runCtx, runtimeInteractionRequest(opts), func(msg Message) {
 		select {
 		case msgCh <- msg:
 		case <-runCtx.Done():
@@ -371,8 +379,8 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 					})
 				}
 			case "control_request":
-				if opts.RequestInteraction == nil || !handleCodebuddyInteraction(msg, control, interactions) {
-					b.handleControlRequest(msg, control)
+				if interactions.request == nil || !handleCodebuddyInteraction(msg, control, interactions) {
+					b.handleControlRequest(msg, control, opts.ApprovalPolicy)
 				}
 			case "control_response":
 				control.respond(msg.Response)
@@ -625,10 +633,9 @@ func (b *codebuddyBackend) handleUser(ctx context.Context, msg codebuddySDKMessa
 	}
 }
 
-// handleControlRequest 应答 control_request 事件：在自主/daemon 模式下自动批准所有
-// 工具调用——把批准响应写成 JSON 行写回 stdin。
-func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin interface{ Write([]byte) (int, error) }) {
-	// 自主/daemon 模式下自动批准所有工具使用。
+// handleControlRequest 把本轮审批策略的响应写回 stream-json 控制通道。
+func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin interface{ Write([]byte) (int, error) }, approvalPolicy string) {
+	// 后台角色拒绝审批，其余任务沿用已有自主运行策略。
 	var req codebuddyControlRequestPayload
 	if err := json.Unmarshal(msg.Request, &req); err != nil {
 		return
@@ -646,6 +653,10 @@ func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin i
 	// async_launched tool_result shape. Background work is disabled via
 	// CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS before tool execution.
 
+	allowed, behavior := approvalPolicy != "never", "allow"
+	if !allowed {
+		behavior = "deny"
+	}
 	response := map[string]any{
 		"type": "control_response",
 		"response": map[string]any{
@@ -655,8 +666,8 @@ func (b *codebuddyBackend) handleControlRequest(msg codebuddySDKMessage, stdin i
 				// CodeBuddy 的 SdkPermissionClient 读的是 `allowed`，键缺失即视为拒绝；
 				// `behavior` 是 Claude Code 的拼写，这个分支在其它权限路径上仍认它。
 				// 两个都发，避免一次「批准」被误读成「静默拒绝」。
-				"allowed":      true,
-				"behavior":     "allow",
+				"allowed":      allowed,
+				"behavior":     behavior,
 				"updatedInput": inputMap,
 			},
 		},

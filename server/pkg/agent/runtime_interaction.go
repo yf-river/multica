@@ -15,6 +15,26 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// 运行时策略优先于外部回答器，后台角色不能借回答器扩大审批权限。
+func runtimeInteractionRequest(opts ExecOptions) func(context.Context, protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
+	if opts.ApprovalPolicy == "never" {
+		return func(context.Context, protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
+			return protocol.InteractionAnswer{Decision: "deny"}, nil
+		}
+	}
+	return opts.RequestInteraction
+}
+
+func codebuddyPermissionMode(opts ExecOptions) string {
+	if opts.PlanMode != nil && *opts.PlanMode {
+		return "plan"
+	}
+	if opts.ApprovalPolicy == "never" {
+		return "dontAsk"
+	}
+	return "bypassPermissions"
+}
+
 type interactionBroker struct {
 	provider string
 	ctx      context.Context
