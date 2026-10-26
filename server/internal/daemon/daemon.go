@@ -1927,6 +1927,9 @@ func (d *Daemon) clearWSHeartbeatAcks() {
 // （先续期 PAT 再做首次 workspace 同步），再启动各个后台循环，最后进入
 // pollLoop 直到 ctx 被取消（例如收到重启信号）。
 func (d *Daemon) Run(ctx context.Context) error {
+	if err := configureEmbeddedDsh(d.cfg.Profile); err != nil {
+		return fmt.Errorf("prepare embedded DSH bridge: %w", err)
+	}
 	// 包一层 ctx，使 handleUpdate 能通过 cancel 触发 daemon 优雅重启。
 	ctx, cancel := context.WithCancel(ctx)
 	d.cancelFunc = cancel

@@ -2,9 +2,9 @@ name: DSH runtime
 on:
   push:
     branches: [personal-studio-upstream]
-    paths: ['packages/dsh-runtime/**', 'server/pkg/agent/dsh*', 'server/pkg/dshprofile/**', 'server/internal/daemon/dsh*', 'server/internal/daemon/agents*', 'server/internal/daemon/daemon.go', 'scripts/*release*', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/dsh-runtime.yml']
+    paths: ['packages/dsh-runtime/**', 'server/pkg/agent/dsh*', 'server/pkg/dshprofile/**', 'server/internal/daemon/dsh*', 'server/internal/daemon/dshbundle/**', 'server/internal/daemon/agents*', 'server/internal/daemon/daemon.go', 'scripts/*release*', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/dsh-runtime.yml']
   pull_request:
-    paths: ['packages/dsh-runtime/**', 'server/pkg/agent/dsh*', 'server/pkg/dshprofile/**', 'server/internal/daemon/dsh*', 'server/internal/daemon/agents*', 'server/internal/daemon/daemon.go', 'scripts/*release*', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/dsh-runtime.yml']
+    paths: ['packages/dsh-runtime/**', 'server/pkg/agent/dsh*', 'server/pkg/dshprofile/**', 'server/internal/daemon/dsh*', 'server/internal/daemon/dshbundle/**', 'server/internal/daemon/agents*', 'server/internal/daemon/daemon.go', 'scripts/*release*', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/dsh-runtime.yml']
 jobs:
   contract:
     runs-on: ubuntu-latest
@@ -21,9 +21,11 @@ jobs:
           cache-dependency-path: server/go.sum
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @multica-ai/dsh-runtime check
+      - run: pnpm --filter @multica-ai/dsh-runtime bundle:daemon
+      - run: git diff --exit-code -- server/internal/daemon/dshbundle/bundle
       - run: pnpm --filter @multica-ai/dsh-runtime pack:runtime
       - working-directory: server
-        run: bash ../scripts/go-test-with-agent-cli-guard.sh go test ./pkg/agent ./pkg/dshprofile ./internal/daemon -run '^TestDsh' -count=1
+        run: bash ../scripts/go-test-with-agent-cli-guard.sh go test ./pkg/agent ./pkg/dshprofile ./internal/daemon ./internal/daemon/dshbundle -run '^Test(Dsh|EmbeddedBridge)' -count=1
       - run: python3 scripts/dsh-runtime-release.test.py
       - uses: actions/upload-artifact@v4
         with:

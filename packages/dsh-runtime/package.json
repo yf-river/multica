@@ -30,7 +30,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm test && pnpm build",
-    "pack:runtime": "node scripts/pack.mjs"
+    "pack:runtime": "node scripts/pack.mjs",
+    "bundle:daemon": "pnpm build && node scripts/pack.mjs ../../server/internal/daemon/dshbundle/bundle"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

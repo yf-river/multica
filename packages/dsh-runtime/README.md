@@ -9,9 +9,10 @@ DSH 的 Multica profile bundle。DSH 负责 session、模型、工具和上下�
 ```sh
 pnpm --filter @multica-ai/dsh-runtime check
 pnpm --filter @multica-ai/dsh-runtime pack:runtime
+pnpm --filter @multica-ai/dsh-runtime bundle:daemon
 ```
 
-`artifacts/dsh-runtime-<version>.tgz` 是安装制品；`manifest.json` 记录版本、兼容范围、大小和 SHA-256。`dist` 由源码构建，不提交。`fixtures` 由 Go adapter 与 bridge 测试共同读取。
+`artifacts/dsh-runtime-<version>.tgz` 是安装制品；`manifest.json` 记录版本、兼容范围、大小和 SHA-256。`dist` 由源码构建，不提交。Go daemon 内置的 tarball 和清单位于 `server/internal/daemon/dshbundle/bundle`，由源码生成并提交，CI 核对一致性。`fixtures` 由 Go adapter 与 bridge 测试共同读取。
 
 包名和 profile 入口为 `@multica-ai/dsh-runtime` 与 `multica`：
 
