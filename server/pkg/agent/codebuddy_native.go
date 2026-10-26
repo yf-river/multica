@@ -345,7 +345,12 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				StopReason string `json:"stopReason"`
 			}
 			_ = json.Unmarshal(raw, &terminal)
-			if terminal.StopReason == "cancelled" || terminal.StopReason == "refusal" {
+			if terminal.StopReason == "cancelled" {
+				result.Status = "aborted"
+				result.Error = "CodeBuddy native turn cancelled"
+				return
+			}
+			if terminal.StopReason == "refusal" {
 				fail(fmt.Errorf("CodeBuddy native turn ended: %s", terminal.StopReason))
 				return
 			}

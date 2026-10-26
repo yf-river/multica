@@ -3,6 +3,10 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -26,6 +30,10 @@ func handleCodebuddyACPInteraction(c *hermesClient, broker *interactionBroker, s
 		ToolCall struct {
 			Title    string          `json:"title"`
 			RawInput json.RawMessage `json:"rawInput"`
+			Meta     struct {
+				ToolName     string `json:"codebuddy.ai/toolName"`
+				PlanFilePath string `json:"codebuddy.ai/planFilePath"`
+			} `json:"_meta"`
 		} `json:"toolCall"`
 		Options []acpPermissionOption `json:"options"`
 	}
@@ -45,6 +53,16 @@ func handleCodebuddyACPInteraction(c *hermesClient, broker *interactionBroker, s
 		}
 		for _, q := range request.Schema.Questions {
 			prompt.Questions = append(prompt.Questions, protocol.InteractionQuestion{ID: q.ID, Header: q.Header, Question: q.Question, Options: q.Options, MultiSelect: q.MultiSelect})
+		}
+	} else if request.ToolCall.Meta.ToolName == "ExitPlanMode" {
+		prompt.Kind, prompt.Title = "plan", "计划已准备好，是否开始执行？"
+		if path := request.ToolCall.Meta.PlanFilePath; path != "" {
+			plan, err := readCodebuddyApprovalPlan(c.cfg, path)
+			if err != nil {
+				c.writeAgentRequestResponse(method, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32602, "message": "cannot present native plan for approval"}})
+				return true
+			}
+			prompt.Title += "\n\n" + plan
 		}
 	} else {
 		if prompt.Title == "" {
@@ -69,6 +87,9 @@ func handleCodebuddyACPInteraction(c *hermesClient, broker *interactionBroker, s
 			kind = "allow_once"
 		}
 		for _, option := range request.Options {
+			if !allowed && option.OptionID == "reject_and_exit_plan" {
+				continue
+			}
 			if option.Kind == kind {
 				respond(map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": option.OptionID}})
 				return
@@ -78,4 +99,55 @@ func handleCodebuddyACPInteraction(c *hermesClient, broker *interactionBroker, s
 		c.writeAgentRequestResponse(method, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32602, "message": fmt.Sprintf("no %s permission option offered", kind)}})
 	})
 	return true
+}
+
+// 原生计划只能从当前账号的计划目录读取，完整展示后才进入审批桥接。
+func readCodebuddyApprovalPlan(cfg Config, planPath string) (string, error) {
+	configDir, overridden := cfg.Env["CODEBUDDY_CONFIG_DIR"]
+	if !overridden {
+		configDir = os.Getenv("CODEBUDDY_CONFIG_DIR")
+	}
+	if configDir == "" {
+		home, overridden := cfg.Env["HOME"]
+		if !overridden {
+			home = os.Getenv("HOME")
+		}
+		if home == "" {
+			home, _ = os.UserHomeDir()
+			if home == "" {
+				return "", fmt.Errorf("CodeBuddy home is unavailable")
+			}
+		}
+		configDir = filepath.Join(home, ".codebuddy")
+	}
+	planDir := filepath.Join(configDir, "plans")
+	relative, err := filepath.Rel(planDir, planPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("plan is outside the account plan directory")
+	}
+	root, err := os.OpenRoot(planDir)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	info, err := root.Stat(relative)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 32000 {
+		return "", fmt.Errorf("plan cannot fit the approval form")
+	}
+	file, err := root.Open(relative)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, 32001))
+	if err != nil {
+		return "", err
+	}
+	if len(content) > 32000 || strings.TrimSpace(string(content)) == "" {
+		return "", fmt.Errorf("invalid approval plan")
+	}
+	return string(content), nil
 }

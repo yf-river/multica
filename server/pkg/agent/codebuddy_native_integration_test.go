@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"log/slog"
 	"os"
 	"strings"
@@ -70,4 +71,43 @@ func TestCodebuddyRealNativeGoalLoop(t *testing.T) {
 		t.Fatal("native goal completed without correlated per-call accounting")
 	}
 	t.Logf("Native goal completed; runtime_events=%d reported_models=%d", runtimeEvents, len(result.Usage))
+}
+
+func TestCodebuddyRealNativePlanApproval(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
+		t.Skip("real native plan model smoke is opt-in")
+	}
+	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	if path == "" || home == "" {
+		t.Fatal("explicit executable and isolated smoke home required")
+	}
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: path, Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": home + "/codebuddy", "CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS": "1"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 85*time.Second)
+	defer cancel()
+	observed := make(chan protocol.InteractionPrompt, 10)
+	plan := true
+	session, err := backend.executeNative(ctx, "Write a one sentence plan to explain how two plus two equals four. Include the exact marker NATIVE_PLAN_REVIEW_OK in the plan file, then call ExitPlanMode to request approval. Do not read or change other files, run commands, search, or delegate. If approval is denied, stop and say the plan was not approved.", ExecOptions{Model: "deepseek-v4.1-flash", Cwd: home, PlanMode: &plan, Timeout: 70 * time.Second, MaxTurns: 3, RequestInteraction: func(_ context.Context, prompt protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
+		observed <- prompt
+		return protocol.InteractionAnswer{Decision: "deny"}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status != "completed" && result.Status != "aborted" {
+		t.Fatalf("native plan failed: status=%s error=%s", result.Status, result.Error)
+	}
+	found := false
+	for len(observed) > 0 {
+		prompt := <-observed
+		if prompt.Kind == "plan" && strings.Contains(prompt.Title, "NATIVE_PLAN_REVIEW_OK") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("native plan artifact did not reach the approval bridge")
+	}
+	t.Logf("Native plan artifact reached approval; isolated test response denied execution; duration_ms=%d", result.DurationMs)
 }
