@@ -519,3 +519,37 @@ CodeBuddy 有界常驻池、MCP / 简报换发、常驻收尾与崩溃恢复、�
 
 有界进程池、租约间的完整凭据和配置换发、常驻收尾与崩溃恢复仍需实现与验收。
 角色和知识库监督、完整业务与性能对照、固定 int 和生产验收仍未完成。
+
+## 第二十四阶段：CodeBuddy 常驻租约与真实三轮复用
+
+Linux 内置 CodeBuddy 2.176 及以上的聊天和任务会话使用有界 ACP 进程池。
+逻辑会话按工作区、Runtime、Agent 和聊天或任务隔离；同一会话串行执行。
+根进程剥离任务环境，每轮由受管 hook 换发 Bash 环境与简报，由 ACP 换发受管
+MCP 环境。RPC 编号跨租约递增，输入和输出按当前 SID、CID 与租约归属过滤。
+原生用户、项目、本地或已安装插件的 MCP 配置需要完整进程环境时，使用池内
+独占的一次性进程；显式最大回合数也按一次性进程处理。
+
+任务完成后在原 SID 上执行不带受管 MCP 的 `session/load`，确认解除后才释放
+租约。原生 load 回执可以省略 SID，按恢复协议核对其身份，不能将省略误判为失败。
+空闲进程到期回收；daemon 关闭、取消与异常路径回收所属进程树。私有目录、锁、
+owner 和 execution 标记用于恢复清理，环境目录在进程存活期间受 GC pin 保护。
+配置指纹区分账号与组织身份、认证配置和 SDK 自行刷新票据；派生产品缓存和
+时间戳不会单独触发换进程，技能、设置和有效能力变化会使旧进程失效。
+
+控制仓库私有证据：
+
+- `phase24-native-same-session-fixed.log`：真实 2.176 / Flash 三轮通过，均为
+  同一 PID、同一 SID。各轮随机环境值和简报标记正确，MCP 的任务凭据摘要
+  正确，任务结束后 MCP 退出，根进程未持有任务凭据，每轮有实际模型用量。
+  三轮耗时分别为 9.603s、4.518s、5.432s；这不是完整性能对照矩阵。
+- `phase24-native-same-session-fixed-trace.jsonl`：对应的 ACP 路由元数据。
+  早期缓存指纹、空闲会话切换和 load 回执处理失败记录均保留，未计作通过。
+- `phase24-agent-regression-final.log`：CodeBuddy、Hermes 与 DSH 相关 race
+  回归通过（17.333s），覆盖租约串行与容量、旧回合隔离、原生 MCP 范围、
+  账号切换、票据轮换、进程归属恢复和反向请求的字符串编号。
+- `phase24-daemon-regression.log`、`phase24-daemon-ownership.log`：daemon、
+  execenv 相关回归与会话归属、环境 GC pin 检查。
+- `phase24-build.log`、`phase24-vet.log`：CLI 构建及相关 Go vet 通过。
+
+自定义 settings 参数与受管 hooks 的完整合并、原生子 Agent 恢复能力仍需核对。
+角色工具权限与知识库监督、完整业务和性能对照、固定 int 及生产验收仍未完成。

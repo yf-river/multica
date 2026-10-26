@@ -158,7 +158,7 @@ func codebuddyNativeRequested(opts ExecOptions) bool {
 }
 
 func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
-	if codebuddyNativeRequested(opts) {
+	if codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil {
 		return b.executeNative(ctx, prompt, opts)
 	}
 	execPath := b.cfg.ExecutablePath

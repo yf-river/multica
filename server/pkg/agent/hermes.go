@@ -798,6 +798,7 @@ type hermesClient struct {
 	writeMu        sync.Mutex // 串行化跨 goroutine 的 stdin.Write 调用
 	mu             sync.Mutex
 	nextID         int
+	nextRequestID  func() int // 常驻 ACP 进程的 ID 跨租约单调递增，迟到回复不能命中新租约。
 	pending        map[int]*pendingRPC
 	sessionID      string
 	onMessage      func(Message)
@@ -876,6 +877,9 @@ func (c *hermesClient) request(ctx context.Context, method string, params any) (
 	c.mu.Lock()
 	id := c.nextID
 	c.nextID++
+	if c.nextRequestID != nil {
+		id = c.nextRequestID()
+	}
 	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: method}
 	c.pending[id] = pr
 	c.mu.Unlock()

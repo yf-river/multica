@@ -407,12 +407,13 @@ type repoCacheBackend interface {
 // 它持有全部工作区状态、runtime 索引、并发控制原语与各类缓存，是
 // handleTask / runTask 以及各后台循环（心跳、同步、GC、自动更新）共享的核心对象。
 type Daemon struct {
-	codexPool  *agent.CodexProcessPool
-	cfg        Config
-	client     *Client
-	repoCache  repoCacheBackend
-	skillCache *SkillBundleCache
-	logger     *slog.Logger
+	codexPool     *agent.CodexProcessPool
+	codebuddyPool *agent.CodebuddyProcessPool
+	cfg           Config
+	client        *Client
+	repoCache     repoCacheBackend
+	skillCache    *SkillBundleCache
+	logger        *slog.Logger
 
 	// terminalReports is the durable outbox for complete/fail callbacks. The
 	// sender hook is production-wired through Client and overridable in focused
@@ -2006,6 +2007,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return fmt.Errorf("prepare resident Codex processes: %w", err)
 	}
 	defer d.codexPool.Close()
+	if err := d.initCodebuddyProcessPool(); err != nil {
+		return fmt.Errorf("prepare resident CodeBuddy processes: %w", err)
+	}
+	defer d.codebuddyPool.Close()
 
 	// 关停时反注册所有 runtimes（用全新的 ctx，因为此时 ctx 已被取消）。
 	defer d.deregisterRuntimes()
@@ -7847,9 +7852,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// 注入 runtime 专属配置（meta skill），让 agent 发现 .agent_context/。
-	taskCtx.CodebuddyBriefViaHook = provider == "codebuddy" && agent.CodebuddyNativeHooksEnabled(
-		agent.Config{CLIVersion: resolvedVersion, BuiltinRuntime: !usesCustomProfileCommand},
-		agent.ExecOptions{NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
+	if provider == "codebuddy" {
+		hookConfig := agent.Config{CLIVersion: resolvedVersion, BuiltinRuntime: !usesCustomProfileCommand}
+		d.configureCodebuddyResident(task, env, &hookConfig)
+		taskCtx.CodebuddyBriefViaHook = agent.CodebuddyNativeHooksEnabled(hookConfig, agent.ExecOptions{NativeGoal: task.NativeGoal, Command: task.Command, CommandOnly: runtimeCommandOnly(task.Command, task.ChatMessage)})
+	}
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
 		if provider == "codex" || taskCtx.CodebuddyBriefViaHook {
@@ -8000,6 +8007,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if provider == "codex" {
 		d.configureCodexResident(task, env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx), &backendConfig)
+	} else if provider == "codebuddy" {
+		d.configureCodebuddyResident(task, env, &backendConfig)
 	}
 	backend, err := agent.ResolveBackend(provider, backendConfig)
 	if err != nil {

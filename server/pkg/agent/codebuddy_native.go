@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -12,9 +13,9 @@ import (
 	"time"
 )
 
-// 普通 CodeBuddy 运行使用 stream-json；带 Goal 的会话使用原生 ACP 控制和循环。
-// 每次执行仍独占自己的进程、MCP 和任务凭据，常驻复用由独立资源生命周期接管。
+// Goal 和受管常驻会话通过原生 ACP 控制；每次执行独占任务租约与 MCP 凭据。
 func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	preparationStarted := time.Now()
 	if err := validateNativeControlOnly(opts); err != nil {
 		return nil, err
 	}
@@ -34,17 +35,22 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	}
 	runCtx, cancel := runContext(ctx, opts.Timeout)
 	var hooks *codebuddyHooks
-	if codebuddyManagedHooksSupported(b.cfg) {
+	if b.cfg.CodebuddyPool == nil && codebuddyManagedHooksSupported(b.cfg) {
 		hooks, err = newCodebuddyHooks(runCtx, b.cfg.Env, opts)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("prepare CodeBuddy task hooks: %w", err)
 		}
 	}
+	var resident *codebuddyProcessLease
 	handedOff := false
 	defer func() {
 		if !handedOff {
-			hooks.close()
+			if resident != nil {
+				resident.release(false)
+			} else {
+				hooks.close()
+			}
 		}
 	}()
 	processCtx, stopProcess := context.WithCancel(context.WithoutCancel(ctx))
@@ -52,34 +58,58 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	if hooks != nil {
 		launchOpts.CodebuddySettingsPath = hooks.settings
 	}
-	args := codebuddyNativeArgs(launchOpts, b.cfg)
-	cmd := b.cfg.commandAt(executable).exec(processCtx, args...)
-	cmd.Env = buildCodebuddyEnv(b.cfg.Env)
-	cmd.Dir = opts.Cwd
-	hideAgentWindow(cmd)
-	cmd.WaitDelay = 5 * time.Second
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		stopProcess()
-		return nil, err
-	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		_ = stdout.Close()
-		cancel()
-		stopProcess()
-		return nil, err
-	}
 	stderr := newStderrTail(newLogWriter(b.cfg.Logger, "[codebuddy:stderr] "), agentStderrTailBytes)
-	cmd.Stderr = stderr
-	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args))
-	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
-		_ = stdout.Close()
-		_ = stdin.Close()
-		cancel()
-		stopProcess()
-		return nil, err
+	var cmd *exec.Cmd
+	var stdout io.ReadCloser
+	var stdin io.WriteCloser
+	if b.cfg.CodebuddyPool != nil {
+		resident, err = b.cfg.CodebuddyPool.acquire(runCtx, b.cfg, opts)
+		if err != nil {
+			cancel()
+			stopProcess()
+			return nil, err
+		}
+	}
+	if resident != nil {
+		cmd, hooks, stderr = resident.entry.cmd, resident.entry.hooks, resident.stderr
+		stdout, stdin = resident.reader, resident
+		mcp = codebuddyResidentMCP(mcp, b.cfg, resident.execution)
+	} else {
+		if hooks == nil && codebuddyManagedHooksSupported(b.cfg) {
+			hooks, err = newCodebuddyHooks(runCtx, b.cfg.Env, opts)
+			if err != nil {
+				cancel()
+				stopProcess()
+				return nil, err
+			}
+			launchOpts.CodebuddySettingsPath = hooks.settings
+		}
+		args := codebuddyNativeArgs(launchOpts, b.cfg)
+		cmd = b.cfg.commandAt(executable).exec(processCtx, args...)
+		cmd.Env, cmd.Dir, cmd.WaitDelay = buildCodebuddyEnv(b.cfg.Env), opts.Cwd, 5*time.Second
+		hideAgentWindow(cmd)
+		stdout, err = cmd.StdoutPipe()
+		if err != nil {
+			cancel()
+			stopProcess()
+			return nil, err
+		}
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			_ = stdout.Close()
+			cancel()
+			stopProcess()
+			return nil, err
+		}
+		cmd.Stderr = stderr
+		b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args))
+		if err = startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
+			_ = stdout.Close()
+			_ = stdin.Close()
+			cancel()
+			stopProcess()
+			return nil, err
+		}
 	}
 	identity := captureCLIIdentity(cmd.Process.Pid)
 	messages := make(chan Message, 256)
@@ -113,6 +143,9 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				commandReady.Store(true)
 			}
 		},
+	}
+	if resident != nil {
+		client.nextRequestID = func() int { return int(resident.entry.sequence.Add(1)) }
 	}
 	client.onAgentRequest = func(method string, id, params json.RawMessage) bool {
 		stateMu.RLock()
@@ -157,8 +190,12 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				var observed string
 				_ = json.Unmarshal(meta["codebuddy.ai/requestId"], &observed)
 				if observed != "" && (envelope.Params.Update.SessionUpdate == "agent_message_chunk" || envelope.Params.Update.SessionUpdate == "agent_thought_chunk" || envelope.Params.Update.SessionUpdate == "tool_call" || envelope.Params.Update.SessionUpdate == "tool_call_update") {
+					rootUpdate := parentCallID == "" && hooks.currentRoot(observed)
+					if !rootUpdate {
+						childUpdate.Store(true)
+					}
 					stateMu.Lock()
-					if parentCallID == "" {
+					if rootUpdate {
 						if requestID != observed {
 							output.Reset()
 						}
@@ -166,11 +203,11 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 					}
 					requestIDs[observed] = true
 					stateMu.Unlock()
-					if parentCallID == "" {
+					if rootUpdate {
 						active.Store(true)
 					}
 				}
-				if envelope.Params.Update.SessionUpdate == "turn_end" && parentCallID == "" {
+				if envelope.Params.Update.SessionUpdate == "turn_end" && parentCallID == "" && hooks.currentRoot(observed) {
 					active.Store(false)
 				}
 			}
@@ -275,7 +312,9 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	}
 	handedOff = true
 	go func() {
-		defer hooks.close()
+		if resident == nil {
+			defer hooks.close()
+		}
 		defer stopProcess()
 		defer cancel()
 		defer close(messages)
@@ -297,6 +336,19 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				_, _ = requestCodebuddyGoal(cleanup, client, result.SessionID, "pause", "")
 				stop()
 			}
+			healthy := false
+			if resident != nil && !resident.entry.taskProcess && result.Status == "completed" {
+				accepting.Store(false)
+				cleanup, stop := context.WithTimeout(context.WithoutCancel(runCtx), 5*time.Second)
+				goal, goalErr := requestCodebuddyGoal(cleanup, client, result.SessionID, "snapshot", "")
+				if goalErr == nil && !goal.RunInFlight && (!goal.HasGoal || goal.ActiveGoal != nil && goal.ActiveGoal.Paused) {
+					params := map[string]any{"cwd": opts.Cwd, "sessionId": result.SessionID, "mcpServers": []any{}}
+					idle, detachErr := client.request(cleanup, "session/load", params)
+					_, changed := resolveResumedSessionID(result.SessionID, idle)
+					healthy = detachErr == nil && !changed
+				}
+				stop()
+			}
 			_ = stdin.Close()
 			select {
 			case <-readerDone:
@@ -305,20 +357,26 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				_ = stdout.Close()
 				<-readerDone
 			}
-			waited := make(chan error, 1)
-			go func() { waited <- cmd.Wait() }()
-			var waitErr error
-			select {
-			case waitErr = <-waited:
-			case <-time.After(time.Second):
-				stopProcess()
-				waitErr = <-waited
+			if resident != nil {
+				if cleanupErr := resident.release(healthy); cleanupErr != nil {
+					result.Status, result.Error = "failed", cleanupErr.Error()
+				}
+			} else {
+				waited := make(chan error, 1)
+				go func() { waited <- cmd.Wait() }()
+				var waitErr error
+				select {
+				case waitErr = <-waited:
+				case <-time.After(time.Second):
+					stopProcess()
+					waitErr = <-waited
+				}
+				releaseProcessGroup(cmd)
+				if waitErr != nil || result.Status != "completed" {
+					reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], identity, b.cfg.Logger)
+				}
+				hooks.close()
 			}
-			releaseProcessGroup(cmd)
-			if waitErr != nil || result.Status != "completed" {
-				reapTaskEscapees(b.cfg.Env["MULTICA_TASK_ID"], identity, b.cfg.Logger)
-			}
-			hooks.close()
 			result.DurationMs = time.Since(started).Milliseconds()
 			if result.Error != "" {
 				result.Error = withAgentStderr(result.Error, "codebuddy", stderr.Tail())
@@ -419,6 +477,9 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			return
 		}
 		accepting.Store(true)
+		if resident != nil {
+			emit(runtimeTelemetry("codebuddy", "process", map[string]any{"phase": "ready", "pid": cmd.Process.Pid, "reused": resident.reused, "preparation_and_handshake_ms": time.Since(preparationStarted).Milliseconds()}))
+		}
 		command := strings.TrimSpace(opts.Command)
 		var goal codebuddyGoalSnapshot
 		if command == "/goal" || strings.HasPrefix(command, "/goal ") {

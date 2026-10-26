@@ -56,6 +56,9 @@ type codebuddyHooks struct {
 	sid, root          string
 	brief              string
 	goal, closed       bool
+	active             bool
+	envKeys            map[string]bool
+	leaseCIDs          map[string]bool
 	seen               map[string]bool
 	seenAgents         map[string]bool
 	children           map[string]string
@@ -65,13 +68,17 @@ type codebuddyHooks struct {
 }
 
 func codebuddyManagedHooksSupported(cfg Config) bool {
-	version, err := parseSemver(cfg.CLIVersion)
-	return runtime.GOOS == "linux" && cfg.BuiltinRuntime && err == nil && version.Major == 2 && !version.lessThan(semver{Major: 2, Minor: 176})
+	return cfg.BuiltinRuntime && CodebuddyResidentSupported(cfg.CLIVersion)
+}
+
+func CodebuddyResidentSupported(version string) bool {
+	parsed, err := parseSemver(version)
+	return runtime.GOOS == "linux" && err == nil && parsed.Major == 2 && !parsed.lessThan(semver{Major: 2, Minor: 176})
 }
 
 // CodebuddyNativeHooksEnabled 与执行分派共用判断，供 daemon 选择简报投递方式。
 func CodebuddyNativeHooksEnabled(cfg Config, opts ExecOptions) bool {
-	return codebuddyManagedHooksSupported(cfg) && codebuddyNativeRequested(opts)
+	return codebuddyManagedHooksSupported(cfg) && (codebuddyNativeRequested(opts) || cfg.CodebuddyPool != nil)
 }
 
 func newCodebuddyHooks(ctx context.Context, env map[string]string, opts ExecOptions) (_ *codebuddyHooks, err error) {
@@ -80,6 +87,11 @@ func newCodebuddyHooks(ctx context.Context, env map[string]string, opts ExecOpti
 		return nil, err
 	}
 	h := &codebuddyHooks{ctx: ctx, dir: dir, socket: filepath.Join(dir, "hook.sock"), settings: filepath.Join(dir, "settings.json"), envFile: filepath.Join(dir, "environment.sh"), seen: map[string]bool{}, seenAgents: map[string]bool{}, children: map[string]string{}, agents: map[string]codebuddyHookAgent{}, done: make(chan struct{})}
+	h.active, h.envKeys = true, make(map[string]bool)
+	h.leaseCIDs = make(map[string]bool)
+	for key := range env {
+		h.envKeys[key] = true
+	}
 	h.brief = opts.CodebuddyRuntimeBrief
 	defer func() {
 		if err != nil {
@@ -142,8 +154,11 @@ func newCodebuddyHooks(ctx context.Context, env map[string]string, opts ExecOpti
 	return h, nil
 }
 
-func writeCodebuddyHookEnvironment(path string, env map[string]string) error {
+func writeCodebuddyHookEnvironment(path string, env map[string]string, clear ...string) error {
 	keys := map[string]bool{}
+	for _, key := range clear {
+		keys[key] = true
+	}
 	for _, pair := range os.Environ() {
 		key, _, _ := strings.Cut(pair, "=")
 		if strings.HasPrefix(strings.ToUpper(key), "MULTICA_") {
@@ -173,6 +188,60 @@ func writeCodebuddyHookEnvironment(path string, env map[string]string) error {
 	}
 	body.WriteString("export " + codebuddyDisableBackgroundTasksEnv + "=1\n")
 	return os.WriteFile(path, []byte(body.String()), 0600)
+}
+
+func (h *codebuddyHooks) begin(ctx context.Context, env map[string]string, brief string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || h.active || len(h.children) != 0 || len(h.agents) != 0 {
+		return errors.New("CodeBuddy hook owner has an unfinished lease")
+	}
+	var clear []string
+	for key := range h.envKeys {
+		clear = append(clear, key)
+	}
+	name, err := newCodebuddyGeneration()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(h.dir, name+".sh")
+	if err := writeCodebuddyHookEnvironment(path, env, clear...); err != nil {
+		return err
+	}
+	for key := range env {
+		h.envKeys[key] = true
+	}
+	h.ctx, h.envFile, h.brief, h.active = ctx, path, brief, true
+	h.leaseCIDs = make(map[string]bool)
+	h.sid, h.root, h.goal = "", "", false
+	return nil
+}
+
+func (h *codebuddyHooks) end() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.active = false
+	h.ctx = context.Background()
+	h.brief, h.sid, h.root, h.goal = "", "", "", false
+	if len(h.children) != 0 || len(h.agents) != 0 {
+		return errors.New("CodeBuddy foreground hook calls have not completed")
+	}
+	return os.Remove(h.envFile)
+}
+
+func (h *codebuddyHooks) acceptsUpdate(sid, cid string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.active && !h.closed && h.ctx.Err() == nil && sid == h.sid && cid != "" && h.leaseCIDs[cid]
+}
+
+func (h *codebuddyHooks) currentRoot(cid string) bool {
+	if h == nil {
+		return true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.root == cid
 }
 
 func validCodebuddyEnvironmentKey(key string) bool {
@@ -216,6 +285,7 @@ func (h *codebuddyHooks) expectPrompt(cid string) {
 	}
 	h.mu.Lock()
 	h.root, h.seen[cid] = cid, true
+	h.leaseCIDs[cid] = true
 	h.mu.Unlock()
 }
 
@@ -258,7 +328,7 @@ func (h *codebuddyHooks) serve(w http.ResponseWriter, r *http.Request) {
 func (h *codebuddyHooks) handle(input codebuddyHookInput) (json.RawMessage, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed || h.ctx.Err() != nil || h.sid == "" || input.SessionID != h.sid || input.GenerationID == "" {
+	if h.closed || !h.active || h.ctx.Err() != nil || h.sid == "" || input.SessionID != h.sid || input.GenerationID == "" {
 		return nil, errors.New("CodeBuddy hook has no matching active task generation")
 	}
 	cid := input.GenerationID
@@ -271,6 +341,7 @@ func (h *codebuddyHooks) handle(input codebuddyHookInput) (json.RawMessage, erro
 				return nil, errors.New("CodeBuddy prompt generation was not issued by this task")
 			}
 			h.root, h.seen[cid] = cid, true
+			h.leaseCIDs[cid] = true
 		}
 		if h.brief != "" {
 			return json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": input.Event, "additionalContext": h.brief}})
@@ -292,6 +363,7 @@ func (h *codebuddyHooks) handle(input codebuddyHookInput) (json.RawMessage, erro
 			return nil, errors.New("CodeBuddy child has no active foreground Agent call")
 		}
 		h.children[cid], h.seen[cid] = input.AgentID, true
+		h.leaseCIDs[cid] = true
 		h.seenAgents[input.AgentID] = true
 		return json.RawMessage(`{}`), nil
 	}

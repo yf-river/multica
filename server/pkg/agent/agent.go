@@ -289,6 +289,7 @@ type Result struct {
 // Config 配置一个 Backend 实例。
 type Config struct {
 	CodexPool          *CodexProcessPool
+	CodebuddyPool      *CodebuddyProcessPool
 	ResidentSessionKey string
 	CodexResumePath    string // 原生恢复必须命中的持久 rollout，按线程 ID 发起并校验回包文件身份
 	PinResidentHome    func() func()
