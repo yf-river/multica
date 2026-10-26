@@ -111,15 +111,9 @@ func newCodebuddyHooks(ctx context.Context, env map[string]string, opts ExecOpti
 		return nil, err
 	}
 	command := shellQuote(executable) + " " + CodebuddyHookHelperArg + " " + shellQuote(h.socket) + " " + shellQuote(h.nonce)
-	settings := map[string]json.RawMessage{}
-	if opts.CodebuddySettingsPath != "" {
-		raw, ok := readRegularFileBounded(opts.CodebuddySettingsPath)
-		if !ok {
-			return nil, errors.New("CodeBuddy hook settings source is unavailable")
-		}
-		if err = json.Unmarshal(raw, &settings); err != nil || settings == nil {
-			return nil, errors.New("CodeBuddy hook settings source must be an object")
-		}
+	settings, err := codebuddyHookSettings(opts)
+	if err != nil {
+		return nil, err
 	}
 	hooks := map[string][]json.RawMessage{}
 	if raw := settings["hooks"]; len(raw) > 0 {

@@ -51,6 +51,18 @@ for line in sys.stdin:
 	if err := os.WriteFile(probe, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
+	humanProof := filepath.Join(work, "human-hook-proof")
+	humanSettings, _ := json.Marshal(map[string]any{
+		"permissions": map[string]any{"deny": []string{"Read"}},
+		"hooks":       map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "printf 'human-hook\\n' >> " + shellQuote(humanProof)}}}}},
+	})
+	if err := os.WriteFile(filepath.Join(work, "human-settings.json"), humanSettings, 0600); err != nil {
+		t.Fatal(err)
+	}
+	taskSettings := filepath.Join(work, "task-settings.json")
+	if err := os.WriteFile(taskSettings, []byte(`{"permissions":{"deny":["Write"]},"skillOverrides":{"owned-disabled-probe":"off"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	pool, err := NewCodebuddyProcessPool(filepath.Join(t.TempDir(), "pool"), 1, time.Minute, logger)
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +83,8 @@ for line in sys.stdin:
 		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: "2.176.0", CodebuddyPool: pool, ResidentSessionKey: "owned-resident-three-turn-smoke", TaskID: fmt.Sprintf("owned-warm-%d", round), Logger: logger, Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_POOL_PROBE": marker, "MULTICA_TOKEN": token, "MULTICA_TASK_ID": fmt.Sprintf("owned-warm-%d", round)}}
 		mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"resident-proof": map[string]any{"command": "python3", "args": []string{probe, mcpProof}}}})
 		opts := ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", ResumeSessionID: sid, Timeout: 80 * time.Second, McpConfig: mcp, SystemPrompt: "Follow the current task brief. Use only the requested single Bash command. Do not read files or delegate.", CodebuddyRuntimeBrief: "Current task brief marker: " + briefMarker + ". Ignore markers in prior task briefs."}
+		opts.CustomArgs = []string{"--settings", "human-settings.json"}
+		opts.CodebuddySettingsPath = taskSettings
 		before := codebuddyFingerprintProbe(t, cfg, opts)
 		prompt := `Use Bash exactly once to execute this command verbatim: printf '%s' "${MULTICA_POOL_PROBE-UNSET}" > ` + shellQuote(proof) + ". Then reply only with the current task brief marker. Do not read files or call other tools."
 		ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
@@ -100,6 +114,10 @@ for line in sys.stdin:
 		got, proofErr := os.ReadFile(proof)
 		if result.Status != "completed" || proofErr != nil || string(got) != marker || strings.TrimSpace(result.Output) != briefMarker || len(result.Usage) == 0 {
 			t.Fatalf("resident round %d failed: status=%s error=%s shell_matches=%v brief_matches=%v usage=%v", round, result.Status, result.Error, string(got) == marker, strings.TrimSpace(result.Output) == briefMarker, len(result.Usage) > 0)
+		}
+		humanOutput, err := os.ReadFile(humanProof)
+		if err != nil || bytes.Count(humanOutput, []byte("human-hook\n")) != round+1 {
+			t.Fatalf("native human hook was not retained for round %d: %v", round, err)
 		}
 		if sid != "" && result.SessionID != sid {
 			t.Fatal("native session changed between leases")

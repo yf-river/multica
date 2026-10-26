@@ -169,7 +169,11 @@ func (p *CodebuddyProcessPool) acquire(ctx context.Context, cfg Config, opts Exe
 		if err != nil {
 			return nil, err
 		}
-		taskProcess := opts.MaxTurns > 0 || codebuddyNeedsTaskProcess(cfg, opts.Cwd)
+		settings, err := codebuddyHookSettings(opts)
+		if err != nil {
+			return nil, err
+		}
+		taskProcess := opts.MaxTurns > 0 || codebuddySettingsHaveMCP(settings) || codebuddyNeedsTaskProcess(cfg, opts.Cwd)
 		p.mu.Lock()
 		if p.closed || p.unhealthy.Load() {
 			p.mu.Unlock()
@@ -638,13 +642,12 @@ func codebuddyResidentFingerprint(cfg Config, opts ExecOptions) (string, error) 
 	if info, err := os.Stat(cfg.ExecutablePath); err == nil {
 		_, _ = fmt.Fprintf(h, "%d:%d:%d", info.Size(), info.ModTime().UnixNano(), info.Mode())
 	}
-	if opts.CodebuddySettingsPath != "" {
-		raw, ok := readRegularFileBounded(opts.CodebuddySettingsPath)
-		if !ok {
-			return "", errors.New("CodeBuddy runtime settings are unavailable")
-		}
-		_, _ = h.Write(raw)
+	settings, err := codebuddyHookSettings(opts)
+	if err != nil {
+		return "", err
 	}
+	settingsJSON, _ := json.Marshal(settings)
+	_, _ = h.Write(settingsJSON)
 	home := resolveSDKConfigDir(cfg.Env)
 	for _, name := range []string{"settings.json", "config.json", "auth.json", "credentials.json", ".credentials.json", ".mcp.json", "mcp.json", "skills", "plugins/cache", "plugins/installed_plugins.json", "rules"} {
 		if err := hashCodexResidentSkills(h, filepath.Join(home, name), "account/"+name, map[string]bool{}); err != nil {
