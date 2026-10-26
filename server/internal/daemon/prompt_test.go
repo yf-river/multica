@@ -1961,3 +1961,29 @@ func TestBuildPromptDoesNotInjectUnrelatedSiblingContext(t *testing.T) {
 		t.Fatal("unrelated active tasks injected into prompt")
 	}
 }
+
+func TestDshChatPlanToggleDoesNotComposeModelPrompt(t *testing.T) {
+	for _, command := range []string{"/plan", "/plan off"} {
+		task := Task{ChatSessionID: "chat", Command: command, ChatMessage: "  " + command + "\n"}
+		if got := buildExecutionPrompt(task, "dsh", &execenv.Environment{}, false, true); got != "" {
+			t.Fatalf("%s would create a model turn: %q", command, got)
+		}
+	}
+}
+
+func TestDshChatPlanReplayRetainsRealUserInput(t *testing.T) {
+	cases := []Task{
+		{ChatSessionID: "chat", Command: "/plan", ChatMessage: "Continue planning the migration"},
+		{ChatSessionID: "chat", Command: "/plan design the migration", ChatMessage: "/plan design the migration"},
+		{ChatSessionID: "chat", Command: "/plan", ChatMessage: "/plan", ChatMessageAttachments: []ChatAttachmentMeta{{ID: "attachment", Filename: "requirements.md"}}},
+	}
+	for _, task := range cases {
+		if got := buildExecutionPrompt(task, "dsh", &execenv.Environment{}, false, true); got == "" {
+			t.Fatalf("real plan input lost: %+v", task)
+		}
+	}
+	task := Task{ChatSessionID: "chat", Command: "/plan", ChatMessage: "/plan"}
+	if got := buildExecutionPrompt(task, "codex", &execenv.Environment{}, false, true); got == "" {
+		t.Fatal("another runtime's prompt changed")
+	}
+}

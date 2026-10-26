@@ -893,6 +893,11 @@ func writeSourceContextPrompt(b *strings.Builder, task Task) {
 // buildExecutionPrompt composes the final task payload with environment context.
 // 1. Supervision is a JSON protocol; ordinary runtime suffixes belong only to task prompts.
 func buildExecutionPrompt(task Task, provider string, env *execenv.Environment, envReused, noLocalAssignment bool, options ...PromptOption) string {
+	// 裸计划开关只调用原生命令；运行简报仍写入任务目录，不作为新的模型输入。
+	if provider == "dsh" && task.ChatSessionID != "" && len(task.ChatMessageAttachments) == 0 &&
+		(task.Command == "/plan" || task.Command == "/plan off") && strings.TrimSpace(task.ChatMessage) == task.Command {
+		return ""
+	}
 	prompt := BuildPrompt(task, provider, options...)
 	if task.SupervisionPrompt != "" {
 		return prompt
