@@ -2,10 +2,13 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestDshSuspendedInteractionContract(t *testing.T) {
@@ -60,6 +63,57 @@ func TestDshSuspendedInteractionContract(t *testing.T) {
 						t.Fatalf("unsafe interaction accepted: %#v", got.result)
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestDshInteractionFlagReachesSubprocess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	t.Setenv("MULTICA_DSH_INTERACTIONS", "1")
+	for _, enabled := range []bool{false, true} {
+		name := "disabled"
+		if enabled {
+			name = "enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			bin := writeDshFixture(t, `
+IFS= read -r command
+if [ "$MULTICA_DSH_INTERACTIONS" = "1" ]; then
+ case "$command" in *'"human_interactions":true'*) ;; *) exit 8 ;; esac
+ printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","capabilities":{"plan_review":true,"user_questions":true}}'
+ printf '%s\n' '{"v":1,"type":"session","request_id":"flag-task","session_id":"native-session"}'
+ printf '%s\n' '{"v":1,"type":"plan_review","request_id":"flag-task","session_id":"native-session","interaction":{"kind":"plan","call_id":"native-call","title":"Plan","questions":[],"plan_markdown":"# Wait"}}'
+ printf '%s\n' '{"v":1,"type":"result","request_id":"flag-task","session_id":"native-session","status":"waiting_plan"}'
+elif [ "$MULTICA_DSH_INTERACTIONS" = "0" ]; then
+ case "$command" in *'"human_interactions":true'*) exit 9 ;; esac
+ printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","capabilities":{}}'
+ printf '%s\n' '{"v":1,"type":"result","request_id":"flag-task","status":"completed"}'
+else exit 10
+fi
+`)
+			configured := map[string]string{"MULTICA_DSH_INTERACTIONS": "1"}
+			backend, err := New("dsh", Config{ExecutablePath: bin, TaskID: "flag-task", Env: configured})
+			if err != nil {
+				t.Fatal(err)
+			}
+			session, err := backend.Execute(context.Background(), "plan", ExecOptions{Cwd: t.TempDir(), HumanInteractions: enabled, Timeout: 5 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range session.Messages {
+			}
+			result := <-session.Result
+			if enabled && (result.Status != "waiting_plan" || result.PendingInteraction == nil) {
+				t.Fatalf("interaction flag lost: %#v", result)
+			}
+			if !enabled && result.Status != "completed" {
+				t.Fatalf("disabled flag inherited: %#v", result)
+			}
+			if configured["MULTICA_DSH_INTERACTIONS"] != "1" {
+				t.Fatal("shared backend configuration mutated")
 			}
 		})
 	}

@@ -314,7 +314,16 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	childEnv := make(map[string]string, len(b.cfg.Env)+1)
+	for key, value := range b.cfg.Env {
+		childEnv[key] = value
+	}
+	// 插件启动时声明能力；人工交互开关与本次 execute 选项必须一致。
+	childEnv["MULTICA_DSH_INTERACTIONS"] = "0"
+	if opts.HumanInteractions {
+		childEnv["MULTICA_DSH_INTERACTIONS"] = "1"
+	}
+	cmd.Env = buildEnv(childEnv)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
