@@ -275,3 +275,13 @@ CodeBuddy 技能开关从 Agent 配置、claim、隔离环境到两条 CLI 启�
 - agent / middleware / handler Go vet 通过，证据为私有 `phase13-*` 文件。
 - 扩大的 Codex race 检查通过（71.775s）；明确排除第十二阶段已在原始基线复现的
   `TestCodexInterruptCompletesNearConfiguredDeadline`，未把它计入通过结果。
+
+## 第十五阶段：CodeBuddy 常驻 MCP 配置探测
+
+CodeBuddy 2.176.0 同一 ACP 进程连续 `session/new`、`session/load`，向同一会话传入
+不同的 MCP 环境标记。第二轮启动新 MCP 子进程，旧 MCP 子进程已退出；进程保留同一
+PID，MCP 均未继承任务令牌。探测只加载自有空工具 MCP，未发送模型 prompt，结束后
+自有进程已退出。私有证据为 `phase15-codebuddy-resident-rebind-probe.json`。
+
+该结果证明 MCP 配置可切换；CodeBuddy 的 shell 环境、任务简报与技能重载仍需独立验证，
+不能据此把当前每任务启动实现称为常驻，也不构成冷 / 热性能结论。
