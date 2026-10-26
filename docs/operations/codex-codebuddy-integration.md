@@ -572,3 +572,25 @@ owner 和 execution 标记用于恢复清理，环境目录在进程存活期间
   人工与任务设置各包含独立权限拒绝项；合并结构由定向测试核对。
 
 原生子 Agent 恢复、角色工具权限、知识库监督、完整性能矩阵和环境验收仍待完成。
+
+## 第二十六阶段：原生子 Agent 恢复与回合计量
+
+受管 hook 允许当前前台 Agent 调用通过显式 `resume` 恢复已知子 Agent，要求
+新的回合 CID，且每个前台调用只登记一个子回合；旧 CID 重放、无恢复意图的旧
+Agent ID 和已结束子回合仍被拒绝。恢复执行继续从当前租约取得环境。
+
+恢复后的子会话文件包含历史回合。ACP 计量按当前执行实际观察到的 CID 分组，
+核对当前父调用的子 Agent 归属，只采集本轮调用并保留完整文件的来源指纹。
+历史回合不重复计费，冲突调用不部分采纳，多 SDK trace 的规则同时适用于子调用。
+
+- `phase26-native-child-resume.log`：保留首次失败；实际恢复与 Bash 环境正确，
+  但旧解析器拒绝多回合子会话，缺少子链路，未计为通过。
+- `phase26-native-child-resume-fixed.log`：真实 2.176 / Flash 两轮通过，
+  首次前台子调用 15.439s，恢复原子 Agent 11.595s。同一父 PID 和 SID，
+  每轮子 Bash 证明当前环境，父输出独立，实际逐调用用量和子链路存在。
+- `phase26-scoped-accounting-tests.log`：hook 的恢复授权与旧代际拒绝、
+  子会话历史排除、冲突用量拒绝和原生多 trace 定向 race 检查通过。
+- `phase26-final-regression.log`：CodeBuddy、Hermes 和 DSH 相关 race 回归通过
+  （17.961s）；`phase26-build.log`、`phase26-vet.log` 的 CLI 构建和 Go vet 通过。
+
+角色工具权限、知识库监督、完整业务和性能矩阵、固定 int 和生产验收仍未完成。

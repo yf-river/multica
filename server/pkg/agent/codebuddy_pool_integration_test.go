@@ -178,6 +178,78 @@ for line in sys.stdin:
 	}
 }
 
+func TestCodebuddyRealResidentForegroundAgentResume(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
+		t.Skip("real foreground Agent resume smoke is opt-in")
+	}
+	executable, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	if executable == "" || home == "" {
+		t.Fatal("explicit executable and isolated account home required")
+	}
+	work := t.TempDir()
+	pool, err := NewCodebuddyProcessPool(filepath.Join(t.TempDir(), "pool"), 1, time.Minute, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	sid, child, firstPID := "", "", 0
+	for round := 0; round < 2; round++ {
+		marker, err := newCodebuddyGeneration()
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof := filepath.Join(work, fmt.Sprintf("child-proof-%d", round))
+		command := `printf '%s' "${MULTICA_CHILD_RESUME_PROBE-UNSET}" > ` + shellQuote(proof)
+		prompt := "Use Agent exactly once for one foreground general-purpose subagent. Ask the child to use Bash exactly once to execute this command verbatim: " + command + ". Wait for it to finish, then reply exactly CHILD_RESUME_OK. Do not use background, other tools, read files, or delegate further."
+		if round > 0 {
+			prompt = "Use Agent exactly once with resume=" + child + " to resume that existing foreground child. Ask it to use Bash exactly once to execute this command verbatim: " + command + ". Wait for it to finish, then reply exactly CHILD_RESUME_OK. Do not create a new child, use background, other tools, read files, or delegate further."
+		}
+		cfg := Config{ExecutablePath: executable, BuiltinRuntime: true, CLIVersion: "2.176.0", Logger: slog.Default(), CodebuddyPool: pool, ResidentSessionKey: "owned-resident-child-resume", TaskID: fmt.Sprintf("child-resume-%d", round), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), "MULTICA_TASK_ID": fmt.Sprintf("child-resume-%d", round), "MULTICA_CHILD_RESUME_PROBE": marker}}
+		opts := ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", ResumeSessionID: sid, Timeout: 110 * time.Second, SystemPrompt: "Execute only the requested foreground Agent acceptance check. Do not inspect unrelated files."}
+		session, err := (&codebuddyBackend{cfg: cfg}).Execute(t.Context(), prompt, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		observed := map[string]bool{}
+		for msg := range session.Messages {
+			if msg.Type == MessageToolResult {
+				for _, id := range agentIDsInText(msg.Output) {
+					observed[id] = true
+				}
+			}
+		}
+		result := <-session.Result
+		got, err := os.ReadFile(proof)
+		if result.Status != "completed" || err != nil || string(got) != marker || strings.TrimSpace(result.Output) != "CHILD_RESUME_OK" || len(result.Usage) == 0 || len(result.ExtraTraces) == 0 {
+			t.Fatalf("Agent round %d failed: status=%s error=%s proof=%v usage=%v child_traces=%d", round, result.Status, result.Error, string(got) == marker, len(result.Usage) > 0, len(result.ExtraTraces))
+		}
+		if len(observed) != 1 {
+			t.Fatalf("expected exactly one observed child, got %d", len(observed))
+		}
+		for id := range observed {
+			if child != "" && child != id {
+				t.Fatal("resume created a different child")
+			}
+			child = id
+		}
+		if sid != "" && result.SessionID != sid {
+			t.Fatal("parent session changed during child resume")
+		}
+		sid = result.SessionID
+		pool.mu.Lock()
+		pid := 0
+		for _, entry := range pool.entries {
+			pid = entry.cmd.Process.Pid
+		}
+		pool.mu.Unlock()
+		if pid == 0 || firstPID != 0 && pid != firstPID {
+			t.Fatal("child resume did not retain the parent resident process")
+		}
+		firstPID = pid
+		t.Logf("Foreground Agent round %d passed; same_parent_pid=true resumed_child=%v fresh_environment=true models=%d duration_ms=%d", round, round > 0, len(result.Usage), result.DurationMs)
+	}
+}
+
 func codebuddyFingerprintProbe(t *testing.T, cfg Config, opts ExecOptions) map[string]string {
 	t.Helper()
 	result := map[string]string{}

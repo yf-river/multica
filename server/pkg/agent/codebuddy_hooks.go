@@ -44,7 +44,7 @@ type codebuddyHookReply struct {
 	Error  string          `json:"error,omitempty"`
 }
 
-type codebuddyHookAgent struct{ cid, agent string }
+type codebuddyHookAgent struct{ cid, agent, resume, child string }
 
 // 每次执行独占一份 hook 状态和不可变环境。只认原生会话、已登记根回合及
 // 在已知 Agent 调用内启动的子代；同一个 session_id 不能独自换取任务凭据。
@@ -343,19 +343,24 @@ func (h *codebuddyHooks) handle(input codebuddyHookInput) (json.RawMessage, erro
 		return json.RawMessage(`{}`), nil
 	}
 	if input.Event == "SubagentStart" {
-		if input.AgentID == "" || h.seen[cid] || h.seenAgents[input.AgentID] {
+		if input.AgentID == "" || h.seen[cid] {
 			return nil, errors.New("CodeBuddy child generation is missing or already used")
 		}
-		knownParent := false
-		for _, parent := range h.agents {
-			if parent.cid == h.root || h.children[parent.cid] == parent.agent && parent.agent != "" {
-				knownParent = true
-				break
+		parentID := ""
+		for id, parent := range h.agents {
+			validParent := parent.cid == h.root || h.children[parent.cid] == parent.agent && parent.agent != ""
+			if !validParent || parent.child != "" || h.seenAgents[input.AgentID] && parent.resume != input.AgentID {
+				continue
 			}
+			parentID = id
+			break
 		}
-		if !knownParent {
+		if parentID == "" {
 			return nil, errors.New("CodeBuddy child has no active foreground Agent call")
 		}
+		parent := h.agents[parentID]
+		parent.child = cid
+		h.agents[parentID] = parent
 		h.children[cid], h.seen[cid] = input.AgentID, true
 		h.leaseCIDs[cid] = true
 		h.seenAgents[input.AgentID] = true
@@ -377,7 +382,11 @@ func (h *codebuddyHooks) handle(input codebuddyHookInput) (json.RawMessage, erro
 			return nil, errors.New("CodeBuddy tool hook has no call identity")
 		}
 		if input.Tool == "Agent" || input.Tool == "Task" {
-			h.agents[input.ToolID] = codebuddyHookAgent{cid: cid, agent: input.AgentID}
+			if _, exists := h.agents[input.ToolID]; exists {
+				return nil, errors.New("CodeBuddy Agent call identity is already active")
+			}
+			resume, _ := input.Input["resume"].(string)
+			h.agents[input.ToolID] = codebuddyHookAgent{cid: cid, agent: input.AgentID, resume: resume}
 		}
 		if input.Tool == "Bash" {
 			command, ok := input.Input["command"].(string)

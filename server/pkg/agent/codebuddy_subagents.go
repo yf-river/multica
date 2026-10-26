@@ -67,6 +67,10 @@ type subagentRawUsage struct {
 // <父 session>/subagents/<childID>.jsonl。整条链任一环不唯一或不完整，就整份放弃，
 // 不按 session 目录批量读，也不把上一轮的 child 当成这一轮。
 func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootCID string) (map[string]TokenUsage, []SubagentTrace, []SubagentCall) {
+	return codebuddyCollectScopedSubagentUsage(env, parentSessionID, rootCID, nil)
+}
+
+func codebuddyCollectScopedSubagentUsage(env map[string]string, parentSessionID, rootCID string, observed map[string]bool) (map[string]TokenUsage, []SubagentTrace, []SubagentCall) {
 	if parentSessionID == "" || rootCID == "" {
 		return nil, nil, nil
 	}
@@ -102,7 +106,17 @@ func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootC
 		if !ok {
 			return nil, nil, nil
 		}
-		childUsage, trace, calls, perCall, ok := parseSubagentFile(raw, childID)
+		var childUsage map[string]TokenUsage
+		var childTraces []SubagentTrace
+		var calls [][2]string
+		var perCall []SubagentCall
+		if observed != nil {
+			childUsage, childTraces, calls, perCall, ok = parseObservedCodebuddyChild(raw, childID, observed)
+		} else {
+			var trace SubagentTrace
+			childUsage, trace, calls, perCall, ok = parseSubagentFile(raw, childID)
+			childTraces = []SubagentTrace{trace}
+		}
 		if !ok {
 			// 任何一个子文件不成立就不合并，避免"部分可信"的用量进账。
 			return nil, nil, nil
@@ -122,13 +136,66 @@ func codebuddyCollectSubagentUsage(env map[string]string, parentSessionID, rootC
 			current.CacheWriteTokens += u.CacheWriteTokens
 			usage[model] = current
 		}
-		traces = append(traces, trace)
+		traces = append(traces, childTraces...)
 	}
 	if len(usage) == 0 {
 		return nil, nil, nil
 	}
 	sort.Slice(traces, func(i, j int) bool { return traces[i].TraceID < traces[j].TraceID })
 	return usage, traces, callsOut
+}
+
+// 恢复后的子会话含历史回合；只有本次 ACP 实际观察到的 CID 可以进入用量。
+func parseObservedCodebuddyChild(raw []byte, childID string, observed map[string]bool) (map[string]TokenUsage, []SubagentTrace, [][2]string, []SubagentCall, bool) {
+	buckets := map[string]*bytes.Buffer{}
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		var record subagentRecord
+		if json.Unmarshal(scanner.Bytes(), &record) != nil {
+			return nil, nil, nil, nil, false
+		}
+		cid := record.Provider.ConversationRequestID
+		if !observed[cid] || len(record.Provider.RawUsage) == 0 {
+			continue
+		}
+		var usage map[string]json.RawMessage
+		if json.Unmarshal(record.Provider.RawUsage, &usage) != nil || usage["prompt_tokens"] == nil || usage["completion_tokens"] == nil {
+			return nil, nil, nil, nil, false
+		}
+		if buckets[cid] == nil {
+			buckets[cid] = &bytes.Buffer{}
+		}
+		buckets[cid].Write(scanner.Bytes())
+		buckets[cid].WriteByte('\n')
+	}
+	if scanner.Err() != nil || len(buckets) == 0 {
+		return nil, nil, nil, nil, false
+	}
+	digest := sha256.Sum256(raw)
+	sourceSHA := hex.EncodeToString(digest[:])
+	usage := map[string]TokenUsage{}
+	var traces []SubagentTrace
+	var calls []SubagentCall
+	var keys [][2]string
+	var ids []string
+	for cid := range buckets {
+		ids = append(ids, cid)
+	}
+	sort.Strings(ids)
+	for _, cid := range ids {
+		trace, perCall, valid := parseCodebuddyNativeCalls(buckets[cid].Bytes(), childID, sourceSHA)
+		if !valid {
+			return nil, nil, nil, nil, false
+		}
+		traces = append(traces, trace)
+		for _, call := range perCall {
+			mergeCodebuddyCallUsage(usage, call)
+			keys = append(keys, [2]string{call.CID, call.MessageID})
+			calls = append(calls, call)
+		}
+	}
+	return usage, traces, keys, calls, true
 }
 
 // agentToolChildIDs 只认本轮根 CID 下、真正由 Agent/Task 工具返回的记录：
