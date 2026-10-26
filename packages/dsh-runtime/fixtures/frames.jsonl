@@ -1,0 +1,11 @@
+{"v":1,"type":"ready","runtime":"dsh","plugin_version":"0.3.0","capabilities":{"resume":true,"cancel":true,"models":true,"thinking":true,"usage":true,"tools":true,"context":true,"compaction":true,"mcp":["stdio","streamable-http"]}}
+{"v":1,"type":"session","request_id":"contract-task","session_id":"contract-session","resumed":true}
+{"v":1,"type":"thinking","request_id":"contract-task","content":"inspect"}
+{"v":1,"type":"tool_call","request_id":"contract-task","call_id":"tool-1","name":"bash","arguments":"{\"command\":\"pwd\"}"}
+{"v":1,"type":"tool_result","request_id":"contract-task","call_id":"tool-1","name":"bash","output":"/contract/work","is_error":false,"duration_ms":25}
+{"v":1,"type":"text","request_id":"contract-task","content":"complete"}
+{"v":1,"type":"usage","request_id":"contract-task","provider":"deepseek-official","model":"deepseek-flash","input_tokens":101,"output_tokens":17,"cache_read_tokens":63,"cache_write_tokens":0}
+{"v":1,"type":"context","request_id":"contract-task","session_id":"contract-session","seq":5,"at":"2026-10-26T00:00:00Z","provider":"deepseek-official","model":"deepseek-flash","duration_ms":109,"input_tokens":101,"output_tokens":17,"cache_read_tokens":63,"context_window":1048576,"pressure_tokens":164,"projected_tokens":200,"breakdown":{"system_tokens":20,"tools_tokens":30,"message_tokens":114}}
+{"v":1,"type":"compaction","request_id":"contract-task","phase":"start","at":"2026-10-26T00:00:01Z","before_tokens":164}
+{"v":1,"type":"compaction","request_id":"contract-task","phase":"end","at":"2026-10-26T00:00:02Z","before_tokens":164,"after_tokens":80,"reason":"threshold"}
+{"v":1,"type":"result","request_id":"contract-task","status":"completed","session_id":"contract-session","output":"complete","resume_rejected":false}

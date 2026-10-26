@@ -13,6 +13,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/processtree"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/dshprofile"
 )
 
 // shellResolveTTL 限制“一次登录 shell 的 PATH 解析结果”在多次 probeAgentCLIs 调用
@@ -333,10 +334,12 @@ func executableCandidate(path string) bool {
 // dshProbeFrame is the discovery frame a Multica-capable DSH profile prints for
 // `--probe`. Only these fields are read; the bundle owns everything else.
 type dshProbeFrame struct {
-	Version         int    `json:"v"`
-	Type            string `json:"type"`
-	Runtime         string `json:"runtime"`
-	ProtocolVersion int    `json:"protocol_version"`
+	Version         int              `json:"v"`
+	Type            string           `json:"type"`
+	Runtime         string           `json:"runtime"`
+	ProtocolVersion int              `json:"protocol_version"`
+	PluginVersion   string           `json:"plugin_version"`
+	Host            *dshprofile.Host `json:"host,omitempty"`
 }
 
 // dshProbeVerdict is what `dsh --profile multica --probe` actually said.
@@ -418,7 +421,23 @@ func probeDshMulticaProfile(ctx context.Context, executablePath string) dshProbe
 	parent := ctx
 	ctx, cancel := context.WithTimeout(parent, dshProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, executablePath, "--profile", dshMulticaProfileName, "--probe")
+	profile := dshMulticaProfileName
+	var release func()
+	if root, _, enabled := dshSupplyConfig(); enabled {
+		lease, err := dshprofile.Lock(root, false)
+		if err != nil {
+			return dshProbeUnavailable
+		}
+		release = func() { _ = lease.Close() }
+		defer release()
+		state, err := dshprofile.Read(root)
+		if err != nil || state == nil {
+			return dshProbeUnavailable
+		}
+		profile = state.Active.Profile
+		executablePath = state.Active.DSHPath
+	}
+	cmd := exec.CommandContext(ctx, executablePath, "--profile", profile, "--probe")
 	// processtree, not cmd.Output: `--probe` boots a whole DSH profile, so the
 	// process it starts is a tree. Killing only the direct child leaves
 	// grandchildren holding the stdout pipe open — which is both a leaked

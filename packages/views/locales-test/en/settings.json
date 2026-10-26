@@ -710,7 +710,10 @@
     "deleting": "Deleting...",
     "toast_delete_failed": "Failed to delete workspace",
     "confirm_cancel": "Cancel",
-    "confirm_action": "Confirm"
+    "confirm_action": "Confirm",
+    "menu_title": "Workspace menu",
+    "menu_hint": "Choose which menu items this workspace shows. Hiding an item does not change member permissions, and existing links keep working.",
+    "menu_fixed": "Always shown"
   },
   "delete_workspace_dialog": {
     "title": "Delete workspace",

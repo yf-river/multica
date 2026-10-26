@@ -65,6 +65,11 @@ func (d *Daemon) agentDiscoveryLoop(ctx context.Context) {
 		case <-versionTicker.C:
 			d.refreshAgentVersions(ctx)
 		case now := <-ticker.C:
+			if entry, ok := d.cfg.Agents["dsh"]; ok {
+				if version := d.agentVersion("dsh"); version != "" {
+					d.prepareManagedDsh(entry.Path, version)
+				}
+			}
 			// Forced by disagreement between two live states, not by a change
 			// since the last look: a profile removed between two observations,
 			// or before the first one — which is what a restart produces —

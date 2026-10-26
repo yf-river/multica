@@ -1,0 +1,40 @@
+# Private Multica runtime surface over dsh-base. It intentionally exposes no
+# HTTP listener and disables DSH telemetry so private task content never leaves
+# the machine except through the explicitly selected model and MCP providers.
+
+- id: hmr
+  disabled: true
+
+- id: session-telemetry-otel
+  disabled: true
+
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.MULTICA_DSH_SESSION_ROOT ?? dshHomePath('sessions')
+
+# DSH 0.2 renamed `persona` to `personaPrefix` and removed the `{{cwd}}`
+# variable; the working-directory service now injects the directory itself.
+- id: system-prompt
+  config:
+    personaPrefix: >-
+      You are a coding agent powered by the {{model}} model and running for Multica.
+      This runtime is headless: do not call
+      ask_user_question. When a genuinely user-owned decision blocks progress,
+      explain the decision and available options in your final response.
+
+- insert:
+    # DSH's launcher treats this reserved row id as a one-shot surface. The
+    # bridge owns process lifetime through appExit, so profile HMR/watchers
+    # must never race its shutdown after a result is emitted.
+    - id: headless-runner
+      name: '@multica-ai/dsh-runtime'
+
+# Keep the working set bounded for Multica tasks. DSH ships compaction defaults
+# (0.8 of the window, 64k headroom); 0.7 plus an explicit retention budget makes
+# long tasks compact earlier, which keeps DeepSeek prefix-cache reads and
+# per-call latency lower. The bridge still reports each compaction as an event.
+- id: compaction-basic
+  config:
+    thresholdRatio: 0.7
+    retainTokens: 32768
+    maxTokens: 16384

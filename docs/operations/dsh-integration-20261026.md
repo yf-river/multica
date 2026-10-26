@@ -67,3 +67,122 @@ bridge pnpm check（22 tests + build）           PASS
 
 - `18132b1f8` / bridge `b8dc4c9`：角色只读沙箱（approval never + sandbox/mode=read-only）。协议级验证通过；GONG-92 因 verify 环境不能把托管审查角色绑定 DSH、普通样本缺 `deepseek-official` 凭据而未完成验收，生产仍为 `46d4f6ee6`。
 - bridge 本地提交已到 `b8dc4c9`；远端仓库推送仍受 GitHub 权限限制。
+
+
+## GONG-93：bridge 收编与自动供给（开发中）
+
+源码从外部 bridge `b8dc4c9` 收进 `packages/dsh-runtime`，包名为
+`@multica-ai/dsh-runtime`，版本 `0.3.0`，兼容范围 `>=0.2.1-rc.3 <0.3.0`。
+DSH 精确测试版本为 `0.2.1-rc.3`；依赖锁用于复现构建，不锁定用户安装的 DSH。
+
+- 制品为 `dsh-runtime-<version>.tgz`；发布清单记录兼容信息、字节数和 SHA-256。
+  Go 与 bridge 共用 execute 和事件黄金帧。正式构建从固定提交生成 bridge，
+  运行包携带 tarball，不引用外部开发目录。
+- 自动供给使用独立版本 profile、持久化候选状态和原子活动记录。
+  安装后经过 probe、真实普通任务/context、原生 plan 切换和同 session 续跑，再激活。
+  staging 安装使用 DSH plugin/pnpm 与 `--offline`，宿主 DSH 提供其自身的依赖。
+- daemon 认领/准备屏障和跨进程共享执行锁共同阻止运行时切换。
+  已验证但忙碌的候选等待空闲，续接不重复安装或消耗模型调用。
+  安装或激活失败保留/恢复旧活动记录，同一失败候选持久隔离。
+- 活动记录保留 N-1 bridge/profile。可识别的 Node/npm 安装保存独立 Node 与 DSH
+  包快照（包含依赖及逐文件校验清单），启动器只引用快照文件；活动与上一代记录
+  固定精确 DSH 版本、原安装来源和快照路径。快照缓存跨本机环境复用，不复制用户
+  profile、home 或凭据。未知或 Electron 安装没有已验证的独立宿主快照时，健康信息
+  明确返回 `dsh_snapshot_available=false`；不能声称该安装支持跨 DSH 版本回退。
+- 发布器从运行包派生本环境 artifact/state 路径，`MULTICA_DSH_MANAGED_PROFILE=0`
+  停用受控供给并恢复原 `multica` 入口；旧 profile 和外部 bridge 目录尚未删除。
+  健康接口返回供给状态及活动版本/哈希，不返回路径和凭据。
+
+本地验证：bridge typecheck、25 项单元测试和构建通过；Go DSH/供给定向测试通过；
+发布器原有45项回归和新增制品验证通过。真实 tarball 独立 profile 的普通任务、
+context、session 续跑和不调用模型的 `/plan` 通过；供给器真实 staging→smoke→激活通过，
+新增空 pnpm 缓存与 `--offline` 安装检查通过。真实检查使用本机 DSH 账号来源，
+不构成固定 int 业务验收或生产发布；所有样本都在独立临时目录和专属 profile 中执行。
+DSH 自身的模型列表诊断可能混入 stdout，Go adapter 继续按既有协议跳过非 JSON 行。
+
+当前阶段没有生产发布授权，生产仍以现场健康版本为准。后续 DSH 问答与计划卡片
+复用 `feature/codex-codebuddy-integration` 的公共交互与轨迹组件，
+不额外建立平行审批表或通用界面；DSH 的挂起续跑行为单独扩展。
+
+
+### 能力探测与宿主恢复补充
+
+- probe/ready 根据实际服务方法报告 commands、userQuestions、sessionProjections、
+  approval、sandboxPolicy 和 compaction。optional 服务缺失不使启动崩溃。
+  人工计划评审尚未接入，因此 `plan_review=false`，不会把底层服务存在冒充 UI 能力。
+- 必需只读策略验证实际沙箱结果，缺失能力或设置失败直接拒绝；普通执行和斜杠命令
+  都经过同一前置检查。显式 Agent 能力设置和真实写入拒绝验收属于后续 B2/C。
+- 本机旧 DSH 目录的 launcher 仍引用当前安装目录，不能直接作为独立回退入口。
+  新宿主快照包含 62958 个文件身份，独立启动返回 `0.2.1-rc.3`，基于该快照的真实
+  普通任务、context、plan 开关、session 恢复及激活通过。首次复制和 smoke 共163.90秒；
+  后续候选复用经过校验的宿主快照。
+- 单元测试验证原安装与 Node 文件被移除后，快照启动器仍可运行；外部依赖链接被拒绝。
+  Linux 定向 race 检查通过，Windows 锁与快照代码已交叉编译；Windows 真实执行仍待 CI。
+- bridge 当前28项单元测试通过。上述检查不代替固定 int 及生产业务验收。
+
+
+### 首次 verify-3 验收与交付修复
+
+`e95c9dfd7` 的 verify-3 程序身份正确，但在役旧版外部发布器没有复制新增 bridge
+制品，daemon 供给状态为空，因此本轮功能验收未通过。没有手工补写运行目录，
+没有把程序健康当成功能通过，也没有修改生产发布器。
+
+修复由 daemon 二进制内置受信 tarball 与 SHA-256 清单，启动时提取到本环境私有
+CLI profile 目录；独立 daemon 安装和旧发布器都能供给 bridge。生成制品从
+`packages/dsh-runtime` 构建，CI 重新生成并校验字节；用户可用既有开关停用。
+
+用户已授权本阶段使用现有原生 DSH 登录的隔离副本进行 verify/int 验收。
+仅复制原生账号认证与必要模型配置，不复制会话或业务数据。凭据或网络恢复后，
+本机操作者可通过 `multica daemon dsh-retry --profile <profile>` 显式重试原失败候选；
+命令经过 profile 身份核对，候选仍需通过既有 probe/smoke 与空闲激活门禁。
+
+### verify-3 通过与首次 int 阻塞
+
+`fed3b9a0d` 在 verify-3 自动安装并激活内置 bridge 0.3.0，SHA-256 为
+`de426b510e22000c6ddf41965d89ed2872596843806ab651d8a0d75bd9a0c6d1`。
+原生 DSH 为 `0.2.1-rc.3`，独立宿主快照可用。Multica 聊天两轮均 completed，
+恢复同一 DSH session，第二轮取回首轮标记；context 帧记录第二轮未缓存输入286、
+缓存读取8832、输出7。该小样本证明恢复与计量链路，不代表复杂编程性能对照。
+桌面、390px 页面和刷新后的历史回复均可见，无 pageerror 或横向溢出。
+
+固定 int 已部署该候选，但自动迁移检查失败：657–666 的回滚只删除索引，
+却被登记为并发创建清理；669–671 的并发创建缺少清理钩子。修复仅调整钩子登记，
+不修改历史迁移内容。完整迁移与迁移包测试已在本次专属 PostgreSQL 实例通过，
+待新固定候选重新验收；生产没有更新。
+
+### int 命令入口补充检查
+
+迁移修复候选 `adb973dec` 的八组自动检查全部通过，真实聊天两轮、session恢复、
+context及桌面/390px页面通过；int 已使用独立 `DSH_HOME` 的原生登录副本。
+追加真实聊天命令检查发现：daemon 为裸 `/plan` 和 `/plan off` 仍拼接完整模型提示词，
+bridge 因此在开关后发起新回合。直接 adapter canary 的空提示词没有覆盖该入口。
+
+修复在任务提示词生产端识别只有计划开关、没有附件的聊天输入，传空模型提示词；
+原生命令照常执行。计划模式重放时的真实输入、带任务参数的 `/plan ...`、附件与
+其他运行时的提示词均有回归检查。未把该 int 命令行为记为通过，待新固定候选验收。
+
+纯计划开关的空输入规则覆盖首次组合、运行级路径后缀及会话拒绝后的冷恢复提示词；
+结构化监督/生活/审查任务仍使用各自输入协议。
+
+### GONG-93 第一阶段固定 int 通过
+
+验收代码提交：`e8e3ee586d04511acb83f4278f40fb4690bad773`。
+固定 int 候选：`e8e3ee586d04511acb83f4278f40fb4690bad773-1793006339686609200`。
+交付 `01a17776-1344-7310-bd56-af7f5f4d7bf4` 已进入 `awaiting_review`，
+任务为 `in_review`；verify-3 与 int 发布占用已释放。
+
+- 八组自动验收全部通过，包含迁移、交付协调、发布器、暂停与差异回归。
+- verify-3/int 均使用原生 DSH 登录隔离副本。int 显式配置独立 `DSH_HOME`，
+  不使用日常 profile；没有复制会话或业务数据。
+- 两环境的新聊天冷启动和已有历史后的 `/plan`、`/plan off` 都只切换模式，
+  没有模型 context、thinking 或工具执行帧。普通两轮任务 completed 并恢复同一会话。
+- int 续跑样本：未缓存输入237、缓存读取9600、输出7；模型耗时1049ms。
+  这是运行样本，尚未完成同配置原生入口的复杂任务对照。
+- 桌面、390px及刷新后的回复可见，无 pageerror 或横向溢出。
+- 活动 bridge `0.3.0`，SHA-256
+  `de426b510e22000c6ddf41965d89ed2872596843806ab651d8a0d75bd9a0c6d1`；
+  DSH `0.2.1-rc.3`，独立宿主快照可用。
+
+生产仍为 `46d4f6ee6504b631edbb8bd910099ac9d27ff064`。本阶段没有生产发布授权；
+生产候选须继续核对未发布主线基线，角色只读业务验收归 B2/C。
+人工计划卡片、显式 Agent 能力与 SDK transport 尚未交付。

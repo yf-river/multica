@@ -1,0 +1,18 @@
+{
+  "bridgeVersion": "0.3.0",
+  "protocolVersion": 1,
+  "dshRange": ">=0.2.1-rc.3 <0.3.0",
+  "capabilities": [
+    "commands-v1",
+    "context-v1"
+  ],
+  "smoke": [
+    "probe",
+    "plain-task",
+    "plan-command",
+    "context-frame"
+  ],
+  "filename": "dsh-runtime-0.3.0.tgz",
+  "sha256": "de426b510e22000c6ddf41965d89ed2872596843806ab651d8a0d75bd9a0c6d1",
+  "bytes": 36579
+}

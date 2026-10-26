@@ -1929,6 +1929,9 @@ func (d *Daemon) clearWSHeartbeatAcks() {
 // （先续期 PAT 再做首次 workspace 同步），再启动各个后台循环，最后进入
 // pollLoop 直到 ctx 被取消（例如收到重启信号）。
 func (d *Daemon) Run(ctx context.Context) error {
+	if err := configureEmbeddedDsh(d.cfg.Profile); err != nil {
+		return fmt.Errorf("prepare embedded DSH bridge: %w", err)
+	}
 	// 包一层 ctx，使 handleUpdate 能通过 cancel 触发 daemon 优雅重启。
 	ctx, cancel := context.WithCancel(ctx)
 	d.cancelFunc = cancel
@@ -2467,6 +2470,7 @@ probeLoop:
 		// its failure is reported as what it is by the version-probe path
 		// above.
 		if name == "dsh" {
+			d.prepareManagedDsh(resolved.Path, version)
 			// What the probe said decides what may happen next. Only a
 			// confirmed-absent profile may install a bundle or condemn the
 			// runtime. An incompatible one is reported and neither installed
@@ -2476,6 +2480,7 @@ probeLoop:
 			// version probe gets.
 			switch probeDshMulticaProfile(ctx, resolved.Path) {
 			case dshProbeOK:
+				version = managedDshVersion(version)
 			case dshProbeMissingProfile:
 				d.logger.Warn("skip registering runtime: DSH Multica runtime profile is not installed",
 					"name", name, "path", resolved.Path)
@@ -8109,17 +8114,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "opencode" || provider == "codearts" {
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
-	approvalPolicy := "ask"
-	if task.Agent != nil {
-		switch task.Agent.SystemKey {
-		case "quality_supervision", "issue_review":
-			approvalPolicy = "never"
-		}
-	}
 	execOpts := agent.ExecOptions{
 		RuntimeInputClaim:          &protocol.RuntimeInputClaim{RuntimeID: task.RuntimeID, DispatchedAt: task.DispatchedAt},
 		RuntimeInputCapabilities:   runtimeInputCapabilities,
-		ApprovalPolicy:             approvalPolicy,
+		ApprovalPolicy:             "ask",
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
 		Model:                      model,
