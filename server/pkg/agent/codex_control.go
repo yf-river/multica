@@ -7,19 +7,6 @@ import (
 	"strings"
 )
 
-func codexGoalActivatingCommand(command string) bool {
-	command = strings.TrimSpace(command)
-	if !strings.HasPrefix(command, "/goal ") {
-		return false
-	}
-	switch strings.TrimSpace(strings.TrimPrefix(command, "/goal")) {
-	case "", "show", "pause", "clear", "complete":
-		return false
-	default:
-		return true
-	}
-}
-
 func (c *codexClient) observeGoalState(method string, params map[string]any) {
 	if method != "thread/goal/cleared" && method != "thread/goal/updated" {
 		return
@@ -68,8 +55,10 @@ func (c *codexClient) goalStopError() string {
 	switch status {
 	case "blocked", "budgetLimited", "usageLimited":
 		return "codex native goal stopped: " + status
-	default:
+	case "", "active", "paused", "complete":
 		return ""
+	default:
+		return "codex native goal has an unknown status: " + status
 	}
 }
 

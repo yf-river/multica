@@ -802,6 +802,7 @@ type hermesClient struct {
 	sessionID      string
 	onMessage      func(Message)
 	onPromptDone   func(hermesPromptResult)
+	onRequestSent  func(method string) // 请求写入完成后，调用方才能开放依赖该请求的控制入口。
 	onAgentRequest func(method string, id, params json.RawMessage) bool
 	// selectPermission 让某 ACP 方言收窄通用的 headless 权限策略。Reasonix 用它拒绝
 	// 同时携带 allow_once 选项的用户提问与 fresh-human 审批。nil 则对既有后端保留共享
@@ -898,6 +899,9 @@ func (c *hermesClient) request(ctx context.Context, method string, params any) (
 		delete(c.pending, id)
 		c.mu.Unlock()
 		return nil, fmt.Errorf("write %s: %w", method, err)
+	}
+	if c.onRequestSent != nil {
+		c.onRequestSent(method)
 	}
 
 	select {

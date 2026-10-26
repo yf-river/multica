@@ -25,10 +25,9 @@ func TestCodexRealGoalControl(t *testing.T) {
 	b := &codexBackend{cfg: Config{ExecutablePath: executable, Env: map[string]string{"CODEX_HOME": home}, Logger: slog.Default()}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	thread := ""
-	for _, command := range []string{"/goal control smoke objective", "/goal show", "/goal pause", "/goal show", "/goal clear"} {
+	for _, command := range []string{"/goal show", "/goal clear"} {
 		session, err := b.Execute(ctx, "", ExecOptions{
-			Cwd: cwd, Model: "gpt-6.1-sol", Command: command, CommandOnly: true, ResumeSessionID: thread, Timeout: 30 * time.Second,
+			Cwd: cwd, Model: "gpt-6.1-sol", Command: command, CommandOnly: true, Timeout: 30 * time.Second,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -39,12 +38,8 @@ func TestCodexRealGoalControl(t *testing.T) {
 		if result.Status != "completed" {
 			t.Fatalf("%s: status=%s error=%s", command, result.Status, result.Error)
 		}
-		if result.SessionID == "" || (thread != "" && result.SessionID != thread) {
-			t.Fatalf("thread continuity lost: %q -> %q", thread, result.SessionID)
-		}
-		thread = result.SessionID
-		if command == "/goal pause" && !strings.Contains(result.Output, "已暂停") {
-			t.Fatalf("goal was not paused: %s", result.Output)
+		if result.SessionID != "" {
+			t.Fatal("pure control published an unmaterialized thread")
 		}
 		if len(result.Usage) != 0 {
 			t.Fatalf("command-only control unexpectedly invoked a model: %+v", result.Usage)
@@ -128,4 +123,64 @@ func TestCodexRealPlanModeControl(t *testing.T) {
 		}
 		thread = result.SessionID
 	}
+}
+
+func TestCodexRealLiveGoalLostAck(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" || os.Getenv("MULTICA_CODEX_FAULT_TRANSPORT") != "1" {
+		t.Skip("real model transport fault injection is opt-in")
+	}
+	path, home, cwd := os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_HOME"), os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_CWD")
+	if path == "" || home == "" || cwd == "" {
+		t.Fatal("explicit fault transport, isolated account home and cwd required")
+	}
+	backend := &codexBackend{cfg: Config{ExecutablePath: path, Env: map[string]string{
+		"CODEX_HOME":                    home,
+		"MULTICA_CODEX_FAULT_REAL_PATH": os.Getenv("MULTICA_CODEX_FAULT_REAL_PATH"),
+		"MULTICA_CODEX_FAULT_TRACE":     os.Getenv("MULTICA_CODEX_FAULT_TRACE"),
+	}, Logger: slog.Default()}}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "Explain in 250 words how binary search works. Do not use tools, read files, run commands, or delegate.", ExecOptions{Cwd: cwd, Model: "gpt-6.1-sol", ThinkingLevel: "low", ServiceTier: "default", ExtraArgs: []string{"--disable", "multi_agent"}, Timeout: 85 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	goalComplete := false
+	var streamed strings.Builder
+	go func() {
+		defer close(drained)
+		for msg := range session.Messages {
+			if msg.Type == MessageText {
+				streamed.WriteString(msg.Content)
+			}
+			var event struct {
+				Kind string `json:"kind"`
+				Goal struct {
+					Status string `json:"status"`
+				} `json:"goal"`
+			}
+			if msg.Type == MessageRuntime && json.Unmarshal([]byte(msg.Content), &event) == nil && event.Kind == "goal" && event.Goal.Status == "complete" {
+				goalComplete = true
+			}
+		}
+	}()
+	for !session.CommandReady() {
+		select {
+		case <-ctx.Done():
+			t.Fatal("native command gate did not open")
+		case <-drained:
+			t.Fatalf("native execution ended before control: %+v", <-session.Result)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	_, err = session.RunCommand(ctx, "/goal Emit the exact text NATIVE_LOST_ACK_GOAL_OK, then mark this goal complete using update_goal. Do not use other tools or delegate.")
+	if err == nil {
+		t.Fatal("transport did not lose the native goal acknowledgement")
+	}
+	<-drained
+	result := <-session.Result
+	if result.Status != "completed" || !goalComplete || !strings.Contains(streamed.String(), "NATIVE_LOST_ACK_GOAL_OK") {
+		t.Fatalf("lost acknowledgement broke the native Goal lifecycle: status=%s complete=%t error=%s", result.Status, goalComplete, result.Error)
+	}
+	t.Logf("Native Goal completed after lost control acknowledgement; duration_ms=%d reported_models=%d", result.DurationMs, len(result.Usage))
 }

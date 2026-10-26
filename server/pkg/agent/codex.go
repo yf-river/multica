@@ -920,6 +920,9 @@ func isCodexBareTomlKey(s string) bool {
 }
 
 func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if err := validateNativeControlOnly(opts); err != nil {
+		return nil, err
+	}
 	// Execute 是对外入口：先跑一次完整 attempt，返回的 Session 消息流里，若首轮因
 	// 可重试原因失败，则内部再自动补一次 attempt（initialize / model_catalog_refresh）。
 	firstSession, err := b.executeOnce(ctx, prompt, opts, 1)
@@ -1365,6 +1368,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	var cleanupWaitErr error
 	drainAndWait := func() {
 		waitOnce.Do(func() {
+			c.commandReady.Store(false)
+			c.commandMu.Lock()
+			defer c.commandMu.Unlock()
+			if c.goalControlUncertain.Load() && c.getThreadID() != "" {
+				c.pauseGoalBeforeStop(c.getThreadID(), b.cfg.Logger)
+			}
 			stdin.Close()
 
 			grace := codexGracefulShutdown()
@@ -1467,8 +1476,6 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		defer close(resCh)
 		defer func() {
 			c.commandReady.Store(false)
-			c.commandMu.Lock()
-			defer c.commandMu.Unlock()
 			cancel()
 			drainAndWait()
 			c.interactions.stop()
@@ -1583,7 +1590,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		}
 		// 先建立带准确协作模式的用户回合，再激活 Goal。空闲线程上的
 		// goal/set 会自行启动回合，不能随后再发送一次 turn/start。
-		deferGoalCommand := !opts.CommandOnly && codexGoalActivatingCommand(opts.Command)
+		deferGoalCommand := !opts.CommandOnly && nativeGoalActivatingCommand(opts.Command)
 		if deferGoalCommand {
 			c.goalActive.Store(true)
 			c.goalEngaged.Store(true)
@@ -1599,8 +1606,8 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		}
 		if opts.CommandOnly {
 			resumeID := threadID
-			if !resumed && (opts.Command == "/plan" || opts.Command == "/plan off") {
-				// 空线程的设置变更不物化 rollout；聊天模式由控制面持久记录恢复。
+			if !resumed {
+				// 纯控制不物化 rollout；聊天控制选择由持久记录恢复。
 				resumeID = ""
 			}
 			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: resumeID})
@@ -2456,6 +2463,8 @@ type codexClient struct {
 	completedWithoutID   bool
 	goalActive           atomic.Bool
 	goalEngaged          atomic.Bool
+	goalMutationSequence atomic.Uint64
+	goalControlUncertain atomic.Bool
 	goalStatus           atomic.Value // string，原生目标停止原因
 	goalStateMu          sync.Mutex
 	goalRevision         uint64
@@ -2671,16 +2680,8 @@ func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, c
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if c.goalActive.Load() && threadID != "" {
-		// 先保存暂停状态，防止中断后的空闲钩子或进程恢复继续执行目标。
-		pauseCtx, cancelPause := context.WithTimeout(context.Background(), 2*time.Second)
-		_, err := c.request(pauseCtx, "thread/goal/set", map[string]any{"threadId": threadID, "status": "paused", "origin": "automatic"})
-		cancelPause()
-		if err != nil {
-			logger.Warn("codex goal pause before interrupt failed", "thread_id", threadID, "error", err)
-		} else {
-			c.goalActive.Store(false)
-		}
+	if (c.goalActive.Load() || c.goalControlUncertain.Load()) && threadID != "" {
+		c.pauseGoalBeforeStop(threadID, logger)
 	}
 	select {
 	case <-turnDone:
@@ -2720,7 +2721,7 @@ func interruptCodexTurn(c *codexClient, threadID string, turnDone <-chan bool, c
 	}
 }
 
-func (c *codexClient) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+func (c *codexClient) request(ctx context.Context, method string, params any) (response json.RawMessage, requestErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -2770,6 +2771,15 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 		return nil, err
 	}
 	data = append(data, '\n')
+	if pr.goalConfirmation != nil {
+		c.goalMutationSequence.Add(1)
+		c.goalControlUncertain.Store(true)
+		defer func() {
+			if requestErr == nil {
+				c.goalControlUncertain.Store(false)
+			}
+		}()
+	}
 	if _, err := c.write(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)

@@ -164,7 +164,7 @@ func TestCodexGoalPausePrecedesTurnCancellation(t *testing.T) {
 }
 
 func TestCodexGoalStopReasonsAreNotSuccess(t *testing.T) {
-	for _, status := range []string{"blocked", "budgetLimited", "usageLimited", "complete", "paused"} {
+	for _, status := range []string{"blocked", "budgetLimited", "usageLimited", "complete", "paused", "futureStatus"} {
 		t.Run(status, func(t *testing.T) {
 			c, _, _ := newTestCodexClient(t)
 			c.observeGoalState("thread/goal/updated", map[string]any{"goal": map[string]any{"status": status}})
@@ -173,7 +173,7 @@ func TestCodexGoalStopReasonsAreNotSuccess(t *testing.T) {
 			}
 			c.observeGoalState("thread/goal/updated", map[string]any{"goal": map[string]any{"status": "active"}})
 			c.observeGoalState("thread/goal/updated", map[string]any{"goal": map[string]any{"status": status}})
-			wantError := status == "blocked" || status == "budgetLimited" || status == "usageLimited"
+			wantError := status == "blocked" || status == "budgetLimited" || status == "usageLimited" || status == "futureStatus"
 			if (c.goalStopError() != "") != wantError {
 				t.Fatalf("incorrect stop result for %s", status)
 			}
@@ -274,5 +274,106 @@ func TestCodexLiveGoalKeepsFastNativeLimitState(t *testing.T) {
 	}
 	if c.goalActive.Load() || c.goalStopError() != "codex native goal stopped: usageLimited" {
 		t.Fatal("control reply overwrote the newer native limit state")
+	}
+}
+
+func TestCodexLiveGoalReconcilesUncertainMutationWithoutReplay(t *testing.T) {
+	for _, outcome := range []string{"active", "not_applied", "newer_terminal", "unavailable", "before_mutation"} {
+		t.Run(outcome, func(t *testing.T) {
+			c, _, _ := newTestCodexClient(t)
+			c.setThreadID("live-thread")
+			c.setActiveTurnID("live-turn")
+			c.commandReady.Store(true)
+			done, mutations, queries := 0, 0, 0
+			c.onTurnDone = func(bool) { done++ }
+			stdin := &fakeStdinWithHook{}
+			stdin.afterWrite = func() {
+				lines := stdin.Lines()
+				var request struct {
+					ID     int    `json:"id"`
+					Method string `json:"method"`
+				}
+				if json.Unmarshal([]byte(lines[len(lines)-1]), &request) != nil {
+					t.Fatal("invalid outgoing command")
+				}
+				if request.Method == "thread/goal/set" {
+					mutations++
+					// 不完整回执不能证明变更未生效，后续只能查询而不能重发。
+					c.handleLine(fmt.Sprintf(`{"id":%d,"result":{}}`, request.ID))
+					return
+				}
+				queries++
+				if outcome == "before_mutation" {
+					c.handleLine(fmt.Sprintf(`{"id":%d,"error":{"code":-32000,"message":"query rejected"}}`, request.ID))
+					return
+				}
+				state := `{"goal":null}`
+				if queries > 1 {
+					switch outcome {
+					case "active", "newer_terminal":
+						state = `{"goal":{"objective":"new objective","status":"active"}}`
+					case "unavailable":
+						state = `{}`
+					}
+				}
+				c.handleLine(fmt.Sprintf(`{"id":%d,"result":%s}`, request.ID, state))
+				if queries > 1 && outcome == "newer_terminal" {
+					c.handleLine(`{"method":"thread/goal/updated","params":{"threadId":"live-thread","goal":{"objective":"new objective","status":"usageLimited"}}}`)
+				}
+			}
+			c.stdin = stdin
+			if _, err := c.runLiveCommand(t.Context(), t.Context(), "/goal new objective", ExecOptions{}); err == nil {
+				t.Fatal("unconfirmed mutation was reported as confirmed")
+			}
+			if outcome == "before_mutation" {
+				if mutations != 0 || queries != 1 || c.goalActive.Load() || c.goalEngaged.Load() || c.getTurnError() != "" {
+					t.Fatal("pre-mutation failure changed execution state")
+				}
+				return
+			}
+			if mutations != 1 || queries != 2 {
+				t.Fatalf("mutation was replayed or state not reconciled: mutations=%d queries=%d", mutations, queries)
+			}
+			if outcome == "unavailable" {
+				if !c.goalControlUncertain.Load() || c.commandReady.Load() || c.getTurnError() == "" || done != 1 {
+					t.Fatal("unknown goal state did not fail and fence the execution")
+				}
+				return
+			}
+			if c.goalControlUncertain.Load() || c.getTurnError() != "" || !c.commandReady.Load() {
+				t.Fatal("verified native state did not settle the control uncertainty")
+			}
+			if c.goalActive.Load() != (outcome == "active") || (outcome == "not_applied" && c.goalEngaged.Load()) {
+				t.Fatal("reconciliation did not preserve the actual native goal")
+			}
+			if outcome == "newer_terminal" && c.goalStopError() != "codex native goal stopped: usageLimited" {
+				t.Fatal("reconciliation overwrote a newer native terminal event")
+			}
+		})
+	}
+}
+
+func TestCodexUncertainCleanupPreservesCompletedGoal(t *testing.T) {
+	c, _, _ := newTestCodexClient(t)
+	c.setThreadID("completed-thread")
+	c.goalControlUncertain.Store(true)
+	c.goalEngaged.Store(true)
+	stdin := &fakeStdinWithHook{}
+	stdin.afterWrite = func() {
+		lines := stdin.Lines()
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		json.Unmarshal([]byte(lines[len(lines)-1]), &request)
+		if request.Method != "thread/goal/get" {
+			t.Fatal("cleanup changed an already completed native goal")
+		}
+		c.handleLine(fmt.Sprintf(`{"id":%d,"result":{"goal":{"objective":"finish","status":"complete"}}}`, request.ID))
+	}
+	c.stdin = stdin
+	c.pauseGoalBeforeStop(c.getThreadID(), c.cfg.Logger)
+	if c.goalControlUncertain.Load() || c.goalActive.Load() || c.goalStopError() != "" || len(stdin.Lines()) != 1 {
+		t.Fatal("completed goal was not preserved at cleanup")
 	}
 }

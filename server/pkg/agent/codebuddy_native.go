@@ -15,6 +15,9 @@ import (
 // 普通 CodeBuddy 运行使用 stream-json；带 Goal 的会话使用原生 ACP 控制和循环。
 // 每次执行仍独占自己的进程、MCP 和任务凭据，常驻复用由独立资源生命周期接管。
 func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if err := validateNativeControlOnly(opts); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -71,6 +74,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	var active atomic.Bool
 	var commandReady atomic.Bool
 	var commandMu sync.Mutex
+	var controlFailure string
 	var goalWasActive atomic.Bool
 	var humanStoppedGoal atomic.Bool
 	var client *hermesClient
@@ -85,6 +89,11 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	broker := newInteractionBroker("codebuddy", runCtx, opts.RequestInteraction, emit)
 	client = &hermesClient{cfg: b.cfg, stdin: stdin, pending: make(map[int]*pendingRPC), pendingTools: make(map[string]*pendingToolCall), onMessage: emit,
 		acceptNotification: func(string) bool { return accepting.Load() }, toolStartCarriesFinalInput: true,
+		onRequestSent: func(method string) {
+			if method == "session/prompt" {
+				commandReady.Store(true)
+			}
+		},
 	}
 	client.onAgentRequest = func(method string, id, params json.RawMessage) bool {
 		stateMu.RLock()
@@ -199,6 +208,29 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		}
 		goal, err := requestCodebuddyGoal(call, client, sid, action, condition)
 		if err != nil {
+			var rejected *acpRPCError
+			if action != "snapshot" && !errors.As(err, &rejected) {
+				verify, cancelVerify := context.WithTimeout(context.WithoutCancel(runCtx), 2*time.Second)
+				actual, verifyErr := requestCodebuddyGoal(verify, client, sid, "snapshot", "")
+				cancelVerify()
+				activeGoal := actual.HasGoal && actual.ActiveGoal != nil && !actual.ActiveGoal.Paused
+				verified := verifyErr == nil && ((action == "set" && activeGoal && actual.ActiveGoal.Condition == condition) ||
+					(action == "resume" && activeGoal) || (action == "pause" && actual.HasGoal && actual.ActiveGoal != nil && actual.ActiveGoal.Paused) ||
+					(action == "clear" && !actual.HasGoal))
+				if verified {
+					if activeGoal {
+						goalWasActive.Store(true)
+						humanStoppedGoal.Store(false)
+					} else {
+						humanStoppedGoal.Store(true)
+					}
+					emitCodebuddyGoal(client, sid, "snapshot", actual)
+				} else {
+					controlFailure = "CodeBuddy goal control outcome could not be verified"
+					commandReady.Store(false)
+					cancel()
+				}
+			}
 			return "", err
 		}
 		if goal.HasGoal && goal.ActiveGoal != nil && !goal.ActiveGoal.Paused {
@@ -223,6 +255,9 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			commandReady.Store(false)
 			commandMu.Lock()
 			defer commandMu.Unlock()
+			if controlFailure != "" {
+				result.Status, result.Error = "failed", controlFailure
+			}
 			active.Store(false)
 			// 取消必须先让原生 Goal 停止续跑，避免恢复同一会话时悄悄重新开始。
 			if result.Status != "completed" && result.SessionID != "" {
@@ -386,7 +421,6 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 				return
 			}
 			goalWasActive.Store(before.HasGoal && before.ActiveGoal != nil && !before.ActiveGoal.Paused)
-			commandReady.Store(true)
 			raw, err := client.request(runCtx, "session/prompt", map[string]any{"sessionId": sid, "prompt": []map[string]string{{"type": "text", "text": prompt}}})
 			if err != nil {
 				fail(err)
