@@ -2187,6 +2187,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 						} `json:"thread"`
 					}
 					if json.Unmarshal(resumeResult, &restored) != nil || !sameCodexResidentRollout(restored.Thread.Path, c.cfg.CodexResumePath) || threadID != priorThreadID {
+						logger.Warn("codex native resume identity mismatch", "expected_thread_id", priorThreadID, "actual_thread_id", threadID, "expected_path", c.cfg.CodexResumePath, "actual_path", restored.Thread.Path)
 						return "", false, errors.New("codex native resume did not use its persistent conversation rollout")
 					}
 				}

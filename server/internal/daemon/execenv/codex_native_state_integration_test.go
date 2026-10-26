@@ -8,7 +8,9 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -18,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -312,4 +315,86 @@ func TestCodexRealStoredActiveGoalQueryDoesNotRunOrPause(t *testing.T) {
 		t.Fatalf("query started native model turns: %d %v", turns, err)
 	}
 	t.Log("query_preserved_active=true pause_complete_clear_confirmed=true native_turns=0 model_usage_entries=0 resident_retained=true")
+}
+
+func TestCodexRealCompressedNativeSessionResume(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
+		t.Skip("real compressed native session smoke is opt-in")
+	}
+	executable, account := os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEX_CONTROL_SMOKE_HOME")
+	if executable == "" || account == "" {
+		t.Fatal("explicit CLI and isolated account required")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	version, err := agent.DetectVersion(ctx, agent.NewCommand(executable, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, home, store := t.TempDir(), t.TempDir(), t.TempDir()
+	copyCodexNativeSmokeAccount(t, account, source)
+	copyCodexNativeSmokeAccount(t, account, home)
+	thread := createCodexGoalFixture(t, ctx, executable, source, "", "paused")
+	paths := findCodexRollouts(filepath.Join(source, "sessions"), thread)
+	if len(paths) != 1 {
+		t.Fatal("source has no unique rollout")
+	}
+	input, err := os.Open(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.OpenFile(paths[0]+".zst", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		_ = input.Close()
+		t.Fatal(err)
+	}
+	encoder, err := zstd.NewWriter(output, zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		_ = input.Close()
+		_ = output.Close()
+		t.Fatal(err)
+	}
+	_, copyErr := io.Copy(encoder, input)
+	if err := errors.Join(copyErr, input.Close(), encoder.Close(), output.Close()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths[0]); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := agent.NewCodexProcessPool(filepath.Join(t.TempDir(), "pool"), 1, time.Minute, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	state, err := PrepareCodexNativeState(ctx, home, source, store, "owned-runtime", thread, pool.RetireHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(source); err != nil {
+		t.Fatal(err)
+	}
+	backend, err := agent.ResolveBackend("codex", agent.Config{ExecutablePath: executable, CodexVersion: version, TaskID: "owned-compressed-resume", Logger: slog.Default(), CodexPool: pool, ResidentSessionKey: "owned-compressed-resume", CodexResumePath: state.ResumePath, Env: map[string]string{"CODEX_HOME": home, "CODEX_SQLITE_HOME": state.SQLiteHome}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(ctx, "", agent.ExecOptions{Cwd: home, Command: "/plan", CommandOnly: true, ResumeSessionID: thread, Model: "gpt-6.1-sol", ThinkingLevel: "low", Timeout: 25 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status != "completed" || result.SessionID != thread || !strings.Contains(result.Output, "计划模式") || len(result.Usage) != 0 {
+		t.Fatalf("compressed native resume: status=%s error=%s output=%s", result.Status, result.Error, result.Output)
+	}
+	plain := strings.TrimSuffix(state.ResumePath, ".zst")
+	if _, err := os.Stat(plain); err != nil {
+		t.Fatalf("native resume did not materialize a writable plain rollout: %v", err)
+	}
+	next := t.TempDir()
+	copyCodexNativeSmokeAccount(t, account, next)
+	if _, err := PrepareCodexNativeState(ctx, next, "", store, "owned-runtime", thread, pool.RetireHome); err != nil {
+		t.Fatalf("next task could not reuse the decompressed native session: %v", err)
+	}
+	t.Log("compressed_source_removed=true native_resume_and_plan_update_confirmed=true model_usage_entries=0")
 }

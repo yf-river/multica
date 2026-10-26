@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pelletier/go-toml/v2"
 	"modernc.org/sqlite"
 )
@@ -177,7 +178,7 @@ func restoreCodexNativeRollouts(ctx context.Context, home, source, store, resume
 			}
 			paths = findCodexRollouts(store, resumeID)
 		}
-		if len(paths) == 1 && strings.HasSuffix(paths[0], ".jsonl") {
+		if len(paths) == 1 && supportedCodexNativeRollout(paths[0]) {
 			if err := verifyCodexNativeRollout(paths[0], resumeID); err != nil {
 				return "", err
 			}
@@ -235,7 +236,7 @@ func relocateCodexNativeSnapshot(ctx context.Context, snapshot, store string) er
 			return err
 		}
 		matches := findCodexRollouts(store, item.id)
-		if len(matches) != 1 || !strings.HasSuffix(matches[0], ".jsonl") {
+		if len(matches) != 1 || !supportedCodexNativeRollout(matches[0]) {
 			_ = rows.Close()
 			return errors.New("Codex native snapshot has history outside its persistent conversation store")
 		}
@@ -267,16 +268,29 @@ func verifyCodexNativeRollout(path, id string) error {
 		return err
 	}
 	defer file.Close()
+	var input io.Reader = file
+	if strings.HasSuffix(path, ".jsonl.zst") {
+		decoder, err := zstd.NewReader(file, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true), zstd.WithDecoderMaxMemory(64<<20))
+		if err != nil {
+			return fmt.Errorf("read compressed Codex rollout metadata: %w", err)
+		}
+		defer decoder.Close()
+		input = decoder
+	}
 	var metadata struct {
 		Type    string `json:"type"`
 		Payload struct {
 			ID string `json:"id"`
 		} `json:"payload"`
 	}
-	if json.NewDecoder(io.LimitReader(file, 32<<20)).Decode(&metadata) == nil && metadata.Type == "session_meta" && metadata.Payload.ID == id {
+	if json.NewDecoder(io.LimitReader(input, 32<<20)).Decode(&metadata) == nil && metadata.Type == "session_meta" && metadata.Payload.ID == id {
 		return nil
 	}
 	return errors.New("Codex native rollout metadata does not match its indexed thread")
+}
+
+func supportedCodexNativeRollout(path string) bool {
+	return strings.HasSuffix(path, ".jsonl") || strings.HasSuffix(path, ".jsonl.zst")
 }
 
 // 原任务的真目录先保留为备份；原路径连接持久存储，兼容原生索引内的旧绝对路径。

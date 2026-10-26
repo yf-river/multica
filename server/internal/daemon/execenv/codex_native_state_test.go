@@ -3,13 +3,52 @@
 package execenv
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
+
+func TestCodexNativeStatePreservesCompressedRollout(t *testing.T) {
+	source, current, store := codexNativeStateHome(t), codexNativeStateHome(t), t.TempDir()
+	const id = "01990000-1111-7222-8333-444444444444"
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := encoder.EncodeAll([]byte(`{"type":"session_meta","payload":{"id":"`+id+`"}}`+"\n"), nil)
+	encoder.Close()
+	path := filepath.Join(source, "sessions", "rollout-2026-10-26-"+id+".jsonl.zst")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, compressed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	index, err := sql.Open("sqlite", filepath.Join(source, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	if _, err := index.Exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, archived INTEGER); INSERT INTO threads VALUES (?,?,0)", id, path); err != nil {
+		t.Fatal(err)
+	}
+	state, err := PrepareCodexNativeState(t.Context(), current, source, store, "runtime", id, nil)
+	if err != nil || !strings.HasSuffix(state.ResumePath, ".jsonl.zst") {
+		t.Fatalf("compressed native migration: %+v %v", state, err)
+	}
+	if data, err := os.ReadFile(state.ResumePath); err != nil || !bytes.Equal(data, compressed) {
+		t.Fatal("compressed rollout bytes changed")
+	}
+	if err := verifyCodexNativeRollout(state.ResumePath, "another-thread"); err == nil {
+		t.Fatal("compressed rollout escaped thread identity verification")
+	}
+}
 
 func codexNativeStateHome(t *testing.T) string {
 	t.Helper()

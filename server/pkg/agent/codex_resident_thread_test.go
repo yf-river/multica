@@ -67,3 +67,29 @@ func TestCodexNativeResumeRequiresOriginalIdentityAndPersistentRollout(t *testin
 		})
 	}
 }
+
+func TestCodexNativeResumeAcceptsOnlySameDirectoryCompressionTransition(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	compressed := filepath.Join(root, "rollout-owned.jsonl.zst")
+	plain := filepath.Join(root, "rollout-owned.jsonl")
+	for _, path := range []string{compressed, plain, filepath.Join(other, filepath.Base(plain))} {
+		if err := os.WriteFile(path, []byte("owned fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !sameCodexResidentRollout(plain, compressed) {
+		t.Fatal("native decompression changed the logical rollout identity")
+	}
+	if sameCodexResidentRollout(filepath.Join(other, filepath.Base(plain)), compressed) {
+		t.Fatal("compression transition accepted another directory")
+	}
+	if sameCodexResidentRollout(filepath.Join(root, "another.jsonl"), compressed) {
+		t.Fatal("compression transition accepted another thread filename")
+	}
+	if err := os.Remove(compressed); err != nil {
+		t.Fatal(err)
+	}
+	if !sameCodexResidentRollout(plain, compressed) {
+		t.Fatal("native removal of the old encoding broke resumed identity")
+	}
+}

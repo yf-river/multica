@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -15,7 +16,26 @@ func sameCodexResidentRollout(actual, expected string) bool {
 	}
 	left, leftErr := os.Stat(actual)
 	right, rightErr := os.Stat(expected)
-	return leftErr == nil && rightErr == nil && os.SameFile(left, right)
+	if leftErr == nil && rightErr == nil && os.SameFile(left, right) {
+		return true
+	}
+	plainActual, plainExpected := actual, expected
+	if strings.HasSuffix(actual, ".jsonl.zst") {
+		plainActual = strings.TrimSuffix(actual, ".zst")
+	}
+	if strings.HasSuffix(expected, ".jsonl.zst") {
+		plainExpected = strings.TrimSuffix(expected, ".zst")
+	}
+	if (plainActual == actual && plainExpected == expected) || filepath.Base(plainActual) != filepath.Base(plainExpected) {
+		return false
+	}
+	actualParent, actualErr := os.Stat(filepath.Dir(plainActual))
+	expectedParent, expectedErr := os.Stat(filepath.Dir(plainExpected))
+	if actualErr != nil || expectedErr != nil || !os.SameFile(actualParent, expectedParent) {
+		return false
+	}
+	// 原生解压使用同目录同名的 plain 文件；原编码和可写编码属于同一已验证线程。
+	return (leftErr == nil && left.Mode().IsRegular()) || (rightErr == nil && right.Mode().IsRegular())
 }
 
 func (c *codexClient) currentThreadConfig() map[string]any {
