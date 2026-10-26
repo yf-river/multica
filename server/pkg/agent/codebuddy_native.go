@@ -36,7 +36,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	processCtx, stopProcess := context.WithCancel(context.WithoutCancel(ctx))
 	args := codebuddyNativeArgs(opts, b.cfg)
 	cmd := b.cfg.commandAt(executable).exec(processCtx, args...)
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = buildCodebuddyEnv(b.cfg.Env)
 	cmd.Dir = opts.Cwd
 	hideAgentWindow(cmd)
 	cmd.WaitDelay = 5 * time.Second

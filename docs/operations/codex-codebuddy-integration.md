@@ -436,3 +436,23 @@ ACP 接入现在依据父调用字段隔离根请求：子消息继续写入执�
 
 该样本验证前台子调用协议；常驻池仍需登记子代关联、解除旧凭据并验证 Goal 自动
 回合的代际归属，尚不能据此宣称平台常驻隔离或业务验收完成。
+
+## 第二十一阶段：原生前台约束和 Goal 自动回合
+
+ACP 启动采用与 stream-json 相同的受管环境，强制前台执行；继承环境和任务配置
+中的 `CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS=0` 均不能覆盖该约束。前台 Agent
+仍可用，不能把禁用后台误实现为删除全部子调用能力。
+
+- `phase21-codebuddy-foreground-tests.log`：CodeBuddy race 回归通过。子调用夹具在
+  环境和任务配置均要求后台时，核对原生进程实际收到的前台约束。
+- `phase21-native-foreground-child.log`：通过当前 Go ACP 适配器和真实 2.176 / Flash
+  完成前台 Agent → Bash → 父答复，通过（14.94s）。子正文可见，最终输出仅归父
+  请求，父子 SDK 用量有独立轨迹（1 个模型、1 条额外轨迹）。使用隔离账号及专用
+  工作目录，配置故意要求后台，适配器仍执行前台约束。
+- `phase21-codebuddy-goal-generation-contract.json`：真实 Goal 自动执行通过；
+  `UserPromptSubmit` 提供 `is_internal_continuation=true` 和原生 generation，
+  与 ACP 根请求及后续 Bash hook 对应。Goal 的 CID 由 CLI 生成；原始探测结果中
+  未使用的随机客户端 CID 不能当成原生父 CID。
+
+这些证据补齐前台生命周期和自动回合协议，CodeBuddy 常驻凭据换发与旧代际拒绝仍
+需实现。完整业务、性能、固定 int 和生产验收状态仍为未完成。

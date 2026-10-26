@@ -7,10 +7,47 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCodebuddyRealNativeForegroundChild(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
+		t.Skip("real foreground child model smoke is opt-in")
+	}
+	path, home := os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_PATH"), os.Getenv("MULTICA_CODEBUDDY_CONTROL_SMOKE_HOME")
+	if path == "" || home == "" {
+		t.Fatal("explicit executable and isolated smoke home required")
+	}
+	work := t.TempDir()
+	wrapper := filepath.Join(work, "codebuddy-foreground-only")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+shellQuote(path)+" --tools Agent,Bash --strict-mcp-config \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: wrapper, Logger: slog.Default(), Env: map[string]string{"HOME": home, "CODEBUDDY_CONFIG_DIR": filepath.Join(home, "codebuddy"), codebuddyDisableBackgroundTasksEnv: "0"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	session, err := backend.executeNative(ctx, "Use Agent exactly once to delegate one foreground general-purpose subagent. Ask it to use Bash exactly once to run printf NATIVE_CHILD_SCOPE_OK and return that output. Wait for the child to finish. Then your final answer must be exactly NATIVE_PARENT_SCOPE_OK. Do not use background tasks, teams, other tools, files, or further delegation.", ExecOptions{Cwd: work, Model: "deepseek-v4.1-flash", Timeout: 110 * time.Second, MaxTurns: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childVisible := false
+	for msg := range session.Messages {
+		if (msg.Type == MessageText && strings.Contains(msg.Content, "NATIVE_CHILD_SCOPE_OK")) || (msg.Type == MessageToolResult && strings.Contains(msg.Output, "NATIVE_CHILD_SCOPE_OK")) {
+			childVisible = true
+		}
+	}
+	result := <-session.Result
+	if result.Status != "completed" || !childVisible || !strings.Contains(result.Output, "NATIVE_PARENT_SCOPE_OK") || strings.Contains(result.Output, "NATIVE_CHILD_SCOPE_OK") {
+		t.Fatalf("foreground child or parent answer failed: child=%v status=%s error=%s output=%q", childVisible, result.Status, result.Error, result.Output)
+	}
+	if result.ProviderTraceID == "" || len(result.Usage) == 0 || len(result.ExtraTraces) == 0 {
+		t.Fatalf("missing parent/child accounting: root=%v models=%d extra_traces=%d", result.ProviderTraceID != "", len(result.Usage), len(result.ExtraTraces))
+	}
+	t.Logf("Foreground child complete; separate parent answer; models=%d extra_traces=%d duration_ms=%d", len(result.Usage), len(result.ExtraTraces), result.DurationMs)
+}
 
 func TestCodebuddyRealNativeGoalControl(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {

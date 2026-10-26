@@ -23,6 +23,9 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 	childFixture := os.Getenv("MULTICA_CODEBUDDY_NATIVE_CHILD_FIXTURE") == "1"
 	if childFixture {
 		hasGoal = false
+		if os.Getenv(codebuddyDisableBackgroundTasksEnv) != "1" {
+			os.Exit(3)
+		}
 	}
 	var promptID json.RawMessage
 	condition := "fixture goal"
@@ -97,7 +100,8 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 }
 
 func TestCodebuddyNativeChildDoesNotReplaceParentTurn(t *testing.T) {
-	backend := &codebuddyBackend{cfg: Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyNativeFixtureProcess$", "--"}, Logger: slog.Default(), Env: map[string]string{"MULTICA_CODEBUDDY_NATIVE_FIXTURE": "1", "MULTICA_CODEBUDDY_NATIVE_CHILD_FIXTURE": "1", "CODEBUDDY_CONFIG_DIR": t.TempDir()}}}
+	t.Setenv(codebuddyDisableBackgroundTasksEnv, "0")
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyNativeFixtureProcess$", "--"}, Logger: slog.Default(), Env: map[string]string{"MULTICA_CODEBUDDY_NATIVE_FIXTURE": "1", "MULTICA_CODEBUDDY_NATIVE_CHILD_FIXTURE": "1", "CODEBUDDY_CONFIG_DIR": t.TempDir(), codebuddyDisableBackgroundTasksEnv: "0"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	session, err := backend.Execute(ctx, "continue", ExecOptions{NativeGoal: true, Model: "flash", Cwd: t.TempDir()})
