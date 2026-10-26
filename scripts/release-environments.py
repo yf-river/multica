@@ -714,6 +714,17 @@ def reviewed_curated_nullable_columns(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def reviewed_dsh_interaction_changes(migration):
+    # 默认值和新增列不回填旧数据；约束只扩展已有取值，回退前须清退等待人工的任务。
+    reviewed = {
+        '674_task_interaction_lease.up.sql': 'dd5fe5d3328d15dcda9614b337ca51b799586f3f836edf5c151df0e64b5734e7',
+        '681_task_interaction_continuation.up.sql': 'bfc10ed40926a386de0bd6b7309fdede8a1ce3d0a72cbaa868de2228d443a462',
+        '682_task_interaction_dsh.up.sql': '568e79e51669e15b736d0dc62cebb4edd69325ca61ca7dba02a292afa0bedb22',
+        '683_task_waiting_human.up.sql': '5b7e8aec9b6725fd049ee7815e6762df2154c064131617336523a74ddd3daade',
+    }
+    return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
+
+
 def additive_statement(statement):
     # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
     return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
@@ -729,7 +740,7 @@ def validate_pending_migrations(release, previous):
         statements=[part.strip() for part in sql.split(';') if part.strip()]
         for statement in statements:
             if additive_statement(statement): continue
-            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration) or reviewed_curated_nullable_columns(migration):
+            if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration) or reviewed_curated_nullable_columns(migration) or reviewed_dsh_interaction_changes(migration):
                 continue
             raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
 def prepare_database(release, cfg, previous):

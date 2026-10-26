@@ -460,6 +460,32 @@ class ReleaseTests(unittest.TestCase):
             unknown=target/'999_unknown.up.sql';unknown.write_bytes((source/names[0]).read_bytes())
             self.assertFalse(r.reviewed_curated_nullable_columns(unknown))
 
+    def test_dsh_interaction_migrations_require_exact_review(self):
+        source=Path(__file__).parent.parent/'server/migrations'
+        names=('674_task_interaction_lease.up.sql','681_task_interaction_continuation.up.sql',
+               '682_task_interaction_dsh.up.sql','683_task_waiting_human.up.sql')
+        with tempfile.TemporaryDirectory() as folder:
+            old=Path(folder)/'old';new=Path(folder)/'new'
+            (old/'server/migrations').mkdir(parents=True)
+            target=new/'server/migrations';target.mkdir(parents=True)
+            for name in names:
+                migration=target/name;migration.write_bytes((source/name).read_bytes())
+                self.assertTrue(r.reviewed_dsh_interaction_changes(migration))
+            r.validate_pending_migrations(new,old)
+            for name in names:
+                migration=target/name
+                original=migration.read_bytes()
+                migration.write_bytes(original+b'\nDELETE FROM agent_task_queue;\n')
+                self.assertFalse(r.reviewed_dsh_interaction_changes(migration))
+                with self.assertRaisesRegex(RuntimeError,'需要单独的数据库兼容方案'):
+                    r.validate_pending_migrations(new,old)
+                migration.write_bytes(original)
+            unknown=target/'999_unknown.up.sql'
+            unknown.write_bytes((source/names[0]).read_bytes())
+            self.assertFalse(r.reviewed_dsh_interaction_changes(unknown))
+            with self.assertRaisesRegex(RuntimeError,'需要单独的数据库兼容方案'):
+                r.validate_pending_migrations(new,old)
+
     def test_reviewed_trace_migrations_reject_changed_sql(self):
         source=Path(__file__).parent.parent/'server/migrations'
         names=('643_supervision_material_trace_usage.up.sql', '645_supervision_round_preparation_budget.up.sql', '649_supervision_trace_scope.up.sql')
