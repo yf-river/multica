@@ -518,10 +518,12 @@ func (s *Service) dispatch(ctx context.Context, ws string) error {
 		return err
 	}
 	scope := "manual"
+	scopeRound := ""
 	if !manual {
 		scope = "completion"
+		scopeRound = round.ID
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO supervision_batch_round(workspace_id,batch_id,round_id,scope) VALUES($1,$2,NULLIF($3,'')::uuid,$4)`, ws, batch, round.ID, scope); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO supervision_batch_round(workspace_id,batch_id,round_id,scope) VALUES($1,$2,NULLIF($3,'')::uuid,$4)`, ws, batch, scopeRound, scope); err != nil {
 		return err
 	}
 	var current json.RawMessage
@@ -845,7 +847,7 @@ func (s *Service) fail(ctx context.Context, batch string, cause error) error {
       UPDATE supervision_subject s SET failures=failures+1,error=$2,next_attempt_at=now()+make_interval(secs=>60*power(5,LEAST(failures,2))::int)
       FROM failed f WHERE s.workspace_id=f.workspace_id AND s.issue_id=f.issue_id
       AND NOT EXISTS(SELECT 1 FROM supervision_batch_round br JOIN supervision_round r ON r.id=br.round_id AND r.workspace_id=br.workspace_id
-        WHERE br.batch_id=f.id AND r.status='closed')`, batch, cause.Error())
+        WHERE br.batch_id=f.id AND br.scope='completion' AND r.status='closed')`, batch, cause.Error())
 	return err
 }
 
@@ -856,10 +858,10 @@ func (s *Service) Commit(ctx context.Context, ws, batch, task string, result Res
 		return err
 	}
 	defer tx.Rollback(ctx)
-	// 1. 先锁批次归属的轮次，再锁批次与台账：重开路径也是「轮次 → 批次」的顺序，
+	// 完成批次先锁归属轮次，再锁批次与台账；重开路径采用相同顺序，
 	// 运行期间重开时这里会看到已关闭状态。
 	var roundID string
-	err = tx.QueryRow(ctx, `SELECT COALESCE(round_id::text,'') FROM supervision_batch_round WHERE workspace_id=$1 AND batch_id=$2`, ws, batch).Scan(&roundID)
+	err = tx.QueryRow(ctx, `SELECT CASE WHEN scope='completion' THEN COALESCE(round_id::text,'') ELSE '' END FROM supervision_batch_round WHERE workspace_id=$1 AND batch_id=$2`, ws, batch).Scan(&roundID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}

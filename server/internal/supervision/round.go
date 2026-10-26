@@ -105,7 +105,7 @@ func (s *Service) CloseOpenRound(ctx context.Context, ws, issue, reason string) 
 	if _, err = tx.Exec(ctx, `UPDATE supervision_batch b SET status='cancelled',completed_at=now(),
       error='任务重新打开，本轮监督已停止；已完成的结论和证据保留。'
       WHERE b.workspace_id=$1 AND b.status='preparing'
-      AND EXISTS(SELECT 1 FROM supervision_batch_round br WHERE br.workspace_id=b.workspace_id AND br.batch_id=b.id AND br.round_id=$2)`, ws, round); err != nil {
+      AND EXISTS(SELECT 1 FROM supervision_batch_round br WHERE br.workspace_id=b.workspace_id AND br.batch_id=b.id AND br.scope='completion' AND br.round_id=$2)`, ws, round); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -128,7 +128,7 @@ func (s *Service) reconcileRounds(ctx context.Context, ws string) error {
       error='任务重新打开，本轮监督已停止；已完成的结论和证据保留。'
       WHERE b.workspace_id=$1 AND b.status='preparing'
       AND EXISTS(SELECT 1 FROM supervision_batch_round br JOIN supervision_round r ON r.id=br.round_id AND r.workspace_id=br.workspace_id
-        WHERE br.workspace_id=b.workspace_id AND br.batch_id=b.id AND r.status='closed')`, ws); err != nil {
+        WHERE br.workspace_id=b.workspace_id AND br.batch_id=b.id AND br.scope='completion' AND r.status='closed')`, ws); err != nil {
 		return err
 	}
 	// 2. 升级前登记的批次没有轮次归属；任务未完成时不再派发，避免旧队列在收敛后
@@ -227,7 +227,7 @@ func closeRoundTx(ctx context.Context, tx pgx.Tx, ws, round, reason string) erro
 	_, err = tx.Exec(ctx, `UPDATE supervision_batch b SET status='cancelled',completed_at=now(),
       error='任务重新打开，本轮监督已停止；已完成的结论和证据保留。'
       WHERE b.workspace_id=$1 AND b.status='preparing'
-      AND EXISTS(SELECT 1 FROM supervision_batch_round br WHERE br.workspace_id=b.workspace_id AND br.batch_id=b.id AND br.round_id=$2)`, ws, round)
+      AND EXISTS(SELECT 1 FROM supervision_batch_round br WHERE br.workspace_id=b.workspace_id AND br.batch_id=b.id AND br.scope='completion' AND br.round_id=$2)`, ws, round)
 	return err
 }
 
