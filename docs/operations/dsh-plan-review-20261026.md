@@ -73,3 +73,8 @@ GONG-94 已以固定提交 `308769403c243a114c5871e35ce5bdb700b50f6e` 通过 ver
 私有最终证据为 `.run/evidence/dsh-plan-review/verify-3-032-final/`、`int-032-final/` 与 `settled-032-delivery.json`。用户私有会话、认证及生成 profile 不进入仓库。
 
 后续显式 Agent 能力与另一任务 `feat/agent-sandbox-mode` 部分重叠；该任务引入 672 迁移，与本交付公共交互迁移编号冲突，且未通过发布门禁。应先核对并复用其可用能力，合并时重新分配未发布迁移编号并验收，不能直接叠加两套迁移。知识库功能、轨迹分析及 SDK transport 仍按各自阶段交付。
+
+
+## 生产候选范围整理
+
+用户已明确批准 Bridge 自动供给与计划卡片发布生产。生产候选删除 daemon 中按 system_key 选择 approval_policy=never 的自动角色映射，使用生产原有 ask 姿态；共享的协议字段保留供后续显式权限阶段使用。本次不发布角色只读行为或其他会话的 sandbox_mode 配置。候选变化需要重新固定并按原交付门禁验收；此前候选证据保留，不覆盖。

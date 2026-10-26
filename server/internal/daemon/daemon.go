@@ -8118,20 +8118,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "opencode" || provider == "codearts" {
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
-	approvalPolicy := "ask"
-	if task.Agent != nil {
-		switch task.Agent.SystemKey {
-		case "quality_supervision", "issue_review":
-			approvalPolicy = "never"
-		}
-	}
 	if task.InteractionContinuation && (provider != "dsh" || task.PriorSessionID == "" || task.PriorWorkDir != env.WorkDir || os.Getenv("MULTICA_DSH_INTERACTIONS") != "1") {
 		return TaskResult{}, errors.New("原生交互无法恢复，请启用 DSH 交互并恢复原会话后重试")
 	}
 	execOpts := agent.ExecOptions{
 		HumanInteractions:          provider == "dsh" && os.Getenv("MULTICA_DSH_INTERACTIONS") == "1",
 		PlanDecision:               task.PlanDecision,
-		ApprovalPolicy:             approvalPolicy,
+		ApprovalPolicy:             "ask",
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		Cwd:                        env.WorkDir,
 		Model:                      model,
