@@ -227,6 +227,13 @@ class Worker:
     def prepare(self,d):
         with self.publication_guard(d) as (lease,fence):
             return self.prepare_owned(d,lease,fence)
+    def prebuild(self,source):
+        recipe=Path(source)/'scripts/run-delivery-acceptance.py'
+        if not recipe.exists():return
+        spec=importlib.util.spec_from_file_location('delivery_acceptance_prebuild',recipe)
+        acceptance=importlib.util.module_from_spec(spec);spec.loader.exec_module(acceptance)
+        acceptance.execute_prebuild(source)
+
     def prepare_owned(self,d,lease,fence):
         if self.busy(d):raise Busy('联调正由另一项交付使用')
         c=self.own_candidate(d)
@@ -255,6 +262,8 @@ class Worker:
                 c=dict(previous,status='accepted',publication_lease=lease,source=str(path),branch=r.output(['git','symbolic-ref','HEAD'],cwd=path),deployed_at=r.read(r.meta_path('int'))['deployed_at'])
                 r.save_candidate(c)
             else:
+                # 1. 构建要花几分钟，而静态与协调检查只要几秒；先跑预检，避免让不可能通过的候选进入构建。
+                self.prebuild(path)
                 try:c=r.prepare_int(path,delivery=dict(delivery_id=d['id'],delivery_env=self.env,approved_source=d['source_commit'],publication_lease=lease),fence=fence)
                 except RuntimeError as e:
                     if '占用' in str(e) or '构建或发布' in str(e):raise Busy(str(e)) from e

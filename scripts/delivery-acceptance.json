@@ -11,7 +11,8 @@
       "command": [
         "python3",
         "scripts/verify-delivery-coordination.py"
-      ]
+      ],
+      "prebuild": true
     },
     {
       "name": "delivery-runtime",
@@ -39,7 +40,8 @@
       "command": [
         "python3",
         "scripts/issue-delivery-worker.test.py"
-      ]
+      ],
+      "prebuild": true
     },
     {
       "name": "delivery-publisher",
@@ -49,7 +51,8 @@
       "command": [
         "python3",
         "scripts/release-environments.test.py"
-      ]
+      ],
+      "prebuild": true
     },
     {
       "name": "delivery-coordination",
@@ -59,7 +62,8 @@
       "command": [
         "python3",
         "scripts/delivery-coordination.test.py"
-      ]
+      ],
+      "prebuild": true
     },
     {
       "name": "batch-closeout-api",
@@ -74,7 +78,8 @@
       "command": [
         "python3",
         "scripts/verify-batch-closeout.py"
-      ]
+      ],
+      "prebuild": true
     },
     {
       "name": "run-diff-capture",
@@ -90,7 +95,8 @@
         "test",
         "./internal/codediff",
         "-count=1"
-      ]
+      ],
+      "prebuild": true
     },
     {
       "name": "run-text-migration",
@@ -106,7 +112,8 @@
         "./cmd/migrate",
         "./internal/migrations",
         "-count=1"
-      ]
+      ],
+      "prebuild": true
     }
   ]
 }
