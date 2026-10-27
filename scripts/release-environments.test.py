@@ -14,6 +14,8 @@ def migration_bytes(name):
     return path.read_bytes()
 
 
+# 单元测试默认按严格模式跑；personal 策略由专门的用例显式打开并恢复。
+os.environ['MULTICA_MIGRATION_POLICY']='strict'
 spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name('release-environments.py'))
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
@@ -480,6 +482,7 @@ class ReleaseTests(unittest.TestCase):
             target.mkdir(parents=True)
             (target / '690_add_nullable_column.up.sql').write_text('ALTER TABLE issue ADD COLUMN IF NOT EXISTS note text;\n')
             (target / '690_add_nullable_column.down.sql').write_text('ALTER TABLE issue DROP COLUMN IF EXISTS note;\n')
+            previous = os.environ.get('MULTICA_MIGRATION_POLICY')
             os.environ['MULTICA_MIGRATION_POLICY'] = 'personal'
             try:
                 r.validate_pending_migrations(new, old)
@@ -505,7 +508,10 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, '需要单独的数据库兼容方案'):
                     r.validate_pending_migrations(new, old)
             finally:
-                os.environ.pop('MULTICA_MIGRATION_POLICY', None)
+                if previous is None:
+                    os.environ.pop('MULTICA_MIGRATION_POLICY', None)
+                else:
+                    os.environ['MULTICA_MIGRATION_POLICY'] = previous
 
     def test_managed_dsh_state_uses_verification_profile_and_respects_override(self):
         with tempfile.TemporaryDirectory() as folder:
