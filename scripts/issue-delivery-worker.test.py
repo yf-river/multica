@@ -1,3 +1,4 @@
+import os
 import importlib.util,json,subprocess,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -368,6 +369,9 @@ class DeliveryTests(unittest.TestCase):
     def test_normal_request_requires_human_approved_delivery(self):
         with self.assertRaisesRegex(RuntimeError,'交付审核'):r.check_delivery_approval({'commit':'a'*40})
     def test_schema_change_rejected_before_mutation_and_stop(self):
+        # 用例断言的是严格模式的通用拒绝原因；控制目录若开启 personal 策略会先报 down 迁移缺失。
+        os.environ['MULTICA_MIGRATION_POLICY']='strict'
+        self.addCleanup(os.environ.pop,'MULTICA_MIGRATION_POLICY',None)
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);old=root/'old';new=root/'new';(old/'server/migrations').mkdir(parents=True);(new/'server/migrations').mkdir(parents=True)
             (new/'server/migrations/999_bad.up.sql').write_text('ALTER TABLE issue DROP COLUMN title;')

@@ -229,7 +229,12 @@ func realMigrationFiles(t *testing.T, versions []string, direction string) []str
 	for _, version := range versions {
 		path := filepath.Join("..", "..", "migrations", version+"."+direction+".sql")
 		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("stat migration %s: %v", path, err)
+			// 历史迁移已收敛到 archive/，测试仍按版本号引用它们。
+			archived := filepath.Join("..", "..", "migrations", "archive", version+"."+direction+".sql")
+			if _, archiveErr := os.Stat(archived); archiveErr != nil {
+				t.Fatalf("stat migration %s: %v", path, err)
+			}
+			path = archived
 		}
 		files = append(files, path)
 	}

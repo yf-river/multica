@@ -243,10 +243,10 @@ func (h *Handler) resetVerificationQuarantine(r *http.Request, name, actor, reas
 	if state != "quarantined" {
 		return errSlotBusy
 	}
-	if _, err = tx.Exec(r.Context(), `UPDATE verification_slot SET state='idle',enabled=true,delivery_id=NULL,worker_token=NULL,candidate_id=NULL,source_commit=NULL,lease_expires_at=NULL,error=NULL,generation=generation+1,updated_at=now() WHERE name=$1`, name); err != nil {
+	if _, err = tx.Exec(r.Context(), `UPDATE verification_slot SET state='idle',enabled=true,delivery_id=NULL,worker_token=NULL,candidate_id='',source_commit='',lease_expires_at=NULL,error='',generation=generation+1,updated_at=now() WHERE name=$1`, name); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO verification_slot_maintenance(id,name,action,actor,reason) VALUES($1,$2,$3,$4,$5)`, dbid.NewV7(), name, "reset", actor, reason+"；原隔离原因："+previous); err != nil {
+	if _, err = tx.Exec(r.Context(), `INSERT INTO verification_slot_maintenance(id,name,action,actor,reason) VALUES($1,$2,$3,$4,$5)`, dbid.NewV7(), name, "resume", actor, "reset-quarantine："+reason+"；原隔离原因："+previous); err != nil {
 		return err
 	}
 	return tx.Commit(r.Context())

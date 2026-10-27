@@ -41,7 +41,8 @@ func TestFilesKeepsBaselineAndHistoricalMigrationsMutuallyExclusive(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(files) < 2 || filepath.Base(files[0]) != "000_initial_schema.up.sql" {
+		// 迁移收敛后 baseline 覆盖全部历史结构，基线模式只剩它自己。
+		if len(files) < 1 || filepath.Base(files[0]) != "000_initial_schema.up.sql" {
 			t.Fatalf("baseline migration files = %v", files)
 		}
 		for _, f := range files {

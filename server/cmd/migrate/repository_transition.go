@@ -51,7 +51,12 @@ func repositoryTransition(ctx context.Context, pool *pgxpool.Pool, action string
 			return e
 		}
 		for _, version := range []string{"525_repository_migration_guard", "524_repository_backfill"} {
-			sql, e := os.ReadFile(filepath.Join(directory, version+".down.sql"))
+			path := filepath.Join(directory, version+".down.sql")
+			if _, statErr := os.Stat(path); statErr != nil {
+				// 历史迁移已收敛到 archive/，恢复路径仍要能找到当时的回滚脚本。
+				path = filepath.Join(directory, "archive", version+".down.sql")
+			}
+			sql, e := os.ReadFile(path)
 			if e != nil {
 				return e
 			}

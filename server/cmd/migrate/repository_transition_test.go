@@ -55,7 +55,12 @@ func TestRepositoryMigrationAndRecovery(t *testing.T) {
 	}
 	apply := func(version string) {
 		t.Helper()
-		body, err := os.ReadFile(filepath.Join(directory, version+".up.sql"))
+		path := filepath.Join(directory, version+".up.sql")
+		if _, statErr := os.Stat(path); statErr != nil {
+			// 历史迁移已收敛到 archive/，测试仍按版本号引用它们。
+			path = filepath.Join(directory, "archive", version+".up.sql")
+		}
+		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -5,6 +5,17 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+def migration_bytes(name):
+    base=Path(__file__).parent.parent/'server/migrations'
+    path=base/name
+    if not path.exists():
+        # 历史迁移已收敛到 archive/，测试仍按原名引用它们。
+        path=base/'archive'/name
+    return path.read_bytes()
+
+
+# 单元测试默认按严格模式跑；personal 策略由专门的用例显式打开并恢复。
+os.environ['MULTICA_MIGRATION_POLICY']='strict'
 spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name('release-environments.py'))
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
@@ -186,7 +197,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(r.reviewed_supervision_index_change(release,migration,[statement]))
 
     def test_snapshot_column_compatibility_requires_exact_reviewed_sql(self):
-        source=Path(__file__).parent.parent/'server/migrations/564_snapshot_column_compatibility.up.sql'
+        source=Path(__file__).parent.parent/'server/migrations/archive/564_snapshot_column_compatibility.up.sql'
         with tempfile.TemporaryDirectory() as tmp:
             migration=Path(tmp)/source.name
             migration.write_bytes(source.read_bytes())
@@ -437,7 +448,7 @@ class ReleaseTests(unittest.TestCase):
         source=Path(__file__).parent.parent/'server/migrations'
         for name in ('617_supervision_instructions.up.sql','618_supervision_managed_agent.up.sql'):
             with TemporaryDirectory() as folder:
-                target=Path(folder)/name;target.write_bytes((source/name).read_bytes())
+                target=Path(folder)/name;target.write_bytes(migration_bytes(name))
                 self.assertTrue(r.reviewed_supervision_settings_change(target))
                 target.write_text(target.read_text()+"\nDELETE FROM agent;\n")
                 self.assertFalse(r.reviewed_supervision_settings_change(target))
@@ -451,14 +462,14 @@ class ReleaseTests(unittest.TestCase):
             (old/'server/migrations').mkdir(parents=True)
             target=new/'server/migrations';target.mkdir(parents=True)
             for name in names:
-                migration=target/name;migration.write_bytes((source/name).read_bytes())
+                migration=target/name;migration.write_bytes(migration_bytes(name))
                 self.assertTrue(r.reviewed_curated_nullable_columns(migration))
             r.validate_pending_migrations(new,old)
             migration.write_text(migration.read_text()+'\nDELETE FROM task_message;\n')
             self.assertFalse(r.reviewed_curated_nullable_columns(migration))
             with self.assertRaisesRegex(RuntimeError,'需要单独的数据库兼容方案'):
                 r.validate_pending_migrations(new,old)
-            unknown=target/'999_unknown.up.sql';unknown.write_bytes((source/names[0]).read_bytes())
+            unknown=target/'999_unknown.up.sql';unknown.write_bytes(migration_bytes(names[0]))
             self.assertFalse(r.reviewed_curated_nullable_columns(unknown))
 
     def test_personal_migration_policy_allows_reviewed_shapes(self):
@@ -471,6 +482,7 @@ class ReleaseTests(unittest.TestCase):
             target.mkdir(parents=True)
             (target / '690_add_nullable_column.up.sql').write_text('ALTER TABLE issue ADD COLUMN IF NOT EXISTS note text;\n')
             (target / '690_add_nullable_column.down.sql').write_text('ALTER TABLE issue DROP COLUMN IF EXISTS note;\n')
+            previous = os.environ.get('MULTICA_MIGRATION_POLICY')
             os.environ['MULTICA_MIGRATION_POLICY'] = 'personal'
             try:
                 r.validate_pending_migrations(new, old)
@@ -496,7 +508,10 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, '需要单独的数据库兼容方案'):
                     r.validate_pending_migrations(new, old)
             finally:
-                os.environ.pop('MULTICA_MIGRATION_POLICY', None)
+                if previous is None:
+                    os.environ.pop('MULTICA_MIGRATION_POLICY', None)
+                else:
+                    os.environ['MULTICA_MIGRATION_POLICY'] = previous
 
     def test_managed_dsh_state_uses_verification_profile_and_respects_override(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -531,7 +546,7 @@ class ReleaseTests(unittest.TestCase):
             (old/'server/migrations').mkdir(parents=True)
             target=new/'server/migrations';target.mkdir(parents=True)
             for name in names:
-                migration=target/name;migration.write_bytes((source/name).read_bytes())
+                migration=target/name;migration.write_bytes(migration_bytes(name))
                 self.assertTrue(r.reviewed_dsh_interaction_changes(migration))
             r.validate_pending_migrations(new,old)
             for name in names:
@@ -543,7 +558,7 @@ class ReleaseTests(unittest.TestCase):
                     r.validate_pending_migrations(new,old)
                 migration.write_bytes(original)
             unknown=target/'999_unknown.up.sql'
-            unknown.write_bytes((source/names[0]).read_bytes())
+            unknown.write_bytes(migration_bytes(names[0]))
             self.assertFalse(r.reviewed_dsh_interaction_changes(unknown))
             with self.assertRaisesRegex(RuntimeError,'需要单独的数据库兼容方案'):
                 r.validate_pending_migrations(new,old)
@@ -554,13 +569,13 @@ class ReleaseTests(unittest.TestCase):
         for name in names:
             with tempfile.TemporaryDirectory() as folder:
                 target=Path(folder)/name
-                target.write_bytes((source/name).read_bytes())
+                target.write_bytes(migration_bytes(name))
                 self.assertTrue(r.reviewed_trace_preparation_change(target))
                 target.write_text(target.read_text()+"\nDELETE FROM supervision_material;\n")
                 self.assertFalse(r.reviewed_trace_preparation_change(target))
         with tempfile.TemporaryDirectory() as folder:
             target=Path(folder)/'999_unknown.up.sql'
-            target.write_bytes((source/names[0]).read_bytes())
+            target.write_bytes(migration_bytes(names[0]))
             self.assertFalse(r.reviewed_trace_preparation_change(target))
 
     # Modification 2. Check the complete pending set through the real gate, not just its hash helper.
@@ -571,6 +586,9 @@ class ReleaseTests(unittest.TestCase):
             (old/'server/migrations').mkdir(parents=True)
             target=new/'server/migrations';target.mkdir(parents=True)
             pending=[p for p in source.glob('*.up.sql') if '640'<=p.name[:3]<='649']
+            if not pending:
+                # 历史迁移收敛后，这批文件在 archive/ 里；门禁仍要能审查它们。
+                pending=[p for p in (source/'archive').glob('*.up.sql') if '640'<=p.name[:3]<='649']
             self.assertEqual(len(pending),10)
             for migration in pending:
                 (target/migration.name).write_bytes(migration.read_bytes())
@@ -613,7 +631,7 @@ class ReleaseTests(unittest.TestCase):
         import re
         from pathlib import Path as P
         migrations=P(__file__).parent.parent/'server/migrations'
-        table_sql=(migrations/'632_task_provider_trace.up.sql').read_text()
+        table_sql=(migrations/'archive/632_task_provider_trace.up.sql').read_text() if (migrations/'archive/632_task_provider_trace.up.sql').exists() else (migrations/'632_task_provider_trace.up.sql').read_text()
         stripped=re.sub(r'--[^\n]*','',table_sql)
         statements=[part.strip() for part in stripped.split(';') if part.strip()]
         self.assertEqual(len(statements),1)
@@ -622,7 +640,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn('CASCADE',statements[0].upper())
         self.assertNotIn('UNIQUE (',statements[0].upper())
 
-        index_sql=(migrations/'633_task_provider_trace_unique.up.sql').read_text()
+        index_sql=(migrations/'archive/633_task_provider_trace_unique.up.sql').read_text()
         stripped=re.sub(r'--[^\n]*','',index_sql)
         statements=[part.strip() for part in stripped.split(';') if part.strip()]
         self.assertEqual(len(statements),1)
