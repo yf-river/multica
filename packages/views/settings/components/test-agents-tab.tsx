@@ -98,7 +98,7 @@ function PolicyEditor({
           setValue(e.target.value);
           setModel("");
         }}
-        className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+        className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -115,7 +115,7 @@ function PolicyEditor({
         value={current ?? ""}
         disabled={disabled || choices.length === 0}
         onChange={(e) => setModel(e.target.value)}
-        className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+        className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {choices.map((c) => (
           <option key={c.id} value={c.id}>
@@ -134,7 +134,7 @@ function PolicyEditor({
             value={thinkingValue}
             disabled={disabled}
             onChange={(e) => setThinking(e.target.value)}
-            className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+            className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {thinkingLevels.map((l) => (
               <option key={l.value} value={l.value}>
