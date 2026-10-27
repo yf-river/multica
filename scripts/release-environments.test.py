@@ -1,3 +1,4 @@
+import os
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -459,6 +460,43 @@ class ReleaseTests(unittest.TestCase):
                 r.validate_pending_migrations(new,old)
             unknown=target/'999_unknown.up.sql';unknown.write_bytes((source/names[0]).read_bytes())
             self.assertFalse(r.reviewed_curated_nullable_columns(unknown))
+
+    def test_personal_migration_policy_allows_reviewed_shapes(self):
+        source = Path(__file__).parent.parent / 'server/migrations'
+        with tempfile.TemporaryDirectory() as folder:
+            old = Path(folder) / 'old'
+            new = Path(folder) / 'new'
+            (old / 'server/migrations').mkdir(parents=True)
+            target = new / 'server/migrations'
+            target.mkdir(parents=True)
+            (target / '690_add_nullable_column.up.sql').write_text('ALTER TABLE issue ADD COLUMN IF NOT EXISTS note text;\n')
+            (target / '690_add_nullable_column.down.sql').write_text('ALTER TABLE issue DROP COLUMN IF EXISTS note;\n')
+            os.environ['MULTICA_MIGRATION_POLICY'] = 'personal'
+            try:
+                r.validate_pending_migrations(new, old)
+                # NOT NULL without DEFAULT is rejected even in personal mode.
+                (target / '691_strict_column.up.sql').write_text('ALTER TABLE issue ADD COLUMN flag boolean NOT NULL;\n')
+                (target / '691_strict_column.down.sql').write_text('ALTER TABLE issue DROP COLUMN IF EXISTS flag;\n')
+                with self.assertRaisesRegex(RuntimeError, '必须带 DEFAULT'):
+                    r.validate_pending_migrations(new, old)
+                # Constraint widening needs the written compatibility note.
+                (target / '691_strict_column.up.sql').unlink()
+                (target / '691_strict_column.down.sql').unlink()
+                (target / '692_widen_status.up.sql').write_text(
+                    'ALTER TABLE agent_task_queue DROP CONSTRAINT s, ADD CONSTRAINT s CHECK (status IN (\'a\',\'b\'));\n')
+                (target / '692_widen_status.down.sql').write_text('ALTER TABLE agent_task_queue DROP CONSTRAINT s;\n')
+                with self.assertRaisesRegex(RuntimeError, '@compat'):
+                    r.validate_pending_migrations(new, old)
+                (target / '692_widen_status.up.sql').write_text(
+                    '-- @compat: 只扩大允许状态，旧程序写入的取值仍是子集。\n'
+                    'ALTER TABLE agent_task_queue DROP CONSTRAINT s, ADD CONSTRAINT s CHECK (status IN (\'a\',\'b\'));\n')
+                r.validate_pending_migrations(new, old)
+                # strict mode still refuses both shapes.
+                os.environ['MULTICA_MIGRATION_POLICY'] = 'strict'
+                with self.assertRaisesRegex(RuntimeError, '需要单独的数据库兼容方案'):
+                    r.validate_pending_migrations(new, old)
+            finally:
+                os.environ.pop('MULTICA_MIGRATION_POLICY', None)
 
     def test_managed_dsh_state_uses_verification_profile_and_respects_override(self):
         with tempfile.TemporaryDirectory() as folder:

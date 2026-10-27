@@ -725,6 +725,38 @@ def reviewed_dsh_interaction_changes(migration):
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
 
 
+def migration_policy():
+    # 个人项目可放宽迁移门禁；默认严格。环境变量 > 控制目录策略文件 > 仓库默认值。
+    override=os.environ.get('MULTICA_MIGRATION_POLICY')
+    if override:return override
+    for path in (RUN/'release-policy.json',Path(__file__).with_name('release-policy.json')):
+        if path.exists():
+            record=read(path) or {}
+            policy=record.get('migration_policy')
+            if policy:return policy
+    return 'strict'
+
+
+ADD_COLUMN=re.compile(r'^ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN\s+(IF\s+NOT\s+EXISTS\s+)?\S+',re.I)
+CONSTRAINT_SWAP=re.compile(r'^ALTER\s+TABLE\s+\S+\s+DROP\s+CONSTRAINT\s+\S+\s*,\s*ADD\s+CONSTRAINT\s+\S+\s+CHECK\s*\(',re.I)
+
+
+def personal_migration_allowed(migration,statement):
+    """个人项目策略：放行新增列与只放宽 CHECK 的约束替换，但要求可回退与书面兼容说明。"""
+    down=migration.with_name(migration.name[:-len('.up.sql')]+'.down.sql')
+    if not down.exists():
+        raise RuntimeError('迁移 '+migration.name+' 缺少对应的 down 迁移；数据兼容需要可回退方案')
+    if ADD_COLUMN.match(statement):
+        if re.search(r'\bNOT\s+NULL\b',statement,re.I) and not re.search(r'\bDEFAULT\b',statement,re.I):
+            raise RuntimeError('迁移 '+migration.name+' 的新列 NOT NULL 必须带 DEFAULT：'+statement[:120])
+        return True
+    if CONSTRAINT_SWAP.match(statement):
+        if '-- @compat:' not in migration.read_text():
+            raise RuntimeError('迁移 '+migration.name+' 的约束变更需要 -- @compat: 兼容说明')
+        return True
+    return False
+
+
 def additive_statement(statement):
     # 通用路径只接受新建表和并发索引；普通 CREATE INDEX 一律拒绝，新表也不例外。
     return bool(re.match(r'^CREATE\s+(TABLE\b|(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b)',statement,re.I))
@@ -738,8 +770,10 @@ def validate_pending_migrations(release, previous):
         sql=re.sub(r'/\*.*?\*/','',migration.read_text(),flags=re.S)
         sql=re.sub(r'--[^\n]*','',sql)
         statements=[part.strip() for part in sql.split(';') if part.strip()]
+        policy=migration_policy()
         for statement in statements:
             if additive_statement(statement): continue
+            if policy=='personal' and personal_migration_allowed(migration,statement): continue
             if reviewed_snapshot_column_change(migration) or reviewed_supervision_index_change(release,migration,statements) or reviewed_supervision_settings_change(migration) or reviewed_trace_preparation_change(migration) or reviewed_curated_nullable_columns(migration) or reviewed_dsh_interaction_changes(migration):
                 continue
             raise RuntimeError('迁移 '+migration.name+' 需要单独的数据库兼容方案；旧站继续运行')
