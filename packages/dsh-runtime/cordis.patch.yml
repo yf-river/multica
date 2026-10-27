@@ -44,3 +44,10 @@
     thresholdRatio: 0.7
     retainTokens: 32768
     maxTokens: 16384
+
+# 受管 profile 的默认模型走 CodeBuddy 额度：canary 与未显式选模型的 DSH agent 不需要
+# 官方 DeepSeek 凭据；显式设置模型的 agent 不受影响。
+- id: agent-default-model
+  config:
+    provider: codebuddy
+    model: deepseek-v4.1-flash

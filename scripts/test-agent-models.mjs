@@ -8,7 +8,9 @@ const [environment, mode = 'audit', policyFile, scopeFile] = process.argv.slice(
 const policyRoot = path.join(process.env.MULTICA_RELEASE_ROOT || '', '.run');
 const cachedPolicy = path.join(policyRoot,'test-agent-policy-'+environment+'.json');
 const desired = mode === 'target' ? null : JSON.parse(fs.readFileSync(policyFile || (fs.existsSync(cachedPolicy) ? cachedPolicy : path.join(policyRoot,'test-agent-policy.json')),'utf8'));
-const valid = p => p && ((p.provider === 'codebuddy' && p.model === 'deepseek-v4.1-flash' && p.thinking_level === '' && p.service_tier === '') || (p.provider === 'codex' && p.model === 'gpt-6.1-sol' && p.thinking_level === 'low' && p.service_tier === 'default'));
+// 与 server/internal/testagents 一致：只校验形状，运行时是否支持该模型由运行时在派发时判定。
+const policyValid = p => Boolean(p) && /^[a-z][a-z0-9-]*$/.test(p.runtime || p.provider || '') && /^[A-Za-z0-9._/-]+$/.test(p.model || '');
+const valid = p => policyValid(p);
 if (desired && (!valid(desired.policy) || Object.values(desired.overrides || {}).some(p => !valid(p)))) throw Error('测试模型配置不受支持');
 if (!['int', 'verify-1', 'verify-2', 'verify-3'].includes(environment) || !['audit', 'apply', 'target'].includes(mode)) throw Error('仅接受固定测试环境及 audit/apply/target');
 const root = process.env.MULTICA_RELEASE_ROOT;
