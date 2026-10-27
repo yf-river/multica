@@ -8,6 +8,9 @@ r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
 # 修改 1. 接口用 Go 的 time.Time 序列化时间（RFC3339Nano，带 Z 或时区和最多 9 位小数），
 # 旧批次配置里可能还是秒级数字；两种都按同一时刻处理，避免直接与 time.time() 比较时报 TypeError。
+# 在 int 等待验收的最长时间；超过即自动释放发布车道，避免别的发布被无限阻塞。
+TESTING_STALE_SECONDS=int(os.environ.get('MULTICA_TESTING_STALE_SECONDS','900'))
+
 def timestamp(value):
     if isinstance(value,(int,float)):return float(value)
     text=str(value or '').strip()
@@ -639,11 +642,16 @@ class Worker:
                 if d['phase']=='testing':
                     if d['candidate_id']!=c['id']:
                         self.advance(d,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
+                # 停在 int 等验收的交付不能无限持有发布车道：超过阈值且没有验收证据就自动释放。
+                testing_entered=time.time()
                 notified=False
                 while True:
                     d=refresh()
                     if not d or d['phase']!='testing':break
                     if heartbeat_errors:raise heartbeat_errors[0]
+                    if not d['acceptance_submitted'] and time.time()-testing_entered>TESTING_STALE_SECONDS:
+                        self.advance(d,'needs_changes',error='候选在 int 等待验收超过 %d 分钟且没有提交证据，已自动释放发布车道' % (TESTING_STALE_SECONDS//60))
+                        break
                     try:
                         if not d['acceptance_submitted']:
                             # 外部归属结束后补派一次；被归属围栏延后的通知不算送达。
