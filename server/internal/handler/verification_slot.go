@@ -38,6 +38,26 @@ func (h *Handler) ConfigureVerificationSlot(w http.ResponseWriter, r *http.Reque
 	}
 	// 修改 1. 单槽位维护：维护只关本槽位接单，正在验收的任务和另外两个槽位都不受影响；
 	// 恢复要求槽位已经空闲，避免把一个刚被领取的槽位重新放回调度。
+	if body.Action == "reset-quarantine" {
+		if strings.TrimSpace(body.Reason) == "" {
+			writeError(w, 400, "缺少维护原因")
+			return
+		}
+		if err := h.resetVerificationQuarantine(r, body.Name, user, strings.TrimSpace(body.Reason)); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, 404, "槽位尚未登记")
+				return
+			}
+			if err == errSlotBusy {
+				writeError(w, 409, "只有被隔离的槽位可以重置")
+				return
+			}
+			writeError(w, 500, "重置验收槽位失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"name": body.Name, "state": "idle"})
+		return
+	}
 	if body.Action == "maintain" || body.Action == "resume-maintenance" {
 		if strings.TrimSpace(body.Reason) == "" {
 			writeError(w, 400, "缺少维护原因")
@@ -206,6 +226,30 @@ func (h *Handler) setVerificationMaintenance(r *http.Request, name, action, acto
 		err = tx.Commit(r.Context())
 	}
 	return state, enabled, err
+}
+
+// resetVerificationQuarantine 把被隔离的槽位放回空闲调度；只允许 operator 在写明原因后执行，
+// 旧的故障信息写入维护审计，隔离记录本身不静默丢弃。
+func (h *Handler) resetVerificationQuarantine(r *http.Request, name, actor, reason string) error {
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(r.Context())
+	var state, previous string
+	if err = tx.QueryRow(r.Context(), `SELECT state,COALESCE(error,'') FROM verification_slot WHERE name=$1 FOR UPDATE`, name).Scan(&state, &previous); err != nil {
+		return err
+	}
+	if state != "quarantined" {
+		return errSlotBusy
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE verification_slot SET state='idle',enabled=true,delivery_id=NULL,worker_token=NULL,candidate_id=NULL,source_commit=NULL,lease_expires_at=NULL,error=NULL,generation=generation+1,updated_at=now() WHERE name=$1`, name); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO verification_slot_maintenance(id,name,action,actor,reason) VALUES($1,$2,$3,$4,$5)`, dbid.NewV7(), name, "reset", actor, reason+"；原隔离原因："+previous); err != nil {
+		return err
+	}
+	return tx.Commit(r.Context())
 }
 
 // GetVerificationSlotSeed 返回槽位当前种子；没有登记时 404，调用方据此选择完整恢复。

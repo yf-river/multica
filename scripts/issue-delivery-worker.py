@@ -843,6 +843,14 @@ class Worker:
             return row.get('evidence') or None
         return None
 
+    def reusable_batch_checks(self,candidate,member_rows):
+        """把成员已提交的验收证据复用到组合候选上，避免再等一次人工 accept。"""
+        for row in member_rows or []:
+            evidence=row.get('evidence') or []
+            if evidence:
+                return evidence
+        return None
+
     def batch_validate(self,batch,members,rows):
         representative=self.batch_row(rows,members[0]['delivery_id']) if members else None
         candidate=r.candidate() if r.candidate_path().exists() else None
@@ -868,10 +876,19 @@ class Worker:
         if candidate['status']=='verifying':
             # 修改 13. 组合验收由批次成员在同一个固定候选上提交，证据与候选一起归档后才进入发布。
             checks=self.batch_acceptance(candidate,members,rows)
+            reused=checks is None
+            if reused:
+                # 成员在 testing 阶段提交过的业务验收证据对同一提交仍然有效：组合候选只是把它
+                # 合并进新基线。若服务端仍要求针对组合候选的确认，就退回等待人工补交。
+                checks=self.reusable_batch_checks(candidate,member_rows)
             if not checks:return True
             evidence=r.RUN/'delivery-evidence'/(candidate['id']+'.json')
             r.write(evidence,dict(candidate=candidate['id'],summary='组合候选实际功能验收',checks=checks),True)
-            r.accept(candidate['id'],evidence)
+            try:
+                r.accept(candidate['id'],evidence)
+            except RuntimeError:
+                if reused:return True
+                raise
             candidate=r.candidate()
         if candidate['status']!='accepted':return True
         state=self.batch_call(dict(action='publishing',batch_id=batch['id'],worker_token=batch['worker_token']))

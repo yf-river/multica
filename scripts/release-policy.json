@@ -1,0 +1,4 @@
+{
+  "migration_policy": "strict",
+  "comment": "personal 模式放行新增列（NOT NULL 需带 DEFAULT）与只放宽 CHECK 的约束替换（需 -- @compat: 与 down 迁移）；默认 strict。"
+}
