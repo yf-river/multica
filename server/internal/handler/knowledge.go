@@ -33,6 +33,32 @@ type knowledgeClient struct {
 	apiKey  string
 }
 
+// knowledgeNamespace maps a workspace to its readable OpenViking namespace: the
+// workspace slug (`gongzuo`, `ai-studio`) so paths and identities stay legible,
+// falling back to the id for workspaces that never got a slug.
+func (h *Handler) knowledgeNamespace(ctx context.Context, workspaceID string) string {
+	ws, err := h.Queries.GetWorkspace(ctx, parseUUID(workspaceID))
+	if err == nil {
+		if slug := sanitizeKnowledgeNamespace(ws.Slug); slug != "" {
+			return slug
+		}
+	}
+	return workspaceID
+}
+
+func sanitizeKnowledgeNamespace(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 func newKnowledgeClient() *knowledgeClient {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_OPENVIKING_URL")), "/")
 	if base == "" {
@@ -41,7 +67,7 @@ func newKnowledgeClient() *knowledgeClient {
 	return &knowledgeClient{baseURL: base, apiKey: strings.TrimSpace(os.Getenv("MULTICA_OPENVIKING_API_KEY"))}
 }
 
-func (c *knowledgeClient) do(ctx context.Context, method, path string, query url.Values, body any, workspaceID string) (json.RawMessage, int, error) {
+func (c *knowledgeClient) do(ctx context.Context, method, path string, query url.Values, body any, namespace string) (json.RawMessage, int, error) {
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -63,7 +89,7 @@ func (c *knowledgeClient) do(ctx context.Context, method, path string, query url
 	}
 	// Dev auth (the current deployment) trusts identity headers; api-key mode
 	// additionally needs the workspace-scoped key.
-	req.Header.Set("X-OpenViking-User", workspaceID)
+	req.Header.Set("X-OpenViking-User", namespace)
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
@@ -90,8 +116,9 @@ func (h *Handler) GetKnowledgeStatus(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
+	namespace := h.knowledgeNamespace(r.Context(), workspaceID)
 	client := newKnowledgeClient()
-	raw, _, err := client.do(r.Context(), http.MethodGet, "/health", nil, nil, workspaceID)
+	raw, _, err := client.do(r.Context(), http.MethodGet, "/health", nil, nil, namespace)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled": true, "healthy": false, "base_url": client.baseURL, "error": err.Error(),
@@ -110,21 +137,22 @@ func (h *Handler) ListKnowledgeResources(w http.ResponseWriter, r *http.Request)
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
+	namespace := h.knowledgeNamespace(r.Context(), workspaceID)
 	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
 	if uri == "" {
-		uri = "viking://resources/workspaces/" + workspaceID
+		uri = "viking://resources/workspaces/" + namespace
 	}
 	if !strings.HasPrefix(uri, "viking://resources/workspaces/"+workspaceID) {
 		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
 		return
 	}
 	client := newKnowledgeClient()
-	root := "viking://resources/workspaces/" + workspaceID
+	root := "viking://resources/workspaces/" + namespace
 	// The workspace namespace is created on first access; mkdir is idempotent and
 	// a "already exists" failure must not block browsing.
-	_, _, _ = client.do(r.Context(), http.MethodPost, "/api/v1/fs/mkdir", nil, map[string]any{"uri": root}, workspaceID)
+	_, _, _ = client.do(r.Context(), http.MethodPost, "/api/v1/fs/mkdir", nil, map[string]any{"uri": root}, namespace)
 	_ = root
-	raw, _, err := client.do(r.Context(), http.MethodGet, "/api/v1/fs/ls", url.Values{"uri": {uri}, "output": {"agent"}}, nil, workspaceID)
+	raw, _, err := client.do(r.Context(), http.MethodGet, "/api/v1/fs/ls", url.Values{"uri": {uri}, "output": {"agent"}}, nil, namespace)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -139,6 +167,7 @@ func (h *Handler) SearchKnowledge(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
+	namespace := h.knowledgeNamespace(r.Context(), workspaceID)
 	var body struct {
 		Query string `json:"query"`
 		Limit int    `json:"limit"`
@@ -156,7 +185,7 @@ func (h *Handler) SearchKnowledge(w http.ResponseWriter, r *http.Request) {
 	if body.Limit <= 0 || body.Limit > 50 {
 		body.Limit = 10
 	}
-	target := "viking://resources/workspaces/" + workspaceID
+	target := "viking://resources/workspaces/" + namespace
 	if p := strings.TrimSpace(body.Path); p != "" {
 		if !strings.HasPrefix(p, target) {
 			writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
@@ -166,7 +195,7 @@ func (h *Handler) SearchKnowledge(w http.ResponseWriter, r *http.Request) {
 	}
 	client := newKnowledgeClient()
 	payload := map[string]any{"query": query, "limit": body.Limit, "target_uri": target, "include_provenance": true}
-	raw, _, err := client.do(r.Context(), http.MethodPost, "/api/v1/search/find", nil, payload, workspaceID)
+	raw, _, err := client.do(r.Context(), http.MethodPost, "/api/v1/search/find", nil, payload, namespace)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -181,8 +210,9 @@ func (h *Handler) ReadKnowledge(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
+	namespace := h.knowledgeNamespace(r.Context(), workspaceID)
 	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
-	prefix := "viking://resources/workspaces/" + workspaceID
+	prefix := "viking://resources/workspaces/" + namespace
 	if uri == "" || !strings.HasPrefix(uri, prefix) {
 		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
 		return
@@ -202,7 +232,7 @@ func (h *Handler) ReadKnowledge(w http.ResponseWriter, r *http.Request) {
 	client := newKnowledgeClient()
 	raw, _, err := client.do(r.Context(), http.MethodGet, "/api/v1/content/read", url.Values{
 		"uri": {uri}, "offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(limit)},
-	}, nil, workspaceID)
+	}, nil, namespace)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -217,6 +247,7 @@ func (h *Handler) UploadKnowledgeResource(w http.ResponseWriter, r *http.Request
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
+	namespace := h.knowledgeNamespace(r.Context(), workspaceID)
 	if err := r.ParseMultipartForm(12 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart upload")
 		return
@@ -238,7 +269,7 @@ func (h *Handler) UploadKnowledgeResource(w http.ResponseWriter, r *http.Request
 	}
 	name := filepath.Base(header.Filename)
 	client := newKnowledgeClient()
-	uploaded, _, err := client.upload(r.Context(), workspaceID, name, data)
+	uploaded, _, err := client.upload(r.Context(), namespace, name, data)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -252,7 +283,7 @@ func (h *Handler) UploadKnowledgeResource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadGateway, "openviking did not return a temp_file_id")
 		return
 	}
-	root := "viking://resources/workspaces/" + workspaceID
+	root := "viking://resources/workspaces/" + namespace
 	payload := map[string]any{
 		"temp_file_id":  envelope.Result.TempFileID,
 		"parent":        root,
@@ -260,7 +291,7 @@ func (h *Handler) UploadKnowledgeResource(w http.ResponseWriter, r *http.Request
 		"reason":        "Uploaded from Multica knowledge",
 		"wait":          false,
 	}
-	added, _, err := client.do(r.Context(), http.MethodPost, "/api/v1/resources", nil, payload, workspaceID)
+	added, _, err := client.do(r.Context(), http.MethodPost, "/api/v1/resources", nil, payload, namespace)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -269,7 +300,7 @@ func (h *Handler) UploadKnowledgeResource(w http.ResponseWriter, r *http.Request
 }
 
 // upload posts one file to OpenViking's temp-upload endpoint.
-func (c *knowledgeClient) upload(ctx context.Context, workspaceID, filename string, data []byte) (json.RawMessage, int, error) {
+func (c *knowledgeClient) upload(ctx context.Context, namespace, filename string, data []byte) (json.RawMessage, int, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("file", filename)
@@ -287,7 +318,7 @@ func (c *knowledgeClient) upload(ctx context.Context, workspaceID, filename stri
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-OpenViking-User", workspaceID)
+	req.Header.Set("X-OpenViking-User", namespace)
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
@@ -319,8 +350,9 @@ func (h *Handler) DeleteKnowledgeResource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, "only workspace admins can delete knowledge resources")
 		return
 	}
+	namespace := h.knowledgeNamespace(r.Context(), workspaceID)
 	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
-	prefix := "viking://resources/workspaces/" + workspaceID
+	prefix := "viking://resources/workspaces/" + namespace
 	if uri == "" || !strings.HasPrefix(uri, prefix) {
 		writeError(w, http.StatusForbidden, "knowledge path is outside this workspace")
 		return
@@ -329,7 +361,7 @@ func (h *Handler) DeleteKnowledgeResource(w http.ResponseWriter, r *http.Request
 	client := newKnowledgeClient()
 	raw, _, err := client.do(r.Context(), http.MethodDelete, "/api/v1/fs", url.Values{
 		"uri": {uri}, "recursive": {strconv.FormatBool(recursive)},
-	}, nil, workspaceID)
+	}, nil, namespace)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
