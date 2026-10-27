@@ -132,6 +132,8 @@ var concurrentIndexCleanups = map[string]string{
 	"670_task_supplement_capability_index": "task_supplement_capability_task_uidx",
 	"671_task_supplement_comment_index": "task_supplement_comment_uidx",
 	"678_task_runtime_input_history":                        "idx_task_runtime_input_history",
+	"684_task_interaction_followup":                     "task_interaction_followup",
+	"685_task_interaction_expiry":                       "task_interaction_suspended_expiry",
 	"673_task_interaction_identity":                         "task_interaction_identity",
 	"676_task_runtime_capability_unique":                    "idx_task_runtime_capability_task",
 	"677_task_runtime_input_unique":                         "idx_task_runtime_input_task_id",
