@@ -40,9 +40,17 @@ function PolicyEditor({
   onSave: (p: TestAgentPolicy) => void;
   button: string;
 }) {
+  // 运行时按 provider 去重：一个工作区里同 provider 可能有多台，策略只记 provider。
+  const uniqueRuntimes = Array.from(
+    new Map(runtimes.map((r) => [r.provider, r])).values(),
+  );
   // 目录缺失（daemon 未上报 runtimes）时退回内置预设，选择器不能被禁用成"点不动"。
-  const options = runtimes.length
-    ? runtimes.map((r) => ({ value: r.id, label: r.provider, provider: r.provider }))
+  const options = uniqueRuntimes.length
+    ? uniqueRuntimes.map((r) => ({
+        value: r.provider,
+        label: r.provider,
+        provider: r.provider,
+      }))
     : Object.entries(testAgentPolicies).map(([key, preset]) => ({
         value: key,
         label: key,
@@ -56,7 +64,7 @@ function PolicyEditor({
   const selected = options.find((o) => o.value === value) ?? options[0];
   const presets: Record<string, TestAgentPolicy> = testAgentPolicies;
   const preset = selected ? presets[selected.provider] : undefined;
-  const live = runtimes.find((r) => r.id === value);
+  const live = uniqueRuntimes.find((r) => r.provider === value);
   const models = useQuery({
     queryKey: ["runtime-models", live?.id ?? ""],
     queryFn: () => api.initiateListModels(live!.id),
@@ -65,7 +73,7 @@ function PolicyEditor({
     retry: false,
   });
   // 发布器回写的目录优先（设置页在控制环境，拿不到别的环境运行时接口）。
-  const published = runtimes.find((r) => r.id === value)?.models ?? [];
+  const published = uniqueRuntimes.find((r) => r.provider === value)?.models ?? [];
   const catalog = published.length
     ? published
     : (models.data?.models ?? []);

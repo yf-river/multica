@@ -61,7 +61,7 @@ describe("test environment controls", () => {
     const runtime = await screen.findByRole("combobox", {
       name: "Test defaults runtime",
     });
-    fireEvent.change(runtime, { target: { value: "rt-codex" } });
+    fireEvent.change(runtime, { target: { value: "codex" } });
     const model = await screen.findByRole("combobox", {
       name: "Test defaults model",
     });
