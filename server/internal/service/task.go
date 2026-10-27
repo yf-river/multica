@@ -4903,8 +4903,13 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 			}
 		}
 		if s.TxStarter != nil {
-			terminalEvent, err = recordTaskTerminalEventTx(ctx, qtx, protocol.EventTaskFailed, t,
-				taskFailedFields(errMsg, failureReason, retried != nil))
+			eventType := protocol.EventTaskFailed
+			fields := taskFailedFields(errMsg, failureReason, retried != nil)
+			if t.Status == "cancelled" {
+				eventType = protocol.EventTaskCancelled
+				fields = map[string]any{"failure_reason": failureReason}
+			}
+			terminalEvent, err = recordTaskTerminalEventTx(ctx, qtx, eventType, t, fields)
 			if err != nil {
 				return fmt.Errorf("record task failure event: %w", err)
 			}
@@ -4935,6 +4940,20 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 			)
 		}
 		return nil, false, fmt.Errorf("fail task: %w", err)
+	}
+
+	// 运行时明确取消沿用终态事务中的会话与输入记录，后续只发布取消事实。
+	if task.Status == "cancelled" {
+		slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
+		s.captureTaskCancelled(ctx, task)
+		s.closeUpstreamRuns(ctx, task, "interrupted", "任务已取消，批次已关闭")
+		s.ReconcileAgentStatus(ctx, task.AgentID)
+		if terminalEvent.ID != "" {
+			publishCommittedEvent(s.Bus, terminalEvent)
+		} else {
+			s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+		}
+		return &task, true, nil
 	}
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)

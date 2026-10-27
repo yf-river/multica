@@ -1353,3 +1353,26 @@ SHA256 不变；目标纯查询仍为原暂停状态。该证据是同制品窗�
 `phase50-codex-native-approval/`，分页与界面为 `phase51-*`，固定 int 为
 `phase52-*`，归档恢复为 `phase53-artifact-recovery/`，生产升级前目标为
 `phase54-*`，人为停止修复为 `phase55-goal-pause-tool/`。生产程序尚未升级。
+
+## 第五十七阶段：运行时取消贯通服务端终态
+
+`3a51c2155` 的平台补验确认原生运行时已返回 cancelled，但服务端终态回调把
+`failure_reason=cancelled` 保存成 failed。活动统计直接按 status 计算，因此这仍会
+增加失败计数；不能只依据原因文案把该样本算作取消验收通过。
+
+终态更新查询按明确的 cancelled 原因保存 cancelled，其他失败原因沿原路径处理。
+同一事务继续保存会话、工作目录、原始输入和终态助手记录，并发布取消事件。
+提交后记录取消轨迹和指标、关闭被中断批次；失败通知、失败恢复与自动重试不作用于
+该取消。生成代码由项目固定 sqlc 版本生成，没有数据库迁移或历史数据回填。
+
+隔离 PostgreSQL 回归在修复前复现 status=failed；修复后验证真实 cancelled、一次
+取消事件与轨迹、零失败事件与轨迹、恢复指针和工作目录、原始输入、用量以及幂等
+重放，且没有自动重试。普通失败事件回归同时通过。取消、失败和重试相关定向 race
+检查通过（1.922s），service/handler vet 通过。
+
+较宽的定向检查中，既有 `TestFailTaskDoesNotRetryAfterSourceContextAttached` 在
+创建夹具 issue 时违反 issue_priority_check，尚未进入本次改动的终态逻辑。
+将 task.go 与生成查询经只读 overlay 恢复为原 `3a51c2155` 后，同一测试仍在
+相同位置报错；原始失败保留，未更改该夹具或数据约束。上述定向 race 排除这一项。
+新固定候选仍需核对实际 API 任务状态、取消后的持久用量与活动统计，再进入 int
+和生产发布；仅本地回归不关闭完整目标。

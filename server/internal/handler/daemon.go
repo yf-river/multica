@@ -5645,7 +5645,11 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 		slog.Warn("fail task: failed to revoke task tokens", "task_id", uuidToString(task.ID), "error", err)
 	}
 
-	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
+	if task.Status == "cancelled" {
+		slog.Info("task cancelled", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
+	} else {
+		slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
+	}
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
