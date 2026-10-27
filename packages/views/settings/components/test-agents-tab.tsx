@@ -26,7 +26,15 @@ function PolicyEditor({
   button,
 }: {
   initial: TestAgentPolicy;
-  runtimes: { id: string; provider: string }[];
+  runtimes: {
+    id: string;
+    provider: string;
+    models?: {
+      id: string;
+      label: string;
+      thinking?: { supported_levels?: { value: string; label: string }[] };
+    }[];
+  }[];
   disabled: boolean;
   label: string;
   onSave: (p: TestAgentPolicy) => void;
@@ -56,7 +64,11 @@ function PolicyEditor({
     staleTime: 60_000,
     retry: false,
   });
-  const catalog = models.data?.models ?? [];
+  // 发布器回写的目录优先（设置页在控制环境，拿不到别的环境运行时接口）。
+  const published = runtimes.find((r) => r.id === value)?.models ?? [];
+  const catalog = published.length
+    ? published
+    : (models.data?.models ?? []);
   const [model, setModel] = useState(initial.model);
   const [thinking, setThinking] = useState(initial.thinking_level ?? '');
   const choices = catalog.length
