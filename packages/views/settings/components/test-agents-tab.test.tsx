@@ -80,7 +80,7 @@ describe("test environment controls", () => {
           runtime: "codex",
           model: "gpt-6.2-sol",
           thinking_level: "low",
-          service_tier: "",
+          service_tier: "default",
         },
       }),
     );
