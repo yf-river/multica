@@ -32,24 +32,41 @@ function PolicyEditor({
   onSave: (p: TestAgentPolicy) => void;
   button: string;
 }) {
-  const [runtimeId, setRuntimeId] = useState(
-    runtimes.find((r) => r.provider === (initial.runtime ?? initial.provider))
-      ?.id ?? runtimes[0]?.id ?? "",
-  );
-  const [model, setModel] = useState(initial.model);
+  // 目录缺失（daemon 未上报 runtimes）时退回内置预设，选择器不能被禁用成"点不动"。
+  const options = runtimes.length
+    ? runtimes.map((r) => ({ value: r.id, label: r.provider, provider: r.provider }))
+    : Object.entries(testAgentPolicies).map(([key, preset]) => ({
+        value: key,
+        label: key,
+        provider: preset.provider,
+      }));
+  const initialValue =
+    options.find(
+      (o) => o.provider === (initial.runtime ?? initial.provider),
+    )?.value ?? options[0]?.value ?? "";
+  const [value, setValue] = useState(initialValue);
+  const selected = options.find((o) => o.value === value) ?? options[0];
+  const presets: Record<string, TestAgentPolicy> = testAgentPolicies;
+  const preset = selected ? presets[selected.provider] : undefined;
+  const live = runtimes.find((r) => r.id === value);
   const models = useQuery({
-    queryKey: ["runtime-models", runtimeId],
-    queryFn: () => api.initiateListModels(runtimeId),
-    enabled: Boolean(runtimeId),
+    queryKey: ["runtime-models", live?.id ?? ""],
+    queryFn: () => api.initiateListModels(live!.id),
+    enabled: Boolean(live?.id),
     staleTime: 60_000,
     retry: false,
   });
-  const selected = runtimes.find((r) => r.id === runtimeId);
-  const list = models.data?.models ?? [];
-  const value =
-    model && (list.length === 0 || list.some((m) => m.id === model))
+  const catalog = models.data?.models ?? [];
+  const [model, setModel] = useState(initial.model);
+  const choices = catalog.length
+    ? catalog.map((m) => ({ id: m.id, label: m.label }))
+    : preset
+      ? [{ id: preset.model, label: preset.model }]
+      : [];
+  const current =
+    model && choices.some((c) => c.id === model)
       ? model
-      : (list.find((m) => m.default)?.id ?? list[0]?.id ?? model);
+      : (choices[0]?.id ?? model);
   return (
     <div className="flex flex-wrap items-center gap-2">
       <label className="sr-only" htmlFor={`${label}-runtime`}>
@@ -58,20 +75,17 @@ function PolicyEditor({
       <select
         id={`${label}-runtime`}
         aria-label={`${label} runtime`}
-        value={runtimeId}
-        disabled={disabled || runtimes.length === 0}
+        value={selected?.value ?? ""}
+        disabled={disabled || options.length === 0}
         onChange={(e) => {
-          setRuntimeId(e.target.value);
+          setValue(e.target.value);
           setModel("");
         }}
         className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
       >
-        {runtimes.length === 0 ? (
-          <option value="">{initial.provider}</option>
-        ) : null}
-        {runtimes.map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.provider}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>
@@ -81,30 +95,27 @@ function PolicyEditor({
       <select
         id={`${label}-model`}
         aria-label={`${label} model`}
-        value={value ?? ""}
-        disabled={disabled || list.length === 0}
+        value={current ?? ""}
+        disabled={disabled || choices.length === 0}
         onChange={(e) => setModel(e.target.value)}
         className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
       >
-        {list.length === 0 ? (
-          <option value={value ?? ""}>{value || "…"}</option>
-        ) : null}
-        {list.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
+        {choices.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.label}
           </option>
         ))}
       </select>
       <Button
         size="sm"
-        disabled={disabled || !selected || !value}
+        disabled={disabled || !selected || !current}
         onClick={() =>
           onSave({
             provider: selected?.provider ?? initial.provider,
             runtime: selected?.provider ?? initial.runtime,
-            model: value ?? "",
-            thinking_level: "",
-            service_tier: "",
+            model: current ?? "",
+            thinking_level: preset?.thinking_level ?? "",
+            service_tier: preset?.service_tier ?? "",
           })
         }
       >
