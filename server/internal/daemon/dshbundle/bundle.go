@@ -9,9 +9,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/dshprofile"
 )
+
+// safePlugin 是随包携带的插件 tarball 白名单。
+var safePlugin = regexp.MustCompile(`^dsh-codebuddy-sdk-[0-9A-Za-z.+-]+\.tgz$`)
 
 //go:embed bundle/*
 var bundle embed.FS
@@ -51,8 +56,13 @@ func Extract(base string) (string, error) {
 		if m.SHA256 != manifest.SHA256 {
 			return "", errors.New("installed embedded DSH identity mismatch")
 		}
-		_, err = dshprofile.VerifyArtifact(destination, m)
-		return destination, err
+		if _, err = dshprofile.VerifyArtifact(destination, m); err != nil {
+			return "", err
+		}
+		if err = syncPlugins(bundle, destination, manifest.Filename); err != nil {
+			return "", err
+		}
+		return destination, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
@@ -73,5 +83,35 @@ func Extract(base string) (string, error) {
 	if err = os.Rename(stage, destination); err != nil {
 		return "", err
 	}
+	if err = syncPlugins(bundle, destination, manifest.Filename); err != nil {
+		return "", err
+	}
 	return destination, nil
+}
+
+// syncPlugins 把随包携带的 DSH 插件 tarball 落到运行时目录，供 daemon 供给时安装。
+// 文件名做白名单校验，避免嵌入内容被当成路径。
+func syncPlugins(fsys embed.FS, destination, runtimeFile string) error {
+	entries, err := fsys.ReadDir("bundle")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".tgz") || name == runtimeFile {
+			continue
+		}
+		if !safePlugin.MatchString(name) {
+			// 历史 runtime 版本 tgz 与清单等文件不是插件，跳过即可。
+			continue
+		}
+		data, err := fsys.ReadFile("bundle/" + name)
+		if err != nil {
+			return err
+		}
+		if err = os.WriteFile(filepath.Join(destination, name), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
