@@ -2,7 +2,9 @@ import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 
 export interface TestAgentPolicy {
-  provider: "codebuddy" | "codex";
+  provider: string;
+  /** 承载该模型的运行时 provider；旧配置没有该字段时回落到 provider。 */
+  runtime?: string;
   model: string;
   thinking_level: string;
   service_tier: string;
@@ -31,8 +33,14 @@ export interface TestEnvironmentControl {
   };
   observed_at: string | null;
 }
-export const testAgentPolicies: Record<"codebuddy" | "codex", TestAgentPolicy> =
-  {
+export const testAgentPolicies: Record<"codebuddy" | "codex" | "dsh", TestAgentPolicy> = {
+  dsh: {
+    provider: "dsh",
+    runtime: "dsh",
+    model: "codebuddy/deepseek-v4.1-flash",
+    thinking_level: "",
+    service_tier: "",
+  },
     codebuddy: {
       provider: "codebuddy",
       model: "deepseek-v4.1-flash",

@@ -19,47 +19,101 @@ import { SettingsTab, SettingsCard, SettingsSection } from "./settings-layout";
 
 function PolicyEditor({
   initial,
+  runtimes,
   disabled,
   label,
   onSave,
   button,
 }: {
   initial: TestAgentPolicy;
+  runtimes: { id: string; provider: string }[];
   disabled: boolean;
   label: string;
   onSave: (p: TestAgentPolicy) => void;
   button: string;
 }) {
-  const [provider, setProvider] = useState(initial.provider);
+  const [runtimeId, setRuntimeId] = useState(
+    runtimes.find((r) => r.provider === (initial.runtime ?? initial.provider))
+      ?.id ?? runtimes[0]?.id ?? "",
+  );
+  const [model, setModel] = useState(initial.model);
+  const models = useQuery({
+    queryKey: ["runtime-models", runtimeId],
+    queryFn: () => api.initiateListModels(runtimeId),
+    enabled: Boolean(runtimeId),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const selected = runtimes.find((r) => r.id === runtimeId);
+  const list = models.data?.models ?? [];
+  const value =
+    model && (list.length === 0 || list.some((m) => m.id === model))
+      ? model
+      : (list.find((m) => m.default)?.id ?? list[0]?.id ?? model);
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <label className="sr-only" htmlFor={label}>
+      <label className="sr-only" htmlFor={`${label}-runtime`}>
         {label}
       </label>
       <select
-        id={label}
-        name={label}
-        aria-label={label}
-        value={provider}
-        onChange={(e) =>
-          setProvider(e.target.value as TestAgentPolicy["provider"])
-        }
-        disabled={disabled}
+        id={`${label}-runtime`}
+        aria-label={`${label} runtime`}
+        value={runtimeId}
+        disabled={disabled || runtimes.length === 0}
+        onChange={(e) => {
+          setRuntimeId(e.target.value);
+          setModel("");
+        }}
         className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
       >
-        <option value="codebuddy">CodeBuddy · DeepSeek V4.1 Flash</option>
-        <option value="codex">Codex · GPT-6.1 Sol · low</option>
+        {runtimes.length === 0 ? (
+          <option value="">{initial.provider}</option>
+        ) : null}
+        {runtimes.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.provider}
+          </option>
+        ))}
+      </select>
+      <label className="sr-only" htmlFor={`${label}-model`}>
+        {label}
+      </label>
+      <select
+        id={`${label}-model`}
+        aria-label={`${label} model`}
+        value={value ?? ""}
+        disabled={disabled || list.length === 0}
+        onChange={(e) => setModel(e.target.value)}
+        className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+      >
+        {list.length === 0 ? (
+          <option value={value ?? ""}>{value || "…"}</option>
+        ) : null}
+        {list.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
       </select>
       <Button
         size="sm"
-        disabled={disabled}
-        onClick={() => onSave(testAgentPolicies[provider])}
+        disabled={disabled || !selected || !value}
+        onClick={() =>
+          onSave({
+            provider: selected?.provider ?? initial.provider,
+            runtime: selected?.provider ?? initial.runtime,
+            model: value ?? "",
+            thinking_level: "",
+            service_tier: "",
+          })
+        }
       >
         {button}
       </Button>
     </div>
   );
 }
+
 export function TestAgentsTab() {
   const { t } = useT("settings");
   const ws = useWorkspaceId();
@@ -124,6 +178,7 @@ export function TestAgentsTab() {
                   initial={
                     defaultRow?.desired.policy ?? testAgentPolicies.codebuddy
                   }
+                  runtimes={defaultRow?.observed.runtimes ?? []}
                   disabled={mutation.isPending}
                   label={t(($) => $.test_agents.default_title)}
                   onSave={(p) => save(defaultRow, p)}
@@ -178,6 +233,7 @@ export function TestAgentsTab() {
                       <PolicyEditor
                         key={row.revision}
                         initial={row.desired.policy}
+                        runtimes={row.observed.runtimes ?? []}
                         disabled={mutation.isPending || stale}
                         label={row.name}
                         onSave={(p) => save(row, p)}
@@ -230,6 +286,7 @@ export function TestAgentsTab() {
                                 row.desired.overrides[agent.id] ??
                                 row.desired.policy
                               }
+                              runtimes={row.observed.runtimes ?? []}
                               disabled={mutation.isPending || stale}
                               label={`${row.name}-${agent.id}`}
                               onSave={(p) => save(row, p, agent.id)}

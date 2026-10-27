@@ -53,9 +53,18 @@ func TestTestAgentControlRevisionAndScope(t *testing.T) {
 	call(map[string]any{"action": "configure", "name": "default", "revision": 3, "policy": flash}).Want(http.StatusForbidden)
 }
 func TestTestAgentPolicyAllowlist(t *testing.T) {
-	for _, p := range []testAgentPolicy{{Provider: "claude", Model: "sonnet"}, {Provider: "codex", Model: "gpt-6.1-sol", Thinking: "low", Tier: "priority"}, {Provider: "codex", Model: "gpt-6.2-sol", Thinking: "low", Tier: "default"}, {Provider: "codebuddy", Model: "pro"}} {
+	for _, p := range []testAgentPolicy{{Provider: "codex", Model: ""}, {Provider: "codex", Model: "gpt 6.1"}, {Provider: "codebuddy", Runtime: "CodeBuddy", Model: "pro"}} {
 		if p.Valid() {
-			t.Fatal("接受了未授权配置", p)
+			t.Fatal("接受了非法配置", p)
+		}
+	}
+	for _, p := range []testAgentPolicy{
+		{Provider: "codebuddy", Model: "deepseek-v4.1-flash"},
+		{Provider: "codex", Model: "gpt-6.1-sol", Thinking: "low", Tier: "default"},
+		{Provider: "dsh", Runtime: "dsh", Model: "codebuddy/deepseek-v4.1-flash"},
+	} {
+		if !p.Valid() {
+			t.Fatal("拒绝了合法配置", p)
 		}
 	}
 }

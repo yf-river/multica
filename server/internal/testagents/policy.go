@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -14,19 +15,30 @@ import (
 
 type Policy struct {
 	Provider string `json:"provider"`
+	// Runtime 是承载该模型的运行时 provider（codebuddy/codex/dsh…）。旧配置没有这个字段，
+	// 回落到 Provider，行为与之前一致。
+	Runtime  string `json:"runtime,omitempty"`
 	Model    string `json:"model"`
 	Thinking string `json:"thinking_level"`
 	Tier     string `json:"service_tier"`
 }
 
-func (p Policy) Valid() bool {
-	switch p.Provider {
-	case "codebuddy":
-		return p.Model == "deepseek-v4.1-flash" && p.Thinking == "" && p.Tier == ""
-	case "codex":
-		return p.Model == "gpt-6.1-sol" && p.Thinking == "low" && p.Tier == "default"
+// modelID 允许 provider 前缀（DSH 的 `codebuddy/deepseek-v4.1-flash`）与常见分隔符。
+var modelID = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+var runtimeID = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// runtime 返回实际承载模型的运行时；未显式选择时与 provider 相同（兼容历史配置）。
+func (p Policy) runtime() string {
+	if p.Runtime != "" {
+		return p.Runtime
 	}
-	return false
+	return p.Provider
+}
+
+// Valid 只校验形状：运行时是已知 provider 风格的标识、模型 id 合法。模型是否真的被该运行时
+// 支持由运行时在派发时判定，设置页则用运行时模型目录限制可选范围。
+func (p Policy) Valid() bool {
+	return runtimeID.MatchString(p.runtime()) && modelID.MatchString(p.Model)
 }
 func Environment(name string) bool {
 	return name == "int" || name == "verify-1" || name == "verify-2" || name == "verify-3"
@@ -57,7 +69,7 @@ func Resolve(ctx context.Context, db Reader, workspace, agentID string) (Selecti
 	if err != nil || json.Unmarshal(raw, &result.Policy) != nil || !result.Policy.Valid() {
 		return result, true, fmt.Errorf("本环境测试 Agent 默认配置尚未就绪")
 	}
-	err = db.QueryRow(ctx, `SELECT id::text,runtime_mode FROM agent_runtime WHERE workspace_id=$1 AND provider=$2 AND daemon_id=$3 AND status='online' AND profile_id IS NULL`, workspace, result.Provider, daemon).Scan(&result.RuntimeID, &result.RuntimeMode)
+	err = db.QueryRow(ctx, `SELECT id::text,runtime_mode FROM agent_runtime WHERE workspace_id=$1 AND provider=$2 AND daemon_id=$3 AND status='online' AND profile_id IS NULL`, workspace, result.runtime(), daemon).Scan(&result.RuntimeID, &result.RuntimeMode)
 	if err != nil {
 		return result, true, fmt.Errorf("本环境测试 runtime 尚未就绪")
 	}

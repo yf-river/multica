@@ -6,7 +6,11 @@ import { api } from "@multica/core/api";
 import { TestAgentsTab } from "./test-agents-tab";
 vi.mock("@multica/core", () => ({ useWorkspaceId: () => "test" }));
 vi.mock("@multica/core/api", () => ({
-  api: { getTestAgentControl: vi.fn(), configureTestAgents: vi.fn() },
+  api: {
+    getTestAgentControl: vi.fn(),
+    configureTestAgents: vi.fn(),
+    initiateListModels: vi.fn(),
+  },
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const flash = {
@@ -27,24 +31,42 @@ function render() {
   );
 }
 describe("test environment controls", () => {
-  it("submits the selected default with its revision, without a target URL", async () => {
+  it("lets the operator pick a runtime and model, then saves both", async () => {
     vi.spyOn(api, "getTestAgentControl").mockResolvedValue([
       {
         name: "default",
         revision: 4,
         desired: { policy: flash as never, overrides: {} },
-        observed: {},
+        observed: {
+          runtimes: [
+            { id: "rt-codebuddy", provider: "codebuddy" },
+            { id: "rt-codex", provider: "codex" },
+          ],
+        },
         observed_at: null,
       },
     ]);
+    vi.spyOn(api, "initiateListModels").mockResolvedValue({
+      runtime_id: "rt-codex",
+      models: [
+        { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", default: true },
+        { id: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+      ],
+      unavailable_models: [],
+    } as never);
     const save = vi
       .spyOn(api, "configureTestAgents")
       .mockResolvedValue({ ok: true });
     render();
-    const select = await screen.findByRole("combobox", {
-      name: "Test defaults",
+    const runtime = await screen.findByRole("combobox", {
+      name: "Test defaults runtime",
     });
-    fireEvent.change(select, { target: { value: "codex" } });
+    fireEvent.change(runtime, { target: { value: "rt-codex" } });
+    const model = await screen.findByRole("combobox", {
+      name: "Test defaults model",
+    });
+    await waitFor(() => expect(api.initiateListModels).toHaveBeenCalled());
+    fireEvent.change(model, { target: { value: "gpt-6.2-sol" } });
     fireEvent.click(
       screen.getByRole("button", { name: "Apply to all environments" }),
     );
@@ -55,9 +77,10 @@ describe("test environment controls", () => {
         revision: 4,
         policy: {
           provider: "codex",
-          model: "gpt-6.1-sol",
-          thinking_level: "low",
-          service_tier: "default",
+          runtime: "codex",
+          model: "gpt-6.2-sol",
+          thinking_level: "",
+          service_tier: "",
         },
       }),
     );
