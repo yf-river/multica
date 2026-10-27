@@ -406,7 +406,9 @@ func (h *Handler) validateDeliveryBatch(r *http.Request, tx pgx.Tx, ws string, c
 	}
 	// 修改 7. 固定组合就是成员这一轮要验收的候选：把候选归属和授权复核里的候选同步到同一份组合，
 	// 成员才能通过正式验收接口提交证据，后续撤权复核也不会把同一组合误判成授权失效。
-	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET candidate_id=$2::text,candidate_url=$3::text,acceptance_submitted=false,plan_snapshot=jsonb_set(jsonb_set(jsonb_set(jsonb_set(COALESCE(d.plan_snapshot,'{}'::jsonb),'{batch_previous_candidate}',to_jsonb(d.candidate_id)),'{batch_previous_review}',COALESCE(d.plan_snapshot->'authorization_review','{}'::jsonb)),'{candidate_commit}',to_jsonb($4::text)),'{authorization_review}',CASE WHEN d.plan_snapshot ? 'authorization_review' THEN jsonb_set(d.plan_snapshot->'authorization_review','{candidate_id}',to_jsonb($2::text)) ELSE '{}'::jsonb END),revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase='approved'`, current.ID, candidate, url, commit)
+	// 组合重绑保留成员已提交的验收：批候选包含该成员的提交，批验收直接复用成员证据，
+	// 不再要求人工对批候选重新 accept 一次。
+	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery d SET candidate_id=$2::text,candidate_url=$3::text,acceptance_submitted=d.acceptance_submitted,plan_snapshot=jsonb_set(jsonb_set(jsonb_set(jsonb_set(COALESCE(d.plan_snapshot,'{}'::jsonb),'{batch_previous_candidate}',to_jsonb(d.candidate_id)),'{batch_previous_review}',COALESCE(d.plan_snapshot->'authorization_review','{}'::jsonb)),'{candidate_commit}',to_jsonb($4::text)),'{authorization_review}',CASE WHEN d.plan_snapshot ? 'authorization_review' THEN jsonb_set(d.plan_snapshot->'authorization_review','{candidate_id}',to_jsonb($2::text)) ELSE '{}'::jsonb END),revision=revision+1,updated_at=now() FROM delivery_batch_member m WHERE m.batch_id=$1 AND m.delivery_id=d.id AND m.result='pending' AND d.phase='approved'`, current.ID, candidate, url, commit)
 	if err != nil {
 		return err
 	}

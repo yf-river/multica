@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,7 +127,11 @@ func (d *Daemon) supplyManagedDsh(ctx context.Context, root, artifacts, path, ve
 		return err
 	}
 	defer preparation.Close()
+	// 插件清单也算身份的一部分：随包插件增删后必须重装，否则旧的 degraded 结果会被复用。
 	identity := m.SHA256 + ":" + version + ":" + path
+	if inventory, err := pluginInventory(artifacts); err == nil && inventory != "" {
+		identity += ":" + inventory
+	}
 	status := readDshSupplyStatus(root)
 	if status.Identity == identity && status.Status == "degraded" {
 		return errors.New(status.Error)
@@ -345,4 +351,26 @@ func smokeManagedDsh(ctx context.Context, root string, g dshprofile.Generation, 
 		return errors.New("DSH canary session resume failed")
 	}
 	return nil
+}
+
+// pluginInventory 汇总随包携带的 provider 插件（文件名+摘要），供供给身份比对。
+func pluginInventory(directory string) (string, error) {
+	paths, err := filepath.Glob(filepath.Join(directory, "dsh-codebuddy-sdk-*.tgz"))
+	if err != nil || len(paths) == 0 {
+		return "", err
+	}
+	sum := sha256.New()
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		sum.Write([]byte(filepath.Base(path) + ":" + hex.EncodeToString(sha256Sum(data)) + "\n"))
+	}
+	return hex.EncodeToString(sum.Sum(nil))[:16], nil
+}
+
+func sha256Sum(data []byte) []byte {
+	sum := sha256.Sum256(data)
+	return sum[:]
 }
