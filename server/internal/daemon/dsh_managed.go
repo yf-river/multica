@@ -160,6 +160,17 @@ func (d *Daemon) supplyManagedDsh(ctx context.Context, root, artifacts, path, ve
 		if e != nil {
 			return fail(fmt.Errorf("DSH staging install: %w: %s", e, dshProvisionOutput(output)))
 		}
+		// 2. 随运行时一起交付的 provider 插件（例如 CodeBuddy）逐个装进受管 profile；
+		// 装不上就整体判失败，避免出现"运行时在、模型却没有"的半可用状态。
+		plugins, _ := filepath.Glob(filepath.Join(artifacts, "dsh-codebuddy-sdk-*.tgz"))
+		for _, pluginPath := range plugins {
+			plugin := exec.Command(path, "plugin", "--profile", status.Generation.Profile, "add", pluginPath, "--offline")
+			plugin.Env = dshPluginEnv()
+			pluginOutput, pluginErr := processtree.CombinedOutput(ctx, plugin, 5*time.Second)
+			if pluginErr != nil {
+				return fail(fmt.Errorf("DSH plugin install %s: %w: %s", filepath.Base(pluginPath), pluginErr, dshProvisionOutput(pluginOutput)))
+			}
+		}
 		frame, e := inspectManagedDsh(ctx, status.Generation)
 		if e != nil {
 			return fail(e)
