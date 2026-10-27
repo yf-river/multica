@@ -328,6 +328,10 @@ def build_dsh_runtime(source, target, env):
     with build_stage('dsh-runtime'):
         run(['pnpm','--filter','@multica-ai/dsh-runtime','build'],cwd=source,env=env)
         run(['pnpm','--filter','@multica-ai/dsh-runtime','pack:runtime',str(destination)],cwd=source,env=env)
+        # 受管 profile 还要安装随包携带的 provider 插件（如 CodeBuddy），发布目录里必须
+        # 一并带上，daemon 供给时才能找到并 `dsh plugin add`。
+        for plugin in sorted((source/'server/internal/daemon/dshbundle/bundle').glob('dsh-codebuddy-sdk-*.tgz')):
+            shutil.copyfile(plugin,destination/plugin.name)
     manifest=read(destination/'manifest.json')
     filename=manifest.get('filename','')
     if not re.fullmatch(r'dsh-runtime-[0-9A-Za-z.+-]+\.tgz',filename):
