@@ -58,6 +58,7 @@ function PolicyEditor({
   });
   const catalog = models.data?.models ?? [];
   const [model, setModel] = useState(initial.model);
+  const [thinking, setThinking] = useState(initial.thinking_level ?? '');
   const choices = catalog.length
     ? catalog.map((m) => ({ id: m.id, label: m.label }))
     : preset
@@ -67,6 +68,22 @@ function PolicyEditor({
     model && choices.some((c) => c.id === model)
       ? model
       : (choices[0]?.id ?? model);
+  // 思考强度与 Agent 审查页一致：优先用模型目录上报的档位，其次按运行时给内置档位。
+  const catalogModel = catalog.find((m) => m.id === current);
+  const thinkingLevels: { value: string; label: string }[] =
+    catalogModel?.thinking?.supported_levels?.length
+      ? catalogModel.thinking.supported_levels
+      : selected?.provider === 'codex'
+        ? [
+            { value: 'low', label: 'low' },
+            { value: 'medium', label: 'medium' },
+            { value: 'high', label: 'high' },
+          ]
+        : [];
+  const thinkingValue =
+    thinking && thinkingLevels.some((l) => l.value === thinking)
+      ? thinking
+      : (thinkingLevels[0]?.value ?? '');
   return (
     <div className="flex flex-wrap items-center gap-2">
       <label className="sr-only" htmlFor={`${label}-runtime`}>
@@ -106,6 +123,27 @@ function PolicyEditor({
           </option>
         ))}
       </select>
+      {thinkingLevels.length > 0 ? (
+        <>
+          <label className="sr-only" htmlFor={`${label}-thinking`}>
+            {label}
+          </label>
+          <select
+            id={`${label}-thinking`}
+            aria-label={`${label} thinking`}
+            value={thinkingValue}
+            disabled={disabled}
+            onChange={(e) => setThinking(e.target.value)}
+            className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+          >
+            {thinkingLevels.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </>
+      ) : null}
       <Button
         size="sm"
         disabled={disabled || !selected || !current}
@@ -114,7 +152,7 @@ function PolicyEditor({
             provider: selected?.provider ?? initial.provider,
             runtime: selected?.provider ?? initial.runtime,
             model: current ?? "",
-            thinking_level: preset?.thinking_level ?? "",
+            thinking_level: thinkingLevels.length > 0 ? thinkingValue : "",
             service_tier: preset?.service_tier ?? "",
           })
         }
