@@ -218,6 +218,13 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 1. 已完成的任务不再接受新交付：否则同一提交会被反复登记、构建并占用验收环境，
+	// 而这些交付最终通常只能取消。确需继续时先重新打开任务。
+	var status string
+	if err := h.DB.QueryRow(r.Context(), `SELECT status FROM issue WHERE workspace_id=$1 AND id=$2`, ws, issue).Scan(&status); err == nil && status == "done" {
+		writeError(w, http.StatusConflict, "任务已完成；如需继续交付请先重新打开任务")
+		return
+	}
 	var body struct {
 		OperationID     string                  `json:"operation_id"`
 		Commit          string                  `json:"source_commit"`

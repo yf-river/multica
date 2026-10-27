@@ -166,3 +166,19 @@ func TestDeliveryCoordinationEvidenceSurvivesCandidateChanges(t *testing.T) {
 		t.Fatalf("历史证据丢失: %d", count)
 	}
 }
+
+func TestSubmitDeliveryRejectsCompletedIssue(t *testing.T) {
+	issue, _ := coordinationFixture(t)
+	var o coordinationOwner
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "session-done", coordinationOwner{}, "")).Want(200).JSON(&o)
+	dbfx.Exec(t, `UPDATE issue SET status='done' WHERE id=$1`, issue)
+	result := testutil.Call(t, testHandler.SubmitIssueDelivery, deliveryRequest(issue, submitBody(strings.Repeat("d", 40)), o)).Want(409)
+	if !strings.Contains(result.Body.String(), "任务已完成") {
+		t.Fatalf("意外原因 %s", result.Body)
+	}
+	var count int
+	dbfx.QueryRow(t, `SELECT count(*) FROM issue_delivery WHERE issue_id=$1`, issue).Scan(&count)
+	if count != 0 {
+		t.Fatalf("已完成任务写入了 %d 份交付", count)
+	}
+}
