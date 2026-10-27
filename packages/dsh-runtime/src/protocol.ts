@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { RuntimeHost } from './host.js'
+import type { PendingInteraction } from './interactions.js'
 
 export const PROTOCOL_VERSION = 1 as const
 export const MAX_COMMAND_BYTES = 8 * 1024 * 1024
@@ -42,6 +43,8 @@ export interface ExecuteCommand {
   command?: string
   /** Runtime approval stance; 'never' turns every approval ask into a rejection. */
   approval_policy?: 'ask' | 'never'
+  human_interactions?: boolean
+  plan_decision?: 'approved' | 'keep_planning'
   resume_session_id?: string
   model?: ModelSelectionInput
   reasoning_effort?: string
@@ -84,6 +87,7 @@ export type OutboundFrame =
       compaction: boolean
       commands?: boolean
       plan_review?: boolean
+      user_questions?: boolean
       services?: Record<string, boolean>
       mcp: ['stdio', 'streamable-http']
     }
@@ -93,6 +97,7 @@ export type OutboundFrame =
   | { v: typeof PROTOCOL_VERSION; type: 'session'; request_id: string; session_id: string; resumed: boolean }
   | { v: typeof PROTOCOL_VERSION; type: 'text'; request_id: string; content: string }
   | { v: typeof PROTOCOL_VERSION; type: 'thinking'; request_id: string; content: string }
+  | { v: typeof PROTOCOL_VERSION; type: 'plan_review' | 'user_question'; request_id: string; session_id: string; interaction: PendingInteraction }
   | { v: typeof PROTOCOL_VERSION; type: 'tool_call'; request_id: string; call_id: string; name: string; arguments: string }
   | {
     v: typeof PROTOCOL_VERSION
@@ -155,7 +160,7 @@ export type OutboundFrame =
     v: typeof PROTOCOL_VERSION
     type: 'result'
     request_id: string
-    status: 'completed' | 'failed' | 'aborted' | 'cancelled'
+    status: 'completed' | 'failed' | 'aborted' | 'cancelled' | 'waiting_plan' | 'waiting_input'
     session_id?: string
     output: string
     stop_reason?: string
@@ -294,12 +299,18 @@ export function parseInboundCommand(line: string): InboundCommand {
   if (type === 'execute') {
     assertOnlyKeys(
       command,
-      ['v', 'type', 'request_id', 'cwd', 'prompt', 'command', 'approval_policy', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers'],
+      ['v', 'type', 'request_id', 'cwd', 'prompt', 'command', 'approval_policy', 'human_interactions', 'plan_decision', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers'],
       'execute command',
     )
     const prompt = optionalString(command.prompt, 'execute.prompt')
     const slashCommand = optionalString(command.command, 'execute.command')
     if (prompt === undefined && slashCommand === undefined) throw new Error('execute requires prompt or command')
+    if (command.human_interactions !== undefined && typeof command.human_interactions !== 'boolean') throw new Error('execute.human_interactions must be boolean')
+    const planDecision = optionalString(command.plan_decision, 'execute.plan_decision')
+    if (planDecision !== undefined && planDecision !== 'approved' && planDecision !== 'keep_planning') throw new Error('execute.plan_decision must be approved or keep_planning')
+    if (planDecision !== undefined && (command.human_interactions !== true || !command.resume_session_id || slashCommand !== (planDecision === 'approved' ? '/plan off' : '/plan'))) {
+      throw new Error('plan decisions require human interactions, the original session and the matching plan command')
+    }
     const approvalPolicy = optionalString(command.approval_policy, 'execute.approval_policy')
     if (approvalPolicy !== undefined && approvalPolicy !== 'ask' && approvalPolicy !== 'never') {
       throw new Error('execute.approval_policy must be ask or never')
@@ -312,6 +323,8 @@ export function parseInboundCommand(line: string): InboundCommand {
       ...prompt === undefined ? {} : { prompt },
       ...slashCommand === undefined ? {} : { command: slashCommand },
       ...approvalPolicy === undefined ? {} : { approval_policy: approvalPolicy },
+      ...(command.human_interactions === undefined ? {} : { human_interactions: command.human_interactions }),
+      ...(planDecision === undefined ? {} : { plan_decision: planDecision }),
       ...optionalString(command.resume_session_id, 'execute.resume_session_id') === undefined
         ? {}
         : { resume_session_id: optionalString(command.resume_session_id, 'execute.resume_session_id') },

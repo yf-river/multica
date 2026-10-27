@@ -647,7 +647,7 @@ WHERE id = sqlc.arg(task_id)
 -- this now; a status flip to cancelled/done no longer does (MUL-4465).
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING *;
 
 -- name: CancelPendingTasksByIssueAndAgent :many
@@ -681,7 +681,7 @@ RETURNING *;
 -- behave consistently.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
-WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING *;
 
 -- name: CancelAgentTasksByTriggerComment :many
@@ -692,7 +692,7 @@ RETURNING *;
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE (trigger_comment_id = $1 OR $1 = ANY(coalesced_comment_ids))
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING *;
 
 -- name: CancelAgentTasksByChatSession :many
@@ -703,7 +703,7 @@ RETURNING *;
 -- could no longer reach those tasks.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
-WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING *;
 
 -- name: GetAgentTask :one
@@ -1600,7 +1600,7 @@ RETURNING retry.*;
 -- CancelAgentTaskByUser, this deliberately leaves recovery inputs replayable.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
-WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING *;
 
 -- name: CancelAgentTaskByUser :one
@@ -1662,7 +1662,7 @@ SET status = 'cancelled',
       )
     END
 WHERE task.id = $1
-  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+  AND task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING task.*;
 
 -- name: SetAgentTaskBranchName :exec
@@ -1719,7 +1719,7 @@ SET status = 'cancelled',
     error = sqlc.arg('error'),
     failure_reason = sqlc.arg('failure_reason'),
     prepare_lease_expires_at = NULL
-WHERE id = sqlc.arg('id') AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+WHERE id = sqlc.arg('id') AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
 RETURNING *;
 
 -- name: CancelQueuedAgentTask :one
@@ -1741,7 +1741,7 @@ WITH head AS MATERIALIZED (
   SELECT candidate.id
   FROM agent_task_queue AS candidate
   WHERE candidate.chat_session_id = $1
-    AND candidate.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+    AND candidate.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred', 'waiting_plan', 'waiting_input')
     AND candidate.regenerate_quick_actions_for IS NULL
   ORDER BY
     CASE

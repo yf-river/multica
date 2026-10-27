@@ -223,6 +223,9 @@ func runPeriodicSweep(ctx context.Context, interval time.Duration, sweep func())
 // 退回信任 DB 的陈旧窗口——这是最初的行为。
 func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handler.LivenessStore, taskSvc *service.TaskService, bus *events.Bus, reconnectGrace time.Duration) {
 	runPeriodicSweep(ctx, sweepInterval, func() {
+		if err := taskSvc.ExpireSuspendedInteractions(ctx); err != nil {
+			slog.Warn("task sweeper: failed to expire human interactions", "error", err)
+		}
 		// 下面这些阶段保持 PR1 里既有的节奏与顺序，让这次上线不改变任何业务
 		// 判定或恢复语义。runtime GC 是唯一的例外：它的 7 天保留清理挪到独立
 		// 的小时循环里，绝不能拖慢这条存活路径。

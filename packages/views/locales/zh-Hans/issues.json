@@ -698,7 +698,9 @@
     "context_child_calls": "已观测子调用",
     "context_mcp": "MCP",
     "context_skills": "技能",
-    "context_usage_partial": "目标判定等内部调用未上报完整用量，统计仅包含已观测的调用。"
+    "context_usage_partial": "目标判定等内部调用未上报完整用量，统计仅包含已观测的调用。",
+    "status_waiting_plan": "等待计划确认",
+    "status_waiting_input": "等待回答"
   },
   "usage_detail": {
     "title": "用量明细",

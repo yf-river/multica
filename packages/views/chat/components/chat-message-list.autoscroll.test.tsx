@@ -26,6 +26,9 @@ let reportContentHeightChanged: (() => void) | undefined;
 let pinCalls: unknown[] = [];
 let scrollToLastItemEnd: (() => void) | undefined;
 
+// 卡片的问答行为由 task-interaction-panel.test.tsx 覆盖；此套验证列表身份与滚动。
+vi.mock("../../common/task-interaction-panel", () => ({ TaskInteractionPanel: () => null }));
+
 vi.mock("react-virtuoso", () => ({
   Virtuoso: ({
     ref,

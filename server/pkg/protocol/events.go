@@ -39,6 +39,8 @@ const (
 	EventTaskDispatch              = "task:dispatch"                // queued → dispatched（daemon 认领）
 	EventTaskRunning               = "task:running"                 // dispatched → running（daemon 已启动）
 	EventTaskWaitingLocalDirectory = "task:waiting_local_directory" // dispatched → waiting_local_directory（daemon 因 local_directory 路径忙而停车等待）
+	EventTaskInteractionResolved   = "task:interaction_resolved"
+	EventTaskWaitingHuman          = "task:waiting_human"
 	EventTaskProgress              = "task:progress"
 	EventTaskCompleted             = "task:completed" // running → completed
 	EventTaskFailed                = "task:failed"    // running → failed

@@ -1,6 +1,6 @@
 {
   "name": "@multica-ai/dsh-runtime",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "private": true,
   "description": "DeepSeek Harness runtime bridge for Multica",
   "repository": {
@@ -52,7 +52,9 @@
     "@deepseek-ai/dsh-mcp-client": ">=0.2.1-rc.3 <0.3.0",
     "@deepseek-ai/dsh-session": ">=0.2.1-rc.3 <0.3.0",
     "@deepseek-ai/dsh-subprocess": ">=0.2.1-rc.3 <0.3.0",
-    "@deepseek-ai/dsh-user-approval": ">=0.2.1-rc.3 <0.3.0"
+    "@deepseek-ai/dsh-user-approval": ">=0.2.1-rc.3 <0.3.0",
+    "@deepseek-ai/dsh-user-questions": ">=0.2.1-rc.3 <0.3.0",
+    "@deepseek-ai/dsh-tool-ask-user": ">=0.2.1-rc.3 <0.3.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -83,6 +85,12 @@
       "optional": true
     },
     "@deepseek-ai/dsh-user-approval": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-questions": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tool-ask-user": {
       "optional": true
     }
   },
@@ -119,7 +127,8 @@
     "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
     "@deepseek-ai/dsh-util-values": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.3"
+    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-user-questions": "0.2.1-rc.3"
   },
   "license": "UNLICENSED"
 }

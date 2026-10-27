@@ -670,7 +670,9 @@
         "running": "进行中",
         "completed": "成功",
         "failed": "失败",
-        "cancelled": "已取消"
+        "cancelled": "已取消",
+        "waiting_plan": "等待计划确认",
+        "waiting_input": "等待回答"
       },
       "section_now": "当前",
       "section_last_30d": "近 30 天",
@@ -872,7 +874,9 @@
     "output_next": "下一页",
     "copy_step_preview": "复制步骤预览",
     "step_duration_unknown": "无法确定准确耗时。",
-    "runtime_context": "运行上下文"
+    "runtime_context": "运行上下文",
+    "status_waiting_plan": "等待计划确认",
+    "status_waiting_input": "等待回答"
   },
   "task_failure": {
     "cancelled_by_system": "系统已取消",

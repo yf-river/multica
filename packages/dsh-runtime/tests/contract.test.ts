@@ -26,6 +26,13 @@ describe('Go adapter and bridge wire contract', () => {
     expect(raw.split('\n')).toContain(encodeFrame(sample).trimEnd())
   })
 
+  it.each(['plan', 'question'])('preserves the complete suspended %s frame sequence', async kind => {
+    const raw = await readFile(new URL(`../fixtures/waiting-${kind}.jsonl`, import.meta.url), 'utf8')
+    const frames = raw.trim().split('\n').map(line => JSON.parse(line) as OutboundFrame)
+    expect(frames.map(encodeFrame).join('')).toBe(raw)
+    expect(frames.at(-1)?.type).toBe('result')
+  })
+
   it('packs one identity in package metadata, compatibility and ready frames', async () => {
     const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
     const compat = JSON.parse(await readFile(new URL('../compat.json', import.meta.url), 'utf8'))

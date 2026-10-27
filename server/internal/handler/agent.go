@@ -378,18 +378,21 @@ type TaskIssueStatusData struct {
 // autopilot / quick_create / 直接指派）由 Kind 判别，各自的来源上下文
 // （TriggerCommentID / ChatSessionID / AutopilotRunID 等）按需携带。
 type AgentTaskResponse struct {
-	ReviewCommit         string                 `json:"review_commit,omitempty"`
-	ReleaseResumeTaskID  string                 `json:"release_resume_task_id,omitempty"`
-	ReleaseResumeRoot    string                 `json:"release_resume_root,omitempty"`
-	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
-	ID                   string                 `json:"id"`
-	AgentID              string                 `json:"agent_id"`
-	RuntimeID            string                 `json:"runtime_id"`
-	IssueID              string                 `json:"issue_id"`
-	WorkspaceID          string                 `json:"workspace_id"`
-	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
-	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
-	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
+	InteractionSourceTaskID string                 `json:"interaction_source_task_id,omitempty"`
+	InteractionContinuation bool                   `json:"interaction_continuation,omitempty"`
+	PlanDecision            string                 `json:"plan_decision,omitempty"`
+	ReviewCommit            string                 `json:"review_commit,omitempty"`
+	ReleaseResumeTaskID     string                 `json:"release_resume_task_id,omitempty"`
+	ReleaseResumeRoot       string                 `json:"release_resume_root,omitempty"`
+	StartClaimSupported     bool                   `json:"start_claim_supported,omitempty"`
+	ID                      string                 `json:"id"`
+	AgentID                 string                 `json:"agent_id"`
+	RuntimeID               string                 `json:"runtime_id"`
+	IssueID                 string                 `json:"issue_id"`
+	WorkspaceID             string                 `json:"workspace_id"`
+	WorkspaceSlug           string                 `json:"workspace_slug,omitempty"`
+	IssueIdentifier         string                 `json:"issue_identifier,omitempty"`
+	RemoteMCPConnections    []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
 	// PluginHookTools 是该工作区的 agent 触发型插件钩子，daemon 在本任务中
 	// 把它们渲染成 MCP 工具。在 claim 时刻解析，这样停用/卸载插件对下一个
 	// 任务生效，而不是等 daemon 碰巧重启。

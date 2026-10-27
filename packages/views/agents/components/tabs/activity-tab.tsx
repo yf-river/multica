@@ -105,6 +105,8 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
     const statusRank: Partial<Record<AgentTask["status"], number>> = {
       running: 0,
       dispatched: 1,
+      waiting_plan: 2,
+      waiting_input: 2,
       waiting_local_directory: 2,
       queued: 3,
     };
@@ -116,7 +118,7 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
           (t.status === "running" ||
             t.status === "queued" ||
             t.status === "dispatched" ||
-            t.status === "waiting_local_directory"),
+            t.status === "waiting_plan" || t.status === "waiting_input" || t.status === "waiting_local_directory"),
       )
       .sort(
         (a, b) =>
@@ -834,6 +836,8 @@ type TimeAgoFn = (dateStr: string) => string;
 /** 把任务状态翻译成界面文案。 */
 function taskStatusLabel(status: AgentTask["status"], t: AgentsT): string {
   switch (status) {
+    case "waiting_plan": return t(($) => $.tab_body.activity.status.waiting_plan);
+    case "waiting_input": return t(($) => $.tab_body.activity.status.waiting_input);
     case "queued":
       return t(($) => $.tab_body.activity.status.queued);
     case "dispatched":
@@ -848,6 +852,7 @@ function taskStatusLabel(status: AgentTask["status"], t: AgentsT): string {
       return t(($) => $.tab_body.activity.status.failed);
     case "cancelled":
       return t(($) => $.tab_body.activity.status.cancelled);
+    default: return status;
   }
 }
 

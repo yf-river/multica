@@ -3838,6 +3838,43 @@ ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID)).Scan(&deliveryI
 		}
 	}
 
+	interaction, interactionErr := h.Queries.GetTaskInteractionFollowup(r.Context(), task.ID)
+	if interactionErr == nil {
+		source, err := h.Queries.GetAgentTask(r.Context(), interaction.TaskID)
+		var answer protocol.InteractionAnswer
+		if err != nil || !requestHasClientCapability(r, protocol.DaemonCapabilityDSHInteractionsV1) || interaction.Provider != "dsh" || interaction.DeliveryMode != "suspended" || interaction.Status != "responded" || runtime.Provider != "dsh" ||
+			source.AgentID != task.AgentID || source.RuntimeID != task.RuntimeID || source.ChatSessionID != task.ChatSessionID || source.IssueID != task.IssueID ||
+			!source.SessionID.Valid || !source.WorkDir.Valid || json.Unmarshal(interaction.Response, &answer) != nil || answer.Decision == "cancelled" {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(r.Context(), task,
+				"原生会话已不可续接，请重新规划。", taskfailure.ReasonAgentUnknown, "error_interaction_continuity", http.StatusConflict, "native interaction continuity is unavailable")
+		}
+		resp.InteractionContinuation = true
+		resp.InteractionSourceTaskID = uuidToString(source.ID)
+		resp.PriorSessionID, resp.PriorWorkDir = source.SessionID.String, source.WorkDir.String
+		if interaction.Kind == "plan" {
+			resp.PlanDecision = answer.Decision
+			if answer.Decision == "approved" {
+				resp.Command = "/plan off"
+			} else if answer.Decision == "keep_planning" {
+				resp.Command = "/plan"
+			} else {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(r.Context(), task,
+					"计划决定无效，请重新规划。", taskfailure.ReasonAgentUnknown, "error_interaction_decision", http.StatusConflict, "invalid plan decision")
+			}
+		}
+	} else if len(task.Context) != 0 {
+		var context map[string]json.RawMessage
+		_ = json.Unmarshal(task.Context, &context)
+		if len(context["dsh_interaction_continuation"]) != 0 {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(r.Context(), task,
+				"人工决定的原生续跑记录缺失，请重新规划。", taskfailure.ReasonAgentUnknown, "error_interaction_binding", http.StatusConflict, "native interaction binding is unavailable")
+		}
+		if !errors.Is(interactionErr, pgx.ErrNoRows) {
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, interactionErr, "interaction continuation", uuidToString(task.ID))
+		}
+	} else if !errors.Is(interactionErr, pgx.ErrNoRows) {
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSourceLoad(r.Context(), task, interactionErr, "interaction continuation", uuidToString(task.ID))
+	}
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
 }
 

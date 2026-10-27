@@ -383,6 +383,7 @@ export interface AgentTask {
    *   - dispatched：已派发出去
    *   - waiting_local_directory：daemon 发出的"本地目录占用等待"——任务已派发
    *     但被搁置，因为另一个任务正锁着同一个磁盘路径
+   *   - waiting_plan / waiting_input：进程已结束，等待人工确认或回答
    *   - running：执行中
    *   - completed / failed / cancelled：终态
    * 凡是要把任务划分成"活跃 vs 已结束"的消费方，都必须把
@@ -391,6 +392,8 @@ export interface AgentTask {
   status:
     | "queued"
     | "dispatched"
+    | "waiting_plan"
+    | "waiting_input"
     | "waiting_local_directory"
     | "running"
     | "completed"
