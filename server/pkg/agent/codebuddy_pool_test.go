@@ -146,37 +146,75 @@ func TestCodebuddyResidentFingerprintSeparatesCacheAndAccount(t *testing.T) {
 }
 
 func TestCodebuddyNativeMCPScopeKeepsTaskProcess(t *testing.T) {
+	for _, name := range []string{".mcp.json", ".codebuddy.json"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := codebuddyFixtureConfig(t)
+			cfg.Env["CODEBUDDY_POOL_ALLOW_TASK_ENV"], cfg.Env["CODEBUDDY_POOL_EXPECT_TASK_TOKEN"] = "1", cfg.Env["MULTICA_TOKEN"]
+			file := filepath.Join(cfg.Env["CODEBUDDY_CONFIG_DIR"], name)
+			content := `{"mcpServers":{"native-user":{"command":"user-defined-command"}}}`
+			if err := os.WriteFile(file, []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			pool, err := NewCodebuddyProcessPool(filepath.Join(t.TempDir(), "pool"), 1, time.Minute, slog.Default())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pool.Close()
+			cfg.CodebuddyPool = pool
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			session, err := (&codebuddyBackend{cfg: cfg}).Execute(ctx, "reply", ExecOptions{Cwd: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range session.Messages {
+			}
+			result := <-session.Result
+			if result.Status != "completed" || result.Output != "fresh answer" {
+				t.Fatalf("native scope lost its task environment: %+v", result)
+			}
+			if len(pool.entries) != 0 {
+				t.Fatal("unmanaged MCP scope entered token-free resident process")
+			}
+			got, err := os.ReadFile(file)
+			if err != nil || string(got) != content {
+				t.Fatal("native MCP configuration was modified")
+			}
+		})
+	}
+}
+
+func TestCodebuddyLocalMCPConfigurationChangesResidentIdentity(t *testing.T) {
 	cfg := codebuddyFixtureConfig(t)
-	cfg.Env["CODEBUDDY_POOL_ALLOW_TASK_ENV"], cfg.Env["CODEBUDDY_POOL_EXPECT_TASK_TOKEN"] = "1", cfg.Env["MULTICA_TOKEN"]
-	file := filepath.Join(cfg.Env["CODEBUDDY_CONFIG_DIR"], ".mcp.json")
-	content := `{"mcpServers":{"native-user":{"command":"user-defined-command"}}}`
-	if err := os.WriteFile(file, []byte(content), 0600); err != nil {
-		t.Fatal(err)
+	opts := ExecOptions{Cwd: t.TempDir()}
+	path := filepath.Join(cfg.Env["CODEBUDDY_CONFIG_DIR"], ".codebuddy.json")
+	write := func(document string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(document), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	pool, err := NewCodebuddyProcessPool(filepath.Join(t.TempDir(), "pool"), 1, time.Minute, slog.Default())
-	if err != nil {
-		t.Fatal(err)
+	fingerprint := func() string {
+		t.Helper()
+		value, err := codebuddyResidentFingerprint(cfg, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
 	}
-	defer pool.Close()
-	cfg.CodebuddyPool = pool
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	session, err := (&codebuddyBackend{cfg: cfg}).Execute(ctx, "reply", ExecOptions{Cwd: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
+	write(`{"projects":{}}`)
+	empty := fingerprint()
+	if codebuddyNeedsTaskProcess(cfg, opts.Cwd) {
+		t.Fatal("empty local metadata prevented resident execution")
 	}
-	for range session.Messages {
+	write(`{"projects":{"/owned-project":{"mcpServers":{"local":{"command":"first-command"}}}}}`)
+	first := fingerprint()
+	if !codebuddyNeedsTaskProcess(cfg, opts.Cwd) || first == empty {
+		t.Fatal("local MCP addition did not isolate and invalidate resident execution")
 	}
-	result := <-session.Result
-	if result.Status != "completed" || result.Output != "fresh answer" {
-		t.Fatalf("native scope lost its task environment: %+v", result)
-	}
-	if len(pool.entries) != 0 {
-		t.Fatal("unmanaged MCP scope entered token-free resident process")
-	}
-	got, err := os.ReadFile(file)
-	if err != nil || string(got) != content {
-		t.Fatal("native MCP configuration was modified")
+	write(`{"projects":{"/owned-project":{"mcpServers":{"local":{"command":"second-command"}}}}}`)
+	if fingerprint() == first {
+		t.Fatal("local MCP configuration change did not invalidate resident execution")
 	}
 }
 
@@ -223,7 +261,11 @@ func codebuddyFixtureConfig(t *testing.T) Config {
 		t.Skip("resident process ownership requires Linux")
 	}
 	root := t.TempDir()
-	return Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyPoolFixtureProcess$", "--"}, BuiltinRuntime: true, CLIVersion: "2.176.0", TaskID: "task", ResidentSessionKey: "workspace/runtime/agent/chat", Logger: slog.Default(), Env: map[string]string{"HOME": root, "CODEBUDDY_POOL_FIXTURE": "1", "CODEBUDDY_POOL_FIXTURE_LOG": filepath.Join(root, "calls"), "CODEBUDDY_CONFIG_DIR": root, "MULTICA_TASK_ID": "task", "MULTICA_TOKEN": "fixture-task-secret"}}
+	config := filepath.Join(root, "codebuddy")
+	if err := os.Mkdir(config, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyPoolFixtureProcess$", "--"}, BuiltinRuntime: true, CLIVersion: "2.176.0", TaskID: "task", ResidentSessionKey: "workspace/runtime/agent/chat", Logger: slog.Default(), Env: map[string]string{"HOME": root, "CODEBUDDY_POOL_FIXTURE": "1", "CODEBUDDY_POOL_FIXTURE_LOG": filepath.Join(root, "calls"), "CODEBUDDY_CONFIG_DIR": config, "MULTICA_TASK_ID": "task", "MULTICA_TOKEN": "fixture-task-secret"}}
 }
 
 func TestCodebuddyResidentTasksReuseProcessAndFenceOldFrames(t *testing.T) {

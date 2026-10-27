@@ -100,6 +100,45 @@ func (c *codebuddyControlClient) respond(raw json.RawMessage) {
 	}
 }
 
+// SDK 只有确认客户端能回答问题后才向模型注册 AskUserQuestion。
+func (c *codebuddyControlClient) initialize(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return errors.New("codebuddy execution ended before initialization")
+	}
+	c.sequence++
+	id := fmt.Sprintf("multica-initialize-%d", c.sequence)
+	responseCh := make(chan codebuddyControlResponse, 1)
+	c.pending[id] = responseCh
+	c.mu.Unlock()
+	defer func() { c.mu.Lock(); delete(c.pending, id); c.mu.Unlock() }()
+	data, err := json.Marshal(map[string]any{"type": "control_request", "request_id": id, "request": map[string]any{"subtype": "initialize", "hasPrompt": true, "capabilities": map[string]bool{"askUserQuestion": true}}})
+	if err != nil {
+		return err
+	}
+	if _, err := c.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	select {
+	case response := <-responseCh:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if response.Subtype != "success" {
+			return fmt.Errorf("codebuddy SDK initialization rejected: %s", response.Error)
+		}
+		return nil
+	case <-c.done:
+		return errors.New("codebuddy execution ended before initialization acknowledgement")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (c *codebuddyControlClient) supplement(ctx context.Context, instruction string) error {
 	if strings.TrimSpace(instruction) == "" {
 		return errors.New("codebuddy additional instruction is empty")

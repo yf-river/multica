@@ -39,11 +39,17 @@ func sameCodexResidentRollout(actual, expected string) bool {
 }
 
 func (c *codexClient) currentThreadConfig() map[string]any {
+	managed := codexSubagentConfig(c.cfg.CodexVersion)
+	if c.mcpToolsOnly {
+		for key, value := range codexSupervisionConfig() {
+			managed[key] = value
+		}
+	}
 	if c.threadConfig == nil {
-		return codexSubagentConfig(c.cfg.CodexVersion)
+		return managed
 	}
 	// 整表和点号键不能同时覆盖同一个字段，否则原生 HashMap 迭代顺序会改变优先级。
-	for key, value := range codexSubagentConfig(c.cfg.CodexVersion) {
+	for key, value := range managed {
 		delete(c.threadConfig, key)
 		parts := strings.Split(key, ".")
 		parent := c.threadConfig

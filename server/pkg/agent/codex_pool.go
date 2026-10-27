@@ -625,9 +625,21 @@ func hashCodexResidentSkills(out io.Writer, path, relative string, visited map[s
 	if err != nil {
 		return errors.New("cannot resolve Codex skill configuration")
 	}
-	info, err := os.Stat(resolved)
+	return hashCodexResidentResource(out, resolved, relative, visited)
+}
+
+// 父目录已解析，普通子项直接读取元数据；只有链接需要再次解析完整路径。
+// 每轮仍读取全部文件正文，内容及权限变化都参与进程配置指纹。
+func hashCodexResidentResource(out io.Writer, resolved, relative string, visited map[string]bool) error {
+	info, err := os.Lstat(resolved)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return errors.New("cannot read Codex skill configuration")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return hashCodexResidentSkills(out, resolved, relative, visited)
 	}
 	_, _ = fmt.Fprintf(out, "%s:%o\n", relative, info.Mode().Perm())
 	if !info.IsDir() {
@@ -653,7 +665,7 @@ func hashCodexResidentSkills(out io.Writer, path, relative string, visited map[s
 		if child.Name() == "node_modules" || child.Name() == ".git" || child.Name() == ".venv" || child.Name() == "__pycache__" {
 			continue
 		}
-		if err := hashCodexResidentSkills(out, filepath.Join(resolved, child.Name()), filepath.Join(relative, child.Name()), visited); err != nil {
+		if err := hashCodexResidentResource(out, filepath.Join(resolved, child.Name()), filepath.Join(relative, child.Name()), visited); err != nil {
 			return err
 		}
 	}

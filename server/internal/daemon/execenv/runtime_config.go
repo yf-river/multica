@@ -170,6 +170,9 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 // Grok:       写 {workDir}/AGENTS.md（Grok Build CLI 从工作目录原生读 AGENTS.md）
 // Qwen:       写 {workDir}/QWEN.md（Qwen Code 的原生上下文文件；它也读 AGENTS.md，但用 QWEN.md 可避开跨运行时歧义）
 func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (string, error) {
+	if provider == "codex" && ctx.CodexBriefViaAPI {
+		return ctx.AgentInstructions, CleanupRuntimeConfig(workDir, provider)
+	}
 	content := buildMetaSkillContent(provider, ctx)
 	if provider == "codebuddy" && ctx.CodebuddyBriefViaHook {
 		return content, CleanupRuntimeConfig(workDir, provider)

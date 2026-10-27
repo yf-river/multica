@@ -170,6 +170,17 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	if opts.MCPToolsOnly && (codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil) {
 		return nil, errors.New("CodeBuddy MCP-only supervision requires an isolated one-shot execution")
 	}
+	if (codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil) && !codebuddyTaskHooksPermitted(b.cfg, opts) {
+		if opts.NativeGoal || strings.HasPrefix(strings.TrimSpace(opts.Command), "/goal") {
+			return nil, errors.New("CodeBuddy native Goal requires task hooks; current settings disable hooks or cannot be verified")
+		}
+		// 此副本只改变本轮分派，配置和共享池仍由 daemon 持有。
+		if b.cfg.CodebuddyPool != nil {
+			isolated := *b
+			isolated.cfg.CodebuddyPool = nil
+			return isolated.Execute(ctx, prompt, opts)
+		}
+	}
 	if codebuddyNativeRequested(opts) || b.cfg.CodebuddyPool != nil {
 		return b.executeNative(ctx, prompt, opts)
 	}
@@ -288,7 +299,24 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 	// 启动横幅打到 stdout 再去读 stdin；若同步写，一旦管道缓冲填满就会卡死。写完 prompt
 	// 后 stdin 保持打开，这样运行中来的 control_request 事件还能被应答。
 	writeDone := make(chan error, 1)
+	initializationFailed := false
 	go func() {
+		if opts.RequestInteraction != nil && opts.ApprovalPolicy != "never" {
+			budget := opts.ThreadHandshakeTimeout
+			if budget <= 0 {
+				budget = 45 * time.Second
+			}
+			setup, stop := context.WithTimeout(runCtx, budget)
+			err := control.initialize(setup)
+			stop()
+			if err != nil {
+				initializationFailed = true
+				closeStdin()
+				cancel()
+				writeDone <- err
+				return
+			}
+		}
 		err := writeCodebuddyInput(control, prompt)
 		if err != nil {
 			closeStdin()
@@ -399,7 +427,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 					b.handleControlRequest(msg, control, opts.ApprovalPolicy)
 				}
 			case "control_response":
-				control.respond(msg.Response)
+				if rootEvent {
+					control.respond(msg.Response)
+				}
 			}
 			if sawResult && len(lifecycle.children) == 0 {
 				closeStdin()
@@ -445,6 +475,9 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			},
 			completionGuardError,
 		)
+		if initializationFailed && ctx.Err() == nil && !errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			finalStatus, finalOutput, finalError = "failed", "", fmt.Sprintf("initialize codebuddy SDK: %v", writeErr)
+		}
 
 		// cmd.Wait() has returned — stderrBuf.Tail() is complete. Resume
 		// rejection phrases often land only on stderr (mirror Claude MUL-4966).

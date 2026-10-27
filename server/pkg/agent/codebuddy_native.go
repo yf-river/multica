@@ -35,7 +35,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 	}
 	runCtx, cancel := runContext(ctx, opts.Timeout)
 	var hooks *codebuddyHooks
-	if b.cfg.CodebuddyPool == nil && codebuddyManagedHooksSupported(b.cfg) {
+	if b.cfg.CodebuddyPool == nil && CodebuddyNativeHooksEnabled(b.cfg, opts) {
 		hooks, err = newCodebuddyHooks(runCtx, b.cfg.Env, opts)
 		if err != nil {
 			cancel()
@@ -75,7 +75,7 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		stdout, stdin = resident.reader, resident
 		mcp = codebuddyResidentMCP(mcp, b.cfg, resident.execution)
 	} else {
-		if hooks == nil && codebuddyManagedHooksSupported(b.cfg) {
+		if hooks == nil && CodebuddyNativeHooksEnabled(b.cfg, opts) {
 			hooks, err = newCodebuddyHooks(runCtx, b.cfg.Env, opts)
 			if err != nil {
 				cancel()
@@ -426,7 +426,11 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 		}
 		setup, stop := context.WithTimeout(runCtx, handshake)
 		defer stop()
-		if _, err := client.request(setup, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "multica", "version": "1"}}); err != nil {
+		capabilities := map[string]any{}
+		if opts.RequestInteraction != nil && opts.ApprovalPolicy != "never" {
+			capabilities["_meta"] = map[string]any{"codebuddy.ai": map[string]bool{"question": true}}
+		}
+		if _, err := client.request(setup, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": capabilities, "clientInfo": map[string]string{"name": "multica", "version": "1"}}); err != nil {
 			fail(err)
 			return
 		}
@@ -581,6 +585,13 @@ func (b *codebuddyBackend) executeNative(ctx context.Context, prompt string, opt
 			return
 		}
 		if err := waitCodebuddyNativeTools(runCtx, client); err != nil {
+			// 原生暂停可能结束回合却不补发工具终态；明确的人为停止按取消收尾，
+			// 未完成工具由现有租约回收流程终止，持久目标仍可续接。
+			if humanStoppedGoal.Load() && runCtx.Err() == nil {
+				result.Status = "cancelled"
+				result.Error = "CodeBuddy goal stopped by user before foreground tools completed"
+				return
+			}
 			fail(err)
 			return
 		}

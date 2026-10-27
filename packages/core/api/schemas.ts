@@ -1967,7 +1967,7 @@ export const TaskMessagePayloadSchema = z.object({
   call_id: z.string().optional().catch(undefined),
   chat_session_id: z.string().optional(),
   seq: z.number(),
-  type: z.enum(["text", "thinking", "tool_use", "tool_result", "error"]),
+  type: z.enum(["text", "thinking", "tool_use", "tool_result", "error", "runtime"]),
   tool: z.string().optional(),
   content: z.string().optional(),
   input: z.record(z.string(), z.unknown()).optional(),

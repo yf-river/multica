@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestCodebuddyNativeFixtureProcess(t *testing.T) {
@@ -19,6 +21,7 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	paused := false
+	danglingTool := os.Getenv("MULTICA_CODEBUDDY_NATIVE_DANGLING_TOOL") == "1"
 	hasGoal, faulted := true, false
 	childFixture := os.Getenv("MULTICA_CODEBUDDY_NATIVE_CHILD_FIXTURE") == "1"
 	if childFixture {
@@ -35,9 +38,10 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params struct {
-				Action            string `json:"action"`
-				Condition         string `json:"condition"`
-				ExpectedRequestID string `json:"expectedRequestId"`
+				ClientCapabilities map[string]any `json:"clientCapabilities"`
+				Action             string         `json:"action"`
+				Condition          string         `json:"condition"`
+				ExpectedRequestID  string         `json:"expectedRequestId"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &request) != nil {
@@ -45,9 +49,19 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 		}
 		result := map[string]any{}
 		switch request.Method {
+		case "initialize":
+			if capture := os.Getenv("MULTICA_CODEBUDDY_NATIVE_CAPABILITY_CAPTURE"); capture != "" {
+				raw, _ := json.Marshal(request.Params.ClientCapabilities)
+				if os.WriteFile(capture, raw, 0600) != nil {
+					os.Exit(3)
+				}
+			}
 		case "session/new", "session/load":
 			result = map[string]any{"sessionId": "native-session", "models": map[string]string{"currentModelId": "flash"}}
 		case codebuddyGoalControlMethod:
+			if danglingTool && request.Params.Action == "set" {
+				_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "native-session", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "unfinished-bash", "title": "Bash", "status": "in_progress", "rawInput": map[string]any{"command": "sleep 20"}}}})
+			}
 			if request.Params.Action == "set" && request.Params.Condition != "" {
 				condition, hasGoal = request.Params.Condition, true
 			}
@@ -97,6 +111,55 @@ func TestCodebuddyNativeFixtureProcess(t *testing.T) {
 		_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
 	}
 	os.Exit(0)
+}
+
+func TestCodebuddyNativeQuestionCapabilityMatchesResponder(t *testing.T) {
+	for _, test := range []struct {
+		name                   string
+		responder, never, want bool
+	}{
+		{"interactive", true, false, true}, {"unattended", false, false, false}, {"no_approval", true, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			capture := filepath.Join(t.TempDir(), "capabilities.json")
+			backend := &codebuddyBackend{cfg: Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyNativeFixtureProcess$", "--"}, Logger: slog.Default(), Env: map[string]string{"MULTICA_CODEBUDDY_NATIVE_FIXTURE": "1", "MULTICA_CODEBUDDY_NATIVE_CAPABILITY_CAPTURE": capture, "CODEBUDDY_CONFIG_DIR": t.TempDir()}}}
+			opts := ExecOptions{Cwd: t.TempDir(), NativeGoal: true, Command: "/goal show", CommandOnly: true, Timeout: 5 * time.Second}
+			if test.responder {
+				opts.RequestInteraction = func(context.Context, protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
+					return protocol.InteractionAnswer{Decision: "deny"}, nil
+				}
+			}
+			if test.never {
+				opts.ApprovalPolicy = "never"
+			}
+			session, err := backend.Execute(t.Context(), "", opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range session.Messages {
+			}
+			if result := <-session.Result; result.Status != "completed" {
+				t.Fatalf("native control failed: %s", result.Error)
+			}
+			raw, err := os.ReadFile(capture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var caps struct {
+				Meta struct {
+					Codebuddy struct {
+						Question bool `json:"question"`
+					} `json:"codebuddy.ai"`
+				} `json:"_meta"`
+			}
+			if err := json.Unmarshal(raw, &caps); err != nil {
+				t.Fatal(err)
+			}
+			if caps.Meta.Codebuddy.Question != test.want {
+				t.Fatalf("question capability=%v want %v", caps.Meta.Codebuddy.Question, test.want)
+			}
+		})
+	}
 }
 
 func TestCodebuddyNativeChildDoesNotReplaceParentTurn(t *testing.T) {
@@ -230,5 +293,39 @@ func TestCodebuddyNativeCancellationPausesGoalBeforeProcessExit(t *testing.T) {
 	saved, err := os.ReadFile(marker)
 	if err != nil || string(saved) != "paused" {
 		t.Fatalf("native goal was not paused before shutdown: %v", err)
+	}
+}
+
+func TestCodebuddyNativeGoalPauseInterruptsUnfinishedForegroundTool(t *testing.T) {
+	backend := &codebuddyBackend{cfg: Config{ExecutablePath: os.Args[0], LaunchPrefix: []string{"-test.run=^TestCodebuddyNativeFixtureProcess$", "--"}, Logger: slog.Default(), Env: map[string]string{"MULTICA_CODEBUDDY_NATIVE_FIXTURE": "1", "MULTICA_CODEBUDDY_NATIVE_DANGLING_TOOL": "1", "CODEBUDDY_CONFIG_DIR": t.TempDir()}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "", ExecOptions{Command: "/goal wait for confirmation", NativeGoal: true, Model: "flash", Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := false
+	for message := range session.Messages {
+		if !observed && message.Type == MessageToolUse {
+			observed = true
+			for !session.CommandReady() {
+				select {
+				case <-ctx.Done():
+					t.Fatal("command gate unavailable")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			output, err := session.RunCommand(ctx, "/goal pause")
+			if err != nil || !strings.Contains(output, "暂停") {
+				t.Fatalf("native pause was not confirmed: %q %v", output, err)
+			}
+		}
+	}
+	result := <-session.Result
+	if !observed || result.Status != "cancelled" || !strings.Contains(result.Error, "stopped by user") {
+		t.Fatalf("intentional goal pause was reported as a failure: observed=%v result=%+v", observed, result)
+	}
+	if session.CommandReady() {
+		t.Fatal("interrupted execution still accepts commands")
 	}
 }

@@ -156,7 +156,7 @@ func (p *CodebuddyProcessPool) stop(e *codebuddyPoolEntry) {
 }
 
 func (p *CodebuddyProcessPool) acquire(ctx context.Context, cfg Config, opts ExecOptions) (*codebuddyProcessLease, error) {
-	if !codebuddyManagedHooksSupported(cfg) || cfg.ResidentSessionKey == "" || cfg.TaskID == "" {
+	if !codebuddyManagedHooksSupported(cfg) || !codebuddyTaskHooksPermitted(cfg, opts) || cfg.ResidentSessionKey == "" || cfg.TaskID == "" {
 		return nil, errors.New("CodeBuddy resident execution requires a supported builtin and logical task identity")
 	}
 	keyBytes := sha256.Sum256([]byte(cfg.ResidentSessionKey + "\x00" + opts.Cwd + "\x00" + resolveSDKConfigDir(cfg.Env)))
@@ -327,7 +327,7 @@ func codebuddyNeedsTaskProcess(cfg Config, cwd string) bool {
 		var document any
 		return json.Unmarshal(raw, &document) != nil || hasMCP(document)
 	}
-	if settingsNeedsProcess(filepath.Join(config, "settings.json")) {
+	if settingsNeedsProcess(filepath.Join(config, "settings.json")) || settingsNeedsProcess(filepath.Join(config, ".codebuddy.json")) {
 		return true
 	}
 	for dir := cwd; dir != ""; dir = filepath.Dir(dir) {
@@ -649,7 +649,7 @@ func codebuddyResidentFingerprint(cfg Config, opts ExecOptions) (string, error) 
 	settingsJSON, _ := json.Marshal(settings)
 	_, _ = h.Write(settingsJSON)
 	home := resolveSDKConfigDir(cfg.Env)
-	for _, name := range []string{"settings.json", "models.json", "config.json", "auth.json", "credentials.json", ".credentials.json", ".mcp.json", "mcp.json", "skills", "plugins/cache", "plugins/installed_plugins.json", "rules"} {
+	for _, name := range []string{"settings.json", "models.json", "config.json", "auth.json", "credentials.json", ".credentials.json", ".codebuddy.json", ".mcp.json", "mcp.json", "skills", "plugins/cache", "plugins/installed_plugins.json", "rules"} {
 		if err := hashCodexResidentSkills(h, filepath.Join(home, name), "account/"+name, map[string]bool{}); err != nil {
 			return "", err
 		}

@@ -291,11 +291,11 @@ describe("buildRunReviewEventRows", () => {
     expect(sopStageDisplayName("custom-agent")).toBe("custom-agent");
   });
 
-  it("keeps canonical diagnostic events while hiding duplicated node summaries", () => {
+  it("keeps diagnostic events without duplicating node summaries or treating telemetry as model output", () => {
     const tree = {
       root: {
         tasks: [],
-        task_messages: [message()],
+        task_messages: [message(), message({ seq: 3, type: "runtime", content: '{"kind":"context","provider":"codex"}' })],
         trace_events: [trace()],
         tool_call_chains: [tool()],
         children: [],

@@ -146,7 +146,11 @@ func codexOwnedProcessMatches(identity CLIIdentity, key, owner string) bool {
 	if !current.Valid || current.StartTicks != identity.StartTicks || current.UID != os.Getuid() || !ownedProcessAlive(identity.PID) {
 		return false
 	}
-	env, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", identity.PID))
+	return codexOwnedEnvironmentMatches(identity.PID, key, owner)
+}
+
+func codexOwnedEnvironmentMatches(pid int, key, owner string) bool {
+	env, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
 		return false
 	}
@@ -169,12 +173,17 @@ func codexOwnedProcesses(key, owner string) ([]CLIIdentity, error) {
 		return nil, err
 	}
 	var identities []CLIIdentity
+	uid := os.Getuid()
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
 			continue
 		}
 		identity := captureCLIIdentity(pid)
+		// 无关进程先按已读取的 UID 和随机归属标识排除；匹配项仍完整复核身份。
+		if !identity.Valid || identity.UID != uid || !codexOwnedEnvironmentMatches(pid, key, owner) {
+			continue
+		}
 		if codexOwnedProcessMatches(identity, key, owner) {
 			identities = append(identities, identity)
 		}

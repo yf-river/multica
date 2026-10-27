@@ -4,14 +4,75 @@ package agent
 
 import (
 	"context"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestCodebuddyRealNativeQuestionAnswer(t *testing.T) {
+	testCodebuddyRealQuestionAnswers(t, "native")
+}
+
+func TestCodebuddyRealSDKQuestionAnswer(t *testing.T) {
+	testCodebuddyRealQuestionAnswers(t, "sdk")
+}
+
+func testCodebuddyRealQuestionAnswers(t *testing.T, transport string) {
+	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {
+		t.Skip("real native question smoke is opt-in")
+	}
+	runtime := codebuddyRealSmokeRuntime(t)
+	for _, test := range []struct{ name, decision, output string }{{"allow", "allow", "简短"}, {"decline", "deny", "DECLINED"}} {
+		t.Run(test.name, func(t *testing.T) {
+			var count atomic.Int32
+			backend := &codebuddyBackend{cfg: Config{ExecutablePath: runtime.Path, BuiltinRuntime: true, CLIVersion: runtime.Version, Logger: slog.Default(), Env: map[string]string{"HOME": runtime.Home, "CODEBUDDY_CONFIG_DIR": filepath.Join(runtime.Home, "codebuddy")}}}
+			execute := backend.executeNative
+			var customArgs []string
+			if transport == "sdk" {
+				execute = backend.Execute
+				customArgs = []string{"--settings", `{"disableAllHooks":true}`}
+			}
+			session, err := execute(t.Context(), "必须调用 AskUserQuestion 原生工具提出一个单选问题：回复要采用哪种长度？选项为简短、详细，各有一句说明。等待用户选择后，只回复所选选项；如果用户拒绝回答，只回复 DECLINED。不要运行命令、搜索或调用其他工具。", ExecOptions{Cwd: t.TempDir(), Model: "deepseek-v4.1-flash", CustomArgs: customArgs, Timeout: 100 * time.Second, RequestInteraction: func(_ context.Context, prompt protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
+				count.Add(1)
+				if prompt.Kind != "question" || len(prompt.Questions) != 1 || len(prompt.Questions[0].Options) != 2 {
+					t.Errorf("unexpected native question: kind=%s questions=%d title=%.350q", prompt.Kind, len(prompt.Questions), prompt.Title)
+					return protocol.InteractionAnswer{Decision: "deny"}, nil
+				}
+				if test.decision == "deny" {
+					return protocol.InteractionAnswer{Decision: "deny"}, nil
+				}
+				q := prompt.Questions[0]
+				label := ""
+				for _, option := range q.Options {
+					if strings.Contains(option.Label, "简短") {
+						label = option.Label
+					}
+				}
+				if label == "" {
+					t.Error("native short-answer option missing")
+					return protocol.InteractionAnswer{Decision: "deny"}, nil
+				}
+				return protocol.InteractionAnswer{Decision: "allow", Answers: map[string][]string{q.ID: {label}}}, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range session.Messages {
+			}
+			result := <-session.Result
+			if result.Status != "completed" || strings.TrimSpace(result.Output) != test.output || count.Load() != 1 || len(result.Usage) == 0 {
+				t.Fatalf("native question failed: status=%s error=%s output=%q questions=%d models=%d", result.Status, result.Error, result.Output, count.Load(), len(result.Usage))
+			}
+			t.Logf("Real CodeBuddy %s transport=%s question decision=%s delivered once; model observed exact outcome; models=%d duration_ms=%d; responder=automated_test", runtime.Version, transport, test.decision, len(result.Usage), result.DurationMs)
+		})
+	}
+}
 
 func TestCodebuddyRealNativeForegroundChild(t *testing.T) {
 	if os.Getenv("MULTICA_RUN_REAL_GOAL_MODEL_SMOKE") != "1" {

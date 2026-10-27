@@ -25,6 +25,14 @@ import (
 )
 
 func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
+	testCodexRealGoalAcrossTaskHomes(t, false)
+}
+
+func TestCodexRealCompressedGoalAcrossTaskHomes(t *testing.T) {
+	testCodexRealGoalAcrossTaskHomes(t, true)
+}
+
+func testCodexRealGoalAcrossTaskHomes(t *testing.T, compressed bool) {
 	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
 		t.Skip("real native Goal migration is opt-in")
 	}
@@ -60,6 +68,9 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 		thread = result.SessionID
 	}
 	thread = createCodexGoalFixture(t, ctx, executable, source, thread, "paused")
+	if compressed {
+		compressCodexSmokeRollout(t, source, thread)
+	}
 	store, poolRoot, cwd := t.TempDir(), filepath.Join(t.TempDir(), "pool"), t.TempDir()
 	pool, err := agent.NewCodexProcessPool(poolRoot, 1, time.Minute, slog.Default())
 	if err != nil {
@@ -71,7 +82,7 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 		var transcript *os.File
 		if directory := os.Getenv("MULTICA_CODEX_MIGRATION_EVIDENCE_DIR"); directory != "" {
 			var err error
-			transcript, err = os.OpenFile(filepath.Join(directory, fmt.Sprintf("native-migration-round-%d.jsonl", round)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			transcript, err = os.OpenFile(filepath.Join(directory, fmt.Sprintf("%s-round-%d.jsonl", t.Name(), round)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,6 +93,9 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 		state, err := PrepareCodexNativeState(ctx, home, source, store, "owned-runtime", thread, pool.RetireHome)
 		if err != nil || state.ResumePath == "" {
 			t.Fatalf("round=%d prepare native state: %v", round, err)
+		}
+		if compressed && round == 0 && !strings.HasSuffix(state.ResumePath, ".jsonl.zst") {
+			t.Fatal("compressed source was not retained as the resume artifact")
 		}
 		if round == 0 {
 			if err := os.RemoveAll(source); err != nil {
@@ -112,6 +126,9 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 			}
 		}
 		result := <-session.Result
+		if result.SessionID != thread {
+			t.Fatal("native session identity changed across task homes")
+		}
 		if transcript != nil {
 			if err := json.NewEncoder(transcript).Encode(result); err != nil {
 				t.Error(err)
@@ -135,7 +152,7 @@ func TestCodexRealGoalAcrossTaskHomes(t *testing.T) {
 			t.Fatal("fresh task home restarted the native app-server")
 		}
 		priorPID = record.Identity.PID
-		t.Logf("round=%d native_pid=%d original_home_removed=true native_goal_preserved=true", round, priorPID)
+		t.Logf("round=%d launcher_pid=%d original_home_removed=true native_goal_preserved=true original_thread_preserved=true compressed_source=%v model_context_recalled=%v", round, priorPID, compressed, prompt != "")
 	}
 }
 
@@ -335,32 +352,7 @@ func TestCodexRealCompressedNativeSessionResume(t *testing.T) {
 	copyCodexNativeSmokeAccount(t, account, source)
 	copyCodexNativeSmokeAccount(t, account, home)
 	thread := createCodexGoalFixture(t, ctx, executable, source, "", "paused")
-	paths := findCodexRollouts(filepath.Join(source, "sessions"), thread)
-	if len(paths) != 1 {
-		t.Fatal("source has no unique rollout")
-	}
-	input, err := os.Open(paths[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	output, err := os.OpenFile(paths[0]+".zst", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		_ = input.Close()
-		t.Fatal(err)
-	}
-	encoder, err := zstd.NewWriter(output, zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		_ = input.Close()
-		_ = output.Close()
-		t.Fatal(err)
-	}
-	_, copyErr := io.Copy(encoder, input)
-	if err := errors.Join(copyErr, input.Close(), encoder.Close(), output.Close()); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(paths[0]); err != nil {
-		t.Fatal(err)
-	}
+	compressCodexSmokeRollout(t, source, thread)
 	pool, err := agent.NewCodexProcessPool(filepath.Join(t.TempDir(), "pool"), 1, time.Minute, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -397,4 +389,35 @@ func TestCodexRealCompressedNativeSessionResume(t *testing.T) {
 		t.Fatalf("next task could not reuse the decompressed native session: %v", err)
 	}
 	t.Log("compressed_source_removed=true native_resume_and_plan_update_confirmed=true model_usage_entries=0")
+}
+
+// 压缩测试自建的原生会话文件，供迁移与真实模型恢复共同验证。
+func compressCodexSmokeRollout(t *testing.T, source, thread string) {
+	t.Helper()
+	paths := findCodexRollouts(filepath.Join(source, "sessions"), thread)
+	if len(paths) != 1 {
+		t.Fatal("source has no unique rollout")
+	}
+	input, err := os.Open(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.OpenFile(paths[0]+".zst", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		_ = input.Close()
+		t.Fatal(err)
+	}
+	encoder, err := zstd.NewWriter(output, zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		_ = input.Close()
+		_ = output.Close()
+		t.Fatal(err)
+	}
+	_, copyErr := io.Copy(encoder, input)
+	if err := errors.Join(copyErr, input.Close(), encoder.Close(), output.Close()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths[0]); err != nil {
+		t.Fatal(err)
+	}
 }

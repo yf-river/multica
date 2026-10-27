@@ -391,8 +391,14 @@ type codexBackend struct {
 func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	args := []string{"app-server", "--listen", "stdio://"}
 	launchArgs := NormalizeCodexLaunchArgs(opts.ExtraArgs, opts.CustomArgs, opts.McpConfig, logger)
+	if opts.MCPToolsOnly {
+		launchArgs = filterCodexSupervisionArgs(launchArgs, logger)
+	}
 	if opts.ServiceTier == codexFastServiceTier {
 		launchArgs = enforceCodexFastMode(launchArgs, logger)
+	}
+	if opts.MCPToolsOnly {
+		launchArgs = append(launchArgs, codexSupervisionArgs("")...)
 	}
 	return append(args, launchArgs...)
 }
@@ -920,6 +926,12 @@ func isCodexBareTomlKey(s string) bool {
 }
 
 func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if opts.MCPToolsOnly {
+		if err := validateCodexSupervision(b.cfg, opts); err != nil {
+			return nil, err
+		}
+		opts.ApprovalPolicy = "never"
+	}
 	if err := validateNativeControlOnly(opts); err != nil {
 		return nil, err
 	}
@@ -1133,6 +1145,14 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		})
 	}
 	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
+	if opts.MCPToolsOnly {
+		profileArgs, err := codexSupervisionProfileArgs(codexHome)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		codexArgs = append(codexArgs, profileArgs...)
+	}
 	var resident *codexProcessLease
 	residentTransferred := false
 	if b.cfg.CodexPool != nil {
@@ -1168,7 +1188,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		stdout, stdin, stderrBuf = stream.reader, stream, resident.stderr
 		pid = resident.entry.cmd.Process.Pid
 		stopProcess = func() { _ = stream.Close(); resident.release(false) }
-		b.cfg.Logger.Info("codex resident lease", "native_pid", pid, "task_id", b.cfg.TaskID, "reused", resident.reused)
+		b.cfg.Logger.Info("codex resident lease", "launcher_pid", pid, "task_id", b.cfg.TaskID, "reused", resident.reused)
 	} else {
 		var err error
 		processCtx, stop := context.WithCancel(context.WithoutCancel(runCtx))
@@ -1279,6 +1299,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	}
 
 	c = &codexClient{
+		mcpToolsOnly:             opts.MCPToolsOnly,
 		cfg:                      b.cfg,
 		approvalPolicy:           opts.ApprovalPolicy,
 		stdin:                    stdin,
@@ -1559,7 +1580,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// 1. initialize 握手
 		initializeStarted := time.Now()
 		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_sent", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", pid, "attempt", attempt, "active_launches", activeLaunches)
-		_, err := c.request(runCtx, "initialize", map[string]any{
+		initialized, err := c.request(runCtx, "initialize", map[string]any{
 			"clientInfo": map[string]any{
 				"name":    "multica-agent-sdk",
 				"title":   "Multica Agent SDK",
@@ -1569,6 +1590,19 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				"experimentalApi": true,
 			},
 		})
+		if err == nil {
+			var peer struct {
+				UserAgent string `json:"userAgent"`
+			}
+			decodeErr := json.Unmarshal(initialized, &peer)
+			actual, versionErr := parseSemver(peer.UserAgent)
+			if decodeErr == nil && versionErr == nil {
+				c.cfg.CodexVersion = fmt.Sprintf("%d.%d.%d", actual.Major, actual.Minor, actual.Patch)
+			}
+			if opts.MCPToolsOnly && (decodeErr != nil || !codexSupervisionVersionSupported(peer.UserAgent)) {
+				err = errors.New("Codex supervision could not verify the actual 0.164.0 protocol peer")
+			}
+		}
 		if err != nil {
 			initializeLatency := time.Since(initializeStarted)
 			var handshakeErr *codexHandshakeTimeoutError
@@ -1717,6 +1751,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		turnParams := map[string]any{
 			"threadId": threadID,
 			"input":    codexTurnInput(prompt, opts.ResumeExpected, resumed, opts.ResumeContinuityNotice),
+		}
+		if opts.MCPToolsOnly {
+			turnParams["environments"] = []any{}
 		}
 		// 每回合的推理强度覆盖。与 startOrResumeThread 里按线程的注入对应；两者同步由
 		// codex_test.go 里共享的 `codexReasoningInjection` 夹具保证（见 MUL-2339——
@@ -2076,15 +2113,21 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	}()
 
 	supplement := func(supplementCtx context.Context, instruction string) error {
+		if opts.MCPToolsOnly {
+			return errors.New("supervision does not accept additional runtime input")
+		}
 		return supplementCodexTurn(supplementCtx, c, instruction)
 	}
 	supplementReady := func() bool {
-		return c.getThreadID() != "" && c.activeTurnID() != ""
+		return !opts.MCPToolsOnly && c.getThreadID() != "" && c.activeTurnID() != ""
 	}
 	runCommand := func(commandCtx context.Context, command string) (string, error) {
+		if opts.MCPToolsOnly {
+			return "", errors.New("supervision does not accept native controls")
+		}
 		return c.runLiveCommand(commandCtx, runCtx, command, opts)
 	}
-	return &Session{RunCommand: runCommand, CommandReady: c.commandReady.Load, Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: c.interactions.waiting, Messages: msgCh, Result: resCh}, nil
+	return &Session{RunCommand: runCommand, CommandReady: func() bool { return !opts.MCPToolsOnly && c.commandReady.Load() }, Supplement: supplement, SupplementReady: supplementReady, WaitingForInput: c.interactions.waiting, Messages: msgCh, Result: resCh}, nil
 }
 
 func supplementCodexTurn(ctx context.Context, c *codexClient, instruction string) error {
@@ -2218,10 +2261,8 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		}
 	}
 
-	// developerInstructions 恒为 nil：用本 cwd 开启的线程会自动加载 daemon 写在该目录的
-	// 任务级 AGENTS.md，运行简报已进上下文，再内联一份会每回合重复。已用 codex-cli 0.144.6
-	// 驱动真实 app-server（thread/start -> turn/start）、developerInstructions 不设置的
-	// 方式端到端验证过（MUL-5392）。
+	// 普通任务经工作目录 AGENTS.md 取得简报；监督禁用文件发现，通过原生开发者指令
+	// 取得角色与绑定技能。两种投递路径各自只提供一份正文。
 	startParams := map[string]any{
 		"model":                  nilIfEmpty(opts.Model),
 		"modelProvider":          nil,
@@ -2236,6 +2277,10 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"includeApplyPatchTool":  nil,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
+	}
+	if opts.MCPToolsOnly {
+		startParams["environments"] = []any{}
+		startParams["developerInstructions"] = nilIfEmpty(opts.SystemPrompt)
 	}
 	if opts.ApprovalPolicy == "never" {
 		startParams["approvalPolicy"] = "never"
@@ -2513,6 +2558,7 @@ func describeCodexSemanticActivity(msg Message) string {
 // ── codexClient: JSON-RPC 2.0 transport ──
 
 type codexClient struct {
+	mcpToolsOnly           bool
 	threadConfig           map[string]any
 	threadClosed           chan struct{}
 	threadClosedOnce       sync.Once

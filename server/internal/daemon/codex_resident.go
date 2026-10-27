@@ -83,7 +83,7 @@ func (d *Daemon) initCodexProcessPool() error {
 }
 
 func (d *Daemon) configureCodexResident(task Task, env *execenv.Environment, store string, cfg *agent.Config) {
-	if d.codexPool == nil || !cfg.BuiltinRuntime || !agent.CodexResidentSupported(cfg.CodexVersion) || env.CodexHome == "" {
+	if d.codexPool == nil || !cfg.BuiltinRuntime || !agent.CodexResidentSupported(cfg.CodexVersion) || env.CodexHome == "" || task.SupervisionPrompt != "" {
 		return
 	}
 	conversation := "issue:" + task.IssueID

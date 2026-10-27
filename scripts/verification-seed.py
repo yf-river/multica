@@ -342,6 +342,60 @@ def restore_release(manifest, current):
         return baseline
 
 
+def candidate_worker_running(record):
+    if record.get('publisher_pid') and r.exists(record['publisher_pid']):
+        return True
+    delivery = record.get('delivery_id')
+    for folder in Path('/proc').iterdir():
+        if not folder.name.isdigit():
+            continue
+        try:
+            args = (folder/'cmdline').read_bytes().split(b'\0')
+            position = args.index(b'--pool-delivery')
+            if args[position + 1].decode() == delivery:
+                return True
+        except (OSError, ValueError, IndexError):
+            continue
+    return False
+
+
+def retire_failed_candidate(env, meta):
+    # 租约已收回的部署前失败候选需归档，否则正常种子恢复会永久被本地指针阻塞。
+    if not r.candidate_path(env).exists():
+        return
+    record = r.candidate(env=env)
+    if record['status'] in ('released', 'failed', 'succeeded'):
+        return
+    if (record['status'] != 'recovery_required' or not record.get('delivery_id')
+            or record.get('commit') == meta.get('commit')
+            or record.get('previous_release') != meta.get('release_id')
+            or candidate_worker_running(record)):
+        raise RuntimeError('槽位存在未完成候选，不能恢复种子')
+    r.check_process_ownership(env, meta)
+    r.check_live_environment(env, meta, r.read(r.config_path(env)))
+    slots = control_api('delivery-queue/slots')
+    slot = next((item for item in slots if item['name'] == env), None)
+    deliveries = control_api('delivery-queue?current=' + record['delivery_id'])
+    delivery = next((item for item in deliveries if item['id'] == record['delivery_id']), None)
+    if (not slot or slot['state'] != 'idle' or slot['enabled'] or slot.get('delivery_id')
+            or not delivery or delivery['phase'] not in ('needs_changes', 'cancelled')
+            or delivery.get('verification_owner')
+            or (delivery.get('verification_run') or {}).get('status') in
+               ('queued', 'dispatched', 'running', 'waiting_local_directory')):
+        raise RuntimeError('旧候选交付或槽位尚未释放，不能恢复种子')
+    archive = r.RUN/'candidates/recovered'/(record['id'] + '.json')
+    if archive.exists():
+        if r.read(archive) != record:
+            raise RuntimeError('旧候选归档与当前记录不符')
+    else:
+        r.write(archive, record, True)
+    record = dict(record, status='failed', maintenance_recovery=dict(
+        previous_status=record['status'], delivery_revision=delivery['revision'],
+        live_commit=meta['commit'], live_release=meta['release_id'],
+        reason='交付已失败且故障租约已收回，保存旧记录后允许按已验证种子恢复'))
+    r.save_candidate(record)
+
+
 def restore(env, seed, pgconfig):
     """把种子装进专属槽位；调用方必须先让槽位进入维护态。"""
     if env not in r.VERIFICATION_ENVS or os.environ.get('MULTICA_TASK_ID'):
@@ -355,8 +409,7 @@ def restore(env, seed, pgconfig):
         dbname = 'multica_' + env.replace('-', '_'); role = env.replace('-', '_')
         if target.hostname != '127.0.0.1' or str(target.port) != port or target.path != '/' + dbname or target.username != role:
             raise RuntimeError('槽位实际连接与专属实例不一致')
-        if r.candidate_path(env).exists() and r.candidate(env=env)['status'] not in ('released', 'failed', 'succeeded'):
-            raise RuntimeError('槽位存在未完成候选')
+        retire_failed_candidate(env, meta)
         record_path = r.RUN/'verification-install'/(env + '.json')
         record = r.read(record_path)
         running = Path(meta['release_dir'])

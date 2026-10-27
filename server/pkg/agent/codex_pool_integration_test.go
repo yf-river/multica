@@ -77,7 +77,7 @@ func TestCodexRealResidentControls(t *testing.T) {
 		if err != nil || bytes.Contains(config, []byte(token)) {
 			t.Fatal("native root configuration retained a task credential")
 		}
-		t.Logf("round=%d native_pid=%d configuration_changed=%t", round, pid, round == 2)
+		t.Logf("round=%d launcher_pid=%d configuration_changed=%t", round, pid, round == 2)
 		priorPID = pid
 	}
 }
@@ -213,6 +213,6 @@ for line in sys.stdin:
 			t.Fatal("native CLI PID was not retained across model turns")
 		}
 		nativePID = pid
-		t.Logf("round=%d native_pid=%d model_usage_reported=true shell_and_mcp_environment_matches=true", round, pid)
+		t.Logf("round=%d launcher_pid=%d model_usage_reported=true shell_and_mcp_environment_matches=true", round, pid)
 	}
 }

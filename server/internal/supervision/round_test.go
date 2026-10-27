@@ -313,6 +313,85 @@ func TestManualReviewOnUnfinishedTaskDoesNotContinueTracking(t *testing.T) {
 	}
 }
 
+func TestManualReviewAfterCompletionUsesLiveMaterials(t *testing.T) {
+	for _, associatedRound := range []bool{false, true} {
+		t.Run(fmt.Sprintf("associated_round_%t", associatedRound), func(t *testing.T) {
+			ctx := context.Background()
+			x := newRoundFixture(t)
+			issue := x.issue(t, "done")
+			x.f.Task(t, x.agent, dbfx.Cols{"runtime_id": x.runtime, "issue_id": issue, "status": "completed"})
+			if err := x.svc.inventory(ctx, x.workspace); err != nil {
+				t.Fatal(err)
+			}
+			if err := x.svc.reconcileRounds(ctx, x.workspace); err != nil {
+				t.Fatal(err)
+			}
+			var completionRound string
+			if err := x.pool.QueryRow(ctx, `SELECT id::text FROM supervision_round WHERE workspace_id=$1 AND issue_id=$2 AND status='open'`, x.workspace, issue).Scan(&completionRound); err != nil {
+				t.Fatal(err)
+			}
+			late := x.f.Comment(t, issue, "手动检查需要核对完成之后的新材料")
+			if err := x.svc.inventory(ctx, x.workspace); err != nil {
+				t.Fatal(err)
+			}
+			x.f.Exec(t, `UPDATE supervision_subject SET force_review=true WHERE workspace_id=$1 AND issue_id=$2`, x.workspace, issue)
+			x.dispatchOnce(t)
+			batch, task, round := x.runningBatchWithRound(t)
+			if !x.batchMaterialIDs(t, batch)[late] {
+				t.Fatal("手动检查没有读取完成后新增的材料")
+			}
+			if associatedRound {
+				// 已登记的手动批次可能带有完成轮次，材料范围仍由 scope 决定。
+				x.f.Exec(t, `UPDATE supervision_batch_round SET round_id=$2 WHERE batch_id=$1`, batch, completionRound)
+			}
+			if err := x.svc.Commit(ctx, x.workspace, batch, task, x.batchResult(t, batch)); err != nil {
+				t.Fatal(err)
+			}
+			if !associatedRound && round != "" {
+				t.Fatal("新手动批次错误关联了完成快照")
+			}
+			if n := x.count(t, `SELECT count(*) FROM supervision_material WHERE workspace_id=$1 AND source_id=$2 AND reviewed_generation=generation`, x.workspace, late); n != 1 {
+				t.Fatal("手动检查没有保存新材料的覆盖")
+			}
+			if n := x.count(t, `SELECT count(*) FROM supervision_frozen_material WHERE workspace_id=$1 AND round_id=$2 AND reviewed_generation>0`, x.workspace, completionRound); n != 0 {
+				t.Fatal("手动检查推进了独立完成快照的覆盖")
+			}
+		})
+	}
+}
+
+func TestManualReviewRoundReferenceDoesNotCancelOnReopen(t *testing.T) {
+	ctx := context.Background()
+	x := newRoundFixture(t)
+	issue := x.issue(t, "done")
+	x.f.Task(t, x.agent, dbfx.Cols{"runtime_id": x.runtime, "issue_id": issue, "status": "completed"})
+	if err := x.svc.inventory(ctx, x.workspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.svc.reconcileRounds(ctx, x.workspace); err != nil {
+		t.Fatal(err)
+	}
+	x.f.Exec(t, `UPDATE supervision_subject SET force_review=true WHERE workspace_id=$1 AND issue_id=$2`, x.workspace, issue)
+	x.dispatchOnce(t)
+	batch, task, _ := x.runningBatchWithRound(t)
+	x.f.Exec(t, `UPDATE supervision_batch_round SET round_id=(SELECT id FROM supervision_round WHERE workspace_id=$2 AND issue_id=$3 AND status='open') WHERE batch_id=$1`, batch, x.workspace, issue)
+	x.f.Exec(t, `UPDATE supervision_batch SET status='preparing' WHERE id=$1`, batch)
+	x.f.Exec(t, `UPDATE issue SET status='in_progress' WHERE id=$1`, issue)
+	if err := x.svc.CloseOpenRound(ctx, x.workspace, issue, RoundCloseReopened); err != nil {
+		t.Fatal(err)
+	}
+	if n := x.count(t, `SELECT count(*) FROM supervision_batch WHERE id=$1 AND status='preparing'`, batch); n != 1 {
+		t.Fatal("关闭自动完成轮次取消了手动检查")
+	}
+	x.f.Exec(t, `UPDATE supervision_batch SET status='running' WHERE id=$1`, batch)
+	if err := x.svc.Commit(ctx, x.workspace, batch, task, x.batchResult(t, batch)); err != nil {
+		t.Fatal(err)
+	}
+	if n := x.count(t, `SELECT count(*) FROM supervision_batch WHERE id=$1 AND status='completed'`, batch); n != 1 {
+		t.Fatal("手动检查在任务重开后未保存结果")
+	}
+}
+
 // TestCompletionSnapshotIgnoresPostCompletionComments 验证完成之后的普通评论不进入
 // 轮次范围，也不会触发整套重审。
 func TestCompletionSnapshotIgnoresPostCompletionComments(t *testing.T) {

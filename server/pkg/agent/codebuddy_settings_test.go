@@ -98,3 +98,57 @@ func TestCodebuddyNativeModelsInvalidateResident(t *testing.T) {
 		})
 	}
 }
+
+func TestCodebuddyHookRestrictionSelectsFileBrief(t *testing.T) {
+	for _, scope := range []string{"account", "project", "local", "ancestor", "custom", "task", "invalid"} {
+		t.Run(scope, func(t *testing.T) {
+			cfg := codebuddyFixtureConfig(t)
+			cfg.CodebuddyPool = &CodebuddyProcessPool{}
+			parent := t.TempDir()
+			work := filepath.Join(parent, "work")
+			if err := os.Mkdir(work, 0700); err != nil {
+				t.Fatal(err)
+			}
+			opts := ExecOptions{Cwd: work}
+			if !CodebuddyNativeHooksEnabled(cfg, opts) {
+				t.Fatal("unrestricted task lost hook delivery")
+			}
+			path := filepath.Join(cfg.Env["CODEBUDDY_CONFIG_DIR"], "settings.json")
+			content := `{"disableAllHooks":true}`
+			switch scope {
+			case "project":
+				path = filepath.Join(work, ".codebuddy", "settings.json")
+			case "local":
+				path = filepath.Join(work, ".codebuddy", "settings.local.json")
+				content = `{"allowManagedHooksOnly":true}`
+			case "ancestor":
+				path = filepath.Join(parent, ".codebuddy", "settings.json")
+			case "custom":
+				opts.CustomArgs = []string{"--settings", content}
+				path = ""
+			case "task":
+				opts.CodebuddySettingsPath = filepath.Join(work, "task-settings.json")
+				path = opts.CodebuddySettingsPath
+			case "invalid":
+				content = `{invalid}`
+			}
+			if path != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if CodebuddyNativeHooksEnabled(cfg, opts) {
+				t.Fatal("restricted task would lose its file brief")
+			}
+			if path != "" {
+				raw, err := os.ReadFile(path)
+				if err != nil || string(raw) != content {
+					t.Fatal("hook restriction source was modified")
+				}
+			}
+		})
+	}
+}

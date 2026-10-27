@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -28,6 +30,7 @@ func handleCodebuddyACPInteraction(c *hermesClient, broker *interactionBroker, s
 			} `json:"questions"`
 		} `json:"schema"`
 		ToolCall struct {
+			ID       string          `json:"toolCallId"`
 			Title    string          `json:"title"`
 			RawInput json.RawMessage `json:"rawInput"`
 			Meta     struct {
@@ -44,15 +47,29 @@ func handleCodebuddyACPInteraction(c *hermesClient, broker *interactionBroker, s
 		c.writeAgentRequestResponse(method, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32602, "message": "interaction session mismatch"}})
 		return true
 	}
+	nativeAsk := method == "session/request_permission" && request.ToolCall.Meta.ToolName == "AskUserQuestion"
 	prompt := protocol.InteractionPrompt{Kind: "approval", Title: request.ToolCall.Title}
-	if method == "_codebuddy.ai/question" {
+	if method == "_codebuddy.ai/question" || nativeAsk {
 		prompt.Kind, prompt.Title = "question", "需要补充信息"
-		if request.InputType != "question" {
-			respond(map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
+		if method == "_codebuddy.ai/question" && request.InputType != "question" {
+			respond(map[string]any{"outcome": "cancelled"})
 			return true
 		}
-		for _, q := range request.Schema.Questions {
-			prompt.Questions = append(prompt.Questions, protocol.InteractionQuestion{ID: q.ID, Header: q.Header, Question: q.Question, Options: q.Options, MultiSelect: q.MultiSelect})
+		questions := request.Schema.Questions
+		if nativeAsk {
+			input := request.Schema
+			if json.Unmarshal(request.ToolCall.RawInput, &input) != nil || len(input.Questions) == 0 || request.ToolCall.ID == "" {
+				c.writeAgentRequestResponse(method, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32602, "message": "invalid native question"}})
+				return true
+			}
+			questions = input.Questions
+		}
+		for index, q := range questions {
+			questionID := q.ID
+			if questionID == "" {
+				questionID = fmt.Sprintf("q_%d", index)
+			}
+			prompt.Questions = append(prompt.Questions, protocol.InteractionQuestion{ID: questionID, Header: q.Header, Question: q.Question, Options: q.Options, MultiSelect: q.MultiSelect})
 		}
 	} else if request.ToolCall.Meta.ToolName == "ExitPlanMode" {
 		prompt.Kind, prompt.Title = "plan", "计划已准备好，是否开始执行？"
@@ -74,12 +91,33 @@ func handleCodebuddyACPInteraction(c *hermesClient, broker *interactionBroker, s
 	}
 	broker.start(string(id), prompt, func(answer protocol.InteractionAnswer, err error) {
 		allowed := err == nil && answer.Decision == "allow"
+		if nativeAsk {
+			decision := "reject"
+			if allowed {
+				decision = "allow"
+			}
+			// 标准权限回执只控制工具放行；原生提问须先把答案交给 AskService。
+			ctx, stop := context.WithTimeout(broker.ctx, 10*time.Second)
+			defer stop()
+			params := map[string]any{"sessionId": sessionID, "toolCallId": request.ToolCall.ID, "decision": decision}
+			if allowed {
+				params["answers"] = answer.Answers
+			}
+			result, resolveErr := c.request(ctx, "_codebuddy.ai/resolveInterruption", params)
+			var resolved struct {
+				Resolved bool `json:"resolved"`
+			}
+			if resolveErr != nil || json.Unmarshal(result, &resolved) != nil || !resolved.Resolved {
+				c.writeAgentRequestResponse(method, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32603, "message": "native question answer was not delivered"}})
+				return
+			}
+		}
 		if method == "_codebuddy.ai/question" {
 			outcome := map[string]any{"outcome": "cancelled"}
 			if allowed {
-				outcome = map[string]any{"outcome": "submitted", "data": map[string]any{"answers": answer.Answers}}
+				outcome = map[string]any{"outcome": "submitted", "answers": answer.Answers}
 			}
-			respond(map[string]any{"outcome": outcome})
+			respond(outcome)
 			return
 		}
 		kind := "reject_once"
