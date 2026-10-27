@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -18,7 +19,7 @@ import (
 // 交付命令与页面使用同一套版本和确认接口。
 func init() {
 	group := &cobra.Command{Use: "delivery", Short: "Plan confirmation, integration queue and production review"}
-	for _, action := range []string{"diagnose", "status", "plan", "confirm-plan", "revoke-release", "submit", "bind-checks", "accept", "approve", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
+	for _, action := range []string{"diagnose", "status", "plan", "confirm-plan", "revoke-release", "submit", "bind-checks", "accept", "approve", "publish", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
 		action := action
 		cmd := &cobra.Command{Use: action + " <issue-id>", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newAPIClient(cmd)
@@ -42,6 +43,9 @@ func init() {
 			if action != "diagnose" && action != "status" && action != "confirm-plan" && action != "revoke-release" {
 				if err = deliveryCLIClaim(ctx, cmd, client, path, action); err != nil {
 					return err
+				}
+				if action == "publish" {
+					return deliveryCLIPublish(ctx, cmd, client, path)
 				}
 				if action == "claim-owner" || action == "recover-owner" || action == "release-owner" {
 					return cli.PrintJSON(os.Stdout, map[string]any{"status": "ok", "generation": client.DeliveryGeneration})
@@ -101,6 +105,10 @@ func init() {
 		}
 		if action == "accept" {
 			cmd.Long = "提交实际验收证据。组合验收由代表交付提交；JSON 包含 revision、candidate_id 和 evidence，须覆盖当前方案 required_checks 的对应阶段；组合代表须覆盖全部成员的 integration 项，候选编号必须与当前组合一致。相同候选和证据可幂等重试。"
+		}
+		if action == "publish" {
+			cmd.Long = "一次完成审核与组合验收：先提交审核批准，随后在批次进入可验收时用同一份证据提交验收，直到发布完成或超时。JSON 包含 review 与 evidence；--timeout 控制最长等待。"
+			cmd.Flags().Duration("timeout", 45*time.Minute, "最长等待时间")
 		}
 		cmd.Flags().String("file", "", "JSON request file (preserve operation_id on retries)")
 		cmd.Flags().String("delivery", "", "Delivery UUID")
@@ -202,4 +210,85 @@ func deliveryDiagnosticQuery(cmd *cobra.Command) (url.Values, error) {
 		q.Set("delivery_id", delivery)
 	}
 	return q, nil
+}
+
+// deliveryCLIPublish 把"审核批准 → 批次验收 → 发布完成"合成一次调用：每轮读取最新批次状态，
+// 已就绪就提交验收，未就绪就继续等；发布完成、失败或超时即返回，重试幂等。
+func deliveryCLIPublish(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, path string) error {
+	id, _ := cmd.Flags().GetString("delivery")
+	file, _ := cmd.Flags().GetString("file")
+	if id == "" || file == "" {
+		return fmt.Errorf("publish requires --delivery and --file")
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	var body map[string]any
+	if err = json.Unmarshal(raw, &body); err != nil {
+		return err
+	}
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	deadline := time.Now().Add(timeout)
+	approved := false
+	for {
+		var status struct {
+			Deliveries []struct {
+				ID          string `json:"id"`
+				Phase       string `json:"phase"`
+				Revision    int64  `json:"revision"`
+				CandidateID string `json:"candidate_id"`
+				Error       string `json:"error"`
+			} `json:"deliveries"`
+		}
+		if err = client.GetJSON(ctx, path+"/deliveries", &status); err != nil {
+			return err
+		}
+		var current *struct {
+			ID          string `json:"id"`
+			Phase       string `json:"phase"`
+			Revision    int64  `json:"revision"`
+			CandidateID string `json:"candidate_id"`
+			Error       string `json:"error"`
+		}
+		for i := range status.Deliveries {
+			if status.Deliveries[i].ID == id {
+				current = &status.Deliveries[i]
+				break
+			}
+		}
+		if current == nil {
+			return fmt.Errorf("delivery %s not found", id)
+		}
+		switch current.Phase {
+		case "published":
+			return cli.PrintJSON(os.Stdout, map[string]any{"status": "published", "delivery": id, "candidate": current.CandidateID})
+		case "needs_changes", "cancelled":
+			return fmt.Errorf("delivery %s stopped in %s: %s", id, current.Phase, current.Error)
+		case "approved":
+			if !approved {
+				body["action"] = "approve"
+				var receipt json.RawMessage
+				if err = client.PostJSON(ctx, path+"/deliveries/"+id+"/action", body, &receipt); err != nil {
+					return err
+				}
+				approved = true
+				break
+			}
+			if current.CandidateID != "" {
+				accept := map[string]any{"action": "accept", "revision": current.Revision, "candidate_id": current.CandidateID, "evidence": body["evidence"]}
+				var receipt json.RawMessage
+				if e := client.PostJSON(ctx, path+"/deliveries/"+id+"/action", accept, &receipt); e != nil {
+					// 批次尚未进入可验收阶段：等下一轮再试。
+					if !strings.Contains(e.Error(), "验收") && !strings.Contains(e.Error(), "409") {
+						return e
+					}
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("publish timed out in phase %s", current.Phase)
+		}
+		time.Sleep(10 * time.Second)
+	}
 }
