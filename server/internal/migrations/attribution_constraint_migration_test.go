@@ -134,7 +134,11 @@ func applyMigrationFile(t *testing.T, ctx context.Context, conn interface {
 
 func readMigrationFile(t *testing.T, name string) string {
 	t.Helper()
-	contents, err := os.ReadFile(filepath.Join(realMigrationsDir(t), name))
+	path := filepath.Join(realMigrationsDir(t), name)
+	if _, err := os.Stat(path); err != nil {
+		path = filepath.Join(realMigrationsDir(t), "archive", name)
+	}
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read migration %s: %v", name, err)
 	}

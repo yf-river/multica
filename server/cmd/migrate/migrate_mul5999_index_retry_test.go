@@ -89,6 +89,10 @@ func assertEveryConcurrentBuildHasCleanup(t *testing.T, direction string, cleanu
 	t.Helper()
 	suffix := "." + direction + ".sql"
 	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*"+suffix))
+	if err == nil && len(paths) == 0 {
+		// 历史迁移已收敛到 archive/，清理登记仍要与它们对齐。
+		paths, err = filepath.Glob(filepath.Join("..", "..", "migrations", "archive", "*"+suffix))
+	}
 	if err != nil {
 		t.Fatalf("glob %s migrations: %v", direction, err)
 	}
@@ -131,7 +135,7 @@ func assertConcurrentIndexCleanupsMatchTheirMigrations(
 ) {
 	t.Helper()
 	for version, indexName := range cleanups {
-		path := filepath.Join("..", "..", "migrations", version+"."+direction+".sql")
+		path := resolveMigrationPath(t, version, direction)
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Errorf("%s: read migration: %v", version, err)
@@ -197,7 +201,7 @@ func testInterruptedIndexRetry(t *testing.T, version, indexName, table, columns,
 	}
 
 	qualifiedIndex := pgx.Identifier{schema, indexName}.Sanitize()
-	migrationSQL, err := os.ReadFile(filepath.Join("..", "..", "migrations", version+".up.sql"))
+	migrationSQL, err := os.ReadFile(resolveMigrationPath(t, version, "up"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,4 +289,17 @@ func testInterruptedIndexRetry(t *testing.T, version, indexName, table, columns,
 		t.Fatalf("retry migration with invalid-index cleanup: %v", err)
 	}
 	assertIndexValidity(t, pool, schema, indexName, true)
+}
+
+func resolveMigrationPath(t *testing.T, version, direction string) string {
+	t.Helper()
+	path := filepath.Join("..", "..", "migrations", version+"."+direction+".sql")
+	if _, err := os.Stat(path); err != nil {
+		archived := filepath.Join("..", "..", "migrations", "archive", version+"."+direction+".sql")
+		if _, archiveErr := os.Stat(archived); archiveErr == nil {
+			return archived
+		}
+		t.Fatalf("stat migration %s: %v", path, err)
+	}
+	return path
 }

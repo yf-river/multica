@@ -1,68 +1,28 @@
 --
+-- PostgreSQL database dump
 --
 
-CREATE TABLE external_credential_profile (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id uuid NOT NULL,
-    provider text NOT NULL,
-    name text NOT NULL,
-    secret_ref text NOT NULL DEFAULT '',
-    encrypted_secret bytea,
-    secret_hint text NOT NULL DEFAULT '',
-    capabilities jsonb NOT NULL DEFAULT '{}',
-    status text NOT NULL DEFAULT 'unverified',
-    last_verified_at timestamptz,
-    last_error text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    idempotency_key uuid,
-    request_hash text
-);
 
-CREATE TABLE task_trace_event (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id uuid NOT NULL,
-    task_id uuid NOT NULL,
-    issue_id uuid,
-    agent_id uuid NOT NULL,
-    runtime_id uuid,
-    squad_id uuid,
-    project_id uuid,
-    source text NOT NULL DEFAULT '',
-    event_type text NOT NULL,
-    event_name text NOT NULL,
-    status text NOT NULL DEFAULT '',
-    attempt integer NOT NULL DEFAULT 1,
-    duration_ms bigint,
-    queue_wait_ms bigint,
-    run_ms bigint,
-    total_ms bigint,
-    provider text NOT NULL DEFAULT '',
-    model text NOT NULL DEFAULT '',
-    input_tokens bigint NOT NULL DEFAULT 0,
-    output_tokens bigint NOT NULL DEFAULT 0,
-    cache_read_tokens bigint NOT NULL DEFAULT 0,
-    cache_write_tokens bigint NOT NULL DEFAULT 0,
-    failure_reason text NOT NULL DEFAULT '',
-    error_type text NOT NULL DEFAULT '',
-    trigger_comment_id uuid,
-    autopilot_run_id uuid,
-    chat_session_id uuid,
-    metadata jsonb NOT NULL DEFAULT '{}',
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
-
+-- Dumped from database version 17.10 (Debian 17.10-1.pgdg12+1)
+-- Dumped by pg_dump version 17.10 (Debian 17.10-1.pgdg12+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: recovery_evidence; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA recovery_evidence;
+
 
 --
 -- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
@@ -72,10 +32,24 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
 
 --
+-- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
+
+
+--
 -- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
 --
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
@@ -551,6 +525,28 @@ BEGIN
     RETURN OLD;
 END;
 $$;
+
+
+--
+-- Name: guard_repository_migration(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_repository_migration() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS (SELECT 1 FROM repository_migration_state WHERE NOT accepted) THEN
+   IF TG_TABLE_NAME <> 'project_resource' THEN
+     RAISE EXCEPTION '仓库配置迁移正在验收，请稍后修改' USING ERRCODE='55000';
+   END IF;
+   IF (TG_OP <> 'INSERT' AND OLD.resource_type IN ('github_repo','gongfeng_repo'))
+      OR (TG_OP <> 'DELETE' AND NEW.resource_type IN ('github_repo','gongfeng_repo')) THEN
+     RAISE EXCEPTION '仓库配置迁移正在验收，请稍后修改' USING ERRCODE='55000';
+   END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -1101,6 +1097,66 @@ $$;
 
 
 --
+-- Name: supervision_source_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.supervision_source_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target uuid; run uuid; material_kind text;
+BEGIN
+    IF TG_TABLE_NAME='issue' THEN
+      IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+      target:=NEW.id; material_kind:='issue';
+    ELSIF TG_TABLE_NAME='comment' THEN
+      target:=COALESCE(NEW.issue_id,OLD.issue_id); material_kind:='comment';
+      IF TG_OP='UPDATE' AND NEW.content IS NOT DISTINCT FROM OLD.content THEN RETURN NEW; END IF;
+      IF TG_OP<>'DELETE' AND NEW.source_task_id IS NOT NULL AND EXISTS(
+        SELECT 1 FROM agent_task_queue WHERE id=NEW.source_task_id AND context->>'type'='quality_supervision'
+      ) THEN RETURN NEW; END IF;
+    ELSIF TG_TABLE_NAME='agent_task_queue' THEN
+      IF COALESCE(NEW.context->>'type','')='quality_supervision' THEN RETURN NEW; END IF;
+      IF TG_OP='UPDATE' AND ROW(NEW.status,NEW.result,NEW.error,NEW.issue_id) IS NOT DISTINCT FROM ROW(OLD.status,OLD.result,OLD.error,OLD.issue_id) THEN RETURN NEW; END IF;
+      target:=NEW.issue_id; run:=NEW.id; material_kind:='task';
+    ELSIF TG_TABLE_NAME='task_message' THEN
+      SELECT issue_id INTO target FROM agent_task_queue WHERE id=NEW.task_id AND COALESCE(context->>'type','')<>'quality_supervision';
+      run:=NEW.task_id; material_kind:='message';
+    ELSIF TG_TABLE_NAME='task_trace_event' THEN
+      target:=NEW.issue_id; run:=NEW.task_id; material_kind:='trace';
+    END IF;
+    IF TG_OP='DELETE' THEN
+      DELETE FROM supervision_material m WHERE m.kind=material_kind AND m.source_id=OLD.id;
+      PERFORM supervision_touch(target,'issue',target);
+      RETURN OLD;
+    END IF;
+    IF target IS NOT NULL THEN PERFORM supervision_touch(target,material_kind,NEW.id,run); END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: supervision_touch(uuid, text, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.supervision_touch(p_issue uuid, p_kind text, p_source uuid, p_run uuid DEFAULT NULL::uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE ws uuid;
+BEGIN
+    SELECT i.workspace_id INTO ws FROM issue i JOIN supervision_config c ON c.workspace_id=i.workspace_id
+      WHERE i.id=p_issue AND COALESCE(i.origin_type,'') <> 'health_report';
+    IF ws IS NULL THEN RETURN; END IF;
+    INSERT INTO supervision_subject(workspace_id,issue_id) VALUES(ws,p_issue)
+      ON CONFLICT(workspace_id,issue_id) DO UPDATE
+      SET desired_version=supervision_subject.desired_version+1,changed_at=now(),next_attempt_at=LEAST(supervision_subject.next_attempt_at,now());
+    INSERT INTO supervision_material(workspace_id,issue_id,kind,source_id,run_id)
+      VALUES(ws,p_issue,p_kind,p_source,p_run)
+      ON CONFLICT(workspace_id,kind,source_id) DO UPDATE
+      SET generation=supervision_material.generation+1,reviewed_offset=0,changed_at=now();
+END $$;
+
+
+--
 -- Name: task_usage_hour_bucket(timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1328,7 +1384,7 @@ CREATE TABLE public.agent_task_queue (
     durable_work_dir text,
     channel_context_revision bigint,
     CONSTRAINT agent_task_queue_accountable_matches_originator CHECK (((originator_user_id IS NULL) OR ((accountable_user_id IS NOT NULL) AND (accountable_user_id = originator_user_id)))),
-    CONSTRAINT agent_task_queue_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'waiting_local_directory'::text, 'deferred'::text])))
+    CONSTRAINT agent_task_queue_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'waiting_local_directory'::text, 'deferred'::text, 'waiting_plan'::text, 'waiting_input'::text])))
 );
 
 
@@ -1410,46 +1466,6 @@ CREATE TABLE public.autopilot_collaborator (
 
 
 --
--- Name: autopilot_quota_period; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.autopilot_quota_period (
-    workspace_id uuid NOT NULL,
-    period_start timestamp with time zone NOT NULL,
-    period_end timestamp with time zone NOT NULL,
-    used_count bigint DEFAULT 0 NOT NULL,
-    reserved_count bigint DEFAULT 0 NOT NULL,
-    blocked_counts jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT autopilot_quota_period_check CHECK ((period_start < period_end)),
-    CONSTRAINT autopilot_quota_period_reserved_count_check CHECK ((reserved_count >= 0)),
-    CONSTRAINT autopilot_quota_period_used_count_check CHECK ((used_count >= 0))
-);
-
-
---
--- Name: autopilot_quota_reservation; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.autopilot_quota_reservation (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    workspace_id uuid NOT NULL,
-    period_start timestamp with time zone NOT NULL,
-    period_end timestamp with time zone NOT NULL,
-    policy_revision bigint NOT NULL,
-    subscription_version bigint NOT NULL,
-    source text NOT NULL,
-    idempotency_key text NOT NULL,
-    state text DEFAULT 'reserved'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    finalized_at timestamp with time zone,
-    CONSTRAINT autopilot_quota_reservation_check CHECK ((period_start < period_end)),
-    CONSTRAINT autopilot_quota_reservation_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'consumed'::text, 'released'::text])))
-);
-
-
---
 -- Name: autopilot_rule_version; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1485,7 +1501,6 @@ CREATE TABLE public.autopilot_run (
     squad_id uuid,
     planned_at timestamp with time zone,
     webhook_delivery_id uuid,
-    quota_reservation_id uuid,
     reason_code text,
     CONSTRAINT autopilot_run_source_check CHECK ((source = ANY (ARRAY['schedule'::text, 'manual'::text, 'webhook'::text, 'api'::text]))),
     CONSTRAINT autopilot_run_status_check CHECK ((status = ANY (ARRAY['issue_created'::text, 'running'::text, 'completed'::text, 'failed'::text, 'skipped'::text])))
@@ -1770,6 +1785,7 @@ CREATE TABLE public.chat_message (
     channel_outbound_installation_id uuid,
     channel_outbound_chat_id text,
     channel_outbound_message_ids text[],
+    health_report_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
     CONSTRAINT chat_message_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])))
 );
 
@@ -1858,6 +1874,7 @@ CREATE TABLE public.comment (
     via_plugin_id uuid,
     revision bigint DEFAULT 1 NOT NULL,
     recovery_settled_at timestamp with time zone,
+    deleted_at timestamp with time zone,
     CONSTRAINT comment_author_type_check CHECK ((author_type = ANY (ARRAY['member'::text, 'agent'::text, 'system'::text, 'plugin'::text]))),
     CONSTRAINT comment_resolved_consistency CHECK ((((resolved_at IS NULL) AND (resolved_by_type IS NULL) AND (resolved_by_id IS NULL)) OR ((resolved_at IS NOT NULL) AND (resolved_by_type IS NOT NULL) AND (resolved_by_id IS NOT NULL)))),
     CONSTRAINT comment_type_check CHECK ((type = ANY (ARRAY['comment'::text, 'status_change'::text, 'progress_update'::text, 'system'::text])))
@@ -1920,6 +1937,17 @@ CREATE TABLE public.contact_sales_inquiry (
 
 
 --
+-- Name: cooking_favorite; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cooking_favorite (
+    user_id uuid NOT NULL,
+    recipe_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: daemon_connection; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1946,7 +1974,108 @@ CREATE TABLE public.daemon_token (
     workspace_id uuid NOT NULL,
     daemon_id text NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    owner_id uuid
+);
+
+
+--
+-- Name: delivery_batch; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.delivery_batch (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    status text NOT NULL,
+    window_seconds integer NOT NULL,
+    collect_until timestamp with time zone NOT NULL,
+    base_commit text DEFAULT ''::text NOT NULL,
+    candidate_id text DEFAULT ''::text NOT NULL,
+    candidate_commit text DEFAULT ''::text NOT NULL,
+    worker_token uuid,
+    error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT delivery_batch_status_check CHECK ((status = ANY (ARRAY['collecting'::text, 'frozen'::text, 'preparing'::text, 'validating'::text, 'publishing'::text, 'published'::text, 'needs_changes'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: delivery_batch_member; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.delivery_batch_member (
+    batch_id uuid NOT NULL,
+    delivery_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    source_commit text NOT NULL,
+    result text DEFAULT 'pending'::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT delivery_batch_member_result_check CHECK ((result = ANY (ARRAY['pending'::text, 'published'::text, 'failed'::text, 'withdrawn'::text])))
+);
+
+
+--
+-- Name: delivery_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.delivery_evidence (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    delivery_id uuid NOT NULL,
+    candidate_id text NOT NULL,
+    source_commit text NOT NULL,
+    identity jsonb NOT NULL,
+    evidence jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: delivery_notice; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.delivery_notice (
+    delivery_id uuid NOT NULL,
+    stage text NOT NULL,
+    comment_id uuid NOT NULL,
+    delivered_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: delivery_owner; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.delivery_owner (
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    execution_id text NOT NULL,
+    token uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    recovery_evidence text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: delivery_publication; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.delivery_publication (
+    resource text NOT NULL,
+    workspace_id uuid,
+    delivery_id uuid,
+    worker_token uuid,
+    generation bigint DEFAULT 0 NOT NULL,
+    expires_at timestamp with time zone,
+    snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    state text DEFAULT 'idle'::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -2059,16 +2188,25 @@ ALTER TABLE public.domain_event_outbox ALTER COLUMN sequence_no ADD GENERATED AL
 
 
 --
--- Name: feedback; Type: TABLE; Schema: public; Owner: -
+-- Name: external_credential_profile; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.feedback (
+CREATE TABLE public.external_credential_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
-    workspace_id uuid,
-    message text NOT NULL,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    provider text NOT NULL,
+    name text NOT NULL,
+    secret_ref text DEFAULT ''::text NOT NULL,
+    encrypted_secret bytea,
+    secret_hint text DEFAULT ''::text NOT NULL,
+    capabilities jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'unverified'::text NOT NULL,
+    last_verified_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    idempotency_key uuid,
+    request_hash text
 );
 
 
@@ -2195,6 +2333,84 @@ CREATE TABLE public.github_pull_request_check_suite (
 
 
 --
+-- Name: health_observation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.health_observation (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: health_report; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.health_report (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    filename text NOT NULL,
+    sha256 text NOT NULL,
+    size_bytes bigint NOT NULL,
+    page_count integer NOT NULL,
+    issue_id uuid,
+    agent_id uuid,
+    attempt integer DEFAULT 0 NOT NULL,
+    epoch bigint DEFAULT 0 NOT NULL,
+    attempt_started_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: health_report_result; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.health_report_result (
+    id uuid NOT NULL,
+    report_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: health_revision; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.health_revision (
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: health_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.health_state (
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    revision bigint DEFAULT 0 NOT NULL,
+    epoch bigint DEFAULT 0 NOT NULL,
+    data jsonb DEFAULT '{"profile": {}, "observation_ids": []}'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: inbox_item; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2229,7 +2445,7 @@ CREATE TABLE public.issue (
     title text NOT NULL,
     description text,
     status text DEFAULT 'backlog'::text NOT NULL,
-    priority text DEFAULT 'none'::text NOT NULL,
+    priority text DEFAULT 'not_important_not_urgent'::text NOT NULL,
     assignee_type text,
     assignee_id uuid,
     creator_type text NOT NULL,
@@ -2258,12 +2474,85 @@ CREATE TABLE public.issue (
     CONSTRAINT issue_creator_type_check CHECK ((creator_type = ANY (ARRAY['member'::text, 'agent'::text]))),
     CONSTRAINT issue_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text)),
     CONSTRAINT issue_metadata_size_limit CHECK ((pg_column_size(metadata) <= 8192)),
-    CONSTRAINT issue_origin_type_check CHECK ((origin_type = ANY (ARRAY['autopilot'::text, 'quick_create'::text, 'lark_chat'::text, 'slack_chat'::text, 'agent_create'::text, 'dingtalk_chat'::text, 'wecom_chat'::text, 'telegram_chat'::text]))),
-    CONSTRAINT issue_priority_check CHECK ((priority = ANY (ARRAY['urgent'::text, 'high'::text, 'medium'::text, 'low'::text, 'none'::text]))),
+    CONSTRAINT issue_origin_type_check CHECK ((origin_type = ANY (ARRAY['autopilot'::text, 'quick_create'::text, 'lark_chat'::text, 'slack_chat'::text, 'agent_create'::text, 'dingtalk_chat'::text, 'wecom_chat'::text, 'telegram_chat'::text, 'health_report'::text]))),
+    CONSTRAINT issue_priority_check CHECK ((priority = ANY (ARRAY['important_urgent'::text, 'important_not_urgent'::text, 'not_important_urgent'::text, 'not_important_not_urgent'::text]))),
     CONSTRAINT issue_properties_is_object CHECK ((jsonb_typeof(properties) = 'object'::text)),
     CONSTRAINT issue_properties_size_limit CHECK ((pg_column_size(properties) <= 16384)),
     CONSTRAINT issue_stage_check CHECK (((stage IS NULL) OR (stage >= 1))),
     CONSTRAINT issue_status_format_check CHECK ((status ~ '^[a-z0-9][a-z0-9_]{0,31}$'::text))
+);
+
+
+--
+-- Name: issue_delivery; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_delivery (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    plan_snapshot jsonb NOT NULL,
+    source_commit text NOT NULL,
+    source_branch text NOT NULL,
+    base_commit text NOT NULL,
+    phase text DEFAULT 'waiting_int'::text NOT NULL,
+    evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    acceptance_submitted boolean DEFAULT false NOT NULL,
+    verification_comment_id uuid NOT NULL,
+    release_comment_id uuid NOT NULL,
+    release_validated boolean DEFAULT false NOT NULL,
+    candidate_id text DEFAULT ''::text NOT NULL,
+    candidate_url text DEFAULT ''::text NOT NULL,
+    approved_by uuid,
+    approved_at timestamp with time zone,
+    approval_comment_id uuid,
+    error text DEFAULT ''::text NOT NULL,
+    worker_token uuid,
+    revision bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_delivery_phase_check CHECK ((phase = ANY (ARRAY['waiting_int'::text, 'testing'::text, 'awaiting_review'::text, 'approved'::text, 'preparing_release'::text, 'publishing'::text, 'published'::text, 'needs_changes'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: issue_delivery_authorization; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_delivery_authorization (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    kind text NOT NULL,
+    comment_id uuid NOT NULL,
+    comment_revision integer NOT NULL,
+    comment_snapshot jsonb NOT NULL,
+    scope text NOT NULL,
+    registered_by_type text NOT NULL,
+    registered_by uuid NOT NULL,
+    revoked boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_delivery_authorization_kind_check CHECK ((kind = ANY (ARRAY['execute'::text, 'release'::text, 'revoke'::text])))
+);
+
+
+--
+-- Name: issue_delivery_plan; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_delivery_plan (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    comment_id uuid NOT NULL,
+    comment_revision integer NOT NULL,
+    confirmed_by uuid,
+    confirmed_at timestamp with time zone,
+    confirmation_id uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -2346,6 +2635,27 @@ CREATE TABLE public.issue_reaction (
     emoji text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT issue_reaction_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text])))
+);
+
+
+--
+-- Name: issue_review; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_review (
+    issue_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    developer_agent_id uuid,
+    round integer DEFAULT 0 NOT NULL,
+    state text DEFAULT 'idle'::text NOT NULL,
+    head_sha text DEFAULT ''::text NOT NULL,
+    findings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    summary text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    input_version text DEFAULT ''::text NOT NULL,
+    CONSTRAINT issue_review_state_check CHECK ((state = ANY (ARRAY['idle'::text, 'dispatched'::text, 'rejected'::text, 'passed'::text, 'stopped'::text, 'no_action'::text])))
 );
 
 
@@ -3380,6 +3690,19 @@ CREATE TABLE public.life_upgrade_evaluation (
 
 
 --
+-- Name: meal_workspace; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.meal_workspace (
+    workspace_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    revision bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: member; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3390,6 +3713,19 @@ CREATE TABLE public.member (
     role text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT member_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))
+);
+
+
+--
+-- Name: multica_schema; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.multica_schema (
+    id smallint NOT NULL,
+    version integer NOT NULL,
+    hash text NOT NULL,
+    initialized_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT multica_schema_id_check CHECK ((id = 1))
 );
 
 
@@ -3680,6 +4016,126 @@ CREATE TABLE public.quick_action (
 
 
 --
+-- Name: release_paused_task; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_paused_task (
+    window_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    resume_task_id uuid,
+    state text DEFAULT 'requested'::text NOT NULL,
+    session_id text DEFAULT ''::text NOT NULL,
+    work_dir text DEFAULT ''::text NOT NULL,
+    root_dir text DEFAULT ''::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: release_window; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_window (
+    id uuid NOT NULL,
+    environment_id text NOT NULL,
+    daemon_id uuid NOT NULL,
+    release_id text NOT NULL,
+    state text DEFAULT 'draining'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: repository; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.repository (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    identity text NOT NULL,
+    config jsonb NOT NULL,
+    default_for_tasks boolean DEFAULT false NOT NULL,
+    revision integer DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: repository_location; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.repository_location (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    repository_id uuid NOT NULL,
+    daemon_id text NOT NULL,
+    local_path text NOT NULL,
+    execution_mode text DEFAULT 'worktree'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: repository_migration_backup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.repository_migration_backup (
+    kind text NOT NULL,
+    id uuid NOT NULL,
+    data jsonb NOT NULL
+);
+
+
+--
+-- Name: repository_migration_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.repository_migration_state (
+    accepted boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: review_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.review_config (
+    workspace_id uuid NOT NULL,
+    agent_id uuid,
+    owner_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    instructions text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: run_text_change; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.run_text_change (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    target_kind text NOT NULL,
+    target_id text NOT NULL,
+    target_name text DEFAULT ''::text NOT NULL,
+    field text NOT NULL,
+    before_text text DEFAULT ''::text NOT NULL,
+    after_text text DEFAULT ''::text NOT NULL,
+    added integer DEFAULT 0 NOT NULL,
+    deleted integer DEFAULT 0 NOT NULL,
+    redacted boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: runtime_profile; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3697,41 +4153,6 @@ CREATE TABLE public.runtime_profile (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT runtime_profile_visibility_check CHECK ((visibility = ANY (ARRAY['workspace'::text, 'private'::text])))
-);
-
-
---
-
-
---
--- Name: seat_capacity_outbox; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.seat_capacity_outbox (
-    workspace_id uuid NOT NULL,
-    operation_token uuid NOT NULL,
-    action text NOT NULL,
-    subject_id uuid,
-    member_id uuid,
-    invitation_id uuid,
-    share_link_id uuid,
-    user_id uuid,
-    expires_at timestamp with time zone,
-    delivered_at timestamp with time zone,
-    attempt_count integer DEFAULT 0 NOT NULL,
-    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
-    lease_token uuid,
-    last_error text,
-    dead_lettered_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT seat_capacity_outbox_action_check CHECK ((action = ANY (ARRAY['reserve_invitation'::text, 'consume_invitation'::text, 'claim_share_join'::text, 'confirm'::text, 'release'::text, 'release_member'::text]))),
-    CONSTRAINT seat_capacity_outbox_attempt_count_check CHECK ((attempt_count >= 0)),
-    CONSTRAINT seat_capacity_outbox_check CHECK (((action <> 'reserve_invitation'::text) OR ((invitation_id IS NOT NULL) AND (expires_at IS NOT NULL)))),
-    CONSTRAINT seat_capacity_outbox_check1 CHECK (((action <> 'consume_invitation'::text) OR ((invitation_id IS NOT NULL) AND (user_id IS NOT NULL)))),
-    CONSTRAINT seat_capacity_outbox_check2 CHECK (((action <> 'claim_share_join'::text) OR ((share_link_id IS NOT NULL) AND (user_id IS NOT NULL)))),
-    CONSTRAINT seat_capacity_outbox_check3 CHECK (((action <> 'confirm'::text) OR (member_id IS NOT NULL))),
-    CONSTRAINT seat_capacity_outbox_check4 CHECK (((action <> 'release_member'::text) OR (member_id IS NOT NULL)))
 );
 
 
@@ -3754,6 +4175,17 @@ CREATE TABLE public.skill (
 
 
 --
+-- Name: skill_asset; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.skill_asset (
+    storage_key text NOT NULL,
+    workspace_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: skill_file; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3763,7 +4195,15 @@ CREATE TABLE public.skill_file (
     path text NOT NULL,
     content text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind text DEFAULT 'text'::text NOT NULL,
+    storage_key text DEFAULT ''::text NOT NULL,
+    content_type text DEFAULT 'text/plain; charset=utf-8'::text NOT NULL,
+    size_bytes bigint DEFAULT 0 NOT NULL,
+    sha256 text DEFAULT ''::text NOT NULL,
+    mode integer DEFAULT 420 NOT NULL,
+    CONSTRAINT skill_file_kind_check CHECK ((kind = ANY (ARRAY['text'::text, 'binary'::text]))),
+    CONSTRAINT skill_file_mode_check CHECK ((mode = ANY (ARRAY[420, 493])))
 );
 
 
@@ -3814,6 +4254,279 @@ CREATE TABLE public.squad_member (
 
 
 --
+-- Name: supervision_action; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_action (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    finding_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    action text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    receipt jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: supervision_batch; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_batch (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    target_version bigint NOT NULL,
+    task_id uuid,
+    status text DEFAULT 'preparing'::text NOT NULL,
+    materials jsonb DEFAULT '[]'::jsonb NOT NULL,
+    result jsonb,
+    error text DEFAULT ''::text NOT NULL,
+    rules_version text DEFAULT 'supervision-v1'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT supervision_batch_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: supervision_batch_round; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_batch_round (
+    workspace_id uuid NOT NULL,
+    batch_id uuid NOT NULL,
+    round_id uuid,
+    scope text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT supervision_batch_round_scope_check CHECK ((scope = ANY (ARRAY['completion'::text, 'manual'::text])))
+);
+
+
+--
+-- Name: supervision_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_config (
+    workspace_id uuid NOT NULL,
+    agent_id uuid,
+    owner_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    interval_seconds integer DEFAULT 300 NOT NULL,
+    inventory_complete boolean DEFAULT false NOT NULL,
+    last_scan_at timestamp with time zone,
+    last_inventory_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    investigation_enabled boolean DEFAULT false NOT NULL,
+    instructions text DEFAULT ''::text NOT NULL,
+    CONSTRAINT supervision_config_interval_seconds_check CHECK (((interval_seconds >= 60) AND (interval_seconds <= 3600)))
+);
+
+
+--
+-- Name: supervision_finding; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_finding (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    batch_id uuid NOT NULL,
+    title text NOT NULL,
+    description text NOT NULL,
+    impact text NOT NULL,
+    recommendation text NOT NULL,
+    confidence text NOT NULL,
+    evidence jsonb NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    snoozed_until timestamp with time zone,
+    human_resolution boolean DEFAULT false NOT NULL,
+    first_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT supervision_finding_confidence_check CHECK ((confidence = ANY (ARRAY['confirmed'::text, 'risk'::text]))),
+    CONSTRAINT supervision_finding_status_check CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'resolved'::text, 'ignored'::text])))
+);
+
+
+--
+-- Name: supervision_frozen_material; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_frozen_material (
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    round_id uuid NOT NULL,
+    material_cutoff timestamp with time zone NOT NULL,
+    kind text NOT NULL,
+    source_id uuid NOT NULL,
+    run_id uuid,
+    generation bigint NOT NULL,
+    reviewed_generation bigint DEFAULT 0 NOT NULL,
+    reviewed_offset integer DEFAULT 0 NOT NULL,
+    changed_at timestamp with time zone NOT NULL,
+    body text NOT NULL
+);
+
+
+--
+-- Name: supervision_investigation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_investigation (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    batch_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    request jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: supervision_manual_preparation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_manual_preparation (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    material_cutoff timestamp with time zone DEFAULT now() NOT NULL,
+    preparation_http_requests integer DEFAULT 0 NOT NULL,
+    preparation_started_at timestamp with time zone,
+    preparation_recheck_scheduled boolean DEFAULT false NOT NULL,
+    CONSTRAINT supervision_manual_preparation_status_check CHECK ((status = ANY (ARRAY['open'::text, 'closed'::text])))
+);
+
+
+--
+-- Name: supervision_material; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_material (
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    kind text NOT NULL,
+    source_id uuid NOT NULL,
+    run_id uuid,
+    generation bigint DEFAULT 1 NOT NULL,
+    reviewed_generation bigint DEFAULT 0 NOT NULL,
+    reviewed_offset integer DEFAULT 0 NOT NULL,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT supervision_material_kind_check CHECK ((kind = ANY (ARRAY['issue'::text, 'comment'::text, 'task'::text, 'message'::text, 'trace'::text, 'trace_usage'::text])))
+);
+
+
+--
+-- Name: supervision_round; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_round (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    sequence integer NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    material_cutoff timestamp with time zone NOT NULL,
+    close_reason text DEFAULT ''::text NOT NULL,
+    opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    closed_at timestamp with time zone,
+    preparation_http_requests integer DEFAULT 0 NOT NULL,
+    preparation_started_at timestamp with time zone,
+    preparation_recheck_scheduled boolean DEFAULT false NOT NULL,
+    CONSTRAINT supervision_round_close_reason_check CHECK ((close_reason = ANY (ARRAY[''::text, 'reopened'::text, 'recompleted'::text]))),
+    CONSTRAINT supervision_round_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT supervision_round_status_check CHECK ((status = ANY (ARRAY['open'::text, 'closed'::text])))
+);
+
+
+--
+-- Name: supervision_subject; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_subject (
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    desired_version bigint DEFAULT 1 NOT NULL,
+    reviewed_version bigint DEFAULT 0 NOT NULL,
+    force_review boolean DEFAULT false NOT NULL,
+    summary text DEFAULT ''::text NOT NULL,
+    efficiency text DEFAULT 'unreviewed'::text NOT NULL,
+    correctness text DEFAULT 'unreviewed'::text NOT NULL,
+    gaps jsonb DEFAULT '[]'::jsonb NOT NULL,
+    last_checked_at timestamp with time zone,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    failures integer DEFAULT 0 NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT supervision_subject_correctness_check CHECK ((correctness = ANY (ARRAY['unreviewed'::text, 'clear'::text, 'problem'::text, 'uncertain'::text]))),
+    CONSTRAINT supervision_subject_efficiency_check CHECK ((efficiency = ANY (ARRAY['unreviewed'::text, 'clear'::text, 'problem'::text, 'uncertain'::text])))
+);
+
+
+--
+-- Name: supervision_trace_material; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supervision_trace_material (
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    round_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    runtime text DEFAULT ''::text NOT NULL,
+    manual boolean DEFAULT false NOT NULL,
+    source text NOT NULL,
+    status text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    material_version bigint DEFAULT 1 NOT NULL,
+    cursor jsonb DEFAULT '{}'::jsonb NOT NULL,
+    lease_until timestamp with time zone,
+    report text DEFAULT ''::text NOT NULL,
+    coverage jsonb DEFAULT '{}'::jsonb NOT NULL,
+    gaps jsonb DEFAULT '[]'::jsonb NOT NULL,
+    queried_at timestamp with time zone,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT supervision_trace_material_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'complete'::text, 'partial'::text, 'failed'::text, 'not_applicable'::text, 'disabled'::text])))
+);
+
+
+--
+-- Name: supervision_trace_scope; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.supervision_trace_scope AS
+ SELECT supervision_round.id,
+    supervision_round.workspace_id,
+    supervision_round.issue_id,
+    supervision_round.status,
+    supervision_round.material_cutoff,
+    supervision_round.preparation_started_at,
+    false AS manual
+   FROM public.supervision_round
+UNION ALL
+ SELECT supervision_manual_preparation.id,
+    supervision_manual_preparation.workspace_id,
+    supervision_manual_preparation.issue_id,
+    supervision_manual_preparation.status,
+    supervision_manual_preparation.material_cutoff,
+    supervision_manual_preparation.preparation_started_at,
+    true AS manual
+   FROM public.supervision_manual_preparation;
+
+
+--
 -- Name: sys_cron_executions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3847,6 +4560,33 @@ CREATE TABLE public.sys_cron_executions (
 
 
 --
+-- Name: task_interaction; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_interaction (
+    task_id uuid NOT NULL,
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid,
+    provider text NOT NULL,
+    kind text NOT NULL,
+    request jsonb NOT NULL,
+    response jsonb,
+    status text DEFAULT 'pending'::text NOT NULL,
+    author_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (now() + '00:01:00'::interval) NOT NULL,
+    responded_at timestamp with time zone,
+    delivery_mode text DEFAULT 'live'::text NOT NULL,
+    followup_task_id uuid,
+    CONSTRAINT task_interaction_delivery_mode_check CHECK ((delivery_mode = ANY (ARRAY['live'::text, 'suspended'::text]))),
+    CONSTRAINT task_interaction_kind_check CHECK ((kind = ANY (ARRAY['question'::text, 'approval'::text, 'plan'::text]))),
+    CONSTRAINT task_interaction_provider_check CHECK ((provider = ANY (ARRAY['codex'::text, 'codebuddy'::text, 'dsh'::text]))),
+    CONSTRAINT task_interaction_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'responded'::text, 'expired'::text])))
+);
+
+
+--
 -- Name: task_message; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3859,6 +4599,104 @@ CREATE TABLE public.task_message (
     content text,
     input jsonb,
     output text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    call_id text
+);
+
+
+--
+-- Name: task_provider_trace; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_provider_trace (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    provider text NOT NULL,
+    observation_space text DEFAULT ''::text NOT NULL,
+    session_id text DEFAULT ''::text NOT NULL,
+    provider_trace_id text NOT NULL,
+    correlation text DEFAULT 'exact'::text NOT NULL,
+    source text DEFAULT 'stream_json'::text NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone,
+    CONSTRAINT task_provider_trace_correlation_valid CHECK ((correlation = ANY (ARRAY['exact'::text, 'inferred_window'::text]))),
+    CONSTRAINT task_provider_trace_trace_id_not_empty CHECK ((provider_trace_id <> ''::text))
+);
+
+
+--
+-- Name: task_runtime_capability; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_runtime_capability (
+    task_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    runtime_id uuid NOT NULL,
+    dispatched_at timestamp with time zone NOT NULL,
+    capabilities text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_runtime_capability_capabilities_check CHECK ((capabilities <@ ARRAY['text'::text, 'command'::text]))
+);
+
+
+--
+-- Name: task_runtime_input; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_runtime_input (
+    task_id uuid NOT NULL,
+    id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid,
+    chat_session_id uuid,
+    author_id uuid NOT NULL,
+    kind text NOT NULL,
+    content text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    output text DEFAULT ''::text NOT NULL,
+    failure_reason text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    settled_at timestamp with time zone,
+    CONSTRAINT task_runtime_input_kind_check CHECK ((kind = ANY (ARRAY['text'::text, 'command'::text]))),
+    CONSTRAINT task_runtime_input_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'delivering'::text, 'delivered'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: task_supplement; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_supplement (
+    task_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    comment_id uuid NOT NULL,
+    author_id uuid NOT NULL,
+    client_request_id uuid NOT NULL,
+    status text NOT NULL,
+    failure_reason text,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivered_at timestamp with time zone,
+    CONSTRAINT task_supplement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'delivering'::text, 'delivered'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: task_supplement_capability; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_supplement_capability (
+    task_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    capability text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -3875,6 +4713,44 @@ CREATE TABLE public.task_token (
     workspace_id uuid NOT NULL,
     user_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: task_trace_event; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_trace_event (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    issue_id uuid,
+    agent_id uuid NOT NULL,
+    runtime_id uuid,
+    squad_id uuid,
+    project_id uuid,
+    source text DEFAULT ''::text NOT NULL,
+    event_type text NOT NULL,
+    event_name text NOT NULL,
+    status text DEFAULT ''::text NOT NULL,
+    attempt integer DEFAULT 1 NOT NULL,
+    duration_ms bigint,
+    queue_wait_ms bigint,
+    run_ms bigint,
+    total_ms bigint,
+    provider text DEFAULT ''::text NOT NULL,
+    model text DEFAULT ''::text NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cache_read_tokens bigint DEFAULT 0 NOT NULL,
+    cache_write_tokens bigint DEFAULT 0 NOT NULL,
+    failure_reason text DEFAULT ''::text NOT NULL,
+    error_type text DEFAULT ''::text NOT NULL,
+    trigger_comment_id uuid,
+    autopilot_run_id uuid,
+    chat_session_id uuid,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -3955,7 +4831,158 @@ CREATE TABLE public.task_usage_hourly_rollup_state (
     CONSTRAINT task_usage_hourly_rollup_state_id_check CHECK ((id = 1))
 );
 
-INSERT INTO public.task_usage_hourly_rollup_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+--
+-- Name: test_agent_control; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.test_agent_control (
+    workspace_id uuid NOT NULL,
+    name text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    desired jsonb DEFAULT '{"policy": {"model": "deepseek-v4.1-flash", "provider": "codebuddy", "service_tier": "", "thinking_level": ""}, "overrides": {}}'::jsonb NOT NULL,
+    observed jsonb DEFAULT '{}'::jsonb NOT NULL,
+    observed_at timestamp with time zone,
+    updated_by text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: upstream_sync_absorption_task; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upstream_sync_absorption_task (
+    item_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    status text DEFAULT 'task_created'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT upstream_sync_absorption_task_status_check CHECK ((status = ANY (ARRAY['task_created'::text, 'in_progress'::text, 'published'::text])))
+);
+
+
+--
+-- Name: upstream_sync_commit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upstream_sync_commit (
+    commit_sha text NOT NULL,
+    patch_id text DEFAULT ''::text NOT NULL,
+    item_id uuid,
+    run_id uuid,
+    absorbed boolean DEFAULT false NOT NULL,
+    absorbed_method text DEFAULT ''::text NOT NULL,
+    subject text DEFAULT ''::text NOT NULL,
+    committed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT upstream_sync_commit_absorbed_method_check CHECK ((absorbed_method = ANY (ARRAY[''::text, 'patch_id'::text, 'subject'::text, 'ancestry'::text])))
+);
+
+
+--
+-- Name: upstream_sync_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upstream_sync_config (
+    singleton smallint DEFAULT 1 NOT NULL,
+    upstream_url text DEFAULT 'https://github.com/multica-ai/multica.git'::text NOT NULL,
+    upstream_branch text DEFAULT 'main'::text NOT NULL,
+    local_ref text DEFAULT 'origin/personal-studio-upstream'::text NOT NULL,
+    runtime_id uuid,
+    agent_id uuid,
+    autopilot_id uuid,
+    batch_size integer DEFAULT 200 NOT NULL,
+    sync_state text DEFAULT 'idle'::text NOT NULL,
+    bootstrap_base_sha text DEFAULT ''::text NOT NULL,
+    cursor_sha text DEFAULT ''::text NOT NULL,
+    head_sha text DEFAULT ''::text NOT NULL,
+    last_run_at timestamp with time zone,
+    error text DEFAULT ''::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT upstream_sync_config_batch_size_check CHECK (((batch_size >= 1) AND (batch_size <= 500))),
+    CONSTRAINT upstream_sync_config_singleton_check CHECK ((singleton = 1)),
+    CONSTRAINT upstream_sync_config_sync_state_check CHECK ((sync_state = ANY (ARRAY['idle'::text, 'bootstrap'::text, 'incremental'::text, 'paused'::text])))
+);
+
+
+--
+-- Name: upstream_sync_item; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upstream_sync_item (
+    id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    cluster_key text NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    summary text DEFAULT ''::text NOT NULL,
+    rationale text DEFAULT ''::text NOT NULL,
+    verdict text DEFAULT 'review'::text NOT NULL,
+    confidence text DEFAULT 'medium'::text NOT NULL,
+    presence text DEFAULT 'local'::text NOT NULL,
+    paths text[] DEFAULT '{}'::text[] NOT NULL,
+    commit_count integer DEFAULT 0 NOT NULL,
+    commit_shas text[] DEFAULT '{}'::text[] NOT NULL,
+    first_commit_at timestamp with time zone,
+    last_commit_at timestamp with time zone,
+    status text DEFAULT 'open'::text NOT NULL,
+    adopted_at timestamp with time zone,
+    adopted_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT upstream_sync_item_confidence_check CHECK ((confidence = ANY (ARRAY['high'::text, 'medium'::text, 'low'::text]))),
+    CONSTRAINT upstream_sync_item_presence_check CHECK ((presence = ANY (ARRAY['local'::text, 'partial'::text, 'absent'::text]))),
+    CONSTRAINT upstream_sync_item_status_check CHECK ((status = ANY (ARRAY['open'::text, 'adopted'::text, 'ignored'::text]))),
+    CONSTRAINT upstream_sync_item_verdict_check CHECK ((verdict = ANY (ARRAY['absorb'::text, 'review'::text, 'skip'::text])))
+);
+
+
+--
+-- Name: upstream_sync_run; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upstream_sync_run (
+    id uuid NOT NULL,
+    mode text DEFAULT 'incremental'::text NOT NULL,
+    trigger_source text DEFAULT 'manual'::text NOT NULL,
+    task_id uuid,
+    status text DEFAULT 'preparing'::text NOT NULL,
+    base_sha text DEFAULT ''::text NOT NULL,
+    observed_head_sha text DEFAULT ''::text NOT NULL,
+    limit_commits integer DEFAULT 200 NOT NULL,
+    cursor_sha text DEFAULT ''::text NOT NULL,
+    scanned_commits integer DEFAULT 0 NOT NULL,
+    absorbed_commits integer DEFAULT 0 NOT NULL,
+    item_count integer DEFAULT 0 NOT NULL,
+    has_more boolean DEFAULT true NOT NULL,
+    result jsonb,
+    error text DEFAULT ''::text NOT NULL,
+    lease_expires_at timestamp with time zone,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT upstream_sync_run_mode_check CHECK ((mode = ANY (ARRAY['bootstrap'::text, 'incremental'::text]))),
+    CONSTRAINT upstream_sync_run_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text]))),
+    CONSTRAINT upstream_sync_run_trigger_source_check CHECK ((trigger_source = ANY (ARRAY['manual'::text, 'schedule'::text, 'api'::text, 'webhook'::text])))
+);
+
+
+--
+-- Name: upstream_sync_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upstream_sync_settings (
+    singleton smallint DEFAULT 1 NOT NULL,
+    instructions text DEFAULT ''::text NOT NULL,
+    schedule_hour integer DEFAULT 9 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT upstream_sync_settings_schedule_hour_check CHECK (((schedule_hour >= 0) AND (schedule_hour <= 23))),
+    CONSTRAINT upstream_sync_settings_singleton_check CHECK ((singleton = 1))
+);
 
 
 --
@@ -3965,7 +4992,7 @@ INSERT INTO public.task_usage_hourly_rollup_state (id) VALUES (1) ON CONFLICT DO
 CREATE TABLE public."user" (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
-    account text NOT NULL DEFAULT ''::text,
+    account text DEFAULT ''::text NOT NULL,
     email text NOT NULL,
     password_hash text,
     avatar_url text,
@@ -4068,6 +5095,76 @@ CREATE TABLE public.vcs_pull_request (
 
 
 --
+-- Name: verification_event; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.verification_event (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    delivery_id uuid NOT NULL,
+    environment text DEFAULT ''::text NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    candidate_id text DEFAULT ''::text NOT NULL,
+    stage text NOT NULL,
+    detail text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: verification_slot; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.verification_slot (
+    name text NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    state text DEFAULT 'idle'::text NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    workspace_id uuid,
+    delivery_id uuid,
+    worker_token uuid,
+    source_commit text DEFAULT ''::text NOT NULL,
+    candidate_id text DEFAULT ''::text NOT NULL,
+    lease_expires_at timestamp with time zone,
+    error text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT verification_slot_check CHECK ((((state = 'idle'::text) AND (delivery_id IS NULL) AND (worker_token IS NULL)) OR ((state <> 'idle'::text) AND (delivery_id IS NOT NULL) AND (worker_token IS NOT NULL)))),
+    CONSTRAINT verification_slot_name_check CHECK ((name = ANY (ARRAY['verify-1'::text, 'verify-2'::text, 'verify-3'::text]))),
+    CONSTRAINT verification_slot_state_check CHECK ((state = ANY (ARRAY['idle'::text, 'preparing'::text, 'verifying'::text, 'draining'::text, 'quarantined'::text])))
+);
+
+
+--
+-- Name: verification_slot_maintenance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.verification_slot_maintenance (
+    id uuid NOT NULL,
+    name text NOT NULL,
+    action text NOT NULL,
+    actor text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    seed_id text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT verification_slot_maintenance_action_check CHECK ((action = ANY (ARRAY['maintain'::text, 'resume'::text])))
+);
+
+
+--
+-- Name: verification_slot_seed; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.verification_slot_seed (
+    name text NOT NULL,
+    seed_id text NOT NULL,
+    seed_sha256 text NOT NULL,
+    verified boolean DEFAULT false NOT NULL,
+    restored_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: webhook_delivery; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4148,6 +5245,25 @@ CREATE TABLE public.workspace_invitation (
 
 
 --
+-- Name: workspace_mcp_check; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workspace_mcp_check (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    server_id uuid NOT NULL,
+    runtime_id uuid NOT NULL,
+    config_version bigint NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    tool_count integer DEFAULT 0 NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone
+);
+
+
+--
 -- Name: workspace_mcp_server; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4158,7 +5274,9 @@ CREATE TABLE public.workspace_mcp_server (
     config jsonb NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    config_version bigint DEFAULT 1 NOT NULL
 );
 
 
@@ -4178,6 +5296,187 @@ CREATE TABLE public.workspace_share_link (
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT workspace_share_link_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'member'::text])))
+);
+
+
+--
+-- Name: agent_task_queue; Type: TABLE; Schema: recovery_evidence; Owner: -
+--
+
+CREATE TABLE recovery_evidence.agent_task_queue (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    agent_id uuid NOT NULL,
+    issue_id uuid,
+    status text DEFAULT 'queued'::text NOT NULL,
+    priority integer DEFAULT 0 NOT NULL,
+    dispatched_at timestamp with time zone,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    result jsonb,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    context jsonb,
+    runtime_id uuid,
+    session_id text,
+    work_dir text,
+    trigger_comment_id uuid,
+    chat_session_id uuid,
+    autopilot_run_id uuid,
+    attempt integer DEFAULT 1 NOT NULL,
+    max_attempts integer DEFAULT 2 NOT NULL,
+    parent_task_id uuid,
+    failure_reason text,
+    trigger_summary text,
+    force_fresh_session boolean DEFAULT false NOT NULL,
+    is_leader_task boolean DEFAULT false NOT NULL,
+    wait_reason text,
+    initiator_user_id uuid,
+    handoff_note text,
+    prepare_lease_expires_at timestamp with time zone,
+    squad_id uuid,
+    runtime_mcp_overlay jsonb,
+    escalation_for_task_id uuid,
+    fire_at timestamp with time zone,
+    originator_user_id uuid,
+    runtime_connected_apps jsonb,
+    coalesced_comment_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    delivered_comment_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    chat_input_task_id uuid,
+    chat_finalize_deferred_at timestamp with time zone,
+    originator_source text,
+    delegated_from_task_id uuid,
+    retry_of_task_id uuid,
+    rerun_of_task_id uuid,
+    rule_version_id uuid,
+    trigger_evidence_kind text,
+    trigger_evidence_ref_id uuid,
+    accountable_user_id uuid,
+    session_rollout_missing boolean DEFAULT false NOT NULL,
+    retired_session_id text,
+    quick_actions_disabled boolean DEFAULT false NOT NULL,
+    regenerate_quick_actions_for uuid,
+    branch_name text,
+    durable_work_dir text,
+    channel_context_revision bigint
+);
+
+
+--
+-- Name: comment; Type: TABLE; Schema: recovery_evidence; Owner: -
+--
+
+CREATE TABLE recovery_evidence.comment (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_id uuid NOT NULL,
+    author_type text NOT NULL,
+    author_id uuid NOT NULL,
+    content text NOT NULL,
+    type text DEFAULT 'comment'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    parent_id uuid,
+    workspace_id uuid NOT NULL,
+    resolved_at timestamp with time zone,
+    resolved_by_type text,
+    resolved_by_id uuid,
+    source_task_id uuid,
+    quick_action_id uuid,
+    via_plugin_id uuid,
+    revision bigint DEFAULT 1 NOT NULL,
+    recovery_settled_at timestamp with time zone
+);
+
+
+--
+-- Name: issue; Type: TABLE; Schema: recovery_evidence; Owner: -
+--
+
+CREATE TABLE recovery_evidence.issue (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    title text NOT NULL,
+    description text,
+    status text DEFAULT 'backlog'::text NOT NULL,
+    priority text DEFAULT 'not_important_not_urgent'::text NOT NULL,
+    assignee_type text,
+    assignee_id uuid,
+    creator_type text NOT NULL,
+    creator_id uuid NOT NULL,
+    parent_issue_id uuid,
+    acceptance_criteria jsonb DEFAULT '[]'::jsonb NOT NULL,
+    context_refs jsonb DEFAULT '[]'::jsonb NOT NULL,
+    "position" double precision DEFAULT 0 NOT NULL,
+    due_date date,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    number integer DEFAULT 0 NOT NULL,
+    project_id uuid,
+    origin_type text,
+    origin_id uuid,
+    first_executed_at timestamp with time zone,
+    start_date date,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    stage integer,
+    properties jsonb DEFAULT '{}'::jsonb NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    last_activity_at timestamp with time zone,
+    work_started_at timestamp with time zone,
+    work_completed_at timestamp with time zone
+);
+
+
+--
+-- Name: task_message; Type: TABLE; Schema: recovery_evidence; Owner: -
+--
+
+CREATE TABLE recovery_evidence.task_message (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    task_id uuid NOT NULL,
+    seq integer NOT NULL,
+    type text NOT NULL,
+    tool text,
+    content text,
+    input jsonb,
+    output text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: task_trace_event; Type: TABLE; Schema: recovery_evidence; Owner: -
+--
+
+CREATE TABLE recovery_evidence.task_trace_event (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    issue_id uuid,
+    agent_id uuid NOT NULL,
+    runtime_id uuid,
+    squad_id uuid,
+    project_id uuid,
+    source text DEFAULT ''::text NOT NULL,
+    event_type text NOT NULL,
+    event_name text NOT NULL,
+    status text DEFAULT ''::text NOT NULL,
+    attempt integer DEFAULT 1 NOT NULL,
+    duration_ms bigint,
+    queue_wait_ms bigint,
+    run_ms bigint,
+    total_ms bigint,
+    provider text DEFAULT ''::text NOT NULL,
+    model text DEFAULT ''::text NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cache_read_tokens bigint DEFAULT 0 NOT NULL,
+    cache_write_tokens bigint DEFAULT 0 NOT NULL,
+    failure_reason text DEFAULT ''::text NOT NULL,
+    error_type text DEFAULT ''::text NOT NULL,
+    trigger_comment_id uuid,
+    autopilot_run_id uuid,
+    chat_session_id uuid,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -4299,22 +5598,6 @@ ALTER TABLE ONLY public.autopilot_collaborator
 
 ALTER TABLE ONLY public.autopilot
     ADD CONSTRAINT autopilot_pkey PRIMARY KEY (id);
-
-
---
--- Name: autopilot_quota_period autopilot_quota_period_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.autopilot_quota_period
-    ADD CONSTRAINT autopilot_quota_period_pkey PRIMARY KEY (workspace_id, period_start, period_end);
-
-
---
--- Name: autopilot_quota_reservation autopilot_quota_reservation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.autopilot_quota_reservation
-    ADD CONSTRAINT autopilot_quota_reservation_pkey PRIMARY KEY (id);
 
 
 --
@@ -4550,6 +5833,22 @@ ALTER TABLE ONLY public.daemon_token
 
 
 --
+-- Name: delivery_batch_member delivery_batch_member_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.delivery_batch_member
+    ADD CONSTRAINT delivery_batch_member_pkey PRIMARY KEY (batch_id, delivery_id);
+
+
+--
+-- Name: delivery_batch delivery_batch_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.delivery_batch
+    ADD CONSTRAINT delivery_batch_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: domain_event_delivery domain_event_delivery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4566,11 +5865,11 @@ ALTER TABLE ONLY public.domain_event_outbox
 
 
 --
--- Name: feedback feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: external_credential_profile external_credential_profile_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.feedback
-    ADD CONSTRAINT feedback_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.external_credential_profile
+    ADD CONSTRAINT external_credential_profile_pkey PRIMARY KEY (id);
 
 
 --
@@ -5206,6 +6505,14 @@ ALTER TABLE ONLY public.member
 
 
 --
+-- Name: multica_schema multica_schema_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.multica_schema
+    ADD CONSTRAINT multica_schema_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: notification_preference notification_preference_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5366,14 +6673,6 @@ ALTER TABLE ONLY public.runtime_profile
 
 
 --
--- Name: seat_capacity_outbox seat_capacity_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.seat_capacity_outbox
-    ADD CONSTRAINT seat_capacity_outbox_pkey PRIMARY KEY (operation_token);
-
-
---
 -- Name: skill_file skill_file_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5438,6 +6737,54 @@ ALTER TABLE ONLY public.squad
 
 
 --
+-- Name: supervision_action supervision_action_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supervision_action
+    ADD CONSTRAINT supervision_action_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supervision_batch supervision_batch_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supervision_batch
+    ADD CONSTRAINT supervision_batch_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supervision_config supervision_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supervision_config
+    ADD CONSTRAINT supervision_config_pkey PRIMARY KEY (workspace_id);
+
+
+--
+-- Name: supervision_finding supervision_finding_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supervision_finding
+    ADD CONSTRAINT supervision_finding_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supervision_material supervision_material_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supervision_material
+    ADD CONSTRAINT supervision_material_pkey PRIMARY KEY (workspace_id, kind, source_id);
+
+
+--
+-- Name: supervision_subject supervision_subject_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supervision_subject
+    ADD CONSTRAINT supervision_subject_pkey PRIMARY KEY (workspace_id, issue_id);
+
+
+--
 -- Name: sys_cron_executions sys_cron_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5454,11 +6801,27 @@ ALTER TABLE ONLY public.task_message
 
 
 --
+-- Name: task_provider_trace task_provider_trace_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_provider_trace
+    ADD CONSTRAINT task_provider_trace_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: task_token task_token_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.task_token
     ADD CONSTRAINT task_token_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_trace_event task_trace_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_trace_event
+    ADD CONSTRAINT task_trace_event_pkey PRIMARY KEY (id);
 
 
 --
@@ -5483,6 +6846,14 @@ ALTER TABLE ONLY public.task_usage
 
 ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_task_id_provider_model_key UNIQUE (task_id, provider, model);
+
+
+--
+-- Name: upstream_sync_settings upstream_sync_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upstream_sync_settings
+    ADD CONSTRAINT upstream_sync_settings_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -5526,6 +6897,14 @@ ALTER TABLE ONLY public.task_usage_hourly
 
 
 --
+-- Name: user user_account_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."user"
+    ADD CONSTRAINT user_account_key UNIQUE (account);
+
+
+--
 -- Name: user_composio_connection user_composio_connection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5547,8 +6926,6 @@ ALTER TABLE ONLY public.user_composio_connection
 
 ALTER TABLE ONLY public."user"
     ADD CONSTRAINT user_email_key UNIQUE (email);
-
-CREATE UNIQUE INDEX user_account_key ON public."user" USING btree (account) WHERE (account <> ''::text);
 
 
 --
@@ -5597,6 +6974,22 @@ ALTER TABLE ONLY public.vcs_pull_request
 
 ALTER TABLE ONLY public.vcs_pull_request
     ADD CONSTRAINT vcs_pull_request_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: verification_slot_maintenance verification_slot_maintenance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.verification_slot_maintenance
+    ADD CONSTRAINT verification_slot_maintenance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: verification_slot_seed verification_slot_seed_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.verification_slot_seed
+    ADD CONSTRAINT verification_slot_seed_pkey PRIMARY KEY (name);
 
 
 --
@@ -5659,6 +7052,20 @@ CREATE INDEX agent_invocation_target_agent_id_idx ON public.agent_invocation_tar
 --
 
 CREATE INDEX agent_invocation_target_target_idx ON public.agent_invocation_target USING btree (target_type, target_id);
+
+
+--
+-- Name: agent_issue_review_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_issue_review_unique ON public.agent USING btree (workspace_id) WHERE (system_key = 'issue_review'::text);
+
+
+--
+-- Name: agent_quality_supervision_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_quality_supervision_unique ON public.agent USING btree (workspace_id) WHERE (system_key = 'quality_supervision'::text);
 
 
 --
@@ -5732,6 +7139,55 @@ CREATE INDEX comment_issue_resolved_at_idx ON public.comment USING btree (issue_
 
 
 --
+-- Name: cooking_favorite_user_recipe_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX cooking_favorite_user_recipe_idx ON public.cooking_favorite USING btree (user_id, recipe_id);
+
+
+--
+-- Name: delivery_batch_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX delivery_batch_active ON public.delivery_batch USING btree (workspace_id) WHERE (status = ANY (ARRAY['collecting'::text, 'frozen'::text, 'preparing'::text, 'validating'::text, 'publishing'::text]));
+
+
+--
+-- Name: delivery_batch_member_delivery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX delivery_batch_member_delivery ON public.delivery_batch_member USING btree (delivery_id);
+
+
+--
+-- Name: delivery_evidence_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX delivery_evidence_key ON public.delivery_evidence USING btree (delivery_id, candidate_id);
+
+
+--
+-- Name: delivery_notice_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX delivery_notice_key ON public.delivery_notice USING btree (delivery_id, stage);
+
+
+--
+-- Name: delivery_owner_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX delivery_owner_key ON public.delivery_owner USING btree (workspace_id, issue_id);
+
+
+--
+-- Name: delivery_publication_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX delivery_publication_key ON public.delivery_publication USING btree (resource);
+
+
+--
 -- Name: domain_event_outbox_idempotency_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5760,10 +7216,59 @@ CREATE UNIQUE INDEX github_pull_request_check_run_pr_ordinal_idx ON public.githu
 
 
 --
+-- Name: health_observation_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX health_observation_id_idx ON public.health_observation USING btree (id);
+
+
+--
+-- Name: health_report_digest_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX health_report_digest_idx ON public.health_report USING btree (workspace_id, user_id, sha256);
+
+
+--
+-- Name: health_report_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX health_report_id_idx ON public.health_report USING btree (id);
+
+
+--
+-- Name: health_report_result_attempt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX health_report_result_attempt_idx ON public.health_report_result USING btree (report_id, attempt);
+
+
+--
+-- Name: health_revision_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX health_revision_scope_idx ON public.health_revision USING btree (workspace_id, user_id, revision);
+
+
+--
+-- Name: health_state_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX health_state_scope_idx ON public.health_state USING btree (workspace_id, user_id);
+
+
+--
 -- Name: idx_activity_log_issue_keyset; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_activity_log_issue_keyset ON public.activity_log USING btree (issue_id, created_at DESC, id DESC);
+
+
+--
+-- Name: idx_activity_log_member_assignee_frequency; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_activity_log_member_assignee_frequency ON public.activity_log USING btree (workspace_id, actor_id, ((details ->> 'to_type'::text)), ((details ->> 'to_id'::text))) WHERE ((actor_type = 'member'::text) AND (action = 'assignee_changed'::text) AND ((details ->> 'to_type'::text) IS NOT NULL) AND ((details ->> 'to_id'::text) IS NOT NULL));
 
 
 --
@@ -5858,6 +7363,13 @@ CREATE INDEX idx_agent_task_queue_agent_terminal_latest ON public.agent_task_que
 
 
 --
+-- Name: idx_agent_task_queue_autopilot_run_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_task_queue_autopilot_run_created_at ON public.agent_task_queue USING btree (autopilot_run_id, created_at) WHERE (autopilot_run_id IS NOT NULL);
+
+
+--
 -- Name: idx_agent_task_queue_chat_pending_v3; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5869,6 +7381,13 @@ CREATE INDEX idx_agent_task_queue_chat_pending_v3 ON public.agent_task_queue USI
 --
 
 CREATE INDEX idx_agent_task_queue_chat_retired_session ON public.agent_task_queue USING btree (chat_session_id, retired_session_id) WHERE ((chat_session_id IS NOT NULL) AND (retired_session_id IS NOT NULL));
+
+
+--
+-- Name: idx_agent_task_queue_chat_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_task_queue_chat_session ON public.agent_task_queue USING btree (chat_session_id, created_at DESC) WHERE (chat_session_id IS NOT NULL);
 
 
 --
@@ -5893,6 +7412,13 @@ CREATE INDEX idx_agent_task_queue_deferred_fire ON public.agent_task_queue USING
 
 
 --
+-- Name: idx_agent_task_queue_delegated_failure_evidence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_task_queue_delegated_failure_evidence ON public.agent_task_queue USING btree (trigger_evidence_ref_id, created_at DESC, id DESC) WHERE (trigger_evidence_kind = ANY (ARRAY['delegated_failure'::text, 'delegated_result'::text]));
+
+
+--
 -- Name: idx_agent_task_queue_dispatched_reclaim_v2; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5904,6 +7430,13 @@ CREATE INDEX idx_agent_task_queue_dispatched_reclaim_v2 ON public.agent_task_que
 --
 
 CREATE INDEX idx_agent_task_queue_escalation_for ON public.agent_task_queue USING btree (escalation_for_task_id) WHERE (escalation_for_task_id IS NOT NULL);
+
+
+--
+-- Name: idx_agent_task_queue_history_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_task_queue_history_page ON public.agent_task_queue USING btree (agent_id, created_at DESC, id DESC) WHERE (NOT ((escalation_for_task_id IS NOT NULL) AND (started_at IS NULL) AND (status = ANY (ARRAY['deferred'::text, 'cancelled'::text]))));
 
 
 --
@@ -6065,13 +7598,6 @@ CREATE INDEX idx_autopilot_collaborator_user ON public.autopilot_collaborator US
 --
 
 CREATE INDEX idx_autopilot_project ON public.autopilot USING btree (project_id);
-
-
---
--- Name: idx_autopilot_quota_reservation_state; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_autopilot_quota_reservation_state ON public.autopilot_quota_reservation USING btree (state, created_at) WHERE (state = 'reserved'::text);
 
 
 --
@@ -6299,6 +7825,13 @@ CREATE INDEX idx_chat_draft_restore_task_id ON public.chat_draft_restore USING b
 
 
 --
+-- Name: idx_chat_message_assistant_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_chat_message_assistant_task ON public.chat_message USING btree (task_id, created_at DESC) WHERE (role = 'assistant'::text);
+
+
+--
 -- Name: idx_chat_message_input_owner; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6320,6 +7853,13 @@ CREATE INDEX idx_chat_pinned_agent_user_ws ON public.chat_pinned_agent USING btr
 
 
 --
+-- Name: idx_chat_session_agent_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_chat_session_agent_id ON public.chat_session USING btree (agent_id);
+
+
+--
 -- Name: idx_chat_session_creator; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6338,6 +7878,13 @@ CREATE INDEX idx_chat_session_pinned ON public.chat_session USING btree (creator
 --
 
 CREATE INDEX idx_chat_session_project ON public.chat_session USING btree (project_id) WHERE (project_id IS NOT NULL);
+
+
+--
+-- Name: idx_chat_session_runtime_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_chat_session_runtime_id ON public.chat_session USING btree (runtime_id) WHERE (runtime_id IS NOT NULL);
 
 
 --
@@ -6446,6 +7993,13 @@ CREATE UNIQUE INDEX idx_dingtalk_bot_identity_installation ON public.dingtalk_bo
 
 
 --
+-- Name: idx_dingtalk_bot_identity_workspace; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dingtalk_bot_identity_workspace ON public.dingtalk_bot_identity USING btree (workspace_id);
+
+
+--
 -- Name: idx_dingtalk_group_presence_installation_conversation; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6481,13 +8035,6 @@ CREATE INDEX idx_dingtalk_group_route_workspace ON public.dingtalk_group_route U
 
 
 --
--- Name: idx_feedback_user_created; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_feedback_user_created ON public.feedback USING btree (user_id, created_at DESC);
-
-
---
 -- Name: idx_github_installation_installation_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6520,6 +8067,13 @@ CREATE INDEX idx_github_pr_check_suite_aggregate ON public.github_pull_request_c
 --
 
 CREATE INDEX idx_github_pull_request_head_sha ON public.github_pull_request USING btree (head_sha);
+
+
+--
+-- Name: idx_github_pull_request_pr_owner_repo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_github_pull_request_pr_owner_repo ON public.github_pull_request USING btree (pr_number, repo_owner, repo_name);
 
 
 --
@@ -6782,6 +8336,20 @@ CREATE INDEX idx_issue_view_shared ON public.issue_view USING btree (workspace_i
 
 
 --
+-- Name: idx_issue_work_completed_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_issue_work_completed_at ON public.issue USING btree (workspace_id, work_completed_at) WHERE (work_completed_at IS NOT NULL);
+
+
+--
+-- Name: idx_issue_work_started_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_issue_work_started_at ON public.issue USING btree (workspace_id, work_started_at) WHERE (work_started_at IS NOT NULL);
+
+
+--
 -- Name: idx_issue_workspace; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6821,10 +8389,6 @@ CREATE INDEX idx_issue_workspace_position ON public.issue USING btree (workspace
 --
 
 CREATE INDEX idx_issue_workspace_status_position ON public.issue USING btree (workspace_id, status, "position");
-
-CREATE INDEX idx_issue_work_started_at ON public.issue USING btree (workspace_id, work_started_at) WHERE (work_started_at IS NOT NULL);
-
-CREATE INDEX idx_issue_work_completed_at ON public.issue USING btree (workspace_id, work_completed_at) WHERE (work_completed_at IS NOT NULL);
 
 
 --
@@ -7227,20 +8791,6 @@ CREATE INDEX idx_runtime_profile_workspace ON public.runtime_profile USING btree
 
 
 --
--- Name: idx_seat_capacity_outbox_due; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_seat_capacity_outbox_due ON public.seat_capacity_outbox USING btree (next_attempt_at, created_at) WHERE (dead_lettered_at IS NULL);
-
-
---
--- Name: idx_seat_capacity_outbox_share_join; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX idx_seat_capacity_outbox_share_join ON public.seat_capacity_outbox USING btree (workspace_id, share_link_id, user_id) WHERE ((share_link_id IS NOT NULL) AND (user_id IS NOT NULL));
-
-
---
 -- Name: idx_skill_file_skill; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7308,6 +8858,27 @@ CREATE INDEX idx_task_chat_finalize_deferred ON public.agent_task_queue USING bt
 --
 
 CREATE INDEX idx_task_message_task_id_seq ON public.task_message USING btree (task_id, seq);
+
+
+--
+-- Name: idx_task_runtime_capability_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_task_runtime_capability_task ON public.task_runtime_capability USING btree (task_id);
+
+
+--
+-- Name: idx_task_runtime_input_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_runtime_input_history ON public.task_runtime_input USING btree (task_id, created_at DESC, id DESC);
+
+
+--
+-- Name: idx_task_runtime_input_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_task_runtime_input_task_id ON public.task_runtime_input USING btree (task_id, id);
 
 
 --
@@ -7472,6 +9043,48 @@ CREATE UNIQUE INDEX idx_workspace_mcp_server_workspace_name ON public.workspace_
 
 
 --
+-- Name: issue_delivery_authorization_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_delivery_authorization_key ON public.issue_delivery_authorization USING btree (id);
+
+
+--
+-- Name: issue_delivery_authorization_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_delivery_authorization_source ON public.issue_delivery_authorization USING btree (workspace_id, plan_id, kind, comment_id, comment_revision);
+
+
+--
+-- Name: issue_delivery_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_delivery_key ON public.issue_delivery USING btree (id);
+
+
+--
+-- Name: issue_delivery_operation; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_delivery_operation ON public.issue_delivery USING btree (workspace_id, operation_id);
+
+
+--
+-- Name: issue_delivery_plan_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_delivery_plan_key ON public.issue_delivery_plan USING btree (workspace_id, issue_id);
+
+
+--
+-- Name: issue_delivery_queue; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_delivery_queue ON public.issue_delivery USING btree (workspace_id, phase, created_at);
+
+
+--
 -- Name: issue_label_workspace_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7483,6 +9096,27 @@ CREATE INDEX issue_label_workspace_type_idx ON public.issue_label USING btree (w
 --
 
 CREATE UNIQUE INDEX issue_label_workspace_type_name_lower_idx ON public.issue_label USING btree (workspace_id, resource_type, lower(name));
+
+
+--
+-- Name: issue_review_issue_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_review_issue_unique ON public.issue_review USING btree (issue_id);
+
+
+--
+-- Name: issue_review_workspace_state; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_review_workspace_state ON public.issue_review USING btree (workspace_id, state);
+
+
+--
+-- Name: issue_to_label_label_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_to_label_label_idx ON public.issue_to_label USING btree (label_id);
 
 
 --
@@ -7500,6 +9134,83 @@ CREATE UNIQUE INDEX life_identity_one_active ON public.life_identity_version USI
 
 
 --
+-- Name: meal_workspace_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX meal_workspace_scope_idx ON public.meal_workspace USING btree (workspace_id, user_id);
+
+
+--
+-- Name: release_paused_task_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX release_paused_task_key ON public.release_paused_task USING btree (window_id, task_id);
+
+
+--
+-- Name: release_window_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX release_window_active ON public.release_window USING btree (environment_id) WHERE (state <> 'finished'::text);
+
+
+--
+-- Name: release_window_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX release_window_id ON public.release_window USING btree (id);
+
+
+--
+-- Name: repository_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX repository_id_idx ON public.repository USING btree (id);
+
+
+--
+-- Name: repository_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX repository_identity_idx ON public.repository USING btree (workspace_id, identity);
+
+
+--
+-- Name: repository_location_daemon_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX repository_location_daemon_idx ON public.repository_location USING btree (workspace_id, repository_id, daemon_id);
+
+
+--
+-- Name: repository_location_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX repository_location_id_idx ON public.repository_location USING btree (id);
+
+
+--
+-- Name: review_config_workspace_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX review_config_workspace_unique ON public.review_config USING btree (workspace_id);
+
+
+--
+-- Name: run_text_change_task_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX run_text_change_task_idx ON public.run_text_change USING btree (task_id, created_at);
+
+
+--
+-- Name: skill_asset_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX skill_asset_key ON public.skill_asset USING btree (storage_key);
+
+
+--
 -- Name: skill_to_label_label_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7507,17 +9218,269 @@ CREATE INDEX skill_to_label_label_idx ON public.skill_to_label USING btree (labe
 
 
 --
--- Name: uq_autopilot_quota_reservation_key; Type: INDEX; Schema: public; Owner: -
+-- Name: supervision_active_issue; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_autopilot_quota_reservation_key ON public.autopilot_quota_reservation USING btree (workspace_id, period_start, period_end, idempotency_key) WHERE (state <> 'released'::text);
+CREATE UNIQUE INDEX supervision_active_issue ON public.supervision_batch USING btree (workspace_id, issue_id) WHERE (status = ANY (ARRAY['preparing'::text, 'running'::text]));
 
 
 --
--- Name: uq_autopilot_run_quota_reservation; Type: INDEX; Schema: public; Owner: -
+-- Name: supervision_batch_round_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_autopilot_run_quota_reservation ON public.autopilot_run USING btree (quota_reservation_id) WHERE (quota_reservation_id IS NOT NULL);
+CREATE UNIQUE INDEX supervision_batch_round_key ON public.supervision_batch_round USING btree (batch_id);
+
+
+--
+-- Name: supervision_batch_round_round; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX supervision_batch_round_round ON public.supervision_batch_round USING btree (workspace_id, round_id);
+
+
+--
+-- Name: supervision_fingerprint; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_fingerprint ON public.supervision_finding USING btree (workspace_id, issue_id, fingerprint);
+
+
+--
+-- Name: supervision_frozen_material_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_frozen_material_key ON public.supervision_frozen_material USING btree (workspace_id, issue_id, material_cutoff, kind, source_id);
+
+
+--
+-- Name: supervision_investigation_batch; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX supervision_investigation_batch ON public.supervision_investigation USING btree (workspace_id, batch_id, created_at);
+
+
+--
+-- Name: supervision_investigation_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_investigation_key ON public.supervision_investigation USING btree (id);
+
+
+--
+-- Name: supervision_manual_preparation_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_manual_preparation_id ON public.supervision_manual_preparation USING btree (id);
+
+
+--
+-- Name: supervision_manual_preparation_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_manual_preparation_open ON public.supervision_manual_preparation USING btree (workspace_id, issue_id) WHERE (status = 'open'::text);
+
+
+--
+-- Name: supervision_material_issue; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX supervision_material_issue ON public.supervision_material USING btree (workspace_id, issue_id, kind, source_id);
+
+
+--
+-- Name: supervision_operation; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_operation ON public.supervision_action USING btree (workspace_id, operation_id);
+
+
+--
+-- Name: supervision_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX supervision_pending ON public.supervision_subject USING btree (workspace_id, next_attempt_at, last_checked_at) WHERE (desired_version > reviewed_version);
+
+
+--
+-- Name: supervision_round_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_round_key ON public.supervision_round USING btree (id);
+
+
+--
+-- Name: supervision_round_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_round_open ON public.supervision_round USING btree (workspace_id, issue_id) WHERE (status = 'open'::text);
+
+
+--
+-- Name: supervision_round_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_round_sequence ON public.supervision_round USING btree (workspace_id, issue_id, sequence);
+
+
+--
+-- Name: supervision_trace_material_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_trace_material_id ON public.supervision_trace_material USING btree (id);
+
+
+--
+-- Name: supervision_trace_material_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX supervision_trace_material_pending ON public.supervision_trace_material USING btree (workspace_id, next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: supervision_trace_material_run_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX supervision_trace_material_run_key ON public.supervision_trace_material USING btree (workspace_id, round_id, run_id, source, material_version);
+
+
+--
+-- Name: task_interaction_followup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX task_interaction_followup ON public.task_interaction USING btree (followup_task_id) WHERE (followup_task_id IS NOT NULL);
+
+
+--
+-- Name: task_interaction_identity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX task_interaction_identity ON public.task_interaction USING btree (task_id, id);
+
+
+--
+-- Name: task_interaction_suspended_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX task_interaction_suspended_expiry ON public.task_interaction USING btree (expires_at, task_id) WHERE ((status = 'pending'::text) AND (delivery_mode = 'suspended'::text));
+
+
+--
+-- Name: task_provider_trace_task_trace_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX task_provider_trace_task_trace_unique ON public.task_provider_trace USING btree (task_id, provider, provider_trace_id);
+
+
+--
+-- Name: task_supplement_capability_task_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX task_supplement_capability_task_uidx ON public.task_supplement_capability USING btree (task_id);
+
+
+--
+-- Name: task_supplement_comment_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX task_supplement_comment_uidx ON public.task_supplement USING btree (comment_id);
+
+
+--
+-- Name: task_supplement_task_request_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX task_supplement_task_request_uidx ON public.task_supplement USING btree (task_id, client_request_id);
+
+
+--
+-- Name: test_agent_control_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX test_agent_control_key ON public.test_agent_control USING btree (workspace_id, name);
+
+
+--
+-- Name: upstream_sync_absorption_task_item; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_absorption_task_item ON public.upstream_sync_absorption_task USING btree (item_id);
+
+
+--
+-- Name: upstream_sync_commit_item; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upstream_sync_commit_item ON public.upstream_sync_commit USING btree (item_id) WHERE (item_id IS NOT NULL);
+
+
+--
+-- Name: upstream_sync_commit_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_commit_unique ON public.upstream_sync_commit USING btree (commit_sha);
+
+
+--
+-- Name: upstream_sync_config_singleton; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_config_singleton ON public.upstream_sync_config USING btree (singleton);
+
+
+--
+-- Name: upstream_sync_item_cluster; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_item_cluster ON public.upstream_sync_item USING btree (cluster_key);
+
+
+--
+-- Name: upstream_sync_item_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_item_id ON public.upstream_sync_item USING btree (id);
+
+
+--
+-- Name: upstream_sync_item_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upstream_sync_item_pending ON public.upstream_sync_item USING btree (status, verdict, created_at DESC);
+
+
+--
+-- Name: upstream_sync_item_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upstream_sync_item_run ON public.upstream_sync_item USING btree (run_id);
+
+
+--
+-- Name: upstream_sync_run_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_run_active ON public.upstream_sync_run USING btree ((true)) WHERE (status = ANY (ARRAY['preparing'::text, 'running'::text]));
+
+
+--
+-- Name: upstream_sync_run_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_run_id ON public.upstream_sync_run USING btree (id);
+
+
+--
+-- Name: upstream_sync_run_list; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upstream_sync_run_list ON public.upstream_sync_run USING btree (created_at DESC);
+
+
+--
+-- Name: upstream_sync_run_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX upstream_sync_run_task ON public.upstream_sync_run USING btree (task_id) WHERE (task_id IS NOT NULL);
 
 
 --
@@ -7553,6 +9516,41 @@ CREATE INDEX user_composio_connection_account_idx ON public.user_composio_connec
 --
 
 CREATE INDEX user_composio_connection_user_status_idx ON public.user_composio_connection USING btree (user_id, status);
+
+
+--
+-- Name: verification_event_delivery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX verification_event_delivery ON public.verification_event USING btree (delivery_id, created_at DESC);
+
+
+--
+-- Name: verification_slot_delivery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX verification_slot_delivery ON public.verification_slot USING btree (delivery_id) WHERE (delivery_id IS NOT NULL);
+
+
+--
+-- Name: verification_slot_maintenance_name_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX verification_slot_maintenance_name_created ON public.verification_slot_maintenance USING btree (name, created_at DESC);
+
+
+--
+-- Name: verification_slot_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX verification_slot_name ON public.verification_slot USING btree (name);
+
+
+--
+-- Name: workspace_mcp_check_server_runtime; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX workspace_mcp_check_server_runtime ON public.workspace_mcp_check USING btree (server_id, runtime_id);
 
 
 --
@@ -7728,6 +9726,62 @@ CREATE TRIGGER mirror_dingtalk_group_presence_bot_identity AFTER INSERT OR UPDAT
 --
 
 CREATE TRIGGER mirror_legacy_dingtalk_group_route_presence AFTER INSERT OR UPDATE ON public.dingtalk_group_route FOR EACH ROW EXECUTE FUNCTION public.mirror_legacy_dingtalk_group_route_presence();
+
+
+--
+-- Name: project_resource project_repository_migration_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_repository_migration_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_resource FOR EACH ROW EXECUTE FUNCTION public.guard_repository_migration();
+
+
+--
+-- Name: repository_location repository_location_migration_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER repository_location_migration_guard BEFORE INSERT OR DELETE OR UPDATE ON public.repository_location FOR EACH ROW EXECUTE FUNCTION public.guard_repository_migration();
+
+
+--
+-- Name: repository repository_migration_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER repository_migration_guard BEFORE INSERT OR DELETE OR UPDATE ON public.repository FOR EACH ROW EXECUTE FUNCTION public.guard_repository_migration();
+
+
+--
+-- Name: comment supervision_comment_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER supervision_comment_change AFTER INSERT OR DELETE OR UPDATE ON public.comment FOR EACH ROW EXECUTE FUNCTION public.supervision_source_changed();
+
+
+--
+-- Name: issue supervision_issue_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER supervision_issue_change AFTER INSERT OR DELETE OR UPDATE ON public.issue FOR EACH ROW EXECUTE FUNCTION public.supervision_source_changed();
+
+
+--
+-- Name: task_message supervision_message_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER supervision_message_change AFTER INSERT ON public.task_message FOR EACH ROW EXECUTE FUNCTION public.supervision_source_changed();
+
+
+--
+-- Name: agent_task_queue supervision_task_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER supervision_task_change AFTER INSERT OR UPDATE OF status, result, error, issue_id ON public.agent_task_queue FOR EACH ROW EXECUTE FUNCTION public.supervision_source_changed();
+
+
+--
+-- Name: task_trace_event supervision_trace_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER supervision_trace_change AFTER INSERT ON public.task_trace_event FOR EACH ROW EXECUTE FUNCTION public.supervision_source_changed();
 
 
 --
@@ -8106,22 +10160,6 @@ ALTER TABLE ONLY public.daemon_connection
 
 ALTER TABLE ONLY public.daemon_token
     ADD CONSTRAINT daemon_token_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-
---
--- Name: feedback feedback_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.feedback
-    ADD CONSTRAINT feedback_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-
---
--- Name: feedback feedback_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.feedback
-    ADD CONSTRAINT feedback_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE SET NULL;
 
 
 --
@@ -8621,4 +10659,5 @@ ALTER TABLE ONLY public.workspace_invitation
 
 
 --
+-- PostgreSQL database dump complete
 --

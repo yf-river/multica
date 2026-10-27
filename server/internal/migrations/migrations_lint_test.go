@@ -139,6 +139,10 @@ func migrationFilesForLint(t *testing.T, pattern string) []string {
 
 	dir := realMigrationsDir(t)
 	files, err := filepath.Glob(filepath.Join(dir, pattern))
+	if len(files) == 0 {
+		// 历史迁移已收敛到 archive/；lint 仍要覆盖它们。
+		files, err = filepath.Glob(filepath.Join(dir, "archive", pattern))
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
