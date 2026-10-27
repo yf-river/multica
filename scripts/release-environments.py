@@ -715,9 +715,11 @@ def reviewed_curated_nullable_columns(migration):
 
 
 def reviewed_dsh_interaction_changes(migration):
-    # 只放宽 agent_task_queue 的状态枚举，不回填数据；旧程序写入的状态仍在新集合内，
-    # 回退前清退等待人工的任务即可重建原约束。
+    # 计划卡片迁移：681/682 只加可空列并放宽 provider 约束（ADD COLUMN IF NOT EXISTS，不回填）；
+    # 683 只放宽 agent_task_queue 的状态枚举。旧程序写入的值仍在新集合内，回退时清退等待人工的任务。
     reviewed = {
+        '681_task_interaction_continuation.up.sql': '64f474de9f27b0aa4fe2ca010f7d3c1e222199997acd4c8bc3982fa579ca7de8',
+        '682_task_interaction_dsh.up.sql': '568e79e51669e15b736d0dc62cebb4edd69325ca61ca7dba02a292afa0bedb22',
         '683_task_waiting_human.up.sql': '5b7e8aec9b6725fd049ee7815e6762df2154c064131617336523a74ddd3daade',
     }
     return migration.name in reviewed and hashlib.sha256(migration.read_bytes()).hexdigest() == reviewed[migration.name]
