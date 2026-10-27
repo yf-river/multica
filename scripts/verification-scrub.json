@@ -1,10 +1,14 @@
 {
- "version": 9,
+ "version": 8,
  "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
  "rules": [
   {
-   "table": "task_interaction",
-   "sql": "DELETE FROM public.\"task_interaction\""
+   "table": "supervision_manual_preparation",
+   "sql": "DELETE FROM public.\"supervision_manual_preparation\""
+  },
+  {
+   "table": "supervision_trace_material",
+   "sql": "DELETE FROM public.\"supervision_trace_material\""
   },
   {
    "table": "supervision_frozen_material",
@@ -17,10 +21,6 @@
   {
    "table": "workspace_mcp_check",
    "sql": "DELETE FROM public.\"workspace_mcp_check\""
-  },
-  {
-   "table": "plugin_remote_mcp_oauth_state",
-   "sql": "DELETE FROM public.\"plugin_remote_mcp_oauth_state\""
   },
   {
    "table": "agent_mcp_server",
@@ -41,10 +41,6 @@
   {
    "table": "autopilot_run",
    "sql": "DELETE FROM public.\"autopilot_run\""
-  },
-  {
-   "table": "autopilot_quota_reservation",
-   "sql": "DELETE FROM public.\"autopilot_quota_reservation\""
   },
   {
    "table": "personal_access_token",
@@ -85,14 +81,6 @@
   {
    "table": "plugin_secret",
    "sql": "DELETE FROM public.\"plugin_secret\""
-  },
-  {
-   "table": "plugin_remote_mcp_secret",
-   "sql": "DELETE FROM public.\"plugin_remote_mcp_secret\""
-  },
-  {
-   "table": "plugin_installation_config",
-   "sql": "DELETE FROM public.\"plugin_installation_config\""
   },
   {
    "table": "lark_inbound_audit",
