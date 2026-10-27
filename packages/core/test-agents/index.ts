@@ -29,7 +29,16 @@ export interface TestEnvironmentControl {
     revision?: number;
     error?: string;
     agents?: TestEnvironmentAgent[];
-    runtimes?: { id: string; provider: string }[];
+    runtimes?: {
+      id: string;
+      provider: string;
+      /** 发布器回写的真实模型目录；缺失时前端回退到运行时接口或内置预设。 */
+      models?: {
+        id: string;
+        label: string;
+        thinking?: { supported_levels?: { value: string; label: string }[] };
+      }[];
+    }[];
   };
   observed_at: string | null;
 }

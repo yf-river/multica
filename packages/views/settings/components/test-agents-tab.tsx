@@ -26,7 +26,15 @@ function PolicyEditor({
   button,
 }: {
   initial: TestAgentPolicy;
-  runtimes: { id: string; provider: string }[];
+  runtimes: {
+    id: string;
+    provider: string;
+    models?: {
+      id: string;
+      label: string;
+      thinking?: { supported_levels?: { value: string; label: string }[] };
+    }[];
+  }[];
   disabled: boolean;
   label: string;
   onSave: (p: TestAgentPolicy) => void;
@@ -56,7 +64,11 @@ function PolicyEditor({
     staleTime: 60_000,
     retry: false,
   });
-  const catalog = models.data?.models ?? [];
+  // 发布器回写的目录优先（设置页在控制环境，拿不到别的环境运行时接口）。
+  const published = runtimes.find((r) => r.id === value)?.models ?? [];
+  const catalog = published.length
+    ? published
+    : (models.data?.models ?? []);
   const [model, setModel] = useState(initial.model);
   const [thinking, setThinking] = useState(initial.thinking_level ?? '');
   const choices = catalog.length
@@ -98,7 +110,7 @@ function PolicyEditor({
           setValue(e.target.value);
           setModel("");
         }}
-        className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+        className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -115,7 +127,7 @@ function PolicyEditor({
         value={current ?? ""}
         disabled={disabled || choices.length === 0}
         onChange={(e) => setModel(e.target.value)}
-        className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+        className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {choices.map((c) => (
           <option key={c.id} value={c.id}>
@@ -134,7 +146,7 @@ function PolicyEditor({
             value={thinkingValue}
             disabled={disabled}
             onChange={(e) => setThinking(e.target.value)}
-            className="min-h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background text-foreground px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
+            className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {thinkingLevels.map((l) => (
               <option key={l.value} value={l.value}>

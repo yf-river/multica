@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 const [environment, mode = 'audit', policyFile, scopeFile] = process.argv.slice(2);
 const policyRoot = path.join(process.env.MULTICA_RELEASE_ROOT || '', '.run');
@@ -79,6 +79,7 @@ try {
  }
  const after = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at,name,custom_args FROM agent ORDER BY id')).rows;
  await client.query('COMMIT');
+ await publishCatalogs(runtimes);
  console.log(JSON.stringify({environment,mode,agents:before.length,busy,daemon_id:health.daemon_id,runtimes,before,after}));
 } catch(e) {
  await client.query('ROLLBACK');throw e;
@@ -211,5 +212,75 @@ async function targeted(scope) {
  } finally {
   if (targetConnected) {await db.query('ROLLBACK').catch(()=>{});await db.end();}
   if (controlConnected) {await control.query('ROLLBACK').catch(()=>{});await control.end();}
+ }
+}
+
+// publishCatalogs 在维护事务提交后单独连接读写模型的目录，失败只影响目录展示。
+async function publishCatalogs(runtimes) {
+ if (mode !== 'apply' || !runtimes.length) return;
+ const side = new pg.Client({connectionString: cfg.server.DATABASE_URL});
+ await side.connect();
+ const catalogs = new Map();
+ try {
+  for (const runtime of runtimes) {
+   try { catalogs.set(runtime.id, await runtimeCatalog(side, runtime)); }
+   catch (error) { catalogs.set(runtime.id, []); console.error('模型目录获取失败', runtime.id, String(error).slice(0, 200)); }
+  }
+ } finally {
+  await side.end();
+ }
+ const byWorkspace = new Map();
+ for (const runtime of runtimes) {
+  const list = byWorkspace.get(runtime.workspace_id) || [];
+  list.push({id: runtime.id, provider: runtime.provider, models: catalogs.get(runtime.id) || []});
+  byWorkspace.set(runtime.workspace_id, list);
+ }
+ try { await writeControl(byWorkspace); }
+ catch (error) { console.error('控制库目录回写失败', String(error).slice(0, 200)); }
+}
+
+// runtimeCatalog 用临时 PAT 读取该运行时的真实模型目录；token 只存在内存，用完即删。
+async function runtimeCatalog(side, runtime) {
+ const token = 'mul_' + randomBytes(24).toString('hex');
+ const hash = createHash('sha256').update(token).digest('hex');
+ const owner = (await side.query(
+  "SELECT user_id FROM member WHERE workspace_id=$1 AND role IN ('owner','admin') LIMIT 1",
+  [runtime.workspace_id])).rows[0];
+ if (!owner) throw Error('工作区缺少管理员，无法读取模型目录');
+ const id = randomUUID();
+ await side.query('INSERT INTO personal_access_token(id,user_id,name,token_hash,token_prefix) VALUES($1,$2,$3,$4,$5)',
+  [id, owner.user_id, 'test-agent-catalog (transient)', hash, token.slice(0, 8)]);
+ try {
+  const response = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models', {
+   method: 'POST',
+   headers: {Authorization: 'Bearer ' + token, 'X-Workspace-ID': runtime.workspace_id},
+   signal: AbortSignal.timeout(20000),
+  });
+  if (!response.ok) throw Error('模型目录 HTTP ' + response.status);
+  const body = await response.json();
+  return (body.models || []).map(model => ({
+   id: model.id,
+   label: model.label || model.id,
+   ...(model.thinking ? {thinking: model.thinking} : {}),
+  }));
+ } finally {
+  await side.query('DELETE FROM personal_access_token WHERE id=$1', [id]);
+ }
+}
+
+// writeControl 把运行时目录写进控制库，设置页据此列真实模型；写失败不影响本环境同步。
+async function writeControl(observedByWorkspace) {
+ if (!observedByWorkspace.size) return;
+ const control = new pg.Client({connectionString: production.toString()});
+ await control.connect();
+ try {
+  for (const [workspace, runtimes] of observedByWorkspace) {
+   const observed = {daemon_id: health.daemon_id, runtimes, observed_at: new Date().toISOString()};
+   await control.query(
+    'INSERT INTO test_agent_control(workspace_id,name,desired,observed) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id,name) DO UPDATE SET observed=EXCLUDED.observed,updated_at=now()',
+    [workspace, environment, desired, observed]);
+  }
+ } finally {
+  await control.end();
  }
 }
