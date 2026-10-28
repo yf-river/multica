@@ -11,6 +11,10 @@ import {
   type TestEnvironmentControl,
   type TestAgentPolicy,
 } from "@multica/core/test-agents";
+import {
+  TestAgentRuntimeDialog,
+  type TestAgentRuntimeOption,
+} from "./test-agent-runtime-dialog";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { toast } from "sonner";
@@ -26,159 +30,38 @@ function PolicyEditor({
   button,
 }: {
   initial: TestAgentPolicy;
-  runtimes: {
-    id: string;
-    provider: string;
-    models?: {
-      id: string;
-      label: string;
-      thinking?: { supported_levels?: { value: string; label: string }[] };
-    }[];
-  }[];
+  runtimes: TestAgentRuntimeOption[];
   disabled: boolean;
   label: string;
   onSave: (p: TestAgentPolicy) => void;
   button: string;
 }) {
-  // 运行时按 provider 去重：一个工作区里同 provider 可能有多台，策略只记 provider。
-  const uniqueRuntimes = Array.from(
-    new Map(runtimes.map((r) => [r.provider, r])).values(),
-  );
-  // 目录缺失（daemon 未上报 runtimes）时退回内置预设，选择器不能被禁用成"点不动"。
-  const options = uniqueRuntimes.length
-    ? uniqueRuntimes.map((r) => ({
-        value: r.provider,
-        label: r.provider,
-        provider: r.provider,
-      }))
-    : Object.entries(testAgentPolicies).map(([key, preset]) => ({
-        value: key,
-        label: key,
-        provider: preset.provider,
-      }));
-  const initialValue =
-    options.find(
-      (o) => o.provider === (initial.runtime ?? initial.provider),
-    )?.value ?? options[0]?.value ?? "";
-  const [value, setValue] = useState(initialValue);
-  const selected = options.find((o) => o.value === value) ?? options[0];
-  const presets: Record<string, TestAgentPolicy> = testAgentPolicies;
-  const preset = selected ? presets[selected.provider] : undefined;
-  const live = uniqueRuntimes.find((r) => r.provider === value);
-  const models = useQuery({
-    queryKey: ["runtime-models", live?.id ?? ""],
-    queryFn: () => api.initiateListModels(live!.id),
-    enabled: Boolean(live?.id),
-    staleTime: 60_000,
-    retry: false,
-  });
-  // 发布器回写的目录优先（设置页在控制环境，拿不到别的环境运行时接口）。
-  const published = uniqueRuntimes.find((r) => r.provider === value)?.models ?? [];
-  const catalog = published.length
-    ? published
-    : (models.data?.models ?? []);
-  const [model, setModel] = useState(initial.model);
-  const [thinking, setThinking] = useState(initial.thinking_level ?? '');
-  const choices = catalog.length
-    ? catalog.map((m) => ({ id: m.id, label: m.label }))
-    : preset
-      ? [{ id: preset.model, label: preset.model }]
-      : [];
-  const current =
-    model && choices.some((c) => c.id === model)
-      ? model
-      : (choices[0]?.id ?? model);
-  // 思考强度与 Agent 审查页一致：优先用模型目录上报的档位，其次按运行时给内置档位。
-  const catalogModel = catalog.find((m) => m.id === current);
-  const thinkingLevels: { value: string; label: string }[] =
-    catalogModel?.thinking?.supported_levels?.length
-      ? catalogModel.thinking.supported_levels
-      : selected?.provider === 'codex'
-        ? [
-            { value: 'low', label: 'low' },
-            { value: 'medium', label: 'medium' },
-            { value: 'high', label: 'high' },
-          ]
-        : [];
-  const thinkingValue =
-    thinking && thinkingLevels.some((l) => l.value === thinking)
-      ? thinking
-      : (thinkingLevels[0]?.value ?? '');
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <label className="sr-only" htmlFor={`${label}-runtime`}>
-        {label}
-      </label>
-      <select
-        id={`${label}-runtime`}
-        aria-label={`${label} runtime`}
-        value={selected?.value ?? ""}
-        disabled={disabled || options.length === 0}
-        onChange={(e) => {
-          setValue(e.target.value);
-          setModel("");
-        }}
-        className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <label className="sr-only" htmlFor={`${label}-model`}>
-        {label}
-      </label>
-      <select
-        id={`${label}-model`}
-        aria-label={`${label} model`}
-        value={current ?? ""}
-        disabled={disabled || choices.length === 0}
-        onChange={(e) => setModel(e.target.value)}
-        className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {choices.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.label}
-          </option>
-        ))}
-      </select>
-      {thinkingLevels.length > 0 ? (
-        <>
-          <label className="sr-only" htmlFor={`${label}-thinking`}>
-            {label}
-          </label>
-          <select
-            id={`${label}-thinking`}
-            aria-label={`${label} thinking`}
-            value={thinkingValue}
-            disabled={disabled}
-            onChange={(e) => setThinking(e.target.value)}
-            className="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-3 text-body text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {thinkingLevels.map((l) => (
-              <option key={l.value} value={l.value}>
-                {l.label}
-              </option>
-            ))}
-          </select>
-        </>
-      ) : null}
-      <Button
-        size="sm"
-        disabled={disabled || !selected || !current}
-        onClick={() =>
-          onSave({
-            provider: selected?.provider ?? initial.provider,
-            runtime: selected?.provider ?? initial.runtime,
-            model: current ?? "",
-            thinking_level: thinkingLevels.length > 0 ? thinkingValue : "",
-            service_tier: preset?.service_tier ?? "",
-          })
-        }
-      >
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <p className="min-w-0 break-all text-caption text-muted-foreground">
+        {initial.runtime ?? initial.provider} · {initial.model}
+        {initial.thinking_level ? ` · ${initial.thinking_level}` : ""}
+      </p>
+      <Button size="sm" variant="outline" disabled={disabled} onClick={() => setOpen(true)}>
         {button}
       </Button>
+      {open ? (
+        <TestAgentRuntimeDialog
+          title={label}
+          description={label}
+          environment={label}
+          initial={initial}
+          runtimes={runtimes}
+          disabled={disabled}
+          applyLabel={button}
+          onClose={() => setOpen(false)}
+          onSave={(policy) => {
+            setOpen(false);
+            onSave(policy);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

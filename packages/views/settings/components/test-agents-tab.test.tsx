@@ -31,7 +31,7 @@ function render() {
   );
 }
 describe("test environment controls", () => {
-  it("lets the operator pick a runtime and model, then saves both", async () => {
+  it("opens the runtime dialog and saves the chosen runtime", async () => {
     vi.spyOn(api, "getTestAgentControl").mockResolvedValue([
       {
         name: "default",
@@ -39,36 +39,30 @@ describe("test environment controls", () => {
         desired: { policy: flash as never, overrides: {} },
         observed: {
           runtimes: [
-            { id: "rt-codebuddy", provider: "codebuddy" },
-            { id: "rt-codex", provider: "codex" },
+            {
+              id: "rt-codex",
+              provider: "codex",
+              models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }],
+            },
+            { id: "rt-codebuddy", provider: "codebuddy", models: [] },
           ],
         },
         observed_at: null,
       },
     ]);
-    vi.spyOn(api, "initiateListModels").mockResolvedValue({
-      runtime_id: "rt-codex",
-      models: [
-        { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", default: true },
-        { id: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
-      ],
-      unavailable_models: [],
-    } as never);
     const save = vi
       .spyOn(api, "configureTestAgents")
       .mockResolvedValue({ ok: true });
     render();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Apply to all environments" }),
+    );
     const runtime = await screen.findByRole("combobox", {
       name: "Test defaults runtime",
     });
     fireEvent.change(runtime, { target: { value: "codex" } });
-    const model = await screen.findByRole("combobox", {
-      name: "Test defaults model",
-    });
-    await waitFor(() => expect(api.initiateListModels).toHaveBeenCalled());
-    fireEvent.change(model, { target: { value: "gpt-6.2-sol" } });
     fireEvent.click(
-      screen.getByRole("button", { name: "Apply to all environments" }),
+      screen.getAllByRole("button", { name: "Apply to all environments" }).at(-1)!,
     );
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith({
@@ -78,9 +72,9 @@ describe("test environment controls", () => {
         policy: {
           provider: "codex",
           runtime: "codex",
-          model: "gpt-6.2-sol",
-          thinking_level: "low",
-          service_tier: "default",
+          model: "gpt-6.1-sol",
+          thinking_level: "",
+          service_tier: "",
         },
       }),
     );
