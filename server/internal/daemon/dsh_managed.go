@@ -11,13 +11,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/daemon/dshbundle"
 	"github.com/multica-ai/multica/server/internal/daemon/processtree"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/dshprofile"
+	"golang.org/x/mod/semver"
 )
 
 type dshSupplyStatus struct {
@@ -166,9 +169,13 @@ func (d *Daemon) supplyManagedDsh(ctx context.Context, root, artifacts, path, ve
 		if e != nil {
 			return fail(fmt.Errorf("DSH staging install: %w: %s", e, dshProvisionOutput(output)))
 		}
-		// 2. 随运行时一起交付的 provider 插件（例如 CodeBuddy）逐个装进受管 profile；
-		// 装不上就整体判失败，避免出现"运行时在、模型却没有"的半可用状态。
-		plugins, _ := filepath.Glob(filepath.Join(artifacts, "dsh-codebuddy-sdk-*.tgz"))
+		// 1. 同一 provider 插件的多个版本共存时只装最新那个：旧版本若被装进去，
+		// 受管 profile 最终生效的插件就取决于文件系统顺序，升级无法复核。
+		// 随包交付只有一个版本（dshbundle 同步时已删除旧版本），这里只兜住手工放置的残留。
+		plugins, err := newestPluginVersions(artifacts)
+		if err != nil {
+			return fail(err)
+		}
 		for _, pluginPath := range plugins {
 			plugin := exec.Command(path, "plugin", "--profile", status.Generation.Profile, "add", pluginPath, "--offline")
 			plugin.Env = dshPluginEnv()
@@ -353,9 +360,47 @@ func smokeManagedDsh(ctx context.Context, root string, g dshprofile.Generation, 
 	return nil
 }
 
+// newestPluginVersions 返回每个 provider 插件目录里版本最高的那一个 tarball。
+// 版本按 semver 比较；解析不出版本的条目直接报错，避免靠文件名排序挑出旧版本。
+func newestPluginVersions(directory string) ([]string, error) {
+	paths, err := filepath.Glob(filepath.Join(directory, "dsh-codebuddy-sdk-*.tgz"))
+	if err != nil {
+		return nil, err
+	}
+	best := map[string]string{}
+	bestVersion := map[string]string{}
+	for _, path := range paths {
+		parts := dshbundle.PluginNameVersion.FindStringSubmatch(filepath.Base(path))
+		if parts == nil {
+			return nil, fmt.Errorf("undeclared DSH plugin without a version suffix: %s", filepath.Base(path))
+		}
+		name, version := parts[1], "v"+strings.TrimPrefix(parts[2], "v")
+		if !semver.IsValid(version) {
+			return nil, fmt.Errorf("undeclared DSH plugin with an invalid version: %s", filepath.Base(path))
+		}
+		current, ok := bestVersion[name]
+		// 2. 只在版本更高时替换；同版本不同文件名的多个 tarball 是交付错误，直接判失败。
+		switch {
+		case !ok || semver.Compare(version, current) > 0:
+			best[name], bestVersion[name] = path, version
+		case semver.Compare(version, current) == 0 && best[name] != path:
+			return nil, fmt.Errorf("DSH plugin %s has two tarballs for version %s", name, parts[2])
+		}
+	}
+	if len(best) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(best))
+	for _, path := range best {
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // pluginInventory 汇总随包携带的 provider 插件（文件名+摘要），供供给身份比对。
 func pluginInventory(directory string) (string, error) {
-	paths, err := filepath.Glob(filepath.Join(directory, "dsh-codebuddy-sdk-*.tgz"))
+	paths, err := newestPluginVersions(directory)
 	if err != nil || len(paths) == 0 {
 		return "", err
 	}

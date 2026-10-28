@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,10 @@ import (
 
 // safePlugin 是随包携带的插件 tarball 白名单。
 var safePlugin = regexp.MustCompile(`^dsh-codebuddy-sdk-[0-9A-Za-z.+-]+\.tgz$`)
+
+// 1. PluginNameVersion 从插件文件名拆出插件名与语义化版本，供随包同步和供给择优共用；
+// 版本段要求 x.y.z 开头，才算真正的版本后缀而不是插件名里的连字符。
+var PluginNameVersion = regexp.MustCompile(`^(.+)-([0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*)\.tgz$`)
 
 //go:embed bundle/*
 var bundle embed.FS
@@ -91,11 +96,16 @@ func Extract(base string) (string, error) {
 
 // syncPlugins 把随包携带的 DSH 插件 tarball 落到运行时目录，供 daemon 供给时安装。
 // 文件名做白名单校验，避免嵌入内容被当成路径。
+// 2. 同一插件只保留随包那一个版本：目录里由旧发布留下的其它版本要删掉。
+// 供给时按 dsh-codebuddy-sdk-*.tgz 通配安装，留着旧版本会让受管 profile 装到哪一个变成
+// 文件名排序的偶然结果，升级也就不再可复核。
 func syncPlugins(fsys embed.FS, destination, runtimeFile string) error {
 	entries, err := fsys.ReadDir("bundle")
 	if err != nil {
 		return err
 	}
+	shipped := map[string]string{}
+	versions := map[string]string{}
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".tgz") || name == runtimeFile {
@@ -105,6 +115,31 @@ func syncPlugins(fsys embed.FS, destination, runtimeFile string) error {
 			// 历史 runtime 版本 tgz 与清单等文件不是插件，跳过即可。
 			continue
 		}
+		parts := PluginNameVersion.FindStringSubmatch(name)
+		if parts == nil {
+			return fmt.Errorf("bundled plugin %s has no version suffix", name)
+		}
+		if other, ok := shipped[parts[1]]; ok && other != name {
+			return fmt.Errorf("bundled plugin %s ships two versions: %s and %s", parts[1], other, name)
+		}
+		shipped[parts[1]] = name
+		versions[parts[1]] = parts[2]
+	}
+	for plugin, keep := range shipped {
+		stale, err := filepath.Glob(filepath.Join(destination, plugin+"-*.tgz"))
+		if err != nil {
+			return err
+		}
+		for _, path := range stale {
+			if filepath.Base(path) == keep {
+				continue
+			}
+			if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	for _, name := range shipped {
 		data, err := fsys.ReadFile("bundle/" + name)
 		if err != nil {
 			return err
