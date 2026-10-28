@@ -18,13 +18,13 @@ const db=new pg.Client({connectionString:targetURL.href});await db.connect();
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'target-policy-test-'));
 const run=path.join(root,'.run');
 const write=(name,value)=>{const p=path.join(run,name);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(value));};
-const id=Object.fromEntries(['delivery','workspace','issue','agent','other','worker','runtime','codex','operation','controlWorkspace'].map(k=>[k,randomUUID()]));
+const id=Object.fromEntries(['delivery','workspace','issue','agent','other','worker','runtime','codex','operation','controlWorkspace','workspace2','runtime2','third'].map(k=>[k,randomUUID()]));
 const flash={provider:'codebuddy',model:'deepseek-v4.1-flash',thinking_level:'',service_tier:''};
 const codex={provider:'codex',model:'gpt-6.1-sol',thinking_level:'low',service_tier:'default'};
-let drains=0, testEnvironment='verify-1';
+let drains=0, testEnvironment='verify-1', secondRuntimeSupports=false;
 const profile='target-policy-tests-'+process.pid;
 const port=19515+[...Buffer.from(profile)].reduce((a,b)=>a+b,0)%1000;
-const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/drain')drains++;res.end(JSON.stringify(req.url==='/api/config'?{environment_id:testEnvironment}:{commit:'commit',daemon_id:'daemon-test'}));});
+const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/drain')drains++; if(req.url.endsWith('/models')) return res.end(JSON.stringify({id:'request',status:'pending'})); if(req.url.endsWith('/models/request')) return res.end(JSON.stringify({status:'completed',models:req.url.includes(id.runtime2) && !secondRuntimeSupports ? [{id:'different-model',label:'Different'}] : [{id:'deepseek-v4.1-flash',label:'Flash',service_tiers:[{id:'fast',name:'Fast'}]}]})); res.end(JSON.stringify(req.url==='/api/config'?{environment_id:testEnvironment}:{commit:'commit',daemon_id:'daemon-test'}));});
 await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
 const scope={environment:'verify-1',execution_id:'test-execution',delivery_id:id.delivery,workspace_id:id.workspace,
  agent_id:id.agent,operation_id:id.operation,candidate_id:'candidate',source_commit:'commit',seed_id:'seed',seed_sha256:'sha',owner_generation:1,generation:1,revision:2};
@@ -54,7 +54,7 @@ async function waiting() {
  throw Error('Expected blocked maintenance transaction');
 }
 try {
- for(const file of ['542_issue_delivery.up.sql','601_delivery_coordination.up.sql','571_verification_slot.up.sql','627_verification_seed_lifecycle.up.sql'])await control.query(fs.readFileSync(path.join(import.meta.dirname,'../server/migrations',file),'utf8'));
+ for(const file of ['542_issue_delivery.up.sql','601_delivery_coordination.up.sql','571_verification_slot.up.sql','627_verification_seed_lifecycle.up.sql'])await control.query(fs.readFileSync(path.join(import.meta.dirname,'../server/migrations/archive',file),'utf8'));
  const schema=`CREATE TABLE test_agent_control(workspace_id uuid,name text,desired jsonb,observed jsonb,revision bigint DEFAULT 1,updated_at timestamptz DEFAULT now(),PRIMARY KEY(workspace_id,name))`;
  await control.query(schema);await db.query(schema);
  await control.query(`INSERT INTO issue_delivery(id,workspace_id,issue_id,operation_id,plan_id,plan_snapshot,source_commit,source_branch,base_commit,phase,verification_comment_id,release_comment_id,candidate_id,worker_token)
@@ -138,7 +138,26 @@ try {
 
  await control.query("UPDATE delivery_publication SET state='idle'");await refuses('inactive int publication lease');
  const receipt=JSON.parse(fs.readFileSync(path.join(run,'test-agent-maintenance',scope.operation_id+'.json'),'utf8'));assert.equal(receipt.state,'applied');
- await blocker.end();await enqueue.end();await editor.end();console.log('PASS '+count+' checks; no drain, unrelated Agent/default preserved');
+ await blocker.end();await enqueue.end();await editor.end();console.log('PASS '+count+' scoped checks; no drain, unrelated Agent/default preserved');
+ // 全环境维护验证真实数据库事务、异步模型目录及缺失模型的回滚。
+ await db.query('CREATE TABLE workspace(id uuid PRIMARY KEY)');await db.query('INSERT INTO workspace VALUES($1)',[id.workspace]);
+ await db.query('CREATE TABLE member(workspace_id uuid,user_id uuid,role text)');await db.query("INSERT INTO member VALUES($1,$2,'owner')",[id.workspace,id.worker]);
+ await db.query('CREATE TABLE personal_access_token(id uuid,user_id uuid,name text,token_hash text,token_prefix text)');
+ await db.query('INSERT INTO workspace VALUES($1)',[id.workspace2]);
+ await db.query("INSERT INTO member VALUES($1,$2,'owner')",[id.workspace2,id.worker]);
+ await db.query("INSERT INTO agent_runtime VALUES($1,$2,'codebuddy','local','online','daemon-test',NULL)",[id.runtime2,id.workspace2]);
+ await db.query("INSERT INTO agent(id,workspace_id,runtime_id,runtime_mode,model,thinking_level,service_tier,status,name,custom_args) VALUES($1::uuid,$2,$3,'local','different-model','','','idle',$1::text,'[]')",[id.third,id.workspace2,id.runtime2]);
+ async function fullApply(policy) {
+  fs.writeFileSync(applyPolicy,JSON.stringify({policy,overrides:{}}));
+  const child=spawn(process.execPath,[script,'int','apply',applyPolicy],{env:{...process.env,MULTICA_RELEASE_ROOT:root},stdio:['ignore','pipe','pipe']});
+  let stdout='',stderr='';child.stdout.on('data',v=>stdout+=v);child.stderr.on('data',v=>stderr+=v);
+  return new Promise(resolve=>child.on('close',code=>resolve({code,stdout,stderr})));
+ }
+ const beforeApply=await rows();const unavailable=await fullApply({...flash,model:'missing-model'});assert.notEqual(unavailable.code,0);assert.match(unavailable.stderr,/不在本环境/);assert.deepEqual(await rows(),beforeApply);
+ const unsupportedWorkspace=await fullApply(flash);assert.notEqual(unsupportedWorkspace.code,0);assert.match(unsupportedWorkspace.stderr,/不在本环境/);assert.deepEqual(await rows(),beforeApply);secondRuntimeSupports=true;
+ const unsupportedThinking=await fullApply({...flash,thinking_level:'ultra'});assert.notEqual(unsupportedThinking.code,0);assert.match(unsupportedThinking.stderr,/思考强度/);assert.deepEqual(await rows(),beforeApply);
+ const unsupportedTier=await fullApply({...flash,service_tier:'invalid'});assert.notEqual(unsupportedTier.code,0);assert.match(unsupportedTier.stderr,/所选速度/);assert.deepEqual(await rows(),beforeApply);
+ const appliedAll=await fullApply(flash);assert.equal(appliedAll.code,0,appliedAll.stderr);const result=JSON.parse(appliedAll.stdout);assert.equal(result.after.filter(a=>a.model===flash.model).length,3);assert.equal(result.runtimes.find(r=>r.provider==='codebuddy').models[0].service_tiers[0].id,'fast');assert.equal((await db.query('SELECT count(*) FROM personal_access_token')).rows[0].count,'0');console.log('PASS async catalog, unsupported model rollback, all agents applied, temporary token removed');
 } finally {
  await db.end();await control.query('DROP DATABASE '+targetURL.pathname.slice(1)+' WITH (FORCE)');await control.end();await new Promise(resolve=>server.close(resolve));fs.rmSync(root,{recursive:true,force:true});
 }

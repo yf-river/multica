@@ -1481,6 +1481,20 @@
     "override_label": "Individual setting",
     "restore": "Use environment default",
     "codex_details": "Codex: code · GPT-6.1 Sol · low · Normal speed",
-    "manage_agents": "Manage agents"
+    "manage_agents": "Manage agents",
+    "runtime_title": "Set runtime",
+    "runtime_description": "Set all test environment agents. Applying clears individual settings.",
+    "runtime": "Runtime",
+    "model": "Model",
+    "thinking": "Thinking",
+    "speed": "Speed",
+    "follow_runtime": "Use runtime default",
+    "unsupported": "Not supported",
+    "standard": "Standard",
+    "catalog_unavailable": "The model catalog is unavailable. Check the test environment and refresh.",
+    "choose_available": "Choose an available model and settings.",
+    "runtime_hint": "Running tasks will not be interrupted. Each environment applies when idle.",
+    "cancel": "Close",
+    "view_agents": "View agents"
   }
 }
