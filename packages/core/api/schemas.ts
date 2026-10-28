@@ -3412,11 +3412,36 @@ export type UpstreamSnapshot = z.output<typeof UpstreamSnapshotSchema>;
 export type UpstreamItem = z.output<typeof UpstreamItemSchema>;
 export type UpstreamRun = z.output<typeof UpstreamRunSchema>;
 
+const TestAgentPolicySchema = z.object({
+  provider: z.string(),
+  runtime: z.string().optional(),
+  model: z.string(),
+  thinking_level: z.string(),
+  service_tier: z.string(),
+});
+
 export const TestEnvironmentControlSchema = z.object({
- name:z.string(), revision:z.number(),
- desired:z.object({policy:z.object({provider:z.enum(["codebuddy","codex"]),model:z.string(),thinking_level:z.string(),service_tier:z.string()}),overrides:z.record(z.string(),z.object({provider:z.enum(["codebuddy","codex"]),model:z.string(),thinking_level:z.string(),service_tier:z.string()}))}),
- observed:z.object({status:z.string().optional(),revision:z.number().optional(),error:z.string().optional(),agents:z.array(z.object({id:z.string(),name:z.string(),model:z.string().nullable(),runtime_id:z.string().nullable(),status:z.string(),archived_at:z.string().nullable()})).optional(),runtimes:z.array(z.object({id:z.string(),provider:z.string()})).optional()}).passthrough(),
- observed_at:z.string().nullable(),
+  name: z.string(),
+  revision: z.number(),
+  desired: z.object({
+    policy: TestAgentPolicySchema,
+    overrides: z.record(z.string(), TestAgentPolicySchema),
+  }),
+  observed: z.object({
+    status: z.string().optional(),
+    available: z.boolean().optional(),
+    revision: z.number().optional(),
+    error: z.string().optional(),
+    agents: z.array(z.object({
+      id: z.string(), name: z.string(), model: z.string().nullable(),
+      runtime_id: z.string().nullable(), status: z.string(), archived_at: z.string().nullable(),
+    })).optional(),
+    runtimes: z.array(z.object({
+      id: z.string(), provider: z.string(), catalog_observed_at: z.string().nullable().optional(),
+      models: z.array(RuntimeModelSchema).optional(),
+    })).optional(),
+  }).passthrough(),
+  observed_at: z.string().nullable(),
 });
 
 export const TestAgentControlCapabilitySchema = z.object({ available: z.boolean() });

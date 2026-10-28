@@ -2,67 +2,323 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, Cpu } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core";
 import {
   testAgentControlKey,
   testAgentControlOptions,
-  testAgentPolicies,
   type TestEnvironmentControl,
   type TestAgentPolicy,
 } from "@multica/core/test-agents";
-import {
-  TestAgentRuntimeDialog,
-  type TestAgentRuntimeOption,
-} from "./test-agent-runtime-dialog";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
 import { toast } from "sonner";
+import type { RuntimeModel } from "@multica/core/types";
+import { ModelPicker } from "../../agents/components/inspector/model-picker";
+import { PickerItem, PropertyPicker } from "../../issues/components/pickers";
+import { ProviderLogo } from "../../runtimes/components/provider-logo";
 import { useT } from "../../i18n";
-import { SettingsTab, SettingsCard, SettingsSection } from "./settings-layout";
+import {
+  SettingsTab,
+  SettingsCard,
+  SettingsRow,
+  SettingsSection,
+} from "./settings-layout";
 
-function PolicyEditor({
-  initial,
-  runtimes,
-  disabled,
+type Runtime = NonNullable<
+  TestEnvironmentControl["observed"]["runtimes"]
+>[number];
+type Model = NonNullable<Runtime["models"]>[number];
+
+function CatalogPicker({
   label,
-  onSave,
-  button,
+  value,
+  options,
+  disabled,
+  runtimeIcon,
+  onChange,
 }: {
-  initial: TestAgentPolicy;
-  runtimes: TestAgentRuntimeOption[];
-  disabled: boolean;
   label: string;
-  onSave: (p: TestAgentPolicy) => void;
-  button: string;
+  value: string;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+  runtimeIcon?: boolean;
+  onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selected = options.find((item) => item.value === value);
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="min-w-0 break-all text-caption text-muted-foreground">
-        {initial.runtime ?? initial.provider} · {initial.model}
-        {initial.thinking_level ? ` · ${initial.thinking_level}` : ""}
-      </p>
-      <Button size="sm" variant="outline" disabled={disabled} onClick={() => setOpen(true)}>
-        {button}
-      </Button>
-      {open ? (
-        <TestAgentRuntimeDialog
-          title={label}
-          description={label}
-          environment={label}
-          initial={initial}
-          runtimes={runtimes}
+    <PropertyPicker
+      open={open}
+      onOpenChange={setOpen}
+      align="start"
+      width="w-[var(--anchor-width)] min-w-[16rem] max-w-md"
+      searchable
+      searchPlaceholder={label}
+      onSearchChange={setSearch}
+      triggerRender={
+        <button
+          type="button"
+          aria-label={label}
           disabled={disabled}
-          applyLabel={button}
-          onClose={() => setOpen(false)}
-          onSave={(policy) => {
-            setOpen(false);
-            onSave(policy);
-          }}
+          className="flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-3 text-left text-body hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
         />
-      ) : null}
-    </div>
+      }
+      trigger={
+        <>
+          {runtimeIcon && value ? (
+            <span aria-hidden="true">
+              <ProviderLogo provider={value} className="h-4 w-4 shrink-0" />
+            </span>
+          ) : (
+            <Cpu
+              className="h-4 w-4 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+          )}
+          <span className="min-w-0 flex-1 truncate">
+            {selected?.label ?? (value || "—")}
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
+        </>
+      }
+    >
+      {options
+        .filter((item) =>
+          `${item.label} ${item.value}`
+            .toLowerCase()
+            .includes(search.toLowerCase()),
+        )
+        .map((item) => (
+          <PickerItem
+            key={item.value}
+            selected={item.value === value}
+            onClick={() => {
+              onChange(item.value);
+              setOpen(false);
+            }}
+          >
+            {item.label}
+          </PickerItem>
+        ))}
+    </PropertyPicker>
+  );
+}
+
+function RuntimeDialog({
+  initial,
+  revision,
+  runtimes,
+  pending,
+  onClose,
+  onSave,
+}: {
+  initial: TestAgentPolicy;
+  revision: number;
+  runtimes: Runtime[];
+  pending: boolean;
+  onClose: () => void;
+  onSave: (policy: TestAgentPolicy, revision: number) => void;
+}) {
+  const { t } = useT("settings");
+  const [initialRevision] = useState(revision);
+  const [provider, setProvider] = useState(initial.runtime || initial.provider);
+  const [model, setModel] = useState(initial.model);
+  const [thinking, setThinking] = useState(initial.thinking_level || "");
+  const [tier, setTier] = useState(initial.service_tier || "");
+  const options = Array.from(
+    new Set(runtimes.map((runtime) => runtime.provider)),
+  ).map((value) => ({ value, label: value }));
+  const models = new Map<string, Model>();
+  for (const runtime of runtimes)
+    if (
+      runtime.provider === provider &&
+      runtime.catalog_observed_at &&
+      Date.now() - Date.parse(runtime.catalog_observed_at) <= 300_000
+    )
+      for (const item of runtime.models ?? []) {
+        if (!models.has(item.id)) models.set(item.id, item);
+      }
+  const selected = models.get(model);
+  const levels = selected?.thinking?.supported_levels ?? [];
+  const tiers = selected?.service_tiers ?? [];
+  const standard = !!selected?.supports_explicit_standard_service_tier;
+  const validThinking =
+    !thinking || levels.some((item) => item.value === thinking);
+  const validTier =
+    !tier ||
+    tiers.some((item) => item.id === tier) ||
+    (tier === "default" && standard);
+  const ready =
+    options.some((item) => item.value === provider) &&
+    !!selected &&
+    validThinking &&
+    validTier;
+  const selectClass =
+    "min-h-10 w-full rounded-lg border border-input bg-background px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !pending) onClose();
+      }}
+    >
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.test_agents.runtime_title)}</DialogTitle>
+          <DialogDescription>
+            {t(($) => $.test_agents.runtime_description)}
+          </DialogDescription>
+        </DialogHeader>
+        <SettingsCard>
+          <SettingsRow
+            label={t(($) => $.test_agents.runtime)}
+            size="select-wide"
+          >
+            <CatalogPicker
+              label={t(($) => $.test_agents.runtime)}
+              runtimeIcon
+              value={provider}
+              options={options}
+              disabled={pending || !options.length}
+              onChange={(value) => {
+                setProvider(value);
+                setModel("");
+                setThinking("");
+                setTier("");
+              }}
+            />
+          </SettingsRow>
+          <SettingsRow label={t(($) => $.test_agents.model)} size="select-wide">
+            {/*
+              与 Agent 设置运行时同一个模型选择器：可搜索、显示 provider/model 两行；
+              目录来自控制行回写的真实目录，所以注入 catalog 而不发实时请求。
+            */}
+            <ModelPicker
+              variant="field"
+              showLabel={false}
+              allowCustom={false}
+              runtimeId={runtimes.find((item) => item.provider === provider)?.id ?? null}
+              runtimeOnline={models.size > 0}
+              value={model || null}
+              canEdit={!pending && models.size > 0}
+              catalog={{ models: Array.from(models.values()) as RuntimeModel[], supported: true }}
+              ariaLabel={t(($) => $.test_agents.model)}
+              onChange={(value: string) => {
+                setModel(value);
+                setThinking("");
+                setTier("");
+              }}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label={t(($) => $.test_agents.thinking)}
+            size="select-wide"
+          >
+            <select
+              aria-label={t(($) => $.test_agents.thinking)}
+              className={selectClass}
+              value={thinking}
+              disabled={pending || (!levels.length && !thinking)}
+              onChange={(event) => setThinking(event.target.value)}
+            >
+              <option value="">
+                {levels.length
+                  ? t(($) => $.test_agents.follow_runtime)
+                  : t(($) => $.test_agents.unsupported)}
+              </option>
+              {thinking && !validThinking && (
+                <option value={thinking}>
+                  {thinking} · {t(($) => $.test_agents.unsupported)}
+                </option>
+              )}
+              {levels.map((level) => (
+                <option key={level.value} value={level.value}>
+                  {level.label}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
+          <SettingsRow label={t(($) => $.test_agents.speed)} size="select-wide">
+            <select
+              aria-label={t(($) => $.test_agents.speed)}
+              className={selectClass}
+              value={tier}
+              disabled={pending || (!tiers.length && !standard && !tier)}
+              onChange={(event) => setTier(event.target.value)}
+            >
+              <option value="">
+                {tiers.length || standard
+                  ? t(($) => $.test_agents.follow_runtime)
+                  : t(($) => $.test_agents.unsupported)}
+              </option>
+              {tier && !validTier && (
+                <option value={tier}>
+                  {tier} · {t(($) => $.test_agents.unsupported)}
+                </option>
+              )}
+              {standard && (
+                <option value="default">
+                  {t(($) => $.test_agents.standard)}
+                </option>
+              )}
+              {tiers
+                .filter((item) => !standard || item.id !== "default")
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+            </select>
+          </SettingsRow>
+        </SettingsCard>
+        {!models.size && (
+          <p role="alert" className="text-caption text-destructive">
+            {t(($) => $.test_agents.catalog_unavailable)}
+          </p>
+        )}
+        {!!models.size && !ready && (
+          <p role="alert" className="text-caption text-destructive">
+            {t(($) => $.test_agents.choose_available)}
+          </p>
+        )}
+        <p className="text-caption text-muted-foreground">
+          {t(($) => $.test_agents.runtime_hint)}
+        </p>
+        <DialogFooter>
+          <Button variant="outline" disabled={pending} onClick={onClose}>
+            {t(($) => $.test_agents.cancel)}
+          </Button>
+          <Button
+            disabled={pending || !ready}
+            onClick={() =>
+              onSave(
+                {
+                  provider,
+                  runtime: provider,
+                  model,
+                  thinking_level: thinking,
+                  service_tier: tier,
+                },
+                initialRevision,
+              )
+            }
+          >
+            {t(($) => $.test_agents.apply_all)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -71,31 +327,35 @@ export function TestAgentsTab() {
   const ws = useWorkspaceId();
   const query = useQuery(testAgentControlOptions(ws));
   const client = useQueryClient();
+  const [open, setOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: (body: Parameters<typeof api.configureTestAgents>[0]) =>
       api.configureTestAgents(body),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: testAgentControlKey(ws) });
+      setOpen(false);
       toast.success(t(($) => $.test_agents.saved));
     },
-    onError: (error: Error) =>
-      toast.error(error.message || t(($) => $.test_agents.save_error)),
+    onError: (error: Error) => {
+      if ("status" in error && error.status === 409) {
+        setOpen(false);
+        void client.invalidateQueries({ queryKey: testAgentControlKey(ws) });
+      }
+      toast.error(error.message || t(($) => $.test_agents.save_error));
+    },
   });
   const rows = query.data ?? [];
-  const defaultRow = rows.find((x) => x.name === "default");
-  function save(
-    row: TestEnvironmentControl | undefined,
-    policy: TestAgentPolicy,
-    agent?: string,
-  ) {
-    mutation.mutate({
-      action: "configure",
-      name: row?.name ?? "default",
-      revision: row?.revision ?? 1,
-      policy,
-      ...(agent ? { agent_id: agent } : {}),
-    });
-  }
+  const defaultRow = rows.find((row) => row.name === "default");
+  const runtimes = rows
+    .filter(
+      (row) =>
+        row.name !== "default" &&
+        row.observed.status !== "error" &&
+        row.observed.available !== false &&
+        row.observed_at &&
+        Date.now() - Date.parse(row.observed_at) <= 180_000,
+    )
+    .flatMap((row) => row.observed.runtimes ?? []);
   return (
     <SettingsTab
       title={t(($) => $.page.tabs.test_agents)}
@@ -124,31 +384,26 @@ export function TestAgentsTab() {
             description={t(($) => $.test_agents.default_description)}
           >
             <SettingsCard>
-              <div className="p-4">
-                <PolicyEditor
-                  key={defaultRow?.revision ?? 0}
-                  initial={
-                    defaultRow?.desired.policy ?? testAgentPolicies.codebuddy
-                  }
-                  runtimes={defaultRow?.observed.runtimes ?? []}
-                  disabled={mutation.isPending}
-                  label={t(($) => $.test_agents.default_title)}
-                  onSave={(p) => save(defaultRow, p)}
-                  button={t(($) => $.test_agents.apply_all)}
-                />
-                <p className="mt-2 text-caption text-muted-foreground">
-                  {t(($) => $.test_agents.codex_details)}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <p className="min-w-0 break-words text-body">
+                  {defaultRow?.desired.policy.runtime ||
+                    defaultRow?.desired.policy.provider ||
+                    "—"}{" "}
+                  · {defaultRow?.desired.policy.model || "—"}
                 </p>
+                <Button onClick={() => setOpen(true)}>
+                  {t(($) => $.test_agents.runtime_title)}
+                </Button>
               </div>
             </SettingsCard>
           </SettingsSection>
-          {!rows.some((r) => r.name !== "default") ? (
+          {!rows.some((row) => row.name !== "default") && (
             <p className="text-muted-foreground">
               {t(($) => $.test_agents.empty)}
             </p>
-          ) : null}
+          )}
           {rows
-            .filter((r) => r.name !== "default")
+            .filter((row) => row.name !== "default")
             .map((row) => {
               const stale =
                 !row.observed_at ||
@@ -182,81 +437,84 @@ export function TestAgentsTab() {
                 >
                   <SettingsCard>
                     <div className="space-y-2 p-4">
-                      <PolicyEditor
-                        key={row.revision}
-                        initial={row.desired.policy}
-                        runtimes={row.observed.runtimes ?? []}
-                        disabled={mutation.isPending || stale}
-                        label={row.name}
-                        onSave={(p) => save(row, p)}
-                        button={t(($) => $.test_agents.apply)}
-                      />
-                      {row.observed.error ? (
+                      <p className="break-words text-body">
+                        {row.desired.policy.runtime ||
+                          row.desired.policy.provider}{" "}
+                        · {row.desired.policy.model}
+                      </p>
+                      {row.observed.error && (
                         <p
                           role="status"
                           className="text-caption text-destructive"
                         >
                           {row.observed.error}
                         </p>
-                      ) : null}
-                      {row.observed_at ? (
+                      )}
+                      {row.observed_at && (
                         <p className="text-caption text-muted-foreground">
                           {t(($) => $.test_agents.updated)} ·{" "}
                           {new Date(row.observed_at).toLocaleString()}
                         </p>
-                      ) : null}
+                      )}
                     </div>
-                    <details className="group">
+                    <details>
                       <summary className="cursor-pointer px-4 py-3 text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                        {t(($) => $.test_agents.manage_agents)}
+                        {t(($) => $.test_agents.view_agents)}
                       </summary>
                       <div className="divide-y">
                         {agents.map((agent) => (
-                          <div
-                            key={agent.id}
-                            className="flex flex-wrap items-center justify-between gap-3 p-4"
-                          >
-                            <div className="min-w-0">
-                              <p className="break-words text-body font-medium">
-                                {agent.name}{" "}
-                                {agent.archived_at ? (
-                                  <span className="text-caption text-muted-foreground">
-                                    · {t(($) => $.test_agents.archived)}
-                                  </span>
-                                ) : null}
-                              </p>
-                              <p className="break-all text-caption text-muted-foreground">
-                                {agent.model ?? "—"}
-                                {row.desired.overrides[agent.id]
-                                  ? ` · ${t(($) => $.test_agents.individual)}`
-                                  : ""}
-                              </p>
-                            </div>
-                            <PolicyEditor
-                              key={`${agent.id}-${row.revision}`}
-                              initial={
-                                row.desired.overrides[agent.id] ??
-                                row.desired.policy
-                              }
-                              runtimes={row.observed.runtimes ?? []}
-                              disabled={mutation.isPending || stale}
-                              label={`${row.name}-${agent.id}`}
-                              onSave={(p) => save(row, p, agent.id)}
-                              button={t(($) => $.test_agents.apply)}
-                            />
+                          <div key={agent.id} className="p-4">
+                            <p className="break-words text-body font-medium">
+                              {agent.name}{" "}
+                              {agent.archived_at && (
+                                <span className="text-caption text-muted-foreground">
+                                  · {t(($) => $.test_agents.archived)}
+                                </span>
+                              )}
+                            </p>
+                            <p className="break-all text-caption text-muted-foreground">
+                              {agent.model ?? "—"}
+                              {row.desired.overrides[agent.id]
+                                ? ` · ${t(($) => $.test_agents.individual)}`
+                                : ""}
+                            </p>
                           </div>
                         ))}
-                        {!agents.length ? (
+                        {!agents.length && (
                           <p className="p-4 text-caption text-muted-foreground">
                             {t(($) => $.test_agents.no_agents)}
                           </p>
-                        ) : null}
+                        )}
                       </div>
                     </details>
                   </SettingsCard>
                 </SettingsSection>
               );
             })}
+          {open && (
+            <RuntimeDialog
+              initial={
+                defaultRow?.desired.policy ?? {
+                  provider: "",
+                  model: "",
+                  thinking_level: "",
+                  service_tier: "",
+                }
+              }
+              revision={defaultRow?.revision ?? 1}
+              runtimes={runtimes}
+              pending={mutation.isPending}
+              onClose={() => setOpen(false)}
+              onSave={(policy, revision) =>
+                mutation.mutate({
+                  action: "configure",
+                  name: "default",
+                  revision,
+                  policy,
+                })
+              }
+            />
+          )}
         </>
       )}
     </SettingsTab>

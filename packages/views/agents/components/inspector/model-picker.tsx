@@ -40,6 +40,7 @@ export function ModelPicker({
   showLabel = true,
   allowCustom = true,
   catalog,
+  ariaLabel,
   onChange,
 }: {
   runtimeId: string | null;
@@ -52,6 +53,8 @@ export function ModelPicker({
   allowCustom?: boolean;
   /** 外部注入的目录（例如控制环境读到的其他环境真实目录）；提供时不发起实时请求。 */
   catalog?: { models: RuntimeModel[]; supported?: boolean };
+  /** 覆盖触发按钮的无障碍名称（宿主界面已有自己的行标签时使用）。 */
+  ariaLabel?: string;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -179,7 +182,7 @@ export function ModelPicker({
               ? `${showLabel ? "mt-1.5 " : ""}flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-3 text-left text-body transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50`
               : CHIP_CLASS
           }
-          aria-label={triggerTitle}
+          aria-label={ariaLabel ?? triggerTitle}
         />
       }
       trigger={

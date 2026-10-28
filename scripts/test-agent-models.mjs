@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 const [environment, mode = 'audit', policyFile, scopeFile] = process.argv.slice(2);
 const policyRoot = path.join(process.env.MULTICA_RELEASE_ROOT || '', '.run');
@@ -43,6 +43,9 @@ let wasDraining = true;
 const client = new pg.Client({connectionString:cfg.server.DATABASE_URL});
 await client.connect();
 try {
+ const catalogRuntimes = (await client.query("SELECT id,workspace_id,provider,runtime_mode FROM agent_runtime WHERE status='online' AND daemon_id=$1 AND profile_id IS NULL",[health.daemon_id])).rows;
+ const requested = new Set([desired?.policy, ...Object.values(desired?.overrides || {})].filter(Boolean).map(p => p.runtime || p.provider));
+ await publishCatalogs(mode === 'apply' ? catalogRuntimes.filter(r => requested.has(r.provider)) : catalogRuntimes);
  if (mode === 'apply') {
   const before = await request(daemon,'/drain');
   if (before.active_tasks || before.claims_in_flight) throw Error('测试环境仍有运行，保留现场，空闲后再维护');
@@ -57,18 +60,30 @@ try {
  const busy = Number((await client.query("SELECT count(*) FROM agent_task_queue WHERE status NOT IN ('completed','failed','cancelled')")).rows[0].count);
  if (mode === 'apply' && busy) throw Error('测试环境仍有待执行任务，保留现场，空闲后再维护');
  const before = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at,name,custom_args FROM agent ORDER BY id')).rows;
- const runtimes = (await client.query("SELECT id,workspace_id,provider,runtime_mode FROM agent_runtime WHERE provider IN ('codebuddy','codex') AND status='online' AND daemon_id=$1 AND profile_id IS NULL",[health.daemon_id])).rows;
- const bindings = new Map();
+ const runtimes = (await client.query("SELECT id,workspace_id,provider,runtime_mode FROM agent_runtime WHERE status='online' AND daemon_id=$1 AND profile_id IS NULL",[health.daemon_id])).rows;
+ for (const runtime of runtimes) {
+  const source = catalogRuntimes.find(item => item.id === runtime.id);
+  if (source?.models?.length) { runtime.models = source.models; runtime.catalog_observed_at = source.catalog_observed_at; }
+ }
+ const bindings = new Map(), ambiguous = new Set();
  for (const row of runtimes) {
-  if (bindings.has(row.workspace_id+'|'+row.provider)) throw Error('工作区 CodeBuddy runtime 不唯一');
-  bindings.set(row.workspace_id+'|'+row.provider,row);
+  const key = row.workspace_id+'|'+row.provider;
+  if (bindings.has(key)) ambiguous.add(key);
+  bindings.set(key,row);
  }
  if (mode === 'apply') {
   for (const row of before) {
    const p = desired.overrides?.[row.id] || desired.policy;
    if ((row.custom_args || []).some(x => /^(?:-m|-c)|^--(?:model|config)(?:=|$)|fast_mode/.test(x))) throw Error('Agent 含覆盖模型的启动参数，请先核对：'+row.name);
-   const runtime = bindings.get(row.workspace_id+'|'+p.provider);
-   if (!runtime) throw Error('工作区缺少本环境在线 CodeBuddy runtime，停止维护');
+   const key = row.workspace_id+'|'+(p.runtime || p.provider);
+   if (ambiguous.has(key)) throw Error('工作区所选运行时不唯一');
+   const runtime = bindings.get(key);
+   if (!runtime) throw Error('工作区缺少所选的在线运行时，停止维护');
+   if (!runtime.models?.length) throw Error('所选运行时模型目录暂不可用，停止维护');
+   const model = runtime.models.find(item => item.id === p.model);
+   if (!model) throw Error('所选模型不在本环境运行时目录中，停止维护');
+   if (p.thinking_level && !model.thinking?.supported_levels?.some(level => level.value === p.thinking_level)) throw Error('所选思考强度不受本环境模型支持，停止维护');
+   if (p.service_tier && !model.service_tiers?.some(tier => tier.id === p.service_tier) && !(p.service_tier === 'default' && model.supports_explicit_standard_service_tier)) throw Error('所选速度不受本环境模型支持，停止维护');
    await client.query("UPDATE agent SET runtime_id=$2,runtime_mode=$6,model=$3,thinking_level=$4,service_tier=$5,updated_at=now() WHERE id=$1 AND (runtime_id IS DISTINCT FROM $2::uuid OR model IS DISTINCT FROM $3 OR thinking_level IS DISTINCT FROM $4 OR service_tier IS DISTINCT FROM $5 OR runtime_mode IS DISTINCT FROM $6)",[row.id,runtime.id,p.model,p.thinking_level,p.service_tier,runtime.runtime_mode]);
   }
  }
@@ -79,7 +94,6 @@ try {
  }
  const after = (await client.query('SELECT id,workspace_id,runtime_id,model,thinking_level,service_tier,status,archived_at,name,custom_args FROM agent ORDER BY id')).rows;
  await client.query('COMMIT');
- await publishCatalogs(runtimes);
  console.log(JSON.stringify({environment,mode,agents:before.length,busy,daemon_id:health.daemon_id,runtimes,before,after}));
 } catch(e) {
  await client.query('ROLLBACK');throw e;
@@ -166,7 +180,7 @@ async function targeted(scope) {
   const busy=await db.query("SELECT id FROM agent_task_queue WHERE agent_id=$1 AND status NOT IN ('completed','failed','cancelled') LIMIT 1",[scope.agent_id]);
   if (busy.rows.length || before.status==='running') throw Error('Target Agent has queued/running/claiming work');
   if ((before.custom_args || []).some(x=>/^(?:-m|-c)|^--(?:model|config)(?:=|$)|fast_mode/.test(x))) throw Error('Target Agent has model launch overrides');
-  const runtimes=await db.query("SELECT id,runtime_mode FROM agent_runtime WHERE workspace_id=$1 AND provider=$2 AND daemon_id=$3 AND status='online' AND profile_id IS NULL",[scope.workspace_id,selected.provider,health.daemon_id]);
+  const runtimes=await db.query("SELECT id,runtime_mode FROM agent_runtime WHERE workspace_id=$1 AND provider=$2 AND daemon_id=$3 AND status='online' AND profile_id IS NULL",[scope.workspace_id,selected.runtime || selected.provider,health.daemon_id]);
   if (runtimes.rows.length!==1) throw Error('Target runtime missing or ambiguous');
   const runtime=runtimes.rows[0];
   const mirrors=await db.query('SELECT * FROM test_agent_control WHERE workspace_id=$1 AND name=$2 FOR UPDATE',[scope.workspace_id,environment]);
@@ -215,72 +229,46 @@ async function targeted(scope) {
  }
 }
 
-// publishCatalogs 在维护事务提交后单独连接读写模型的目录，失败只影响目录展示。
+// 使用该验收槽位已有身份读取实际运行时目录，不越过运行时权限。
 async function publishCatalogs(runtimes) {
- if (mode !== 'apply' || !runtimes.length) return;
- const side = new pg.Client({connectionString: cfg.server.DATABASE_URL});
- await side.connect();
+ if ((mode !== 'apply' && process.env.MULTICA_TEST_AGENT_CATALOG !== '1') || !runtimes.length) return;
+ const profile = JSON.parse(fs.readFileSync(meta.daemon_profile_path, 'utf8'));
+ if (!profile.token) throw Error('验收槽位缺少目录读取凭据');
  const catalogs = new Map();
- try {
-  for (const runtime of runtimes) {
-   try { catalogs.set(runtime.id, await runtimeCatalog(side, runtime)); }
-   catch (error) { catalogs.set(runtime.id, []); console.error('模型目录获取失败', runtime.id, String(error).slice(0, 200)); }
+ let next = 0;
+ await Promise.all(Array.from({length: Math.min(8, runtimes.length)}, async () => {
+  while (next < runtimes.length) {
+   const runtime = runtimes[next++];
+   try { catalogs.set(runtime.id, await runtimeCatalog(profile.token, runtime)); }
+   catch (error) { console.error('模型目录获取失败', runtime.id, String(error).slice(0, 200)); }
   }
- } finally {
-  await side.end();
- }
- const byWorkspace = new Map();
+ }));
  for (const runtime of runtimes) {
-  const list = byWorkspace.get(runtime.workspace_id) || [];
-  list.push({id: runtime.id, provider: runtime.provider, models: catalogs.get(runtime.id) || []});
-  byWorkspace.set(runtime.workspace_id, list);
- }
- try { await writeControl(byWorkspace); }
- catch (error) { console.error('控制库目录回写失败', String(error).slice(0, 200)); }
-}
-
-// runtimeCatalog 用临时 PAT 读取该运行时的真实模型目录；token 只存在内存，用完即删。
-async function runtimeCatalog(side, runtime) {
- const token = 'mul_' + randomBytes(24).toString('hex');
- const hash = createHash('sha256').update(token).digest('hex');
- const owner = (await side.query(
-  "SELECT user_id FROM member WHERE workspace_id=$1 AND role IN ('owner','admin') LIMIT 1",
-  [runtime.workspace_id])).rows[0];
- if (!owner) throw Error('工作区缺少管理员，无法读取模型目录');
- const id = randomUUID();
- await side.query('INSERT INTO personal_access_token(id,user_id,name,token_hash,token_prefix) VALUES($1,$2,$3,$4,$5)',
-  [id, owner.user_id, 'test-agent-catalog (transient)', hash, token.slice(0, 8)]);
- try {
-  const response = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models', {
-   method: 'POST',
-   headers: {Authorization: 'Bearer ' + token, 'X-Workspace-ID': runtime.workspace_id},
-   signal: AbortSignal.timeout(20000),
-  });
-  if (!response.ok) throw Error('模型目录 HTTP ' + response.status);
-  const body = await response.json();
-  return (body.models || []).map(model => ({
-   id: model.id,
-   label: model.label || model.id,
-   ...(model.thinking ? {thinking: model.thinking} : {}),
-  }));
- } finally {
-  await side.query('DELETE FROM personal_access_token WHERE id=$1', [id]);
+  runtime.models = catalogs.get(runtime.id) || [];
+  if (runtime.models.length) runtime.catalog_observed_at = new Date().toISOString();
  }
 }
 
-// writeControl 把运行时目录写进控制库，设置页据此列真实模型；写失败不影响本环境同步。
-async function writeControl(observedByWorkspace) {
- if (!observedByWorkspace.size) return;
- const control = new pg.Client({connectionString: production.toString()});
- await control.connect();
- try {
-  for (const [workspace, runtimes] of observedByWorkspace) {
-   const observed = {daemon_id: health.daemon_id, runtimes, observed_at: new Date().toISOString()};
-   await control.query(
-    'INSERT INTO test_agent_control(workspace_id,name,desired,observed) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id,name) DO UPDATE SET observed=EXCLUDED.observed,updated_at=now()',
-    [workspace, environment, desired, observed]);
-  }
- } finally {
-  await control.end();
+async function runtimeCatalog(token, runtime) {
+ const headers = {Authorization: 'Bearer ' + token, 'X-Workspace-ID': runtime.workspace_id};
+ const response = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models', {
+  method: 'POST', headers, signal: AbortSignal.timeout(20000),
+ });
+ if (!response.ok) throw Error('模型目录 HTTP ' + response.status);
+ let body = await response.json();
+ const deadline = Date.now() + 12000;
+ while (['pending', 'running'].includes(body.status) && Date.now() < deadline) {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const poll = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models/' + body.id, {headers, signal: AbortSignal.timeout(5000)});
+  if (!poll.ok) throw Error('模型目录读取失败 HTTP ' + poll.status);
+  body = await poll.json();
  }
+ if (body.status !== 'completed') throw Error('模型目录未就绪');
+ return (body.models || []).map(model => ({
+  id: model.id,
+  label: model.label || model.id,
+  ...(model.thinking ? {thinking: model.thinking} : {}),
+  ...(model.service_tiers ? {service_tiers: model.service_tiers} : {}),
+  ...(model.supports_explicit_standard_service_tier ? {supports_explicit_standard_service_tier: true} : {}),
+ }));
 }
