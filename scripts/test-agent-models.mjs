@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 const [environment, mode = 'audit', policyFile, scopeFile] = process.argv.slice(2);
 const policyRoot = path.join(process.env.MULTICA_RELEASE_ROOT || '', '.run');
@@ -229,65 +229,46 @@ async function targeted(scope) {
  }
 }
 
-// 使用环境实际运行时采集模型目录，供应用前校验及状态回报。
+// 使用该验收槽位已有身份读取实际运行时目录，不越过运行时权限。
 async function publishCatalogs(runtimes) {
  if ((mode !== 'apply' && process.env.MULTICA_TEST_AGENT_CATALOG !== '1') || !runtimes.length) return;
- const side = new pg.Client({connectionString: cfg.server.DATABASE_URL});
- await side.connect();
+ const profile = JSON.parse(fs.readFileSync(meta.daemon_profile_path, 'utf8'));
+ if (!profile.token) throw Error('验收槽位缺少目录读取凭据');
  const catalogs = new Map();
- try {
-  let next = 0;
-  await Promise.all(Array.from({length: Math.min(8, runtimes.length)}, async () => {
-   while (next < runtimes.length) {
-    const runtime = runtimes[next++];
-    try { catalogs.set(runtime.id, await runtimeCatalog(side, runtime)); }
-    catch (error) { console.error('模型目录获取失败', runtime.id, String(error).slice(0, 200)); }
-   }
-  }));
- } finally {
-  await side.end();
- }
+ let next = 0;
+ await Promise.all(Array.from({length: Math.min(8, runtimes.length)}, async () => {
+  while (next < runtimes.length) {
+   const runtime = runtimes[next++];
+   try { catalogs.set(runtime.id, await runtimeCatalog(profile.token, runtime)); }
+   catch (error) { console.error('模型目录获取失败', runtime.id, String(error).slice(0, 200)); }
+  }
+ }));
  for (const runtime of runtimes) {
   runtime.models = catalogs.get(runtime.id) || [];
   if (runtime.models.length) runtime.catalog_observed_at = new Date().toISOString();
  }
 }
 
-// runtimeCatalog 用临时 PAT 读取该运行时的真实模型目录；token 只存在内存，用完即删。
-async function runtimeCatalog(side, runtime) {
- const token = 'mul_' + randomBytes(24).toString('hex');
- const hash = createHash('sha256').update(token).digest('hex');
- const owner = (await side.query(
-  "SELECT user_id FROM member WHERE workspace_id=$1 AND role IN ('owner','admin') LIMIT 1",
-  [runtime.workspace_id])).rows[0];
- if (!owner) throw Error('工作区缺少管理员，无法读取模型目录');
- const id = randomUUID();
- await side.query('INSERT INTO personal_access_token(id,user_id,name,token_hash,token_prefix) VALUES($1,$2,$3,$4,$5)',
-  [id, owner.user_id, 'test-agent-catalog (transient)', hash, token.slice(0, 8)]);
- try {
-  const response = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models', {
-   method: 'POST',
-   headers: {Authorization: 'Bearer ' + token, 'X-Workspace-ID': runtime.workspace_id},
-   signal: AbortSignal.timeout(20000),
-  });
-  if (!response.ok) throw Error('模型目录 HTTP ' + response.status);
-  let body = await response.json();
-  const deadline = Date.now() + 12000;
-  while (['pending', 'running'].includes(body.status) && Date.now() < deadline) {
-   await new Promise(resolve => setTimeout(resolve, 300));
-   const poll = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models/' + body.id, {headers: {Authorization: 'Bearer ' + token, 'X-Workspace-ID': runtime.workspace_id}, signal: AbortSignal.timeout(5000)});
-   if (!poll.ok) throw Error('模型目录读取失败 HTTP ' + poll.status);
-   body = await poll.json();
-  }
-  if (body.status !== 'completed') throw Error('模型目录未就绪');
-  return (body.models || []).map(model => ({
-   id: model.id,
-   label: model.label || model.id,
-   ...(model.thinking ? {thinking: model.thinking} : {}),
-   ...(model.service_tiers ? {service_tiers: model.service_tiers} : {}),
-   ...(model.supports_explicit_standard_service_tier ? {supports_explicit_standard_service_tier: true} : {}),
-  }));
- } finally {
-  await side.query('DELETE FROM personal_access_token WHERE id=$1', [id]);
+async function runtimeCatalog(token, runtime) {
+ const headers = {Authorization: 'Bearer ' + token, 'X-Workspace-ID': runtime.workspace_id};
+ const response = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models', {
+  method: 'POST', headers, signal: AbortSignal.timeout(20000),
+ });
+ if (!response.ok) throw Error('模型目录 HTTP ' + response.status);
+ let body = await response.json();
+ const deadline = Date.now() + 12000;
+ while (['pending', 'running'].includes(body.status) && Date.now() < deadline) {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const poll = await fetch(meta.backend_url + '/api/runtimes/' + runtime.id + '/models/' + body.id, {headers, signal: AbortSignal.timeout(5000)});
+  if (!poll.ok) throw Error('模型目录读取失败 HTTP ' + poll.status);
+  body = await poll.json();
  }
+ if (body.status !== 'completed') throw Error('模型目录未就绪');
+ return (body.models || []).map(model => ({
+  id: model.id,
+  label: model.label || model.id,
+  ...(model.thinking ? {thinking: model.thinking} : {}),
+  ...(model.service_tiers ? {service_tiers: model.service_tiers} : {}),
+  ...(model.supports_explicit_standard_service_tier ? {supports_explicit_standard_service_tier: true} : {}),
+ }));
 }

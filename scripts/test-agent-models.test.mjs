@@ -24,13 +24,13 @@ const codex={provider:'codex',model:'gpt-6.1-sol',thinking_level:'low',service_t
 let drains=0, testEnvironment='verify-1', secondRuntimeSupports=false;
 const profile='target-policy-tests-'+process.pid;
 const port=19515+[...Buffer.from(profile)].reduce((a,b)=>a+b,0)%1000;
-const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/drain')drains++; if(req.url.endsWith('/models')) return res.end(JSON.stringify({id:'request',status:'pending'})); if(req.url.endsWith('/models/request')) return res.end(JSON.stringify({status:'completed',models:req.url.includes(id.runtime2) && !secondRuntimeSupports ? [{id:'different-model',label:'Different'}] : [{id:'deepseek-v4.1-flash',label:'Flash',service_tiers:[{id:'fast',name:'Fast'}]}]})); res.end(JSON.stringify(req.url==='/api/config'?{environment_id:testEnvironment}:{commit:'commit',daemon_id:'daemon-test'}));});
+const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/drain')drains++; if(req.url.includes('/models') && req.headers.authorization!=='Bearer fixture-owner-token') {res.statusCode=404;return res.end('{}');} if(req.url.endsWith('/models')) return res.end(JSON.stringify({id:'request',status:'pending'})); if(req.url.endsWith('/models/request')) return res.end(JSON.stringify({status:'completed',models:req.url.includes(id.runtime2) && !secondRuntimeSupports ? [{id:'different-model',label:'Different'}] : [{id:'deepseek-v4.1-flash',label:'Flash',service_tiers:[{id:'fast',name:'Fast'}]}]})); res.end(JSON.stringify(req.url==='/api/config'?{environment_id:testEnvironment}:{commit:'commit',daemon_id:'daemon-test'}));});
 await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
 const scope={environment:'verify-1',execution_id:'test-execution',delivery_id:id.delivery,workspace_id:id.workspace,
  agent_id:id.agent,operation_id:id.operation,candidate_id:'candidate',source_commit:'commit',seed_id:'seed',seed_sha256:'sha',owner_generation:1,generation:1,revision:2};
 const scopePath=path.join(root,'scope.json');
 const scopeWrite=()=>fs.writeFileSync(scopePath,JSON.stringify(scope));scopeWrite();
-const profilePath=path.join(root,'profile.json');fs.writeFileSync(profilePath,JSON.stringify({workspace_id:id.workspace,daemon_id:'daemon-test'}));
+const profilePath=path.join(root,'profile.json');fs.writeFileSync(profilePath,JSON.stringify({workspace_id:id.workspace,daemon_id:'daemon-test',token:'fixture-owner-token'}));
 write('env/prod-services.json',{server:{DATABASE_URL:url.href,MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID:id.controlWorkspace}});
 write('env/verify-1-services.json',{server:{DATABASE_URL:targetURL.href,MULTICA_ENV_ID:'verify-1'}});
 write('deployments/goal-test-verify-1.json',{backend_url:'http://127.0.0.1:'+port,commit:'commit',release_id:'artifact',daemon_profile:profile,daemon_profile_path:profilePath});
@@ -157,7 +157,7 @@ try {
  const unsupportedWorkspace=await fullApply(flash);assert.notEqual(unsupportedWorkspace.code,0);assert.match(unsupportedWorkspace.stderr,/不在本环境/);assert.deepEqual(await rows(),beforeApply);secondRuntimeSupports=true;
  const unsupportedThinking=await fullApply({...flash,thinking_level:'ultra'});assert.notEqual(unsupportedThinking.code,0);assert.match(unsupportedThinking.stderr,/思考强度/);assert.deepEqual(await rows(),beforeApply);
  const unsupportedTier=await fullApply({...flash,service_tier:'invalid'});assert.notEqual(unsupportedTier.code,0);assert.match(unsupportedTier.stderr,/所选速度/);assert.deepEqual(await rows(),beforeApply);
- const appliedAll=await fullApply(flash);assert.equal(appliedAll.code,0,appliedAll.stderr);const result=JSON.parse(appliedAll.stdout);assert.equal(result.after.filter(a=>a.model===flash.model).length,3);assert.equal(result.runtimes.find(r=>r.provider==='codebuddy').models[0].service_tiers[0].id,'fast');assert.equal((await db.query('SELECT count(*) FROM personal_access_token')).rows[0].count,'0');console.log('PASS async catalog, unsupported model rollback, all agents applied, temporary token removed');
+ const appliedAll=await fullApply(flash);assert.equal(appliedAll.code,0,appliedAll.stderr);const result=JSON.parse(appliedAll.stdout);assert.equal(result.after.filter(a=>a.model===flash.model).length,3);assert.equal(result.runtimes.find(r=>r.provider==='codebuddy').models[0].service_tiers[0].id,'fast');assert.equal((await db.query('SELECT count(*) FROM personal_access_token')).rows[0].count,'0');console.log('PASS profile identity, async catalog, unsupported model rollback, all agents applied, no temporary tokens');
 } finally {
  await db.end();await control.query('DROP DATABASE '+targetURL.pathname.slice(1)+' WITH (FORCE)');await control.end();await new Promise(resolve=>server.close(resolve));fs.rmSync(root,{recursive:true,force:true});
 }
