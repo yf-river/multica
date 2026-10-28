@@ -93,7 +93,9 @@ describe("test environment controls", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Runtime" }));
     fireEvent.click(await screen.findByRole("button", { name: "codex" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Model" }));
-    fireEvent.click(await screen.findByRole("button", { name: "GPT-6.1 Sol" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /GPT-6\.1 Sol/ }),
+    );
     fireEvent.change(
       within(dialog).getByRole("combobox", { name: "Thinking" }),
       { target: { value: "low" } },
@@ -166,9 +168,8 @@ describe("test environment controls", () => {
     expect(
       screen.getByRole("button", { name: "Apply to all environments" }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-      "deepseek-v4.1-flash",
-    );
+    // 目录缺失时模型控件退化为只读展示，仍要保留当前配置值。
+    expect(screen.getAllByText(/deepseek-v4\.1-flash/).length).toBeGreaterThan(0);
   });
   it("does not offer a catalog from a disabled environment", async () => {
     vi.spyOn(api, "getTestAgentControl").mockResolvedValue([

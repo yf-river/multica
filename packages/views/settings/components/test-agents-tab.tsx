@@ -22,6 +22,8 @@ import {
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import { toast } from "sonner";
+import type { RuntimeModel } from "@multica/core/types";
+import { ModelPicker } from "../../agents/components/inspector/model-picker";
 import { PickerItem, PropertyPicker } from "../../issues/components/pickers";
 import { ProviderLogo } from "../../runtimes/components/provider-logo";
 import { useT } from "../../i18n";
@@ -198,15 +200,21 @@ function RuntimeDialog({
             />
           </SettingsRow>
           <SettingsRow label={t(($) => $.test_agents.model)} size="select-wide">
-            <CatalogPicker
-              label={t(($) => $.test_agents.model)}
-              value={model}
-              options={Array.from(models.values()).map((item) => ({
-                value: item.id,
-                label: item.label,
-              }))}
-              disabled={pending || !models.size}
-              onChange={(value) => {
+            {/*
+              与 Agent 设置运行时同一个模型选择器：可搜索、显示 provider/model 两行；
+              目录来自控制行回写的真实目录，所以注入 catalog 而不发实时请求。
+            */}
+            <ModelPicker
+              variant="field"
+              showLabel={false}
+              allowCustom={false}
+              runtimeId={runtimes.find((item) => item.provider === provider)?.id ?? null}
+              runtimeOnline={models.size > 0}
+              value={model || null}
+              canEdit={!pending && models.size > 0}
+              catalog={{ models: Array.from(models.values()) as RuntimeModel[], supported: true }}
+              ariaLabel={t(($) => $.test_agents.model)}
+              onChange={(value: string) => {
                 setModel(value);
                 setThinking("");
                 setTier("");

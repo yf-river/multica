@@ -11,6 +11,7 @@ import {
   refreshRuntimeModels,
   runtimeModelsOptions,
 } from "@multica/core/runtimes";
+import type { RuntimeModel } from "@multica/core/types";
 import { Label } from "@multica/ui/components/ui/label";
 import {
   PickerItem,
@@ -38,6 +39,8 @@ export function ModelPicker({
   variant = "chip",
   showLabel = true,
   allowCustom = true,
+  catalog,
+  ariaLabel,
   onChange,
 }: {
   runtimeId: string | null;
@@ -48,6 +51,10 @@ export function ModelPicker({
   variant?: "chip" | "field";
   showLabel?: boolean;
   allowCustom?: boolean;
+  /** 外部注入的目录（例如控制环境读到的其他环境真实目录）；提供时不发起实时请求。 */
+  catalog?: { models: RuntimeModel[]; supported?: boolean };
+  /** 覆盖触发按钮的无障碍名称（宿主界面已有自己的行标签时使用）。 */
+  ariaLabel?: string;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -55,10 +62,11 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
-  );
-  const supported = modelsQuery.data?.supported ?? true;
+  const modelsQuery = useQuery({
+    ...runtimeModelsOptions(runtimeOnline ? runtimeId : null),
+    enabled: !catalog && Boolean(runtimeOnline && runtimeId),
+  });
+  const supported = catalog ? (catalog.supported ?? true) : (modelsQuery.data?.supported ?? true);
   // Memoise the model list so every downstream useMemo gets a stable
   // reference; `?? []` would mint a fresh array on every render and
   // invalidate filters needlessly.
@@ -68,8 +76,8 @@ export function ModelPicker({
     [modelsQuery.data],
   );
   const models = useMemo(
-    () => modelsQuery.data?.models ?? [],
-    [modelsQuery.data],
+    () => catalog?.models ?? modelsQuery.data?.models ?? [],
+    [catalog, modelsQuery.data],
   );
 
   const filtered = useMemo(() => {
@@ -174,7 +182,7 @@ export function ModelPicker({
               ? `${showLabel ? "mt-1.5 " : ""}flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-3 text-left text-body transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50`
               : CHIP_CLASS
           }
-          aria-label={triggerTitle}
+          aria-label={ariaLabel ?? triggerTitle}
         />
       }
       trigger={
