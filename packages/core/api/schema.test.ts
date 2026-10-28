@@ -1023,6 +1023,21 @@ it("rejects malformed test environment management payloads", async () => {
  expect(TestEnvironmentControlSchema.array().safeParse([]).success).toBe(true);
 });
 
+it("accepts test runtime policies and preserves their reported capabilities", async () => {
+ const {TestEnvironmentControlSchema}=await import("./schemas");
+ const policy={provider:"codebuddy",runtime:"dsh",model:"codebuddy/flash",thinking_level:"",service_tier:""};
+ const row={name:"int",revision:3,desired:{policy,overrides:{}},observed:{available:true,runtimes:[{id:"r",provider:"dsh",catalog_observed_at:"2026-10-28T00:00:00Z",models:[{id:"codebuddy/flash",label:"Flash",service_tiers:[{id:"fast",name:"Fast"}]}]}]},observed_at:null};
+ const parsed=TestEnvironmentControlSchema.parse(row);
+ expect(parsed.desired.policy.runtime).toBe("dsh");
+ expect(parsed.observed.runtimes?.[0]?.models?.[0]?.service_tiers?.[0]?.id).toBe("fast");
+ expect(parsed.observed.available).toBe(true);
+ stubFetchJson([row]);
+ const client=new ApiClient("https://api.example.test");
+ const result=await client.getTestAgentControl();
+ expect(result).toHaveLength(1);
+ expect(result[0]?.observed.runtimes?.[0]?.models?.[0]?.service_tiers?.[0]?.id).toBe("fast");
+});
+
 it("requires a boolean test environment capability",async()=>{
  const {TestAgentControlCapabilitySchema}=await import("./schemas");
  expect(TestAgentControlCapabilitySchema.safeParse({available:"yes"}).success).toBe(false);
