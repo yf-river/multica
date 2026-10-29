@@ -1184,6 +1184,8 @@ class Worker:
                 install=r.RUN/'verification-install'/(chosen['name']+'.json')
                 state=r.read(install) if install.exists() else {}
                 cleaning=state.get('stage') in ('baseline_cleaning','cleaned') and state.get('baseline_cleanup_seed')==seed_id
+                if cleaning and state.get('stage')=='cleaned':
+                    cleaning=r.read(r.meta_path(chosen['name'])).get('commit')==commit
                 if not cleaning:
                     if current.get('seed_id')!=seed_id or current.get('dump_sha256')!=artifact['sha256']:
                         seed.verify_seed(chosen['name'],path,pgconfig,accept=True)
