@@ -8,6 +8,42 @@ spec=importlib.util.spec_from_file_location('worker',Path(__file__).with_name('i
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class PoolFlowTests(unittest.TestCase):
+    def test_update_stops_before_build_and_retries_without_changing_lease(self):
+        worker=object.__new__(w.Worker)
+        lease=dict(name='verify-1',generation=7,delivery_id='delivery',worker_token='token',source_commit='old',candidate_id='candidate',state='verifying')
+        candidate=dict(id='candidate',delivery_id='delivery')
+        events=[]
+        def build_once(*args,**kwargs):
+            events.append('build')
+            if events.count('build')==1:raise RuntimeError('build failed')
+            return Path('/artifact')
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)), \
+             patch.object(worker,'api',return_value=dict(lease)),patch.object(r,'candidate',return_value=dict(candidate)), \
+             patch.object(w.dev,'stop',side_effect=lambda *args:events.append('stop')), \
+             patch.object(r,'build_verification',side_effect=build_once) as build:
+            with self.assertRaisesRegex(RuntimeError,'build failed'):
+                worker.build_verification_update('delivery',lease,candidate,Path('/source'))
+            self.assertEqual(lease['candidate_id'],'candidate')
+            self.assertEqual(lease['generation'],7)
+            self.assertEqual(worker.build_verification_update('delivery',lease,candidate,Path('/source')),Path('/artifact'))
+            self.assertEqual(events,['stop','build','stop','build'])
+            self.assertEqual(build.call_count,2)
+            self.assertTrue(build.call_args.kwargs['dev_web'])
+
+    def test_update_stop_failure_or_stale_slot_never_builds(self):
+        worker=object.__new__(w.Worker)
+        lease=dict(name='verify-1',generation=7,delivery_id='delivery',worker_token='token',source_commit='old',candidate_id='candidate',state='verifying')
+        candidate=dict(id='candidate',delivery_id='delivery')
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)), \
+             patch.object(worker,'api',return_value=dict(lease)) as api,patch.object(r,'candidate',return_value=candidate), \
+             patch.object(w.dev,'stop',side_effect=r.RecoveryRequired('busy')) as stop,patch.object(r,'build_verification') as build:
+            with self.assertRaises(r.RecoveryRequired):worker.build_verification_update('delivery',lease,candidate,Path('/source'))
+            build.assert_not_called()
+            api.return_value=dict(lease,generation=8)
+            with self.assertRaises(r.RecoveryRequired):worker.build_verification_update('delivery',lease,candidate,Path('/source'))
+            self.assertEqual(stop.call_count,1)
+            build.assert_not_called()
+
     def run_flow(self, *, failed=False, resume=False,busy=False,project=False):
         identity='00000000-0000-0000-0000-000000000001'
         d=dict(id=identity,phase='testing',source_commit='a'*40,worker_token='token',candidate_id='candidate' if resume else '',acceptance_submitted=False,evidence=[dict(name='flow',status='passed',evidence='fixture')])

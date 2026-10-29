@@ -84,6 +84,56 @@ func TestExternalVerificationOwnerDefersNotificationUntilReleaseOrExpiry(t *test
 		}
 	}
 }
+
+func TestExternalOwnerDefersFailureResultNotices(t *testing.T) {
+	for _, stage := range []string{"needs_changes", "verification_failed:one", "verification_update_failed:one"} {
+		for _, finish := range []string{"release", "expire", "none"} {
+			t.Run(stage+"/"+finish, func(t *testing.T) {
+				f := newVerificationOwnerFixture(t, "testing")
+				id := dbid.NewV7().String()
+				dbfx.Exec(t, `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,$2,$3)`, f.delivery, stage, id)
+				var owner coordinationOwner
+				if finish != "none" {
+					testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(f.issue, "claim", "external-failure-owner", owner, "")).Want(200).JSON(&owner)
+				}
+				notify := func() bool {
+					deferred, err := testHandler.notifyDeliveryResult(newRequest(http.MethodPost, "/", nil), testWorkspaceID, f.issue, f.delivery, stage)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return deferred
+				}
+				if finish != "none" {
+					if !notify() || !notify() {
+						t.Fatal("有效归属未延迟通知")
+					}
+					var delivered bool
+					var count int
+					dbfx.QueryRow(t, `SELECT delivered_at IS NOT NULL FROM delivery_notice WHERE delivery_id=$1 AND stage=$2`, f.delivery, stage).Scan(&delivered)
+					dbfx.QueryRow(t, `SELECT count(*) FROM comment WHERE id=$1`, id).Scan(&count)
+					if delivered || count != 0 {
+						t.Fatal("延迟通知被投递")
+					}
+					if finish == "release" {
+						testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(f.issue, "release", "external-failure-owner", owner, "")).Want(200)
+					} else {
+						dbfx.Exec(t, `UPDATE delivery_owner SET expires_at=now()-interval '1 second' WHERE issue_id=$1`, f.issue)
+					}
+				}
+				if notify() || notify() {
+					t.Fatal("归属结束后通知未恢复")
+				}
+				var delivered bool
+				var count int
+				dbfx.QueryRow(t, `SELECT delivered_at IS NOT NULL FROM delivery_notice WHERE delivery_id=$1 AND stage=$2`, f.delivery, stage).Scan(&delivered)
+				dbfx.QueryRow(t, `SELECT count(*) FROM comment WHERE id=$1`, id).Scan(&count)
+				if !delivered || count != 1 {
+					t.Fatal("恢复通知没有恰好投递一次")
+				}
+			})
+		}
+	}
+}
 func TestExternalVerificationOwnerFencesStaleNativeTerminalFailure(t *testing.T) {
 	for _, phase := range []string{"testing", "preparing_release"} {
 		t.Run(phase, func(t *testing.T) {

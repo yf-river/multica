@@ -650,6 +650,17 @@ class Worker:
         save('preparing',lease=lease,repair_lease=old,artifact=str(artifact),source=str(source),source_commit=d['source_commit'],dev_web=hot)
         return source,artifact,lease
 
+    def build_verification_update(self, delivery, lease, candidate, source):
+        with r.lock(r.candidate_lock(lease['name'])):
+            actual=self.api('delivery-queue/slots?delivery_id='+delivery)
+            if any(actual.get(k)!=lease.get(k) for k in ('name','generation','delivery_id','worker_token','source_commit','candidate_id')) or actual.get('state')!='verifying':
+                raise r.RecoveryRequired('构建前验收槽位身份已变化')
+            current=r.candidate(env=lease['name'])
+            if current.get('id')!=candidate['id'] or current.get('delivery_id')!=delivery:
+                raise r.RecoveryRequired('构建前验收候选身份已变化')
+            dev.stop(r,lease['name'],lease)
+            return r.build_verification(source,delivery,dev_web=True)
+
     def pool_delivery(self,delivery):
         self.refresh_release_settings()
         path=self.pool_job_path(delivery)
@@ -839,7 +850,7 @@ class Worker:
                         try:
                             source=self.source(changed,integrate=False)
                             save('updating',lease=lease,candidate_id=c['id'],source=str(source),source_commit=request['source_commit'])
-                            artifact=r.build_verification(source,delivery,dev_web=True)
+                            artifact=self.build_verification_update(delivery,lease,c,source)
                         except Exception as error:
                             self.advance(d,'verification-update-failed',error=r.redact_failure(str(error))[:1500] or '测试更新构建失败')
                             save('verifying',lease=lease,candidate_id=c['id'])
