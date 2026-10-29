@@ -1132,6 +1132,17 @@ class Worker:
         r.write(r.RUN/'environment-baselines.json',dict(candidate_id=candidate['id'],commit=commit,source_digest=digest,refs=refs,updated_at=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())),True)
         r.write(r.RUN/'environment-baseline-maintenance.json',dict(candidate_id=candidate['id'],commit=commit,source_digest=digest),True)
 
+    def baseline_slot_stale(self,name,seed_id,commit):
+        """已维护槽位是否还停在本次生产基线。
+
+        同步期间该槽位仍会被下一个任务领取：释放只清空数据并留下候选程序，历史
+        completed 记录不能证明现在的部署提交。按槽位实际元数据和安装记录判断。
+        """
+        if r.read(r.meta_path(name)).get('commit')!=commit:return True
+        install=r.RUN/'verification-install'/(name+'.json')
+        state=r.read(install) if install.exists() else {}
+        return state.get('stage')!='cleaned' or state.get('baseline_cleanup_seed')!=seed_id
+
     def reconcile_environment_baseline(self):
         """以已发布归档生成种子，并逐个更新空闲槽位。"""
         import uuid
@@ -1175,9 +1186,21 @@ class Worker:
                     if not chosen or chosen.get('state')!='idle' or chosen.get('delivery_id'):
                         return
                 else:
+                    # 修改 1. 同步期间已维护的槽位仍会被下一个任务领取：释放只清空数据并留下候选
+                    # 程序，历史 completed 不能证明当前部署提交。空闲时重新核对实际程序，不是基线
+                    # 就重新维护，避免槽位最终停留在任务版本。
+                    stale=[x['name'] for x in sorted(slots,key=lambda x:x['name'])
+                           if x['name'] in completed and x['state']=='idle' and not x.get('delivery_id')
+                           and self.baseline_slot_stale(x['name'],seed_id,commit)]
+                    if stale:
+                        completed.difference_update(stale);job['completed_slots']=sorted(completed)
+                        r.write(journal,job,True)
                     chosen=next((x for x in sorted(slots,key=lambda x:x['name']) if x['state']=='idle' and not x.get('delivery_id') and x['name'] not in completed),None)
                     if not chosen:
-                        if current.get('seed_id')==seed_id and completed==set(r.VERIFICATION_ENVS):
+                        # 修改 2. 被占用的槽位无法核对：只有三个槽位都空闲且都停在基线程序上，
+                        # 才能判定整次同步完成，不能在仍有槽位跑任务版本时提前收尾。
+                        occupied=[x for x in slots if x['state']!='idle' or x.get('delivery_id')]
+                        if current.get('seed_id')==seed_id and completed==set(r.VERIFICATION_ENVS) and not stale and not occupied:
                             job['complete']=True;r.write(journal,job,True)
                         return
                     job.update(slot=chosen['name'],previous_enabled=chosen['enabled']);r.write(journal,job,True)

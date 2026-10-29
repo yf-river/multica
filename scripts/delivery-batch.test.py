@@ -92,6 +92,102 @@ class BaselineMaintenanceTests(unittest.TestCase):
                 worker.reconcile_environment_baseline()
                 ensure.assert_called_once();clean.assert_called_once()
 
+    def _baseline_sync_fixture(self, root, commit, candidate, seed_id, task, completed, occupied=(), stale=()):
+        """搭建基线同步现场：可选地让已完成维护的槽位停留在任务版本。"""
+        seeds = root/'seeds'; destination = seeds/seed_id; destination.mkdir(parents=True, exist_ok=True)
+        r.write(root/'published.json', dict(candidate=candidate, commit=commit, source_digest='digest'))
+        slots = {name: dict(name=name, state='idle', enabled=True, delivery_id=None) for name in r.VERIFICATION_ENVS}
+        for name in r.VERIFICATION_ENVS:
+            r.write(self._slot_meta(root, name), dict(commit=task if name in stale else commit))
+            r.write(self._slot_install(root, name), dict(environment=name, stage='cleaned', baseline_cleanup_seed=seed_id))
+        for name, delivery_id in occupied:
+            slots[name].update(state='verifying', delivery_id=delivery_id)
+            r.write(self._slot_meta(root, name), dict(commit=task))
+        journal = root/'environment-baseline-maintenance.json'
+        r.write(journal, dict(candidate_id=candidate, commit=commit, source_digest='digest', completed_slots=list(completed)))
+        restored = []
+
+        def restore_program(env, *args, **kwargs):
+            restored.append(env); r.write(self._slot_meta(root, env), dict(commit=commit))
+
+        def clear_data(env, seed, sha, pgconfig):
+            r.write(self._slot_install(root, env), dict(environment=env, stage='cleaned', baseline_cleanup_seed=seed))
+        worker = object.__new__(w.Worker)
+        worker.api = lambda path: [dict(row) for row in slots.values()]
+        return worker, slots, journal, restored, restore_program, clear_data
+
+    def _slot_meta(self, root, env):
+        return root/'deployments'/('goal-test-'+env+'.json')
+
+    def _slot_install(self, root, env):
+        return root/'verification-install'/(env+'.json')
+
+    def _run_baseline_sync(self, worker, journal, restored, restore_program, clear_data, seeds, destination, commit, seed_id):
+        with patch.object(w.seed, 'SEEDS', seeds), patch.object(r, 'lock', return_value=contextlib.nullcontext()), \
+                patch.object(r, 'checksums', return_value={'fixture': 'hash'}), \
+                patch.object(worker, 'current_seed', return_value=dict(seed_id=seed_id, dump_sha256='seed-hash')), \
+                patch.object(w.seed, 'read_seed', return_value=(destination, dict(build=dict(baseline_commit=commit)), dict(sha256='seed-hash'))), \
+                patch.object(w.seed, 'verified_sql_seed', return_value=destination/'seed.sql'), \
+                patch.object(w.seed, 'clear_idle_baseline', side_effect=clear_data), \
+                patch.object(w.seed, 'ensure', side_effect=restore_program), \
+                patch.object(w.seed, 'verify_seed', side_effect=restore_program):
+            worker.reconcile_environment_baseline()
+        return restored
+
+    def test_reoccupied_slot_is_rechecked_before_other_slots_finish(self):
+        """已完成维护的槽位再次被任务占用并释放后，空闲时重新恢复生产提交。"""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); commit = 'a'*40; task = 'b'*40; candidate = 'candidate-1'; seed_id = 'prod-'+commit
+            archive = root/'accepted-artifacts'/candidate/commit; archive.mkdir(parents=True)
+            (archive/'release.json').write_text(json.dumps(dict(source_commit=commit, source_digest='digest', files={'fixture': 'hash'})))
+            seeds = root/'seeds'
+            worker, slots, journal, restored, restore_program, clear_data = self._baseline_sync_fixture(
+                root, commit, candidate, seed_id, task, completed=['verify-1'],
+                occupied=[('verify-2', 'delivery-2')], stale=('verify-1', 'verify-3'))
+            with patch.object(r, 'RUN', root):
+                # 第一轮：verify-1 曾在同步期间被任务占用（程序停在任务版本），必须重新维护。
+                self.assertEqual(self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                                         seeds, seeds/seed_id, commit, seed_id), ['verify-1'])
+                self.assertEqual(r.read(self._slot_meta(root, 'verify-1'))['commit'], commit)
+                self.assertEqual(r.read(journal)['completed_slots'], ['verify-1'])
+                # 第二轮：verify-2 仍忙，先维护尚未处理的 verify-3；此时不能判定整次同步完成。
+                self.assertEqual(self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                                         seeds, seeds/seed_id, commit, seed_id), ['verify-1', 'verify-3'])
+                self.assertNotIn('complete', r.read(journal))
+                # 第三轮：三个槽位都已完成但 verify-2 仍在跑任务，等它结束后再核对。
+                self.assertEqual(self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                                         seeds, seeds/seed_id, commit, seed_id), ['verify-1', 'verify-3'])
+                self.assertIsNone(r.read(journal).get('complete'))
+                slots['verify-2'].update(state='idle', delivery_id=None)
+                # 第四轮：verify-2 释放后仍停在任务版本，同样要恢复到生产提交。
+                self.assertEqual(self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                                         seeds, seeds/seed_id, commit, seed_id), ['verify-1', 'verify-3', 'verify-2'])
+                self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                        seeds, seeds/seed_id, commit, seed_id)
+                self.assertEqual(r.read(journal)['completed_slots'], ['verify-1', 'verify-2', 'verify-3'])
+                self.assertTrue(r.read(journal)['complete'])
+                for name in r.VERIFICATION_ENVS:
+                    self.assertEqual(r.read(self._slot_meta(root, name))['commit'], commit)
+                    self.assertEqual(r.read(self._slot_install(root, name))['baseline_cleanup_seed'], seed_id)
+
+    def test_completed_slot_still_on_task_version_blocks_sync_completion(self):
+        """已登记的槽位停留在任务版本时，不能把整次同步标记完成。"""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); commit = 'a'*40; task = 'b'*40; candidate = 'candidate-1'; seed_id = 'prod-'+commit
+            archive = root/'accepted-artifacts'/candidate/commit; archive.mkdir(parents=True)
+            (archive/'release.json').write_text(json.dumps(dict(source_commit=commit, source_digest='digest', files={'fixture': 'hash'})))
+            seeds = root/'seeds'
+            worker, slots, journal, restored, restore_program, clear_data = self._baseline_sync_fixture(
+                root, commit, candidate, seed_id, task, completed=list(r.VERIFICATION_ENVS), stale=('verify-3',))
+            with patch.object(r, 'RUN', root):
+                self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                        seeds, seeds/seed_id, commit, seed_id)
+                self.assertEqual(restored, ['verify-3'])
+                self.assertIsNone(r.read(journal).get('complete'))
+                self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                        seeds, seeds/seed_id, commit, seed_id)
+                self.assertTrue(r.read(journal)['complete'])
+
 
 class BatchFlowTests(unittest.TestCase):
     """组批只在发布器空闲、窗口到期后冻结；一个批次只构建和发布一次。"""
