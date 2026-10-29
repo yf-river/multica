@@ -76,6 +76,7 @@ func deliveryWorktreeForTask(task Task, workspacesRoot string) (*releaseCheckpoi
 }
 
 // 仅对已核验并实际复用的工作树查询原始身份，避免独立目录继承别人的租约。
+// 验收执行结束不代表源码交付结束，目录归属仍由原始开发执行确认。
 func resolveDeliveryWorktreeRetention(ctx context.Context, client *Client, task Task, source *Task) (deliveryWorktreeRetention, Task, error) {
 	if task.IssueID == "" {
 		return deliveryWorktreeRetention{}, task, nil
