@@ -28,6 +28,8 @@ try {
   const workspaces = await read('/api/workspaces');
   if (!workspaces.length) throw Error('requires existing production workspace');
   const page = await context.newPage();
+  // 开发模式首次按路由编译，仍须完成原有页面、网络与业务断言。
+  if (deployment.frontend_mode === 'dev') page.setDefaultNavigationTimeout(180_000);
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   page.on('response', response => { if (response.status() >= 400 && new URL(response.url()).origin === new URL(base).origin) failures.push({ path: new URL(response.url()).pathname, status: response.status() }); });
