@@ -7751,28 +7751,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			if releasePaused(ctx) {
 				return
 			}
-			var retention deliveryWorktreeRetention
-			markerTask := task
-			if task.IssueID != "" {
-				check, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-				var retentionErr error
-				retention, retentionErr = d.client.getDeliveryWorktreeRetention(check, task.ID)
-				cancel()
-				var requestErr *requestError
-				missing := errors.As(retentionErr, &requestErr) && requestErr.StatusCode == http.StatusNotFound
-				if (retentionErr == nil || missing) && !retention.Retain && deliverySourceTask != nil && deliverySourceTask.ID != "" && deliverySourceTask.ID != task.ID {
-					check, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-					retention, retentionErr = d.client.getDeliveryWorktreeRetention(check, deliverySourceTask.ID)
-					cancel()
-					if retention.Retain {
-						// Keep the original source identity in the marker for the next continuation.
-						markerTask = *deliverySourceTask
-					}
-				}
-				if retentionErr != nil && !(errors.As(retentionErr, &requestErr) && requestErr.StatusCode == http.StatusNotFound) {
-					returnErr = errors.Join(returnErr, fmt.Errorf("确认交付工作目录归属失败，已保留 %s: %w", env.WorkDir, retentionErr))
-					return
-				}
+			retention, markerTask, retentionErr := resolveDeliveryWorktreeRetention(ctx, d.client, task, deliverySourceTask)
+			if retentionErr != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("确认交付工作目录归属失败，已保留 %s: %w", env.WorkDir, retentionErr))
+				return
 			}
 			var outcome execenv.LocalWorktreeOutcome
 			var finalizeErr error

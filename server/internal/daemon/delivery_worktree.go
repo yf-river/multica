@@ -1,10 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
@@ -69,4 +73,30 @@ func deliveryWorktreeForTask(task Task, workspacesRoot string) (*releaseCheckpoi
 		return nil, fmt.Errorf("验收目录归属与任务不一致")
 	}
 	return &saved, nil
+}
+
+// 仅对已核验并实际复用的工作树查询原始身份，避免独立目录继承别人的租约。
+func resolveDeliveryWorktreeRetention(ctx context.Context, client *Client, task Task, source *Task) (deliveryWorktreeRetention, Task, error) {
+	if task.IssueID == "" {
+		return deliveryWorktreeRetention{}, task, nil
+	}
+	query := func(id string) (deliveryWorktreeRetention, error) {
+		check, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		retention, err := client.getDeliveryWorktreeRetention(check, id)
+		var requestErr *requestError
+		if errors.As(err, &requestErr) && requestErr.StatusCode == http.StatusNotFound {
+			return deliveryWorktreeRetention{}, nil
+		}
+		return retention, err
+	}
+	retention, err := query(task.ID)
+	if err != nil || retention.Retain || source == nil || source.ID == "" || source.ID == task.ID {
+		return retention, task, err
+	}
+	retention, err = query(source.ID)
+	if retention.Retain && err == nil {
+		return retention, *source, nil
+	}
+	return retention, task, err
 }
