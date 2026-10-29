@@ -112,7 +112,7 @@ def start(r, env, source, lease):
         r.owned_stop(oldpid, 'web', Path(meta['release_dir']) / 'apps/web')
         meta['pids'].pop('web', None); r.write(r.meta_path(env), meta, True)
         args = ['node', target / 'apps/web/node_modules/next/dist/bin/next', 'dev', '--webpack', '--port', meta['frontend_port'], '--hostname', '0.0.0.0']
-        pid = r.start(args, target / 'apps/web', {**cfg['web'], 'NEXT_TELEMETRY_DISABLED': '1', 'MULTICA_RELEASE_MANIFEST': str(Path(meta['release_dir']) / 'release.json')}, meta['log_paths']['web'])
+        pid = r.start(args, target / 'apps/web', {**cfg['web'], 'CORS_ALLOWED_ORIGINS': cfg['server']['CORS_ALLOWED_ORIGINS'], 'NEXT_TELEMETRY_DISABLED': '1', 'MULTICA_RELEASE_MANIFEST': str(Path(meta['release_dir']) / 'release.json')}, meta['log_paths']['web'])
         meta['pids']['web'] = pid
         meta.setdefault('role_release_dirs', {})['web'] = str(target)
         meta['frontend_mode'] = 'dev'
