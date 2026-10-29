@@ -359,6 +359,20 @@ class PoolServiceLifetimeTests(unittest.TestCase):
             self.assertIn(bad['id'],errors.getvalue())
             self.assertIn('identity mismatch',errors.getvalue())
 
+    def test_project_waiting_for_source_or_review_is_reserved_without_dispatch(self):
+        base=dict(id=self.identity,phase='waiting_int',project_id='project-a',source_commit='a'*40,
+                  source_ready=True,issue_status='in_progress',final_review=dict(state='passed',head_sha='a'*40))
+        for changes in (dict(source_ready=False),dict(issue_status='in_review'),
+                        dict(final_review=dict(state='pending',head_sha='a'*40)),
+                        dict(final_review=dict(state='passed',head_sha='b'*40))):
+            with self.subTest(changes=changes),patch.object(self.worker,'batch_project',return_value='project-a'), \
+                    patch.object(self.worker,'start_pool_unit') as launch:
+                self.assertEqual(self.worker.pool_dispatch([dict(base,**changes)],None),{self.identity})
+                launch.assert_not_called()
+        with patch.object(self.worker,'batch_project',return_value='project-a'), patch.object(self.worker,'start_pool_unit') as launch:
+            self.assertEqual(self.worker.pool_dispatch([base],None,allow_new=False),{self.identity})
+            launch.assert_not_called()
+
     def test_start_failure_is_reported_without_stopping_other_deliveries(self):
         import io
         rows=[dict(id='00000000-0000-0000-0000-00000000000'+str(i),phase='testing',created_at=str(i)) for i in (4,5)]
