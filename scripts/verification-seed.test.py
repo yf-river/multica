@@ -316,6 +316,19 @@ class CompatibilityTests(unittest.TestCase):
         self.manifest = {'schema': {'fingerprint': SHA,
                          'migration_files_sha256': s.release_schema_identity(self.release)}}
 
+    def test_stopped_slot_requires_no_processes_or_database_consumers(self):
+        meta={'pids':{'server':11,'web':12,'daemon':13},'release_dir':'/release','daemon_workspaces_root':'/tasks','backend_port':0,'frontend_port':0}
+        with patch.object(s.r,'exists',return_value=False),patch.object(s.r,'check_process_ownership'),patch.object(s.r,'assert_unused') as unused,patch.object(s.r,'health_url',return_value='http://127.0.0.1:0'),patch.object(s,'counter',return_value=0):
+            s.check_stopped_slot('verify-3',meta,'container','verify_db')
+            self.assertEqual(unused.call_count,2)
+        with patch.object(s.r,'exists',return_value=True),patch.object(s,'counter') as count:
+            with self.assertRaisesRegex(RuntimeError,'部分进程'):
+                s.check_stopped_slot('verify-3',meta,'container','verify_db')
+            count.assert_not_called()
+        with patch.object(s.r,'exists',return_value=False),patch.object(s.r,'check_process_ownership'),patch.object(s.r,'assert_unused'),patch.object(s,'counter',return_value=1):
+            with self.assertRaisesRegex(RuntimeError,'数据库仍有消费者'):
+                s.check_stopped_slot('verify-3',meta,'container','verify_db')
+
     def test_same_migrations_allow_different_application_release(self):
         other = self.root / 'other'
         write_release(other)
