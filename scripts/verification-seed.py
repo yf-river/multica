@@ -535,10 +535,23 @@ def restore_release(manifest, current):
     try:
         validate_seed_release(manifest,current)
         return Path(current)
-    except RuntimeError:
+    except RuntimeError as mismatch:
         baseline=(manifest.get('build') or {}).get('release')
-        if not baseline:raise
-        baseline=Path(baseline).resolve()
+        baseline=Path(baseline).resolve() if baseline else None
+        if not baseline or not (baseline/'release.json').is_file():
+            # 历史运行槽位会轮换；只可回退到当前生产已验收的固定归档。
+            if not (r.RUN/'published.json').is_file():
+                raise mismatch
+            published=r.read(r.RUN/'published.json')
+            candidate=published.get('candidate',''); commit=published.get('commit','')
+            if not re.fullmatch(r'[a-zA-Z0-9_.-]+',candidate) or not re.fullmatch(r'[0-9a-f]{40}',commit):
+                raise RuntimeError('已发布产物归档身份不完整')
+            baseline=r.RUN/'accepted-artifacts'/candidate/commit
+            if not (baseline/'release.json').is_file():
+                raise RuntimeError('种子基线及当前生产验收归档均不存在')
+            published_package=r.read(baseline/'release.json')
+            if published_package.get('source_commit')!=commit or published_package.get('source_digest')!=published.get('source_digest'):
+                raise RuntimeError('当前生产验收归档身份不符')
         package=r.read(baseline/'release.json')
         if r.checksums(baseline)!=package.get('files'):
             raise RuntimeError('种子基线完整制品校验失败，拒绝恢复')

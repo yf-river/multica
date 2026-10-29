@@ -327,6 +327,19 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(s.restore_release(manifest,other),self.release)
         self.assertEqual(s.restore_release(manifest,self.release),self.release)
 
+    def test_missing_seed_release_uses_only_matching_published_archive(self):
+        other = self.root/'task-a'; write_release(other,b'CREATE TABLE task_a(id int);')
+        commit = 'c'*40
+        archive = self.root/'accepted-artifacts'/'candidate-1'/commit
+        write_release(archive)
+        (self.root/'published.json').write_text(json.dumps({'candidate':'candidate-1','commit':commit,'source_digest':'d'*64}))
+        manifest = dict(self.manifest, build={'release':str(self.root/'retired')})
+        with patch.object(s.r, 'RUN', self.root):
+            self.assertEqual(s.restore_release(manifest,other),archive)
+            (archive/'server/bin/migrate').write_bytes(b'tampered')
+            with self.assertRaisesRegex(RuntimeError,'完整制品校验失败'):
+                s.restore_release(manifest,other)
+
     def test_baseline_full_package_or_current_migration_tampering_stops_restore(self):
         other=self.root/'task-a';write_release(other,b'CREATE TABLE task_a(id int);')
         manifest=dict(self.manifest,build={'release':str(self.release)})
