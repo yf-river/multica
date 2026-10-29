@@ -382,8 +382,10 @@ class PoolServiceLifetimeTests(unittest.TestCase):
 
     def test_disabled_admission_reserves_project_testing_including_current(self):
         d=dict(id=self.identity,phase='testing',project_id='project-a')
-        other=dict(id='other',phase='testing',project_id='other-project')
+        other=dict(id='00000000-0000-0000-0000-000000000004',phase='testing',project_id='other-project')
         with patch.object(self.worker,'batch_project',return_value='project-a'), patch.object(self.worker,'start_pool_unit') as launch:
+            self.assertEqual(self.worker.pool_dispatch([d,other],self.identity,allow_new=False),{self.identity})
+            (r.RUN/'verification-jobs').mkdir(parents=True,exist_ok=True)
             self.assertEqual(self.worker.pool_dispatch([d,other],self.identity,allow_new=False),{self.identity})
             launch.assert_not_called()
 
