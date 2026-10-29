@@ -118,6 +118,7 @@ func TestTaskDeliveryWorktreeRetentionUsesExecutionIdentity(t *testing.T) {
 	dbfx.Exec(t, `UPDATE agent_runtime SET daemon_id=$2 WHERE id=$1`, runtime, batchClaimTestDaemonID)
 	agent, issue := createClaimReclaimAgentAndIssue(t, ctx, runtime, "retention agent")
 	task := seedQueuedIssueTask(t, ctx, agent, runtime, issue)
+	dbfx.Exec(t, `UPDATE issue SET assignee_type='agent',assignee_id=$2 WHERE id=$1`, issue, agent)
 	delivery := dbfx.Insert(t, "issue_delivery", testutil.Cols{
 		"id": dbid.NewV7(), "workspace_id": testWorkspaceID, "issue_id": issue, "operation_id": dbid.NewV7(),
 		"plan_id": dbid.NewV7(), "plan_snapshot": testutil.Raw(fmt.Sprintf(`'{"workflow":"project","source_execution_id":"%s"}'::jsonb`, task)),
@@ -141,6 +142,12 @@ func TestTaskDeliveryWorktreeRetentionUsesExecutionIdentity(t *testing.T) {
 	if got := request(); got["retain"] != true || got["source_commit"] != strings.Repeat("a", 40) {
 		t.Fatalf("目录未绑定交付: %v", got)
 	}
+	// 同一负责人后续运行只做验收或发布操作，不拥有原源码工作树。
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{source_execution_id}',to_jsonb($2::text)) WHERE id=$1`, delivery, dbid.NewV7())
+	if got := request(); got["retain"] != false {
+		t.Fatalf("后续执行不能按负责人身份保留另一次执行的源码目录: %v", got)
+	}
+	dbfx.Exec(t, `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{source_execution_id}',to_jsonb($2::text)) WHERE id=$1`, delivery, task)
 	dbfx.Exec(t, `UPDATE issue_delivery SET phase='published' WHERE id=$1`, delivery)
 	if got := request(); got["retain"] != false {
 		t.Fatalf("发布后不应继续保留: %v", got)
