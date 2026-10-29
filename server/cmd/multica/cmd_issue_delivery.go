@@ -96,6 +96,9 @@ func init() {
 			}
 			return cli.PrintJSON(os.Stdout, result)
 		}}
+		if action == "submit" {
+			cmd.Long = "登记准确提交。JSON 包含 operation_id（UUID）、source_commit、source_branch、base_commit、evidence（name、status=passed、evidence）和 required_checks（name、stage）。项目流程可用 integration_skip_reason 说明无任务专属联调项的原因。修复尚未占用环境的旧交付时，先读取 status，再在新请求中提供 replace_delivery_id 与 replace_revision；只允许替换该准确版本，活动验收租约或最终发布阶段拒绝替换。相同 operation_id 与请求可重试；新提交需要重新审查和测试。已占用槽位或批次冲突的修复按 retest 的专用流程处理。"
+		}
 		if action == "bind-checks" {
 			cmd.Long = "将原已确认方案的业务验收清单绑定到尚未发布的交付。JSON 包含 revision、plan_id、required_checks（name、stage）；verification 与 integration 各至少一项。相同清单可幂等重试，已绑定项不能删减或替换；不需要重新申请用户发布授权。"
 		}
