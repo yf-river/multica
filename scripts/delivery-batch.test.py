@@ -23,6 +23,46 @@ def delivery(identity, phase='approved'):
 
 
 class BaselineMaintenanceTests(unittest.TestCase):
+    def test_claim_after_idle_snapshot_cannot_interleave_with_baseline_completion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);commit='a'*40;candidate='candidate-1';seed_id='prod-'+commit
+            archive=root/'accepted-artifacts'/candidate/commit;archive.mkdir(parents=True)
+            r.write(archive/'release.json',dict(source_commit=commit,source_digest='digest',files={'fixture':'hash'}))
+            seeds=root/'seeds';destination=seeds/seed_id;destination.mkdir(parents=True)
+            r.write(root/'published.json',dict(candidate=candidate,commit=commit,source_digest='digest'))
+            journal=root/'environment-baseline-maintenance.json'
+            r.write(journal,dict(candidate_id=candidate,commit=commit,source_digest='digest',completed_slots=list(r.VERIFICATION_ENVS)))
+            slots=[dict(name=name,state='idle',enabled=True,delivery_id=None) for name in r.VERIFICATION_ENVS]
+            for row in slots:
+                r.write(root/'deployments'/('goal-test-'+row['name']+'.json'),dict(commit=commit))
+                r.write(root/'verification-install'/(row['name']+'.json'),dict(stage='cleaned',baseline_cleanup_seed=seed_id))
+            maintainer=object.__new__(w.Worker);claimant=object.__new__(w.Worker)
+            outcomes=[];errors=[]
+            def claim():
+                outcomes.append(('claimed',r.read(journal).get('complete',False)))
+                slots[0].update(state='preparing',delivery_id='task-a')
+                return dict(slots[0])
+            def attempt():
+                try:claimant.ensure_seed(claim)
+                except w.Busy:outcomes.append(('busy',False))
+                except Exception as error:errors.append(error)
+            def snapshot(path):
+                self.assertEqual(path,'delivery-queue/slots')
+                captured=[dict(row) for row in slots]
+                thread=threading.Thread(target=attempt);thread.start();thread.join(timeout=3)
+                self.assertFalse(thread.is_alive(),'领取不能阻塞基线收尾')
+                return captured
+            maintainer.api=snapshot
+            # 使用真实 flock 和完整 reconcile；只有种子归档及数据库恢复依赖受控替换。
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(maintainer,'current_seed',return_value=dict(seed_id=seed_id,dump_sha256='seed-hash')),patch.object(w.seed,'read_seed',return_value=(destination,dict(build=dict(baseline_commit=commit)),dict(sha256='seed-hash'))),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(claimant,'ensure_seed_locked'):
+                maintainer.reconcile_environment_baseline()
+                self.assertEqual(errors,[])
+                self.assertEqual(outcomes,[('busy',False)])
+                self.assertEqual(slots[0]['state'],'idle')
+                self.assertTrue(r.read(journal)['complete'])
+                self.assertEqual(claimant.ensure_seed(claim)['state'],'preparing')
+                self.assertEqual(outcomes,[('busy',False),('claimed',True)])
+
     def test_only_idle_slot_is_maintained_and_interrupted_enable_state_is_saved(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);commit='a'*40;candidate='candidate-1';digest='digest';seed_id='prod-'+commit
