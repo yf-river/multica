@@ -77,6 +77,21 @@ class BaselineMaintenanceTests(unittest.TestCase):
                 ensure.assert_not_called();clean.assert_called_once()
                 self.assertEqual(r.read(journal)['completed_slots'],['verify-2'])
 
+    def test_cleaned_slot_from_task_is_restored_to_production_baseline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);commit='a'*40;candidate='candidate-1';seed_id='prod-'+commit
+            archive=root/'accepted-artifacts'/candidate/commit;archive.mkdir(parents=True)
+            (archive/'release.json').write_text(json.dumps(dict(source_commit=commit,source_digest='digest',files={'fixture':'hash'})))
+            seeds=root/'seeds';destination=seeds/seed_id;destination.mkdir(parents=True)
+            r.write(root/'published.json',dict(candidate=candidate,commit=commit,source_digest='digest'))
+            journal=root/'environment-baseline-maintenance.json';r.write(journal,dict(candidate_id=candidate,commit=commit,source_digest='digest',slot='verify-2',previous_enabled=False))
+            r.write(root/'verification-install/verify-2.json',dict(stage='cleaned',baseline_cleanup_seed=seed_id))
+            r.write(root/'deployments/goal-test-verify-2.json',dict(commit='b'*40))
+            worker=object.__new__(w.Worker);worker.api=lambda path:[dict(name=name,state='idle',enabled=False,delivery_id=None) for name in r.VERIFICATION_ENVS]
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value=dict(seed_id=seed_id,dump_sha256='seed-hash')),patch.object(w.seed,'read_seed',return_value=(destination,dict(build=dict(baseline_commit=commit)),dict(sha256='seed-hash'))),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'clear_idle_baseline') as clean,patch.object(w.seed,'ensure') as ensure:
+                worker.reconcile_environment_baseline()
+                ensure.assert_called_once();clean.assert_called_once()
+
 
 class BatchFlowTests(unittest.TestCase):
     """组批只在发布器空闲、窗口到期后冻结；一个批次只构建和发布一次。"""
