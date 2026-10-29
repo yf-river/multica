@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,6 +20,21 @@ class GeneratedFileTests(unittest.TestCase):
             path.write_bytes(b'user changes')
             with self.assertRaises(RuntimeError): dev.update_next_env(path,original)
             self.assertEqual(path.read_bytes(),b'user changes')
+
+    def test_bridge_build_output_passes_inventory_but_unknown_files_do_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)
+            release=SimpleNamespace(RUN=source,VERIFICATION_ENVS=('verify-1',),read=lambda p:{},config_path=lambda e:source/'config.json',meta_path=lambda e:source/'meta.json',validate_verification_config=lambda *a:None,check_process_ownership=lambda *a:None,check_live_environment=lambda *a:None)
+            lease=dict(name='verify-1',delivery_id='delivery',generation=1)
+            for ignored in ['packages/dsh-runtime/dist/','node_modules/\npackages/dsh-runtime/dist/']:
+                release.output=lambda *a,**k:ignored
+                # 目录检查通过后仍执行下一项前端配置保护。
+                with self.assertRaisesRegex(RuntimeError,'前端未关闭'):
+                    dev.start(release,'verify-1',source,lease)
+            for ignored in ['private-cache/','packages/dsh-runtime/secrets/','packages/other/dist/']:
+                release.output=lambda *a,**k:ignored
+                with self.assertRaisesRegex(RuntimeError,'未识别的忽略文件'):
+                    dev.start(release,'verify-1',source,lease)
 
     def test_acl_restore_ignores_cache_files_removed_by_next(self):
         with tempfile.TemporaryDirectory() as directory:
