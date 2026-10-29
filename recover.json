@@ -1,1 +1,0 @@
-{"recovery_evidence":"同一执行续接：owner.execution_id=01a185a4-8dc6-7bdb-b31b-2ab3f34ddbf7 等于本次 MULTICA_TASK_ID，租约 2026-10-29T03:28:20Z 到期。上一轮在启动前因主分支分叉失败，plan=null 且 deliveries=[]，没有登记任何交付记录，也没有占用 int 或 verify 槽位。","previous_execution":"01a185a4-8dc6-7bdb-b31b-2ab3f34ddbf7"}
