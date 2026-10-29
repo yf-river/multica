@@ -113,7 +113,7 @@ class BatchFlowTests(unittest.TestCase):
 
     def test_managed_project_settings_control_batch_and_pause(self):
         settings = dict(configured=True, enabled=True, project_id='project-a')
-        with patch.dict(os.environ, {'MULTICA_RELEASE_REDESIGN': '1'}), patch.object(self.worker, 'api', return_value=settings):
+        with patch.dict(os.environ, {}, clear=True), patch.object(self.worker, 'api', return_value=settings):
             self.worker.refresh_release_settings()
             self.assertEqual(self.worker.batch_config()['window_seconds'], 600)
             self.assertEqual(self.worker.batch_project(), 'project-a')

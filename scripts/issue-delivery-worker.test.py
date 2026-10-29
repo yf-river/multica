@@ -6,6 +6,11 @@ spec=importlib.util.spec_from_file_location('delivery_worker',Path(__file__).wit
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class DeliveryTests(unittest.TestCase):
+    def setUp(self):
+        settings=patch.object(w.Worker,'refresh_release_settings')
+        settings.start()
+        self.addCleanup(settings.stop)
+
     def test_active_maintenance_holds_new_verification_admission(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         with tempfile.TemporaryDirectory() as folder:
@@ -105,6 +110,7 @@ class DeliveryTests(unittest.TestCase):
             return dict(id=identity,phase=state['phase'],revision=4,source_commit=commit,worker_token=token,candidate_id='candidate',acceptance_submitted=False,evidence={},verification_run=attempt)
         calls=[]
         def api(path,body=None,method=None):
+            if path=='release-agent/settings':return dict(configured=False,enabled=False)
             if path.startswith('delivery-queue?current='):return [row()]
             if path.startswith('delivery-queue/slots?'):return dict(lease)
             if path=='delivery-queue/slots/advance':
@@ -140,6 +146,7 @@ class DeliveryTests(unittest.TestCase):
             d=dict(id=identity,phase='testing',revision=4,source_commit=commit,worker_token='worker-token',candidate_id='candidate',acceptance_submitted=False,evidence={})
             d.update(states[min(state['step'],len(states)-1)]);return d
         def api(path,body=None,method=None):
+            if path=='release-agent/settings':return dict(configured=False,enabled=False)
             if path.startswith('delivery-queue?current='):return [row()]
             if path.startswith('delivery-queue/slots?'):return dict(lease)
             if path=='delivery-queue/slots/advance':
@@ -392,6 +399,7 @@ class DeliveryTests(unittest.TestCase):
         current={'id':'candidate','delivery_id':identity,'status':'accepted'}
         def api(path,body=None,method=None):
             # 队列列表返回待复核交付；推进回执按普通对象处理，验证进程重启后仍会释放旧槽位。
+            if path=='release-agent/settings':return dict(configured=False,enabled=False)
             return {} if path.endswith('/advance') else [d]
         worker=object.__new__(w.Worker);worker.env='prod'
         with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(r,'candidate_path',return_value=Path(__file__)),patch.object(r,'candidate',return_value=current),patch.object(worker,'api',side_effect=api),patch.object(worker,'pin'),patch.object(r,'release_candidate') as release:

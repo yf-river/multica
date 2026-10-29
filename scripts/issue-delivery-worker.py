@@ -566,11 +566,10 @@ class Worker:
             r.run(['systemctl','start',unit]);return
         home=pwd.getpwuid(os.getuid()).pw_dir
         command=[sys.executable,str(Path(__file__).resolve()),'--env',self.env,'--pool-delivery',delivery]
-        mode=['--setenv=MULTICA_RELEASE_REDESIGN=1'] if os.environ.get('MULTICA_RELEASE_REDESIGN')=='1' else []
         # 旧单元里的槽位服务继续由 canonical PID/profile 管理，新控制器独立接续原作业。
         r.run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec',
                '--property=KillMode=process','--working-directory',r.ROOT,
-               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*mode,*command])
+               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*command])
 
     def pool_dispatch(self,rows,current_id,allow_new=True):
         if not allow_new and not (r.RUN/'verification-jobs').exists():return set()
@@ -935,7 +934,6 @@ class Worker:
         return (self.batch_config() or {}).get('project_id') or ''
 
     def refresh_release_settings(self):
-        if os.environ.get('MULTICA_RELEASE_REDESIGN')!='1':return
         settings=self.api('release-agent/settings')
         if not isinstance(settings,dict) or not isinstance(settings.get('configured'),bool):
             raise RuntimeError('发布 Agent 设置响应无效')

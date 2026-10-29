@@ -20,6 +20,7 @@ class PoolFlowTests(unittest.TestCase):
         events=[]
         worker=object.__new__(w.Worker);worker.env='prod'
         def api(path,body=None,method=None):
+            if path=='release-agent/settings':return dict(configured=False,enabled=False)
             if path.startswith('delivery-queue?'):return [dict(d)]
             if path.startswith('delivery-queue/slots?'):return dict(lease)
             if path=='delivery-queue/slots/advance':
@@ -102,6 +103,7 @@ class PoolFlowTests(unittest.TestCase):
         candidate=dict(id='candidate',status='accepted',delivery_id=identity)
         actions=[]
         def api(path,body=None,method=None):
+            if path=='release-agent/settings':return dict(configured=False,enabled=False)
             if path.startswith('delivery-queue?'):return [dict(delivery)]
             if path.startswith('delivery-queue/slots?'):return dict(lease)
             if path=='delivery-queue/slots/advance':
