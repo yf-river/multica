@@ -188,6 +188,32 @@ class BaselineMaintenanceTests(unittest.TestCase):
                                         seeds, seeds/seed_id, commit, seed_id)
                 self.assertTrue(r.read(journal)['complete'])
 
+    def test_busy_slot_blocks_sync_completion_until_it_is_checked(self):
+        """三个槽位都已登记但其中一个仍在跑任务时，不能判定整次同步完成。"""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); commit = 'a'*40; task = 'b'*40; candidate = 'candidate-1'; seed_id = 'prod-'+commit
+            archive = root/'accepted-artifacts'/candidate/commit; archive.mkdir(parents=True)
+            (archive/'release.json').write_text(json.dumps(dict(source_commit=commit, source_digest='digest', files={'fixture': 'hash'})))
+            seeds = root/'seeds'
+            worker, slots, journal, restored, restore_program, clear_data = self._baseline_sync_fixture(
+                root, commit, candidate, seed_id, task, completed=list(r.VERIFICATION_ENVS),
+                occupied=[('verify-1', 'delivery-1')])
+            with patch.object(r, 'RUN', root):
+                # 全部槽位都已登记且未发现不一致，但 verify-1 仍被任务占用，无法核对实际程序。
+                self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                        seeds, seeds/seed_id, commit, seed_id)
+                self.assertEqual(restored, [])
+                self.assertIsNone(r.read(journal).get('complete'))
+                # 该任务结束并释放槽位后仍停在任务版本，必须重新维护。
+                slots['verify-1'].update(state='idle', delivery_id=None)
+                self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                        seeds, seeds/seed_id, commit, seed_id)
+                self.assertEqual(restored, ['verify-1'])
+                self.assertEqual(r.read(self._slot_meta(root, 'verify-1'))['commit'], commit)
+                self._run_baseline_sync(worker, journal, restored, restore_program, clear_data,
+                                        seeds, seeds/seed_id, commit, seed_id)
+                self.assertTrue(r.read(journal)['complete'])
+
 
 class BatchFlowTests(unittest.TestCase):
     """组批只在发布器空闲、窗口到期后冻结；一个批次只构建和发布一次。"""
