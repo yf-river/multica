@@ -180,6 +180,17 @@ def clear_environment(r, batch, fence):
                 pending = sql(target, target['database'], "SELECT count(*) FROM agent_task_queue WHERE status NOT IN ('completed','failed','cancelled')")
                 if pending != '0':
                     raise r.RecoveryRequired('联调环境仍有未完成任务，保留现场')
+                accounts = [part.strip() for part in cfg['server'].get('ALLOWED_ACCOUNTS', '').split(',') if part.strip()]
+                if len(accounts) != 1 or not re.fullmatch(r'[a-zA-Z0-9_.@-]+', accounts[0]):
+                    raise r.RecoveryRequired('联调环境需要明确唯一的测试账号')
+                users=json.loads(sql(target,target['database'],"SELECT COALESCE(json_agg(json_build_object('account',account,'password_hash',password_hash)),'[]'::json)::text FROM public.\"user\" WHERE COALESCE(password_hash,'')<>''"))
+                if len(users)>1:
+                    raise r.RecoveryRequired('联调环境存在多个密码账号，无法自动确定恢复身份')
+                login=users[0] if users else dict(account=accounts[0],password_hash='')
+                if not re.fullmatch(r'[a-zA-Z0-9_.@-]+',login.get('account') or ''):
+                    raise r.RecoveryRequired('联调登录账号无法安全恢复')
+                state['login'] = login
+                r.write(journal,state,True)
             except Exception:
                 fence()
                 r.http(r.health_url('int')+'/drain', 'DELETE')
@@ -255,6 +266,18 @@ def apply_test_runtime(r):
           cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT':str(r.ROOT)})
 
 
+def restore_login(r, target, state, account, fence):
+    """初始化使用临时口令绑定 Daemon，随后恢复联调账号原有密码。"""
+    login=state.get('login') or {}
+    if not login.get('password_hash'):return
+    if login.get('account')!=account:
+        raise r.RecoveryRequired('联调账号与清理前身份不一致')
+    fence()
+    value=login['password_hash'].replace("'", "''")
+    count=sql(target,target['database'],"WITH changed AS (UPDATE public.\"user\" SET password_hash='%s' WHERE account='%s' RETURNING 1) SELECT count(*) FROM changed" % (value,account))
+    if count!='1':raise r.RecoveryRequired('联调账号密码恢复失败')
+
+
 def restore_environment(r, seed, batch, pointer, fence):
     """按已验收的 SQL 种子恢复已清理的 int；中断时重入同一批次。"""
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', batch or ''):
@@ -288,6 +311,9 @@ def restore_environment(r, seed, batch, pointer, fence):
             accounts = [part.strip() for part in cfg['server'].get('ALLOWED_ACCOUNTS', '').split(',') if part.strip()]
             if len(accounts) != 1 or not re.fullmatch(r'[a-zA-Z0-9_.@-]+', accounts[0]):
                 raise r.RecoveryRequired('联调环境需要明确唯一的测试账号')
+            account=(state.get('login') or {}).get('account') or accounts[0]
+            if not re.fullmatch(r'[a-zA-Z0-9_.@-]+',account):
+                raise r.RecoveryRequired('联调登录账号无法安全恢复')
             running = Path(meta['release_dir']).resolve()
             selected = seed.restore_release(manifest, running)
             package = r.read(Path(selected)/'release.json')
@@ -300,7 +326,7 @@ def restore_environment(r, seed, batch, pointer, fence):
                     raise r.RecoveryRequired('联调种子基线复制校验失败')
                 selected = destination
             state.update(stage='initializing', batch=batch, seed=pointer, restore_release=str(Path(selected).resolve()),
-                         restore_release_id=package['id'], account=accounts[0], password=secrets.token_urlsafe(32))
+                         restore_release_id=package['id'], account=account, password=secrets.token_urlsafe(32))
             r.write(journal, state, True)
         elif state.get('seed') != pointer:
             raise r.RecoveryRequired('联调恢复中不能更换 SQL 种子')
@@ -340,6 +366,7 @@ def restore_environment(r, seed, batch, pointer, fence):
         state['target'] = target;state['stage'] = 'initializing';r.write(journal,state,True)
         initialize_database(r, seed, target, pointer, release, state['account'], state['password'], fence)
         bind_account(r, seed, release, state['account'], state['password'], fence)
+        restore_login(r, target, state, state['account'], fence)
         fence()
         state['stage'] = 'starting';r.write(journal,state,True)
         meta = r.read(r.meta_path('int'));meta['pids'] = {}

@@ -119,9 +119,9 @@ class IntegrationIdentityTests(unittest.TestCase):
                 @staticmethod
                 def write(path, value, private=False): path.write_text(json.dumps(value))
             R.meta_path('int').write_text(json.dumps({'release_dir': '/release', 'pids': {'daemon': 11, 'web': 12, 'server': 13}}))
-            R.config_path('int').write_text(json.dumps({'server': {}}))
+            R.config_path('int').write_text(json.dumps({'server': {'ALLOWED_ACCOUNTS':'develop'}}))
             # Daemon exits immediately after shutdown.
-            with patch.object(data, 'identity', return_value=target), patch.object(R, 'exists', side_effect=[True, True, False, False]), patch.object(data, 'sql', return_value='0'), patch.object(data, 'clear_database') as clear, patch.object(data, 'clear_uploads', side_effect=[RuntimeError('interrupted'), None]):
+            with patch.object(data, 'identity', return_value=target), patch.object(R, 'exists', side_effect=[True, True, False, False]), patch.object(data, 'sql', side_effect=['0','[{"account":"actual","password_hash":"old-hash"}]']), patch.object(data, 'clear_database') as clear, patch.object(data, 'clear_uploads', side_effect=[RuntimeError('interrupted'), None]):
                 with self.assertRaisesRegex(RuntimeError, 'interrupted'): data.clear_environment(R, 'batch', lambda: None)
                 self.assertEqual(R.read(root/'integration-data.json')['stage'], 'cleaning')
                 self.assertEqual(R.read(R.meta_path('int'))['pids'], {})
@@ -129,6 +129,15 @@ class IntegrationIdentityTests(unittest.TestCase):
             self.assertEqual(R.drain.call_count, 1)
             self.assertEqual(clear.call_count, 2)
             self.assertEqual(R.read(root/'integration-data.json')['stage'], 'cleaned')
+            self.assertEqual(R.read(root/'integration-data.json')['login']['account'], 'actual')
+
+    def test_restored_login_reuses_only_the_same_int_account(self):
+        target = data.identity(FakeRelease())
+        with patch.object(data,'sql',return_value='1') as sql:
+            data.restore_login(FakeRelease(),target,{'login':{'account':'develop','password_hash':'old-hash'}},'develop',lambda:None)
+            self.assertIn("password_hash='old-hash'",sql.call_args.args[2])
+            with self.assertRaisesRegex(RuntimeError,'身份不一致'):
+                data.restore_login(FakeRelease(),target,{'login':{'account':'other','password_hash':'old-hash'}},'develop',lambda:None)
 
     def test_cleanup_does_not_take_over_another_batch(self):
         target = data.identity(FakeRelease())
