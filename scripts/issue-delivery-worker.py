@@ -1014,6 +1014,19 @@ class Worker:
         return True
 
     def batch_prepare(self,batch,members,rows):
+        # 固定成员可能已从队列消失；必须精确查询，不能将暂时缺行当作撤回。
+        for member in members:
+            identity=member['delivery_id']
+            delivery=self.batch_row(rows,identity)
+            if not delivery:
+                delivery=self.batch_row(self.api('delivery-queue?current='+identity),identity)
+            if not delivery:return True
+            replaced=delivery.get('phase')=='needs_changes' and delivery.get('error')=='负责人显式提交下一版本'
+            if replaced or delivery.get('phase') in ('cancelled','published'):
+                self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],
+                                     error='固定交付已退出/替换',conflict_delivery_id=identity))
+                return True
+        if not members:return True
         representative=members[0]
         delivery=self.batch_row(rows,representative['delivery_id'])
         if not delivery:return True

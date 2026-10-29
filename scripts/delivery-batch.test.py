@@ -325,6 +325,35 @@ class BatchFlowTests(unittest.TestCase):
         self.assertEqual(self.calls[-2]['stage'], 'conflict')
         self.assertTrue(self.calls[-1]['automatic'])
 
+    def test_frozen_replaced_member_fails_before_claim_and_requeues_valid(self):
+        for old_phase in ('needs_changes','cancelled','published'):
+            with self.subTest(phase=old_phase):
+                self.calls=[]
+                old=dict(delivery('old',old_phase),error='负责人显式提交下一版本' if old_phase=='needs_changes' else '')
+                valid=delivery('valid'); new=delivery('new')
+                self.state=dict(batch=dict(id='b1',status='frozen',worker_token='w1'),members=[dict(delivery_id='old'),dict(delivery_id='valid')])
+                self.worker.api=lambda path: [old] if path=='delivery-queue?current=old' else (_ for _ in ()).throw(AssertionError(path))
+                with patch.object(self.worker,'publication_guard',side_effect=AssertionError('must not claim')):
+                    self.worker.tick_batches([valid,new])
+                self.assertEqual(self.actions(),['fail'])
+                self.assertEqual(self.calls[-1]['conflict_delivery_id'],'old')
+                self.assertEqual(self.calls[-1]['error'],'固定交付已退出/替换')
+                self.state=dict(batch=None,members=[]); self.calls=[]
+                self.worker.tick_batches([valid,new])
+                self.assertEqual(self.actions(),['open'])
+
+    def test_frozen_missing_or_same_delivery_repair_is_not_failed(self):
+        for old in (None,dict(delivery('old','needs_changes'),error='等待原任务修复')):
+            with self.subTest(old=old):
+                self.calls=[]
+                self.state=dict(batch=dict(id='b1',status='frozen',worker_token='w1'),members=[dict(delivery_id='old')])
+                self.worker.api=lambda path: [] if old is None else [old]
+                with patch.object(self.worker,'publication_guard',side_effect=AssertionError('claim attempted')):
+                    if old is None:self.worker.tick_batches([])
+                    else:
+                        with self.assertRaisesRegex(AssertionError,'claim attempted'):self.worker.tick_batches([old])
+                self.assertNotIn('fail',self.actions())
+
     def test_project_merge_conflict_preserves_the_batch(self):
         member = dict(delivery_id='d1', source_commit='a' * 40, result='pending')
         batch = dict(id='b1', status='frozen', worker_token='w1', project_id='project-a')
