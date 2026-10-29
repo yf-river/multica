@@ -109,7 +109,7 @@ def source_digest(root):
         h.update(name.encode() + b'\0'); h.update(p.read_bytes()); files.append(name)
     return h.hexdigest(), files
 
-def validation_identity(source, env='int'):
+def validation_identity(source, env='int', slot_seed=None):
     """业务输入和验收程序独立于版本戳；缺少可靠映射时选择完整验收。"""
     _, names = source_digest(Path(source))
     runtime = hashlib.sha256(); schema = hashlib.sha256(); suite = hashlib.sha256()
@@ -124,8 +124,8 @@ def validation_identity(source, env='int'):
                     configuration=hashlib.sha256(config_path(env).read_bytes()).hexdigest())
     # 2. 槽位候选的数量身份还要绑定测试数据：同一程序在不同种子上的结果不能算同一份证据。
     if env != 'int':
-        seed = current_seed() or {}
-        identity.update(environment=env, seed=seed.get('seed_id', ''), seed_sha256=seed.get('dump_sha256', ''))
+        seed = slot_seed if slot_seed is not None else (current_seed() or {})
+        identity.update(environment=env, seed=seed.get('seed_id', ''), seed_sha256=seed.get('seed_sha256', seed.get('dump_sha256', '')))
     return identity
 
 def validation_plan(source, previous):
@@ -1150,7 +1150,7 @@ def build_verification(source, delivery_id, *, dev_web=False):
     return target
 
 
-def prepare_verification(source, artifact, lease, *, dev_web=False):
+def prepare_verification(source, artifact, lease, *, dev_web=False, slot_seed=None):
     env = lease['name']
     if env not in VERIFICATION_ENVS:
         raise RuntimeError('非法任务验收槽位')
@@ -1183,7 +1183,7 @@ def prepare_verification(source, artifact, lease, *, dev_web=False):
                 publish(env, target)
             # 3. 候选登记时带上含种子的身份，证据才能区分同一程序在不同测试数据上的结果。
             record.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],
-                          validation_identity=validation_identity(source, env),deployed_at=read(meta_path(env))['deployed_at'])
+                          validation_identity=validation_identity(source, env, slot_seed),deployed_at=read(meta_path(env))['deployed_at'])
         except Exception as error:
             record.update(status='recovery_required',error=str(error))
             raise

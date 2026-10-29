@@ -421,8 +421,8 @@ class Worker:
             raise r.RecoveryRequired('当前 SQL 种子身份不符或尚未验收')
         return current
 
-    def seed_matches(self,name):
-        current=self.current_seed()
+    def seed_matches(self,name,expected=None):
+        current=expected if expected is not None else self.current_seed()
         if not current:return True
         try:record=self.api('delivery-queue/slots/seed?name='+name)
         except urllib.error.HTTPError as e:
@@ -430,7 +430,14 @@ class Worker:
             return False
         # 修改 9. 单槽位查询返回 verified（列表接口才是 seed_verified）；按实际接口响应判断，
         # 否则有 current seed 时每次领取都会被误判成版本不一致而隔离。
-        return record.get('seed_id')==current.get('seed_id') and record.get('seed_sha256')==current.get('dump_sha256') and record.get('verified') is True
+        return record.get('seed_id')==current.get('seed_id') and record.get('seed_sha256')==current.get('seed_sha256',current.get('dump_sha256')) and record.get('verified') is True
+
+    def lease_seed(self,name):
+        if not self.current_seed():return None
+        record=self.api('delivery-queue/slots/seed?name='+name)
+        if not record.get('verified') or not record.get('seed_id') or not record.get('seed_sha256'):
+            raise r.RecoveryRequired('验收槽位缺少已验证的种子身份')
+        return record
 
     def ensure_seed(self):
         if not self.current_seed():return
@@ -615,7 +622,7 @@ class Worker:
         env=old['name']
         metadata=r.read(r.meta_path(env))
         r.check_process_ownership(env,metadata)
-        if not self.seed_matches(env):raise r.RecoveryRequired('修复不能重置种子或换任务')
+        if not self.seed_matches(env,request):raise r.RecoveryRequired('修复不能重置种子或换任务')
         source=self.source(d,integrate=False)
         self.failure_stage='repair_building'
         save('repair_building',lease=old,repair_lease=old,source_commit=d['source_commit'])
@@ -680,7 +687,7 @@ class Worker:
             if c and c.get('commit')==lease['source_commit'] and c.get('status') in ('building','recovery_required'):
                 if live.get('release_id')==manifest['id'] and dev.marker(r,lease['name']).exists() and r.read(dev.marker(r,lease['name'])).get('state')=='running':
                     r.check_process_ownership(lease['name'],live);r.verify_browser(lease['name'])
-                    c.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],validation_identity=r.validation_identity(source,lease['name']),deployed_at=live['deployed_at'])
+                    c.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],validation_identity=r.validation_identity(source,lease['name'],self.lease_seed(lease['name'])),deployed_at=live['deployed_at'])
                     with r.lock(r.candidate_lock(lease['name'])):r.save_candidate(c)
                     ready_new=True
                 elif live.get('release_id')==c.get('previous_release'):
@@ -691,7 +698,7 @@ class Worker:
                 dev.stop(r,lease['name'],lease)
                 if c and c.get('status') not in ('released','failed','succeeded'):
                     r.release_candidate(c['id'],env=lease['name'])
-                c=r.prepare_verification(source,artifact,lease,dev_web=True)
+                c=r.prepare_verification(source,artifact,lease,dev_web=True,slot_seed=self.lease_seed(lease['name']))
             elif c.get('generation')!=lease['generation']:
                 c['generation']=lease['generation']
                 with r.lock(r.candidate_lock(lease['name'])):r.save_candidate(c)
@@ -800,7 +807,8 @@ class Worker:
                     save('updating',lease=lease,previous_lease=old_lease,candidate_id=c['id'],source=str(source),source_commit=lease['source_commit'],artifact=str(artifact))
                     c=deploy_update(lease,c,source,artifact)
                 if c is None:
-                    c=r.prepare_verification(source,artifact,lease,dev_web=True) if hot else r.prepare_verification(source,artifact,lease)
+                    pinned_seed=self.lease_seed(lease['name'])
+                    c=r.prepare_verification(source,artifact,lease,dev_web=hot,slot_seed=pinned_seed)
                     lease['candidate_id']=c['id'];slot(lease,'prepared')
                     save('verifying',lease=lease,candidate_id=c['id'])
                 if heartbeat_errors:raise heartbeat_errors[0]

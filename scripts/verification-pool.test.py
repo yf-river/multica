@@ -185,6 +185,13 @@ class SeedGateTests(unittest.TestCase):
             with patch.object(r,'current_seed',return_value=dict(seed_id='seed-a',dump_sha256='a'*64)),patch.object(worker,'api',return_value=dict(record)):
                 self.assertIs(worker.seed_matches('verify-1'),expected,record)
 
+    def test_repair_accepts_original_verified_seed_after_global_seed_changes(self):
+        worker=self.worker()
+        original=dict(seed_id='seed-old',seed_sha256='a'*64,verified=True)
+        with patch.object(r,'current_seed',return_value=dict(seed_id='seed-new',dump_sha256='b'*64)),patch.object(worker,'api',return_value=original):
+            self.assertFalse(worker.seed_matches('verify-1'))
+            self.assertTrue(worker.seed_matches('verify-1',original))
+
     def test_stale_slot_is_restored_before_claim(self):
         worker=self.worker()
         slots=[dict(name='verify-1',enabled=True,state='idle',seed_id='seed-old',seed_sha256='b'*64,seed_verified=True)]

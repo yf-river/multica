@@ -7,6 +7,17 @@ spec=importlib.util.spec_from_file_location('release',Path(__file__).with_name('
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
 class CoordinationTests(unittest.TestCase):
+    def test_verify_identity_uses_occupied_slot_seed_when_global_seed_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'source';source.mkdir();config=root/'verify.json';config.write_text('{}')
+            subprocess.run(['git','init','-q',source],check=True)
+            (source/'handler.go').write_text('package handler\n')
+            pinned={'seed_id':'seed-old','seed_sha256':'a'*64}
+            with patch.object(r,'config_path',return_value=config),patch.object(r,'current_seed',return_value={'seed_id':'seed-new','dump_sha256':'b'*64}):
+                identity=r.validation_identity(source,'verify-1',pinned)
+            self.assertEqual(identity['seed'],'seed-old')
+            self.assertEqual(identity['seed_sha256'],'a'*64)
+
     def test_validation_identity_reuses_docs_but_invalidates_code_and_configuration(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);source=root/'source';source.mkdir();config=root/'int.json';config.write_text('{}')
