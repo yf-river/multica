@@ -80,6 +80,24 @@ class DeliveryTests(unittest.TestCase):
             worker.prepare_repair(d,dict(lease=dict(old,generation=30),repair_lease=old),Mock())
             self.assertEqual(api.call_args.args[1]['generation'],29)
 
+    def test_project_repair_builds_development_frontend(self):
+        worker=object.__new__(w.Worker)
+        old=dict(name='verify-1',generation=29,worker_token='old',source_commit='old',delivery_id='delivery')
+        request=dict(environment='verify-1',generation=29,compatibility_evidence='report')
+        d=dict(id='delivery',project_id='project-a',source_commit='new',worker_token='new',plan_snapshot=dict(verification_repair=dict(request=request)))
+        manifest=dict(source_commit='new',files={'server':'sha'},verification_frontend='dev')
+        meta=dict(release_dir='/old',release_id='old')
+        with patch.object(worker,'batch_project',return_value='project-a'),patch.object(worker,'source',return_value=Path('/source')), \
+             patch.object(worker,'seed_matches',return_value=True),patch.object(r,'check_process_ownership'), \
+             patch.object(r,'read',side_effect=lambda path:manifest if str(path).endswith('release.json') else meta), \
+             patch.object(r,'build_verification',return_value=Path('/artifact')) as build,patch.object(r,'checksums',return_value=manifest['files']), \
+             patch.object(r,'validate_pending_migrations'),patch.object(r,'candidate_path') as candidate, \
+             patch.object(w,'repair_detail',return_value='detail'),patch.object(worker,'api',return_value=dict(old,generation=30)):
+            candidate.return_value.exists.return_value=False
+            saved=[];worker.prepare_repair(d,dict(lease=old),lambda stage,**kw:saved.append((stage,kw)))
+            build.assert_called_once_with(Path('/source'),'delivery',dev_web=True)
+            self.assertTrue(saved[-1][1]['dev_web'])
+
     def test_repair_uses_pinned_checkout_not_stale_task_worktree(self):
         worker=object.__new__(w.Worker); worker.env='prod'
         delivery=dict(id='delivery',source_commit='a'*40,source_branch='feature/new',project_id='project-a',

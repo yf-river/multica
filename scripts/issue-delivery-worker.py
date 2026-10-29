@@ -629,7 +629,8 @@ class Worker:
         source=self.source(d,integrate=False)
         self.failure_stage='repair_building'
         save('repair_building',lease=old,repair_lease=old,source_commit=d['source_commit'])
-        artifact=r.build_verification(source,d['id'])
+        hot=bool(self.batch_project() and d.get('project_id')==self.batch_project())
+        artifact=r.build_verification(source,d['id'],dev_web=hot)
         manifest=r.read(artifact/'release.json')
         if manifest['source_commit']!=d['source_commit'] or manifest['files']!=r.checksums(artifact):raise r.RecoveryRequired('修复制品指纹不符')
         r.validate_pending_migrations(artifact,metadata['release_dir'])
@@ -645,7 +646,7 @@ class Worker:
         self.failure_stage='repair_slot_advance'
         lease=self.api('delivery-queue/slots/advance',dict(old,action='repair',replacement_worker_token=d['worker_token'],
                        replacement_source_commit=d['source_commit'],detail=detail))
-        save('preparing',lease=lease,repair_lease=old,artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
+        save('preparing',lease=lease,repair_lease=old,artifact=str(artifact),source=str(source),source_commit=d['source_commit'],dev_web=hot)
         return source,artifact,lease
 
     def pool_delivery(self,delivery):
@@ -724,7 +725,7 @@ class Worker:
                 c=None
                 repairing=bool((d.get('plan_snapshot') or {}).get('verification_repair')) and not d.get('candidate_id')
                 if repairing:
-                    hot=False  # Repair builds a separate pinned artifact, not the previous task directory.
+                    hot=bool(self.batch_project() and d.get('project_id')==self.batch_project())
                     if d['phase']=='waiting_int':
                         self.advance(d,'claim');d=refresh()
                     if d['phase']!='testing':return
