@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import ExitStack
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,87 @@ class PoolFlowTests(unittest.TestCase):
             with self.assertRaises(r.RecoveryRequired):worker.build_verification_update('delivery',lease,candidate,Path('/source'))
             self.assertEqual(stop.call_count,1)
             build.assert_not_called()
+
+    def test_pool_update_failure_then_reregister_and_deploy_same_slot(self):
+        delivery='00000000-0000-0000-0000-000000000001'
+        old='a'*40; new='b'*40
+        worker=object.__new__(w.Worker); worker.env='prod'
+        lease=dict(name='verify-1',generation=1,delivery_id=delivery,worker_token='token',source_commit=old,candidate_id='old-candidate',state='verifying')
+        old_candidate=dict(id='old-candidate',delivery_id=delivery,status='verifying',commit=old)
+        new_candidate=dict(id='new-candidate',delivery_id=delivery,status='verifying',commit=new)
+        request=dict(source_commit=new,source_branch='feature/fix')
+        d=dict(id=delivery,phase='testing',project_id='project-a',source_commit=old,source_branch='feature/fix',worker_token='token',candidate_id='old-candidate',acceptance_submitted=False,plan_snapshot={'verification_update':{'state':'pending','request':request}},verification_owner={'external':True},evidence=[])
+        events=[]; failures=[]
+        def api(path,body=None,method=None):
+            if path=='release-agent/settings':return dict(configured=False,enabled=False)
+            if path.startswith('delivery-queue?'):return [dict(d)]
+            if path.startswith('delivery-queue/slots?'):return dict(lease)
+            if path=='delivery-queue/slots/advance':
+                action=body['action'];events.append('slot:'+action)
+                if action=='resume':lease['generation']+=1
+                if action=='prepared':lease.update(candidate_id=body['candidate_id'],state='verifying')
+                return dict(lease)
+            raise AssertionError(path)
+        def advance(current,action,**extra):
+            events.append('delivery:'+action)
+            if action=='verification-update-failed':
+                failures.append((dict(lease),r.read(worker.pool_job_path(delivery)),extra['error']))
+                d['plan_snapshot']['verification_update']['state']='failed'
+            elif action=='begin-verification-update':
+                d['plan_snapshot']['verification_update']['state']='applying'
+                d['source_commit']=new
+                lease.update(generation=lease['generation']+1,source_commit=new,state='preparing')
+                return {'slot_generation':lease['generation']}
+            elif action=='prepared':
+                d.update(candidate_id=extra['candidate_id'],acceptance_submitted=True,final_review={'state':'passed','head_sha':new})
+            elif action=='accepted':d['phase']='awaiting_review'
+            return dict(d)
+        def sleep(_):
+            if d['plan_snapshot']['verification_update']['state']=='failed':
+                saved=r.read(worker.pool_job_path(delivery))
+                self.assertEqual(saved['stage'],'verifying')
+                self.assertEqual(saved['candidate_id'],'old-candidate')
+                self.assertEqual(saved['lease']['candidate_id'],'old-candidate')
+                d['plan_snapshot']['verification_update']={'state':'pending','request':request}
+                events.append('reregister')
+        def build(*args,**kwargs):
+            events.append('build')
+            if events.count('build')==1:raise RuntimeError('install failed')
+            return artifact
+        def prepare(source_arg,artifact_arg,lease_arg,**kwargs):
+            events.append('deploy-dev')
+            self.assertEqual(lease_arg['name'],'verify-1')
+            self.assertEqual(lease_arg['source_commit'],new)
+            self.assertTrue(kwargs['dev_web'])
+            self.assertEqual(source_arg,source)
+            return dict(new_candidate)
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)):
+            r.write(Path(tmp)/'delivery-batch.json',dict(enabled=True,controller_environment='prod',project_id='project-a'))
+            r.write(worker.pool_job_path(delivery),dict(stage='verifying',lease=dict(lease),candidate_id='old-candidate'))
+            r.write(r.meta_path('verify-1'),dict(frontend_url='http://fixture',release_id='old-release'))
+            source=Path(tmp)/'source';source.mkdir()
+            artifact=Path(tmp)/'artifact';artifact.mkdir()
+            r.write(artifact/'release.json',dict(source_commit=new,verification_frontend='dev',files={}))
+            patches=[patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source),
+                 patch.object(worker,'lease_seed',return_value={}),patch.object(worker,'require_sql_seed'),patch.object(worker,'verification_pending',return_value=True),
+                 patch.object(r,'candidate',return_value=old_candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'),
+                 patch.object(r,'checksums',return_value={}),patch.object(r,'build_verification',side_effect=build),patch.object(r,'prepare_verification',side_effect=prepare),
+                 patch.object(r,'release_candidate'),patch.object(r,'drain'),patch.object(r,'accept'),patch.object(w.dev,'adopt'),
+                 patch.object(w.dev,'stop',side_effect=lambda *args:events.append('stop')),patch.object(w.seed,'adopt_cleaning'),patch.object(w.seed,'clear_slot'),
+                 patch.object(w.time,'sleep',side_effect=sleep)]
+            with ExitStack() as stack:
+                for item in patches:stack.enter_context(item)
+                worker.pool_delivery(delivery)
+        self.assertEqual(len(failures),1)
+        self.assertEqual(failures[0][0]['candidate_id'],'old-candidate')
+        self.assertEqual(failures[0][0]['source_commit'],old)
+        self.assertEqual(failures[0][1]['candidate_id'],'old-candidate')
+        self.assertIn('install failed',failures[0][2])
+        self.assertLess(events.index('stop'),events.index('build'))
+        self.assertLess(events.index('delivery:verification-update-failed'),events.index('reregister'))
+        self.assertLess(events.index('reregister'),events.index('delivery:begin-verification-update'))
+        self.assertLess(events.index('delivery:begin-verification-update'),events.index('deploy-dev'))
+        self.assertEqual(lease['candidate_id'],'new-candidate')
 
     def run_flow(self, *, failed=False, resume=False,busy=False,project=False):
         identity='00000000-0000-0000-0000-000000000001'
