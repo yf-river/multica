@@ -162,6 +162,59 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(record['status'],'verifying')
         r.validate_candidate(record)
 
+    def test_real_dev_prepare_deploys_exact_candidate(self):
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+        import os
+        import pwd
+        web=self.root/'apps/web'
+        (web/'next.config.ts').write_text('agentRules: false')
+        (web/'next-env.d.ts').write_text('fixture')
+        self.commit();self.sha=self.git('rev-parse','HEAD');source=self.worktree()
+        env='verify-3';old=self.base/'old';old.mkdir()
+        artifact=self.base/'artifact';artifact.mkdir();(artifact/'program').write_text('candidate')
+        digest=r.source_digest(source)[0]
+        manifest=dict(id='new-release',source_commit=self.sha,source_digest=digest,verification_frontend='dev',files=r.checksums(artifact))
+        r.write(artifact/'release.json',manifest)
+        cfg=dict(web=dict(MULTICA_SERVICE_USER=pwd.getpwuid(os.getuid()).pw_name,HOME=str(self.base/'web/home')),server=dict(CORS_ALLOWED_ORIGINS='http://fixture'))
+        (self.base/'web').mkdir()
+        r.write(r.config_path(env),cfg)
+        meta=dict(release_id='old-release',release_dir=str(old),pids=dict(server=111,web=112,daemon=113),frontend_port='4567',frontend_url='http://fixture',backend_url='http://backend',daemon_profile='fixture',log_paths=dict(server=str(self.base/'server.log'),web=str(self.base/'web.log'),daemon=str(self.base/'daemon.log')))
+        r.write(r.meta_path(env),meta)
+        lease=dict(name=env,generation=8,delivery_id='delivery-a',source_commit=self.sha)
+        original_run=subprocess.run;original_check=subprocess.check_output;original_output=r.output
+        def fake_run(args,*a,**kw):
+            if str(args[0]) in ('mount','mountpoint','setfacl'):
+                return SimpleNamespace(returncode=1 if str(args[0])=='mountpoint' else 0)
+            return original_run(args,*a,**kw)
+        def fake_check(args,*a,**kw):
+            if str(args[0])=='getfacl':return b'fixture acl'
+            return original_check(args,*a,**kw)
+        def fake_output(args,*a,**kw):
+            if str(args[0]).endswith('/server/bin/multica'):return 'fixture-version'
+            return original_output(args,*a,**kw)
+        def fake_http(url,*args,**kwargs):
+            if url.endswith('/health'):return dict(pid=113,profile='fixture')
+            if url.endswith('/drain'):return dict(release_pause_supported=False)
+            if url.endswith('/api/config'):return dict(environment_id=env)
+            return {}
+        calls=[]
+        def fake_start(args,cwd,envvars,log):
+            calls.append((args,cwd,envvars,log));return 222
+        with ExitStack() as stack:
+            for name,value in dict(validate_verification_config=lambda *a:None,check_process_ownership=lambda *a:None,check_live_environment=lambda *a:None,isolation_check=lambda *a,**k:None,prepare_database=lambda *a:None,readiness_snapshot=lambda *a:{},process_env=lambda *a:{},drain=lambda *a:None,exists=lambda *a:False,owned_stop=lambda *a:None,start_maintenance=lambda *a:None,launch=lambda *a:dict(server=211,web=212,daemon=213),ready=lambda *a,**k:None,verify_browser=lambda *a:None,verify_logs=lambda *a:None,http=fake_http,start=fake_start,output=fake_output).items():
+                stack.enter_context(patch.object(r,name,side_effect=value))
+            stack.enter_context(patch.object(subprocess,'run',side_effect=fake_run))
+            stack.enter_context(patch.object(subprocess,'check_output',side_effect=fake_check))
+            record=r.prepare_verification(source,artifact,lease,dev_web=True,slot_seed=dict(seed_id='seed',seed_sha256='hash'))
+        live=r.read(r.meta_path(env));state=r.read(r.RUN/'verification-dev'/f'{env}.json')
+        self.assertEqual((record['commit'],record['source'],record['generation'],record['status']), (self.sha,str(source),8,'verifying'))
+        self.assertEqual((live['commit'],live['release_id'],live['frontend_mode']),(self.sha,'new-release','dev'))
+        self.assertEqual((state['source'],state['generation'],state['state']),(str(source),8,'running'))
+        self.assertEqual(calls[0][0][0], 'node')
+        self.assertEqual([str(x) for x in calls[0][0][2:]],['dev','--webpack','--port','4567','--hostname','0.0.0.0'])
+        self.assertEqual(calls[0][2]['MULTICA_RELEASE_MANIFEST'],str(Path(live['release_dir'])/'release.json'))
+
     def test_missing_published_record_blocks_build(self):
         (self.run/'published.json').unlink()
         r.write(r.meta_path('prod'),{'commit':self.sha,'source_digest':'dirty-snapshot'})

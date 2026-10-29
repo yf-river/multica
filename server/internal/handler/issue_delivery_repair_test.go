@@ -48,6 +48,13 @@ func TestVerificationUpdateKeepsSlotAndRejectsOldAcceptance(t *testing.T) {
 	testutil.Call(t, testHandler.ActIssueDelivery, request(wrong)).Want(409)
 	testutil.Call(t, testHandler.ActIssueDelivery, request(repair)).Want(200)
 	testutil.Call(t, testHandler.ActIssueDelivery, request(repair)).Want(200)
+	fail := map[string]any{"id": delivery, "revision": revision + 1, "action": "verification-update-failed", "worker_token": token, "source_commit": strings.Repeat("a", 40), "error": "build failed"}
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", fail)).Want(200)
+	testutil.Call(t, testHandler.ActIssueDelivery, request(repair)).Want(200) // Idempotent replay does not restart the failed operation.
+	revision += 2
+	repair.OperationID = dbid.NewV7().String()
+	repair.Source = strings.Repeat("d", 40)
+	testutil.Call(t, testHandler.ActIssueDelivery, request(repair)).Want(200)
 	var phase, source, pending, state string
 	var accepted bool
 	dbfx.QueryRow(t, `SELECT d.phase,d.source_commit,d.plan_snapshot->'verification_update'->>'state',d.acceptance_submitted,s.state FROM issue_delivery d JOIN verification_slot s ON s.delivery_id=d.id WHERE d.id=$1`, delivery).Scan(&phase, &source, &pending, &accepted, &state)
@@ -61,6 +68,9 @@ func TestVerificationUpdateKeepsSlotAndRejectsOldAcceptance(t *testing.T) {
 	update := map[string]any{"id": delivery, "revision": revision + 1, "action": "begin-verification-update", "worker_token": token, "source_commit": strings.Repeat("a", 40), "slot_generation": 18, "candidate_commit": repair.Source}
 	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", update)).Want(409)
 	update["slot_generation"] = 19
+	update["candidate_commit"] = strings.Repeat("c", 40)
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", update)).Want(409)
+	update["candidate_commit"] = repair.Source
 	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", update)).Want(200)
 	var slotGeneration int64
 	var slotCommit, slotCandidate string
@@ -71,6 +81,20 @@ func TestVerificationUpdateKeepsSlotAndRejectsOldAcceptance(t *testing.T) {
 	old := verification.Lease{Name: "verify-1", Workspace: testWorkspaceID, Delivery: delivery, Token: token, Source: strings.Repeat("a", 40), Candidate: "old-candidate", Generation: 19}
 	if err := (verification.Store{DB: testHandler.TxStarter}).Advance(context.Background(), old, "heartbeat", ""); err == nil {
 		t.Fatal("旧版本仍可操作槽位")
+	}
+	newLease := old
+	newLease.Generation = 20
+	newLease.Source = repair.Source
+	newLease.Candidate = "new-candidate"
+	slotReq := map[string]any{"name": newLease.Name, "generation": newLease.Generation, "workspace_id": newLease.Workspace, "delivery_id": newLease.Delivery, "worker_token": newLease.Token, "source_commit": newLease.Source, "candidate_id": newLease.Candidate, "action": "prepared"}
+	testutil.Call(t, testHandler.AdvanceVerificationSlot, newRequest("POST", "/slots/advance", slotReq)).Want(200)
+	prepared := map[string]any{"id": delivery, "revision": revision + 2, "action": "prepared", "worker_token": token, "source_commit": repair.Source, "candidate_id": newLease.Candidate, "candidate_url": "http://verify.example", "candidate_commit": repair.Source}
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", prepared)).Want(200)
+	var updateState, finalCandidate, slotState string
+	var live bool
+	dbfx.QueryRow(t, `SELECT d.plan_snapshot->'verification_update'->>'state',d.candidate_id,s.state,s.lease_expires_at>now() FROM issue_delivery d JOIN verification_slot s ON s.delivery_id=d.id WHERE d.id=$1 AND s.name='verify-1' AND s.generation=20 AND s.worker_token=$2 AND s.source_commit=$3 AND s.candidate_id=$4`, delivery, token, repair.Source, newLease.Candidate).Scan(&updateState, &finalCandidate, &slotState, &live)
+	if updateState != "applied" || finalCandidate != newLease.Candidate || slotState != "verifying" || !live {
+		t.Fatalf("updated candidate identity: %s %s %s %v", updateState, finalCandidate, slotState, live)
 	}
 }
 
