@@ -1,5 +1,6 @@
 """固定环境发布：真实临时 Git 仓库验证源码与回收，进程切换使用 Mock。"""
 import importlib.util
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -24,6 +25,13 @@ class ReleaseTest(unittest.TestCase):
         (self.root/'apps/web').mkdir(parents=True)
         (self.root/'apps/web/page.ts').write_text('first\n')
         (self.root/'.gitignore').write_text('node_modules/\n.env\n')
+        # 构建夹具携带实际操作包契约，源码身份和清单校验使用生产实现。
+        scripts = Path(__file__).parent
+        for name in r.operation_files(scripts):
+            target = self.root/'scripts'/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(scripts/name, target)
+        (self.root/'scripts/build-version.sh').write_text('printf v1.0.0')
         self.commit()
         self.sha=self.git('rev-parse','HEAD')
         self.run=self.base/'state'
@@ -270,6 +278,9 @@ class ReleaseTest(unittest.TestCase):
         with patch.object(r,'validate_candidate'),self.assertRaisesRegex(RuntimeError,'passed'):r.accept('candidate',evidence)
     def test_successful_acceptance_records_feature_evidence(self):
         record=self.record(self.worktree());record['status']='verifying';r.write(r.candidate_path(),record)
+        artifact=self.base/'artifact';artifact.mkdir();(artifact/'program').write_text('accepted program')
+        r.write(artifact/'release.json',{'id':record['release_id'],'files':r.checksums(artifact)})
+        r.write(r.meta_path('int'),{'release_dir':str(artifact)})
         evidence=self.base/'evidence.json'
         r.write(evidence,{'candidate':'candidate','summary':'verified','checks':[{'name':'feature','status':'passed','evidence':'actual result'}]})
         with patch.object(r,'validate_candidate'):r.accept('candidate',evidence)
@@ -279,7 +290,7 @@ class ReleaseTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'不能释放'):r.release_candidate('candidate')
     def test_failed_deployment_check_restores_previous(self):
         with patch.object(r,'deploy') as deploy,patch.object(r,'verify_browser',side_effect=RuntimeError('browser')),patch.object(r,'restore') as restore:
-            with self.assertRaisesRegex(RuntimeError,'browser'):r.publish('prod',self.base/'slot',10)
+            with self.assertRaisesRegex(RuntimeError,'browser'):r.publish_in_window('prod',self.base/'slot',10)
             restore.assert_called_once_with('prod',10)
     def test_failed_task_blocks_production(self):
         with patch.object(r,'task_api',return_value={'status':'failed'}):
@@ -315,7 +326,9 @@ class ReleaseTest(unittest.TestCase):
 
     def test_idle_slot_failure_does_not_leave_building_state(self):
         with patch.object(r,'idle_slot',side_effect=RuntimeError('busy directory')):
-            with self.assertRaisesRegex(RuntimeError,'busy directory'):r.prepare_int(self.root,1)
+            r.write(r.meta_path('int'),{'release_id':'previous'})
+            with self.assertRaisesRegex(RuntimeError,'busy directory'):
+                r.prepare_int(self.root,1,delivery={'publication_lease':{'generation':1}},fence=lambda:None)
         self.assertEqual(r.candidate()['status'],'failed')
 
     def test_restore_when_new_processes_have_exited(self):
@@ -350,21 +363,22 @@ class ReleaseTest(unittest.TestCase):
                     static=self.root/'apps/web/.next/static';static.mkdir(parents=True);(static/'a.js').write_text('asset')
                 return
             return original_run(args,**kw)
-        with patch.object(r,'run',side_effect=compiler):r.build(self.root,self.base/'first')
+        with patch.object(r,'executor_preflight',return_value={'fixture':'compiler boundary'}),patch.object(r,'run',side_effect=compiler):r.build(self.root,self.base/'first')
         r.write(r.meta_path('int'),{'release_dir':str(self.base/'first')})
         (self.root/'README.md').write_text('documentation update');self.commit()
-        with patch.object(r,'run',side_effect=compiler) as commands:r.build(self.root,self.base/'second')
+        with patch.object(r,'executor_preflight',return_value={'fixture':'compiler boundary'}),patch.object(r,'run',side_effect=compiler) as commands:r.build(self.root,self.base/'second')
         self.assertFalse(any(call.args[0][0] in ('go','pnpm') for call in commands.call_args_list))
         self.assertTrue((self.base/'second/apps/web/node_modules/next/dist/server/next-server.js').exists())
 
     def test_recovery_failure_is_distinct_from_safe_failure(self):
         with patch.object(r,'deploy'),patch.object(r,'verify_browser',side_effect=RuntimeError('browser')), \
              patch.object(r,'restore',side_effect=RuntimeError('old service cannot start')):
-            with self.assertRaises(r.RecoveryRequired):r.publish('prod',self.base/'slot')
+            with self.assertRaises(r.RecoveryRequired):r.publish_in_window('prod',self.base/'slot')
 
     def test_contended_publisher_lock_returns_without_waiting(self):
         with r.lock('publisher'):
-            with self.assertRaisesRegex(RuntimeError,'结束当前运行'):r.prepare_int(self.root,1)
+            with self.assertRaisesRegex(RuntimeError,'结束当前运行'):
+                r.prepare_int(self.root,1,delivery={'publication_lease':{'generation':1}},fence=lambda:None)
 
     def test_previous_slot_cleanup_preserves_current_and_legacy(self):
         current=self.run/'runtime/prod/a';current.mkdir(parents=True)
@@ -391,8 +405,11 @@ class PublicationFlowTest(unittest.TestCase):
         r.write(r.candidate_path(),record);r.write(r.request_path(record['id']),record)
         target=self.base/'prod-runtime'
         with patch.object(r,'idle_slot',return_value=target),patch.object(r,'copy_tree') as copy, \
-             patch.object(r,'publish') as publish,patch.object(r,'finish_cleanup') as cleanup:
+             patch.object(r,'publish') as publish,patch.object(r,'finish_cleanup') as cleanup, \
+             patch.object(r,'check_delivery_approval'),patch.object(r,'publication_api') as publication:
             r.worker(record['id'])
+        self.assertTrue(all(call.args[1]=='check' for call in publication.call_args_list))
+        self.assertGreaterEqual(publication.call_count,2)
         publish.assert_called_once_with('prod',target,1)
         self.assertEqual(copy.call_args.args,(current,target))
         self.assertEqual(r.read(self.run/'published.json')['commit'],self.sha)
@@ -410,7 +427,7 @@ class PublicationFlowTest(unittest.TestCase):
     def test_busy_int_does_not_build(self):
         r.write(r.candidate_path(),{'id':'other','status':'verifying'})
         with patch.object(r,'build') as build, self.assertRaisesRegex(RuntimeError,'其他候选'):
-            r.prepare_int(self.root,1)
+            r.prepare_int(self.root,1,delivery={'publication_lease':{'generation':1}},fence=lambda:None)
         build.assert_not_called()
 
 if __name__=='__main__':unittest.main()

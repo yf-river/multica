@@ -2675,20 +2675,36 @@ func TestExecuteAndDrain_ReportsFirstBufferedChunkTimestamp(t *testing.T) {
 	}
 
 	got := rec.snapshot()
-	if len(got) != 2 {
-		t.Fatalf("reported %d messages, want thinking and text: %+v", len(got), got)
+	// 首屏刷新可能先发送第一片；验证内容和起始时间，不约束有效的分批数量。
+	var thinking, text strings.Builder
+	var firstThinking, firstText time.Time
+	for _, message := range got {
+		if message.CreatedAt.IsZero() {
+			t.Fatalf("message has no observation time: %+v", message)
+		}
+		switch message.Type {
+		case "thinking":
+			thinking.WriteString(message.Content)
+			if firstThinking.IsZero() {
+				firstThinking = message.CreatedAt
+			}
+		case "text":
+			text.WriteString(message.Content)
+			if firstText.IsZero() {
+				firstText = message.CreatedAt
+			}
+		default:
+			t.Fatalf("unexpected transcript message: %+v", message)
+		}
 	}
-	if got[0].Type != "thinking" || got[0].Content != "think one think two" {
-		t.Fatalf("thinking message = %+v", got[0])
+	if thinking.String() != "think one think two" || text.String() != "text one text two" {
+		t.Fatalf("transcript content lost or reordered: %+v", got)
 	}
-	if boundary := <-backend.thinkingSecondStartedAt; !got[0].CreatedAt.Before(boundary) {
-		t.Fatalf("thinking created_at = %s, want before second chunk started at %s", got[0].CreatedAt, boundary)
+	if boundary := <-backend.thinkingSecondStartedAt; !firstThinking.Before(boundary) {
+		t.Fatalf("thinking created_at = %s, want before second chunk started at %s", firstThinking, boundary)
 	}
-	if got[1].Type != "text" || got[1].Content != "text one text two" {
-		t.Fatalf("text message = %+v", got[1])
-	}
-	if boundary := <-backend.textSecondStartedAt; !got[1].CreatedAt.Before(boundary) {
-		t.Fatalf("text created_at = %s, want before second chunk started at %s", got[1].CreatedAt, boundary)
+	if boundary := <-backend.textSecondStartedAt; !firstText.Before(boundary) {
+		t.Fatalf("text created_at = %s, want before second chunk started at %s", firstText, boundary)
 	}
 }
 

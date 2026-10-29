@@ -28,7 +28,7 @@ func TestDeliveryWorktreeRequiresSameIssueAgentAndWorkspace(t *testing.T) {
 	if err := saveDeliveryWorktree(task, env); err != nil {
 		t.Fatal(err)
 	}
-	next := Task{AgentID: task.AgentID, IssueID: task.IssueID, WorkspaceID: task.WorkspaceID, PriorWorkDir: work, DeliveryContext: &DeliveryContextData{Workflow: "project", Phase: "testing", OwnsCheckout: true}}
+	next := Task{AgentID: task.AgentID, IssueID: task.IssueID, WorkspaceID: task.WorkspaceID, PriorWorkDir: work, DeliveryContext: &DeliveryContextData{Workflow: "project", Phase: "waiting_int", OwnsCheckout: true}}
 	if got, err := deliveryWorktreeForTask(next, base); err != nil || got == nil || got.WorkDir != work {
 		t.Fatalf("未恢复原目录: %+v %v", got, err)
 	}

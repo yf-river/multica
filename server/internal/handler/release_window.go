@@ -90,6 +90,16 @@ func (h *Handler) ReleaseWindow(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "运行环境不存在")
 			return
 		}
+		var sameWindow bool
+		err = tx.QueryRow(r.Context(), `SELECT environment_id=$2 AND daemon_id=$3 AND release_id=$4 FROM release_window WHERE id=$1 FOR UPDATE`, b.ID, env, b.Daemon, b.Release).Scan(&sameWindow)
+		if err == nil && !sameWindow {
+			writeError(w, 409, "发布窗口身份与请求不一致")
+			return
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 500, "读取发布窗口失败")
+			return
+		}
 		// 2. 先把本环境过期未收尾的窗口标成 finished：609 之后同一环境只允许一个活动窗口，
 		// 否则上一次发布的残留会让新发布直接撞唯一索引、且报错指向别处。
 		// 这些窗口的暂停任务记为 skipped 保留现场，与 abandon 的处理保持一致。
@@ -102,7 +112,7 @@ func (h *Handler) ReleaseWindow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var active string
-		if err = tx.QueryRow(r.Context(), `SELECT id::text FROM release_window WHERE environment_id=$1 AND state<>'finished' LIMIT 1`, env).Scan(&active); err == nil {
+		if err = tx.QueryRow(r.Context(), `SELECT id::text FROM release_window WHERE environment_id=$1 AND state<>'finished' AND id<>$2 LIMIT 1`, env, b.ID).Scan(&active); err == nil {
 			writeError(w, 409, "已有未完成的发布窗口 "+active+"，请先 resume 或 abandon")
 			return
 		} else if !errors.Is(err, pgx.ErrNoRows) {

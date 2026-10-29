@@ -153,3 +153,46 @@ func TestTaskDeliveryWorktreeRetentionUsesExecutionIdentity(t *testing.T) {
 		t.Fatalf("发布后不应继续保留: %v", got)
 	}
 }
+
+// 审查通过的自动通知早于槽位领取，负责人此时也必须接续已登记的源码目录。
+func TestClaimTasksReusesSubmittedSourceBeforeVerification(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	runtime := createClaimReclaimRuntime(t, ctx, "source continuation runtime")
+	dbfx.Exec(t, `UPDATE agent_runtime SET daemon_id=$2 WHERE id=$1`, runtime, batchClaimTestDaemonID)
+	agent, issue := createClaimReclaimAgentAndIssue(t, ctx, runtime, "source continuation agent")
+	dbfx.Exec(t, `UPDATE issue SET assignee_type='agent',assignee_id=$2 WHERE id=$1`, issue, agent)
+	source := seedQueuedIssueTask(t, ctx, agent, runtime, issue)
+	const directory = "/tmp/submitted-delivery-source"
+	dbfx.Exec(t, `UPDATE agent_task_queue SET status='completed',work_dir=$2,completed_at=now() WHERE id=$1`, source, directory)
+	delivery := dbfx.Insert(t, "issue_delivery", testutil.Cols{
+		"id": dbid.NewV7(), "workspace_id": testWorkspaceID, "issue_id": issue, "operation_id": dbid.NewV7(),
+		"plan_id": dbid.NewV7(), "plan_snapshot": testutil.Raw(fmt.Sprintf(`'{"workflow":"project","source_execution_id":"%s"}'::jsonb`, source)),
+		"source_commit": strings.Repeat("a", 40), "source_branch": "feature/source", "base_commit": strings.Repeat("b", 40),
+		"phase": "waiting_int", "verification_comment_id": dbid.NewV7(), "release_comment_id": dbid.NewV7(),
+	})
+	for _, phase := range []string{"waiting_int", "testing", "approved"} {
+		t.Run(phase, func(t *testing.T) {
+			dbfx.Exec(t, `UPDATE issue_delivery SET phase=$2 WHERE id=$1`, delivery, phase)
+			task := seedQueuedIssueTask(t, ctx, agent, runtime, issue)
+			w := httptest.NewRecorder()
+			req := newDaemonTokenRequest("POST", "/api/daemon/tasks/claim", map[string]any{"daemon_id": batchClaimTestDaemonID, "runtime_ids": []string{runtime}, "max_tasks": 1}, testWorkspaceID, batchClaimTestDaemonID)
+			testHandler.ClaimTasksByRuntime(w, req)
+			var response struct {
+				Tasks []struct {
+					ID           string `json:"id"`
+					PriorWorkDir string `json:"prior_work_dir"`
+				} `json:"tasks"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != 200 || len(response.Tasks) != 1 || response.Tasks[0].PriorWorkDir != directory {
+				t.Fatalf("源码接续目录错误: %d %s", w.Code, w.Body.String())
+			}
+			dbfx.Exec(t, `UPDATE agent_task_queue SET status='completed',completed_at=now() WHERE id=$1`, task)
+		})
+	}
+}

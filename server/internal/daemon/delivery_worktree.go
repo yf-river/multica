@@ -33,7 +33,7 @@ func saveDeliveryWorktree(task Task, env *execenv.Environment) error {
 }
 
 func deliveryWorktreeForTask(task Task, workspacesRoot string) (*releaseCheckpoint, error) {
-	if task.DeliveryContext == nil || task.DeliveryContext.Workflow != "project" || (task.DeliveryContext.Phase != "testing" && task.DeliveryContext.Phase != "approved") || !task.DeliveryContext.OwnsCheckout || task.ReviewCommit != "" {
+	if task.DeliveryContext == nil || task.DeliveryContext.Workflow != "project" || (task.DeliveryContext.Phase != "waiting_int" && task.DeliveryContext.Phase != "testing" && task.DeliveryContext.Phase != "approved") || !task.DeliveryContext.OwnsCheckout || task.ReviewCommit != "" {
 		return nil, nil
 	}
 	if task.PriorWorkDir == "" {

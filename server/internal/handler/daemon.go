@@ -3705,7 +3705,7 @@ ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID), task.AgentID).S
 				Environment: environment, EnvironmentState: environmentState,
 				SeedID: seedID, SeedSHA256: seedSHA, BatchID: batchID, BatchStatus: batchStatus, BatchMembers: batchMembers,
 			}
-			if ownsCheckout && (phase == "testing" || phase == "approved") {
+			if ownsCheckout && (phase == "waiting_int" || phase == "testing" || phase == "approved") {
 				resp.PriorWorkDir = sourceWorkDir
 			}
 		} else if !errors.Is(err, pgx.ErrNoRows) {

@@ -25,6 +25,20 @@ func TestReleaseWindowPauseResumeIsDurableAndIdempotent(t *testing.T) {
 	}
 	call("begin").Want(200)
 	call("begin").Want(200)
+	// 相同窗口的重试可复用；其他程序、环境或运行时不能借用这个标识。
+	otherDaemon := dbid.NewV7().String()
+	dbfx.Runtime(t, "other release daemon", testutil.Cols{"daemon_id": otherDaemon})
+	for _, input := range []map[string]any{
+		{"id": window, "action": "begin", "daemon_id": daemon, "release_id": "other-candidate"},
+		{"id": window, "action": "begin", "daemon_id": otherDaemon, "release_id": "candidate"},
+		{"id": dbid.NewV7().String(), "action": "begin", "daemon_id": daemon, "release_id": "candidate"},
+	} {
+		testutil.Call(t, testHandler.ReleaseWindow, newRequest("POST", "/window", input)).Want(409)
+	}
+	t.Run("different environment", func(t *testing.T) {
+		t.Setenv("MULTICA_ENV_ID", "prod")
+		call("begin").Want(409)
+	})
 	call("pause").Want(200)
 	call("pause").Want(200)
 	var status map[string]string
