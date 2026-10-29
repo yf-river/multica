@@ -329,7 +329,7 @@ class BatchFlowTests(unittest.TestCase):
         for old_phase in ('needs_changes','cancelled','published'):
             with self.subTest(phase=old_phase):
                 self.calls=[]
-                old=dict(delivery('old',old_phase),error='负责人显式提交下一版本' if old_phase=='needs_changes' else '')
+                old=dict(delivery('old',old_phase),error='任务已退出待发布，需要重新验证' if old_phase=='needs_changes' else '')
                 valid=delivery('valid'); new=delivery('new')
                 self.state=dict(batch=dict(id='b1',status='frozen',worker_token='w1'),members=[dict(delivery_id='old'),dict(delivery_id='valid')])
                 self.worker.api=lambda path: [old] if path=='delivery-queue?current=old' else (_ for _ in ()).throw(AssertionError(path))
@@ -343,7 +343,7 @@ class BatchFlowTests(unittest.TestCase):
                 self.assertEqual(self.actions(),['open'])
 
     def test_frozen_missing_or_same_delivery_repair_is_not_failed(self):
-        for old in (None,dict(delivery('old','needs_changes'),error='等待原任务修复')):
+        for old in (None,):
             with self.subTest(old=old):
                 self.calls=[]
                 self.state=dict(batch=dict(id='b1',status='frozen',worker_token='w1'),members=[dict(delivery_id='old')])
@@ -353,6 +353,14 @@ class BatchFlowTests(unittest.TestCase):
                     else:
                         with self.assertRaisesRegex(AssertionError,'claim attempted'):self.worker.tick_batches([old])
                 self.assertNotIn('fail',self.actions())
+
+    def test_held_same_delivery_repair_is_not_failed(self):
+        old=dict(delivery('old','needs_changes'),error='等待原任务修复')
+        self.state=dict(batch=dict(id='b1',status='frozen',worker_token='w1',project_id='project-a',error='合并冲突'),members=[dict(delivery_id='old')])
+        with patch.object(self.worker,'batch_prepare') as prepare:
+            self.worker.tick_batches([old])
+        prepare.assert_not_called()
+        self.assertEqual(self.actions(),['dispatch-agent','retry'])
 
     def test_project_merge_conflict_preserves_the_batch(self):
         member = dict(delivery_id='d1', source_commit='a' * 40, result='pending')

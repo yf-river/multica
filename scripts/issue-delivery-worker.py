@@ -1021,8 +1021,8 @@ class Worker:
             if not delivery:
                 delivery=self.batch_row(self.api('delivery-queue?current='+identity),identity)
             if not delivery:return True
-            replaced=delivery.get('phase')=='needs_changes' and delivery.get('error')=='负责人显式提交下一版本'
-            if replaced or delivery.get('phase') in ('cancelled','published'):
+            # 有 hold 的同交付修复由 tick_batches 的 hold/retry 分支处理；此处仅处理无 hold 的冻结批次。
+            if delivery.get('phase') in ('needs_changes','cancelled','published'):
                 self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],
                                      error='固定交付已退出/替换',conflict_delivery_id=identity))
                 return True
