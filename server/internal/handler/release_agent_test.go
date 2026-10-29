@@ -33,6 +33,55 @@ func configureReleaseAgent(t *testing.T, project string) string {
 	return result.AgentID
 }
 
+func TestAutoReleaseBatchRepresentativeClaimsPublication(t *testing.T) {
+	if testHandler == nil {
+		t.Fatal("isolated PostgreSQL is required")
+	}
+	batchCleanup(t)
+	dbfx.Cleanup(t, `DELETE FROM delivery_publication WHERE resource='int-prod'`)
+	dbfx.Cleanup(t, `DELETE FROM release_agent_config WHERE workspace_id=$1`, testWorkspaceID)
+	dbfx.Cleanup(t, `DELETE FROM agent WHERE workspace_id=$1 AND system_key=$2`, testWorkspaceID, releaseagent.SystemKey)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "自动发布领取测试"})
+	configureReleaseAgent(t, project)
+	reviewer := enableReviewSettings(t, "")
+	delivery, token := batchFixture(t)
+	var issue string
+	dbfx.QueryRow(t, `SELECT issue_id::text FROM issue_delivery WHERE id=$1`, delivery).Scan(&issue)
+	dbfx.Cleanup(t, `DELETE FROM issue_review WHERE issue_id=$1`, issue)
+	dbfx.Cleanup(t, `DELETE FROM verification_event WHERE delivery_id=$1`, delivery)
+	dbfx.Cleanup(t, `DELETE FROM delivery_evidence WHERE delivery_id=$1`, delivery)
+	dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=$1`, issue, project)
+	dbfx.Exec(t, `UPDATE issue_delivery SET phase='testing',approved_by=NULL,approved_at=NULL,candidate_id='verify-1',acceptance_submitted=true,evidence='[{"name":"组合业务","status":"passed","evidence":"测试通过"}]'::jsonb WHERE id=$1`, delivery)
+	dbfx.Exec(t, `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) VALUES($1,$2,$3,$4,'verify-1',$5,'{}','[{"name":"组合业务","status":"passed","evidence":"测试通过"}]')`, dbid.NewV7(), testWorkspaceID, issue, delivery, strings.Repeat("a", 40))
+	body := map[string]any{"id": delivery, "action": "request-final-review", "revision": 1, "worker_token": token, "source_commit": strings.Repeat("a", 40)}
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", body)).Want(200)
+	if result := submitReviewVerdict(t, issue, reviewer, "pass", map[string]any{}); result.Code != 200 {
+		t.Fatalf("review: %d %s", result.Code, result.Body.String())
+	}
+	body["action"] = "accepted"
+	body["revision"] = 2
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/api/delivery-queue/advance", body)).Want(200)
+	batch, _ := openBatch(t, 60)
+	_, members := freezeBatch(t, batch.ID)
+	if len(members) != 1 || members[0].DeliveryID != delivery {
+		t.Fatalf("frozen members: %+v", members)
+	}
+	claim := func(credential string) *testutil.Response {
+		return testutil.Call(t, testHandler.PublicationLease, newRequest("POST", "/api/delivery-queue/publication", map[string]any{"action": "claim", "delivery_id": delivery, "worker_token": credential}))
+	}
+	claim(dbid.NewV7().String()).Want(409)
+	dbfx.Exec(t, `UPDATE release_agent_config SET enabled=false WHERE workspace_id=$1 AND project_id=$2`, testWorkspaceID, project)
+	claim(token).Want(409)
+	dbfx.Exec(t, `UPDATE release_agent_config SET enabled=true WHERE workspace_id=$1 AND project_id=$2`, testWorkspaceID, project)
+	dbfx.Exec(t, `UPDATE issue_review SET state='idle' WHERE issue_id=$1`, issue)
+	claim(token).Want(409)
+	dbfx.Exec(t, `UPDATE issue_review SET state='passed' WHERE issue_id=$1`, issue)
+	dbfx.Exec(t, `UPDATE delivery_evidence SET candidate_id='' WHERE delivery_id=$1`, delivery)
+	claim(token).Want(409)
+	dbfx.Exec(t, `UPDATE delivery_evidence SET candidate_id='verify-1' WHERE delivery_id=$1`, delivery)
+	claim(token).Want(200)
+}
+
 func TestReleaseProjectVerificationEntersQueueWithoutIndividualApproval(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
