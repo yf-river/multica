@@ -120,8 +120,8 @@ func privateAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) {
 
 	ctx := context.Background()
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
-		VALUES ('Private Agent Owner', 'private-agent-owner@multica.test')
+		INSERT INTO "user" (name, email, account)
+		VALUES ('Private Agent Owner', 'private-agent-owner@multica.test', 'private-agent-owner@multica.test')
 		RETURNING id
 	`).Scan(&ownerID); err != nil {
 		t.Fatalf("create owner user: %v", err)
@@ -139,8 +139,8 @@ func privateAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) {
 	}
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
-		VALUES ('Plain Member', 'plain-member@multica.test')
+		INSERT INTO "user" (name, email, account)
+		VALUES ('Plain Member', 'plain-member@multica.test', 'plain-member@multica.test')
 		RETURNING id
 	`).Scan(&memberID); err != nil {
 		t.Fatalf("create plain member user: %v", err)
