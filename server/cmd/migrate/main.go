@@ -415,6 +415,8 @@ var concurrentIndexCleanups = map[string]string{
 	"494_task_trace_event_agent_index":                                         "idx_task_trace_event_agent_created",
 	"495_task_trace_event_squad_index":                                         "idx_task_trace_event_squad_created",
 	"496_external_credential_profile_provider_index":                           "idx_external_credential_profile_user_provider",
+	"688_release_agent_config_workspace":                                      "release_agent_config_workspace",
+	"689_release_agent_identity":                                              "agent_issue_release_unique",
 }
 
 // concurrentDownIndexCleanups 覆盖每条"回滚方向会用 CREATE INDEX CONCURRENTLY
