@@ -150,6 +150,19 @@ func deliveryCLIClaim(ctx context.Context, cmd *cobra.Command, client *cli.APICl
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
+	// 领取会在服务端生成令牌，先确认本地可保存，避免丢失刚领取的归属。
+	probe, err := os.CreateTemp(dir, ".delivery-owner-*")
+	if err != nil {
+		return fmt.Errorf("交付归属凭据目录不可写: %w", err)
+	}
+	probeName := probe.Name()
+	if err = probe.Close(); err != nil {
+		os.Remove(probeName)
+		return err
+	}
+	if err = os.Remove(probeName); err != nil {
+		return err
+	}
 	file := filepath.Join(dir, key+".json")
 	var saved struct {
 		Token      string `json:"token"`
