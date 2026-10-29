@@ -73,7 +73,7 @@ def start(r, env, source, lease):
     def build_output(name):
         parts = Path(name).parts
         return ('node_modules' in parts or '.turbo' in parts or '__pycache__' in parts
-                or name.startswith(('apps/web/.next/', 'apps/web/.source/', 'apps/docs/.source/', 'server/bin/'))
+                or name.startswith(('apps/web/.next/', 'apps/web/.source/', 'apps/docs/.source/', 'server/bin/', 'packages/dsh-runtime/dist/'))
                 or name.endswith('.tsbuildinfo'))
     if any(not build_output(name) for name in ignored):
         raise RuntimeError('任务目录有未识别的忽略文件，不能向测试进程开放')
