@@ -126,6 +126,13 @@ class PoolFlowTests(unittest.TestCase):
 
 
 class SeedGateTests(unittest.TestCase):
+    def setUp(self):
+        directory=tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        run_patch=patch.object(r,'RUN',Path(directory.name))
+        run_patch.start()
+        self.addCleanup(run_patch.stop)
+
     def worker(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         return worker
