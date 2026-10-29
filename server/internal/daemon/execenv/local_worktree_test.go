@@ -2582,18 +2582,20 @@ func TestReviewWorktreeChecksOutExactRemoteCommit(t *testing.T) {
 	gitRun(t, remote, "add", "review.txt")
 	gitRun(t, remote, "commit", "-m", "review candidate")
 	candidate := gitRun(t, remote, "rev-parse", "HEAD")
-	wt, err := PrepareLocalWorktree(LocalWorktreeParams{LocalPath: repo, BaseRef: candidate, RepositoryURL: remote, ExactCommit: true, EnvRoot: t.TempDir(), AgentName: "review", TaskID: "exact-review"}, worktreeTestLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := gitRun(t, wt.Path, "rev-parse", "HEAD"); got != candidate {
-		t.Fatalf("review HEAD=%s, want %s", got, candidate)
-	}
-	if got := readFile(t, filepath.Join(wt.Path, "tracked.txt")); got != "original\n" {
-		t.Fatalf("dirty checkout leaked into review: %q", got)
-	}
-	if got := readFile(t, filepath.Join(wt.Path, "review.txt")); got != "review candidate\n" {
-		t.Fatalf("missing candidate content: %q", got)
+	for _, repositoryURL := range []string{remote, ""} {
+		wt, err := PrepareLocalWorktree(LocalWorktreeParams{LocalPath: repo, BaseRef: candidate, RepositoryURL: repositoryURL, ExactCommit: true, EnvRoot: t.TempDir(), AgentName: "review", TaskID: "exact-review"}, worktreeTestLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := gitRun(t, wt.Path, "rev-parse", "HEAD"); got != candidate {
+			t.Fatalf("review HEAD=%s, want %s", got, candidate)
+		}
+		if got := readFile(t, filepath.Join(wt.Path, "tracked.txt")); got != "original\n" {
+			t.Fatalf("dirty checkout leaked into review: %q", got)
+		}
+		if got := readFile(t, filepath.Join(wt.Path, "review.txt")); got != "review candidate\n" {
+			t.Fatalf("missing candidate content: %q", got)
+		}
 	}
 	if got := readFile(t, filepath.Join(repo, "tracked.txt")); got != "private unfinished work\n" {
 		t.Fatalf("source checkout changed: %q", got)

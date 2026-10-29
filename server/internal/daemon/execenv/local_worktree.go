@@ -332,9 +332,15 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 		if _, err = hex.DecodeString(params.BaseRef); err != nil || strings.ToLower(params.BaseRef) != params.BaseRef {
 			return nil, fmt.Errorf("invalid review commit")
 		}
-		remote, remoteErr := matchingRemote(gitRoot, params.RepositoryURL)
-		if remoteErr != nil {
-			return nil, remoteErr
+		remote := "origin"
+		if params.RepositoryURL != "" {
+			var remoteErr error
+			remote, remoteErr = matchingRemote(gitRoot, params.RepositoryURL)
+			if remoteErr != nil {
+				return nil, remoteErr
+			}
+		} else if _, remoteErr := runGitTrimmed(gitRoot, "remote", "get-url", remote); remoteErr != nil {
+			return nil, fmt.Errorf("review repository has no origin remote: %w", remoteErr)
 		}
 		if _, err = runGitEnv(gitRoot, []string{"GIT_TERMINAL_PROMPT=0"}, "fetch", "--no-tags", remote, params.BaseRef); err != nil {
 			return nil, fmt.Errorf("fetch review commit %s: %w", params.BaseRef, err)
