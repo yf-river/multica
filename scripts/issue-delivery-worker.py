@@ -573,10 +573,12 @@ class Worker:
                '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*command])
 
     def pool_dispatch(self,rows,current_id,allow_new=True):
+        project=self.batch_project()
+        # 项目交付始终由 verify 路由占有，隔离及暂停新入场时也不能落入旧 int 路径。
+        project_deliveries={d['id'] for d in rows if project and d.get('project_id')==project and d['phase'] in ('waiting_int','testing')}
         if not allow_new and not (r.RUN/'verification-jobs').exists():
-            project=self.batch_project()
-            return {d['id'] for d in rows if d['id']!=current_id and d['phase']=='waiting_int' and project and d.get('project_id')==project}
-        managed=[]; reserved=set(); active=set(); blocked=set()
+            return project_deliveries
+        managed=[]; active=set(); blocked=set()
         records={d['id']:d for d in rows}
         recovering=set()
         for path in (r.RUN/'verification-jobs').glob('*.json'):
@@ -591,7 +593,6 @@ class Worker:
         for d in sorted(records.values(),key=lambda d:d.get('created_at','')):
             if d['id']==current_id:continue
             if d['phase']=='waiting_int' and self.batch_project() and d.get('project_id')==self.batch_project():
-                reserved.add(d['id'])
                 review=d.get('final_review') or {}
                 if not d.get('source_ready') or d.get('issue_status')!='in_progress' or review.get('state')!='passed' or review.get('head_sha')!=d.get('source_commit'):continue
             job_path=self.pool_job_path(d['id'])
@@ -614,7 +615,7 @@ class Worker:
                 active.add(d['id'])
             except Exception as error:
                 print('验收接力恢复受阻 '+d['id']+'：'+str(error),file=sys.stderr)
-        return reserved | {d['id'] for d in managed}
+        return project_deliveries | {d['id'] for d in managed}
 
     def prepare_repair(self,d,job,save):
         # 1. Retain the original quarantine until the pinned replacement and unchanged running baseline pass all gates.

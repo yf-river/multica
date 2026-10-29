@@ -373,6 +373,20 @@ class PoolServiceLifetimeTests(unittest.TestCase):
             self.assertEqual(self.worker.pool_dispatch([base],None,allow_new=False),{self.identity})
             launch.assert_not_called()
 
+    def test_project_quarantined_testing_remains_managed_without_launch(self):
+        d=dict(id=self.identity,phase='testing',project_id='project-a')
+        r.write(self.worker.pool_job_path(self.identity),dict(delivery_id=self.identity,stage='quarantined',lease={}))
+        with patch.object(self.worker,'batch_project',return_value='project-a'), patch.object(self.worker,'start_pool_unit') as launch:
+            self.assertEqual(self.worker.pool_dispatch([d],None),{self.identity})
+            launch.assert_not_called()
+
+    def test_disabled_admission_reserves_project_testing_including_current(self):
+        d=dict(id=self.identity,phase='testing',project_id='project-a')
+        other=dict(id='other',phase='testing',project_id='other-project')
+        with patch.object(self.worker,'batch_project',return_value='project-a'), patch.object(self.worker,'start_pool_unit') as launch:
+            self.assertEqual(self.worker.pool_dispatch([d,other],self.identity,allow_new=False),{self.identity})
+            launch.assert_not_called()
+
     def test_start_failure_is_reported_without_stopping_other_deliveries(self):
         import io
         rows=[dict(id='00000000-0000-0000-0000-00000000000'+str(i),phase='testing',created_at=str(i)) for i in (4,5)]
