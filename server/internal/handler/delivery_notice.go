@@ -47,7 +47,7 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 	}
 	var ownerTx pgx.Tx
 	var externalCloseout bool
-	if stage == "batch_ready" || stage == "published" {
+	if stage == "batch_ready" || stage == "published" || stage == "needs_changes" || strings.HasPrefix(stage, "verification_failed:") || strings.HasPrefix(stage, "verification_update_failed:") {
 		ownerTx, err = h.TxStarter.Begin(r.Context())
 		if err != nil {
 			return false, err
