@@ -192,6 +192,17 @@ func deliveryCLIClaim(ctx context.Context, cmd *cobra.Command, client *cli.APICl
 		return err
 	}
 	if err = os.WriteFile(file, raw, 0600); err != nil {
+		if operation != "release" {
+			// 令牌无法持久化时，用刚领取的令牌释放归属，避免留下无法接续的占用。
+			var released any
+			releaseErr := client.PostJSON(ctx, path+"/delivery-owner", map[string]any{
+				"action": "release", "execution_id": execution,
+				"token": saved.Token, "generation": saved.Generation,
+			}, &released)
+			if releaseErr != nil {
+				return fmt.Errorf("保存交付归属凭据失败: %w；释放归属也失败: %v", err, releaseErr)
+			}
+		}
 		return err
 	}
 	client.DeliveryToken = saved.Token
