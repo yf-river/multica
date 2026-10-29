@@ -148,7 +148,7 @@ func (s Store) Resume(ctx context.Context, l Lease) (Lease, error) {
 		return Lease{}, err
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `UPDATE verification_slot SET generation=generation+1,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE name=$1 AND generation=$2 AND workspace_id=$3 AND delivery_id=$4 AND worker_token=$5 AND source_commit=$6 AND candidate_id=$7 AND state IN ('verifying','draining') RETURNING generation,state`, l.Name, l.Generation, l.Workspace, l.Delivery, l.Token, l.Source, l.Candidate).Scan(&l.Generation, &l.State)
+	err = tx.QueryRow(ctx, `UPDATE verification_slot SET generation=generation+1,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE name=$1 AND generation=$2 AND workspace_id=$3 AND delivery_id=$4 AND worker_token=$5 AND source_commit=$6 AND candidate_id=$7 AND state IN ('preparing','verifying','draining') RETURNING generation,state`, l.Name, l.Generation, l.Workspace, l.Delivery, l.Token, l.Source, l.Candidate).Scan(&l.Generation, &l.State)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, ErrStale
 	}

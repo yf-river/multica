@@ -3679,26 +3679,34 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// 环境和种子，避免 Agent 自行挑环境或按通用完成提示提前结束。查询失败只降级为空，
 	// 不影响领取；老库没有批次表时也走降级路径。
 	if task.IssueID.Valid {
-		var deliveryID, phase, candidateID, candidateCommit, environment, environmentState string
+		var deliveryID, phase, workflow, candidateURL, candidateID, candidateCommit, environment, environmentState string
 		var seedID, seedSHA, batchID, batchStatus string
 		var batchMembers int
+		var ownsCheckout bool
+		var sourceWorkDir string
 		err := h.DB.QueryRow(r.Context(), `
-SELECT d.id::text,d.phase,d.candidate_id,COALESCE(d.plan_snapshot->>'candidate_commit',''),
+SELECT d.id::text,d.phase,COALESCE(d.plan_snapshot->>'workflow',''),d.candidate_url,d.candidate_id,COALESCE(d.plan_snapshot->>'candidate_commit',''),
        COALESCE(s.name,''),COALESCE(s.state,''),COALESCE(x.seed_id,''),COALESCE(x.seed_sha256,''),
        COALESCE(b.id::text,''),COALESCE(b.status,''),
-       COALESCE((SELECT count(*) FROM delivery_batch_member m2 WHERE m2.batch_id=b.id),0)
+       COALESCE((SELECT count(*) FROM delivery_batch_member m2 WHERE m2.batch_id=b.id),0),
+       COALESCE(d.plan_snapshot->>'workflow'='project' AND i.assignee_type='agent' AND i.assignee_id=$2,false),
+       COALESCE((SELECT aq.work_dir FROM agent_task_queue aq WHERE aq.id::text=d.plan_snapshot->>'source_execution_id' AND aq.issue_id=d.issue_id AND aq.agent_id=$2 AND aq.status='completed'), '')
 FROM issue_delivery d
+JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id
 LEFT JOIN verification_slot s ON s.delivery_id=d.id
 LEFT JOIN verification_slot_seed x ON x.name=s.name
 LEFT JOIN delivery_batch_member m ON m.delivery_id=d.id
 LEFT JOIN delivery_batch b ON b.id=m.batch_id
 WHERE d.issue_id=$1 AND d.phase<>'cancelled'
-ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID)).Scan(&deliveryID, &phase, &candidateID, &candidateCommit, &environment, &environmentState, &seedID, &seedSHA, &batchID, &batchStatus, &batchMembers)
+ORDER BY d.created_at DESC LIMIT 1`, uuidToString(task.IssueID), task.AgentID).Scan(&deliveryID, &phase, &workflow, &candidateURL, &candidateID, &candidateCommit, &environment, &environmentState, &seedID, &seedSHA, &batchID, &batchStatus, &batchMembers, &ownsCheckout, &sourceWorkDir)
 		if err == nil {
 			resp.DeliveryContext = &DeliveryContextData{
-				ID: deliveryID, Phase: phase, CandidateID: candidateID, CandidateCommit: candidateCommit,
+				ID: deliveryID, Phase: phase, Workflow: workflow, CandidateURL: candidateURL, OwnsCheckout: ownsCheckout, CandidateID: candidateID, CandidateCommit: candidateCommit,
 				Environment: environment, EnvironmentState: environmentState,
 				SeedID: seedID, SeedSHA256: seedSHA, BatchID: batchID, BatchStatus: batchStatus, BatchMembers: batchMembers,
+			}
+			if ownsCheckout && (phase == "testing" || phase == "approved") {
+				resp.PriorWorkDir = sourceWorkDir
 			}
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			slog.Warn("task claim: failed to load delivery context",
@@ -5551,6 +5559,25 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 		status = "release_paused"
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": status})
+}
+
+// GetTaskDeliveryWorktree identifies a task checkout still needed by its project delivery.
+func (h *Handler) GetTaskDeliveryWorktree(w http.ResponseWriter, r *http.Request) {
+	task, workspaceID, ok := h.requireDaemonTaskAccessScope(w, r, chi.URLParam(r, "taskId"), true)
+	if !ok {
+		return
+	}
+	var commit, branch string
+	err := h.DB.QueryRow(r.Context(), `SELECT d.source_commit,d.source_branch FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND d.issue_id=$2 AND d.plan_snapshot->>'workflow'='project' AND (d.plan_snapshot->>'source_execution_id'=$3 OR (i.assignee_type='agent' AND i.assignee_id=$4)) AND d.phase NOT IN ('published','cancelled') ORDER BY d.created_at DESC LIMIT 1`, workspaceID, task.IssueID, uuidToString(task.ID), task.AgentID).Scan(&commit, &branch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, map[string]any{"retain": false})
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "读取交付工作目录状态失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"retain": true, "source_commit": commit, "source_branch": branch})
 }
 
 // renewUpstreamLeaseForPolledTask 用任务自己的状态轮询续租它名下的上游批次。

@@ -527,11 +527,11 @@ export const ListIssueStatusesResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
-// 兜底值把 7 个内置状态的 key 当作 categories，这样即使服务器旧到还没有这个端点，
+// 兜底值把 8 个内置状态的 key 当作 categories，这样即使服务器旧到还没有这个端点，
 // 客户端也能拿到权威的内置分类列表。
 export const EMPTY_LIST_ISSUE_STATUSES_RESPONSE: ListIssueStatusesResponse = {
   statuses: [],
-  categories: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
+  categories: ["backlog", "todo", "in_progress", "in_review", "pending_release", "done", "blocked", "cancelled"],
   total: 0,
 };
 
@@ -1313,7 +1313,7 @@ export const IssueSchema = z.object({
   title: z.string(),
   description: z.string().nullable(),
   status: z.string(),
-  // `status` 承载的平台行为对应的权威分类：7 个内置状态取自身，自定义状态取继承的
+  // `status` 承载的平台行为对应的权威分类：8 个内置状态取自身，自定义状态取继承的
   // 分类。可选是因为只有会解析它的端点才返回，消费方必须退回用 `status`，而不是把
   // "" 当成一个分类。(MUL-6243)
   status_category: z.string().optional(),

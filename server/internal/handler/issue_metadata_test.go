@@ -10,6 +10,28 @@ import (
 	"testing"
 )
 
+func TestIssueMetadataRejectsSystemReleaseChecks(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	issueID := dbfx.Issue(t, "Release checks", nil)
+	for _, key := range []string{"review_passed", "release_workflow", "verification_passed", "verification_commit", "integration_passed", "integration_commit"} {
+		for _, method := range []string{"PUT", "DELETE"} {
+			w := httptest.NewRecorder()
+			req := newRequest(method, "/api/issues/"+issueID+"/metadata/"+key, json.RawMessage(`{"value":true}`))
+			req = withURLParams(req, "id", issueID, "key", key)
+			if method == "PUT" {
+				testHandler.SetIssueMetadataKey(w, req)
+			} else {
+				testHandler.DeleteIssueMetadataKey(w, req)
+			}
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("%s %s: expected 403, got %d", method, key, w.Code)
+			}
+		}
+	}
+}
+
 // Round-trip: set primitives of each type, list, get them back, delete, confirm gone.
 func TestIssueMetadataSetGetDelete(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata round-trip")

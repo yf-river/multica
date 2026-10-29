@@ -19,7 +19,7 @@ import (
 // 交付命令与页面使用同一套版本和确认接口。
 func init() {
 	group := &cobra.Command{Use: "delivery", Short: "Plan confirmation, integration queue and production review"}
-	for _, action := range []string{"diagnose", "status", "plan", "confirm-plan", "revoke-release", "submit", "bind-checks", "accept", "approve", "publish", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
+	for _, action := range []string{"diagnose", "status", "plan", "confirm-plan", "revoke-release", "submit", "bind-checks", "accept", "approve", "review-project-comments", "publish", "retest", "cancel", "owner", "claim-owner", "recover-owner", "release-owner"} {
 		action := action
 		cmd := &cobra.Command{Use: action + " <issue-id>", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newAPIClient(cmd)
@@ -101,10 +101,13 @@ func init() {
 		}
 		// 1. Document the same repair payload consumed by the existing delivery action API.
 		if action == "retest" {
-			cmd.Long = "重新验收待审候选，或修复未批准生产的 needs_changes 原交付。失败修复 JSON 包含 revision、evidence 和 repair：operation_id、source_commit、source_branch、base_commit、environment、generation、seed_id、seed_sha256、compatibility_evidence。保留原槽位和失败记录，不重置数据、不批准生产；只支持尚未部署的隔离候选。相同操作号与完整请求可幂等重试。"
+			cmd.Long = "重新验收待审候选，或修复原交付。失败槽位修复 JSON 包含 revision、evidence 和 repair：operation_id、source_commit、source_branch、base_commit、environment、generation、seed_id、seed_sha256、compatibility_evidence。项目批次合并冲突修复使用同一原交付，repair 提供 operation_id、source_commit、source_branch、base_commit，修复后重新审查和测试。相同操作号与完整请求可幂等重试。"
 		}
 		if action == "accept" {
-			cmd.Long = "提交实际验收证据。组合验收由代表交付提交；JSON 包含 revision、candidate_id 和 evidence，须覆盖当前方案 required_checks 的对应阶段；组合代表须覆盖全部成员的 integration 项，候选编号必须与当前组合一致。相同候选和证据可幂等重试。"
+			cmd.Long = "提交实际验收证据。JSON 包含 revision、candidate_id 和 evidence，须覆盖本交付 required_checks 的对应阶段。项目批次各负责人提交自己的联调证据；其他批次由代表汇总全部成员的联调项。候选编号必须与当前组合一致。相同候选和证据可幂等重试。"
+		}
+		if action == "review-project-comments" {
+			cmd.Long = "项目待发布后收到用户评论时，先核对最新评论及任务范围；范围未变且用户未要求暂停时，提交 JSON：revision、user_comments_version、scope_review。若需要修改或暂停，不得使用此动作绕过。"
 		}
 		if action == "publish" {
 			cmd.Long = "一次完成审核与组合验收：先提交审核批准，随后在批次进入可验收时用同一份证据提交验收，直到发布完成或超时。JSON 包含 review 与 evidence；--timeout 控制最长等待。"

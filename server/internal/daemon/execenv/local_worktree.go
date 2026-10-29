@@ -483,6 +483,18 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 // 文件中唯一「销毁工作且无法回头」的操作，而 daemon 日志里一条警告不能替代用户的
 // 改动。存活的 worktree 仍登记在用户仓库中，`git worktree list` 能直接指到它。
 func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, error) {
+	return w.finalize(logger, "", "")
+}
+
+// FinalizeRetained records the branch while preserving the checkout for its delivery.
+func (w *LocalWorktree) FinalizeRetained(logger *slog.Logger, branch, commit string) (LocalWorktreeOutcome, error) {
+	if branch == "" || commit == "" {
+		return LocalWorktreeOutcome{}, errors.New("retained worktree requires branch and commit")
+	}
+	return w.finalize(logger, branch, commit)
+}
+
+func (w *LocalWorktree) finalize(logger *slog.Logger, retainBranch, retainCommit string) (LocalWorktreeOutcome, error) {
 	if w == nil {
 		return LocalWorktreeOutcome{}, nil
 	}
@@ -571,7 +583,12 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 	// 删它等于连同删掉它们。
 	tip, err := runGitTrimmed(w.Path, "rev-parse", "--verify", "HEAD")
 	producedWork := err != nil || tip != w.BaseCommit
-	dropped := !producedWork && w.createdBranch
+	dropped := !producedWork && w.createdBranch && retainCommit == ""
+	if retainCommit != "" && (err != nil || w.Branch != retainBranch || tip != retainCommit) {
+		outcome.Branch = ""
+		outcome.PreservedPath = w.Path
+		return outcome, fmt.Errorf("delivery checkout changed after submission; work is preserved at %s", w.Path)
+	}
 
 	// 从「合并进行到一半」开始的一轮，只有解决冲突并提交过什么，才配推进分支记录
 	// 的状态。当分支仍停在「本轮找到它的地方」时，无法区分「agent 选择保留分支上
@@ -628,6 +645,10 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 		}
 	}
 
+	if retainCommit != "" {
+		outcome.PreservedPath = w.Path
+		return outcome, nil
+	}
 	if removeErr := removeLocalWorktreeDir(w.GitRoot, w.Path, logger); removeErr != nil {
 		outcome.PreservedPath = w.Path
 		return outcome, fmt.Errorf(

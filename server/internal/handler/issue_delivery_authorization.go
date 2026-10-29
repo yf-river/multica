@@ -116,9 +116,29 @@ func deliveryAuthorizationReady(ctx context.Context, tx pgx.Tx, ws, issue, id st
 	var review json.RawMessage
 	var plan, source, candidate string
 	var approved bool
-	err := tx.QueryRow(ctx, `SELECT COALESCE(plan_snapshot->'authorization_review','{}'::jsonb),plan_id::text,source_commit,candidate_id,approved_by IS NOT NULL FROM issue_delivery WHERE id=$1`, id).Scan(&review, &plan, &source, &candidate, &approved)
+	var automatic bool
+	err := tx.QueryRow(ctx, `SELECT COALESCE(plan_snapshot->'authorization_review','{}'::jsonb),plan_id::text,source_commit,candidate_id,approved_by IS NOT NULL,auto_release FROM issue_delivery WHERE id=$1`, id).Scan(&review, &plan, &source, &candidate, &approved, &automatic)
 	if err != nil {
 		return false, err
+	}
+	if automatic {
+		var valid bool
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id JOIN release_agent_config c ON c.workspace_id=d.workspace_id AND c.project_id=i.project_id AND c.enabled JOIN issue_review r ON r.issue_id=i.id AND r.workspace_id=i.workspace_id AND r.state='passed' AND r.head_sha=d.source_commit WHERE d.id=$1 AND d.workspace_id=$2 AND d.issue_id=$3 AND d.auto_release AND i.status='pending_release' AND COALESCE(i.metadata->>'release_hold','')<>'true' AND EXISTS(SELECT 1 FROM delivery_evidence e WHERE e.delivery_id=d.id AND e.issue_id=i.id AND e.workspace_id=d.workspace_id AND e.source_commit=d.source_commit AND e.candidate_id<>''))`, id, ws, issue).Scan(&valid)
+		if err != nil || !valid {
+			return valid, err
+		}
+		var saved *string
+		if err = tx.QueryRow(ctx, `SELECT plan_snapshot->>'project_comments_version' FROM issue_delivery WHERE id=$1`, id).Scan(&saved); err != nil {
+			return false, err
+		}
+		if saved != nil {
+			current, versionErr := deliveryCommentsVersion(ctx, tx, ws, issue)
+			return versionErr == nil && *saved == current, versionErr
+		}
+		// 兼容升级前的自动交付，原评论时间校验仍然有效。
+		var changed bool
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM comment x JOIN issue_delivery d ON d.issue_id=x.issue_id AND d.workspace_id=x.workspace_id WHERE d.id=$1 AND x.author_type='member' AND GREATEST(x.created_at,x.updated_at)>d.approved_at AND NOT EXISTS(SELECT 1 FROM delivery_notice n WHERE n.comment_id=x.id))`, id).Scan(&changed)
+		return err == nil && !changed, err
 	}
 	if approved {
 		var memberValid bool
@@ -195,7 +215,7 @@ func (h *Handler) RevokeIssueReleaseAuthorization(w http.ResponseWriter, r *http
 	}
 	_, err = tx.Exec(r.Context(), `UPDATE issue_delivery_authorization SET revoked=true WHERE workspace_id=$1 AND issue_id=$2 AND plan_id=$3 AND kind='release'`, ws, issue, body.PlanID)
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,release_validated=false,error='用户已撤销发布授权',plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase=CASE WHEN phase IN ('approved','preparing_release') THEN 'awaiting_review' ELSE phase END,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing')`, ws, issue)
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET approved_by=NULL,approved_at=NULL,auto_release=false,release_validated=false,error='用户已撤销发布授权',plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase=CASE WHEN phase IN ('approved','preparing_release') THEN 'awaiting_review' ELSE phase END,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing')`, ws, issue)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -207,7 +227,7 @@ func (h *Handler) RevokeIssueReleaseAuthorization(w http.ResponseWriter, r *http
 	h.deliveryJSON(w, r, ws, issue)
 }
 
-const deliveryPlanValidSQL = `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN issue_delivery_plan p ON p.id=d.plan_id AND p.workspace_id=d.workspace_id JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE d.id=$1 AND p.confirmed_by IS NOT NULL AND (
+const deliveryPlanValidSQL = `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id JOIN release_agent_config cfg ON cfg.workspace_id=i.workspace_id AND cfg.project_id=i.project_id AND cfg.enabled WHERE d.id=$1 AND d.plan_snapshot->>'workflow'='project' AND d.plan_snapshot->>'project_id'=i.project_id::text AND d.plan_snapshot->>'title'=i.title AND d.plan_snapshot->>'description'=COALESCE(i.description,'')) OR EXISTS(SELECT 1 FROM issue_delivery d JOIN issue_delivery_plan p ON p.id=d.plan_id AND p.workspace_id=d.workspace_id JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE d.id=$1 AND p.confirmed_by IS NOT NULL AND (
  NOT EXISTS(SELECT 1 FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute') OR
  EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment ac ON ac.id=a.comment_id AND ac.revision=a.comment_revision AND ac.author_type='member' JOIN member m ON m.workspace_id=a.workspace_id AND m.user_id=ac.author_id WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked AND m.role IN ('owner','admin','member'))))`
 
@@ -224,9 +244,9 @@ func deliveryPublicationAuthorization(ctx context.Context, tx pgx.Tx, ws, id str
    FROM delivery_publication p
    JOIN delivery_batch b ON b.id=$3 AND b.workspace_id=p.workspace_id
    JOIN delivery_batch_member m ON m.batch_id=b.id AND m.delivery_id=$2 AND m.result='pending'
-   JOIN issue_delivery d ON d.id=m.delivery_id AND d.workspace_id=b.workspace_id AND d.source_commit=m.source_commit AND d.approved_by IS NOT NULL
+   JOIN issue_delivery d ON d.id=m.delivery_id AND d.workspace_id=b.workspace_id AND d.source_commit=m.source_commit AND (d.approved_by IS NOT NULL OR d.auto_release)
    JOIN delivery_batch_member first ON first.batch_id=b.id AND first.result='pending' AND first.delivery_id=(SELECT delivery_id FROM delivery_batch_member WHERE batch_id=b.id AND result='pending' ORDER BY created_at,delivery_id LIMIT 1)
-   JOIN issue_delivery representative ON representative.id=first.delivery_id AND representative.workspace_id=b.workspace_id AND representative.source_commit=first.source_commit AND representative.approved_by IS NOT NULL
+   JOIN issue_delivery representative ON representative.id=first.delivery_id AND representative.workspace_id=b.workspace_id AND representative.source_commit=first.source_commit AND (representative.approved_by IS NOT NULL OR representative.auto_release)
    WHERE p.resource='int-prod' AND p.workspace_id=$1 AND p.delivery_id=representative.id AND p.worker_token=representative.worker_token
    AND ((b.status IN ('frozen','preparing','validating') AND d.phase='approved' AND representative.phase='approved') OR (b.status='publishing' AND d.phase='publishing' AND representative.phase='publishing' AND d.release_validated AND representative.release_validated))
    AND (b.status IN ('frozen','preparing') OR (b.candidate_id<>'' AND b.candidate_commit<>'' AND d.candidate_id=b.candidate_id AND representative.candidate_id=b.candidate_id AND d.plan_snapshot->>'candidate_commit'=b.candidate_commit AND representative.plan_snapshot->>'candidate_commit'=b.candidate_commit))`, ws, id, batch).Scan(&generation, &leased)

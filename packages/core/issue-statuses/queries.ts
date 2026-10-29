@@ -1,7 +1,7 @@
 // 本文件提供工作区的「issue 状态目录」查询与解析逻辑（MUL-6243）。
 //
-// 工作区永远有 7 个内置状态，还可能有自定义状态。每个状态——无论内置还是
-// 自定义——都属于 7 个类别中的恰好一个，而类别决定了平台行为、看板列与展示
+// 工作区永远有 8 个内置状态，还可能有自定义状态。每个状态——无论内置还是
+// 自定义——都属于 8 个类别中的恰好一个，而类别决定了平台行为、看板列与展示
 // 方式。所以这份目录对 UI 只回答一个问题：拿到 issue 上存的状态 key，它的
 // 标签、颜色和类别是什么？
 
@@ -55,7 +55,7 @@ export interface IssueStatusCatalog {
   /**
    * 界面给某个状态上色要用的 `#rrggbb`；应该用类别语义 token 时返回 null。
    *
-   * 内置状态恒为 null。7 个内置状态在目录里带着一个种子 hex，但它们不可
+   * 内置状态恒为 null。8 个内置状态在目录里带着一个种子 hex，但它们不可
    * 重新着色（服务端拒绝任何对系统行的修改），且所有界面都用 token 渲染它们
    * ——`text-success` 之类，正是这让他们跟着主题进入深色模式。调用方若改用
    * `entryOf(key)?.color`，画出来的会是原始种子色，与同状态的 token 渲染相差
@@ -127,7 +127,7 @@ export function compareIssueStatusEntries(a: IssueStatusEntry, b: IssueStatusEnt
   return a.key.localeCompare(b.key);
 }
 
-/** 判断一个字符串是否为 7 个内置状态类别之一（类型收窄到 IssueStatusCategory）。 */
+/** 判断一个字符串是否为 8 个内置状态类别之一（类型收窄到 IssueStatusCategory）。 */
 export function isIssueStatusCategory(value: string): value is IssueStatusCategory {
   return BUILT_IN.has(value);
 }
@@ -165,7 +165,7 @@ export function buildIssueStatusCatalog(
   const categoryOf = (statusKey: string): IssueStatusCategory => {
     const category = byKey.get(statusKey)?.category;
     if (category && isIssueStatusCategory(category)) return category;
-    // 内置 key 本身就是它的类别，所以目录没加载时也能正确解析全部 7 个——
+    // 内置 key 本身就是它的类别，所以目录没加载时也能正确解析全部 8 个——
     // 这正是默认工作区在拉取落地前渲染完全一致的原因。
     if (isIssueStatusCategory(statusKey)) return statusKey;
     // 未知的自定义 key：放到一个合理的地方渲染，而不是丢掉它。

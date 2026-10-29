@@ -14,6 +14,84 @@ func businessChecks() []requiredDeliveryCheck {
 	return []requiredDeliveryCheck{{Name: "真实业务", Stage: "verification"}, {Name: "组合业务", Stage: "integration"}}
 }
 
+func TestIndependentTaskRequiresExplicitIntegrationReason(t *testing.T) {
+	checks := []requiredDeliveryCheck{{Name: "独立业务", Stage: "verification"}}
+	if _, err := normalizeRequiredDeliveryChecks(checks); err == nil {
+		t.Fatal("普通交付不能省略联调检查")
+	}
+	if _, err := deliveryRequiredChecks(json.RawMessage(`{"required_checks":[{"name":"独立业务","stage":"verification"}]}`)); err == nil {
+		t.Fatal("省略联调原因不能接受")
+	}
+	if _, err := deliveryRequiredChecks(json.RawMessage(`{"required_checks":[{"name":"独立业务","stage":"verification"}],"integration_skip_reason":"只影响独立文案"}`)); err != nil {
+		t.Fatalf("有理由的独立业务检查应可进入组批：%v", err)
+	}
+}
+
+func TestIndependentDeliverySkipRequiresManagedProject(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	dbfx.Cleanup(t, `DELETE FROM release_agent_config WHERE workspace_id=$1`, testWorkspaceID)
+	dbfx.Cleanup(t, `DELETE FROM agent WHERE workspace_id=$1 AND system_key='issue_release'`, testWorkspaceID)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	issue, _ := coordinationFixture(t)
+	dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=$1`, issue, project)
+	var owner coordinationOwner
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "independent-check", owner, "")).Want(200).JSON(&owner)
+	body := submitBody(strings.Repeat("a", 40))
+	body["required_checks"] = []requiredDeliveryCheck{{Name: "独立业务", Stage: "verification"}}
+	body["integration_skip_reason"] = "只影响独立文案"
+	testutil.Call(t, testHandler.SubmitIssueDelivery, deliveryRequest(issue, body, owner)).Want(400)
+	configureReleaseAgent(t, project)
+	reviewer := enableReviewSettings(t, "")
+	dbfx.Exec(t, `DELETE FROM issue_delivery_plan WHERE issue_id=$1`, issue)
+	testutil.Call(t, testHandler.SubmitIssueDelivery, deliveryRequest(issue, body, owner)).Want(200)
+	var snapshot json.RawMessage
+	dbfx.QueryRow(t, `SELECT plan_snapshot FROM issue_delivery WHERE issue_id=$1`, issue).Scan(&snapshot)
+	if !strings.Contains(string(snapshot), "只影响独立文案") {
+		t.Fatalf("未保存免联调依据: %s", snapshot)
+	}
+	if !strings.Contains(string(snapshot), `"workflow": "project"`) || strings.Contains(string(snapshot), `"confirmed_by"`) {
+		t.Fatalf("发布项目应记录任务依据，不伪造用户确认: %s", snapshot)
+	}
+	var stored struct {
+		CommentsVersion string `json:"project_comments_version"`
+	}
+	var actualVersion string
+	if err := json.Unmarshal(snapshot, &stored); err != nil {
+		t.Fatal(err)
+	}
+	dbfx.QueryRow(t, deliveryCommentsVersionSQL, testWorkspaceID, issue).Scan(&actualVersion)
+	if stored.CommentsVersion != actualVersion || actualVersion == "" {
+		t.Fatal("登记任务时没有固定用户评论版本")
+	}
+	var delivery string
+	var valid bool
+	dbfx.QueryRow(t, `SELECT id::text FROM issue_delivery WHERE issue_id=$1`, issue).Scan(&delivery)
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": "claim"})).Want(409)
+	if response := moveIssueTo(t, issue, "in_review"); response.Code != 200 {
+		t.Fatalf("进入审查失败: %s", response.Body.String())
+	}
+	var reviewSHA string
+	dbfx.QueryRow(t, `SELECT COALESCE(context->>'head_sha','') FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2 ORDER BY created_at DESC LIMIT 1`, issue, reviewer).Scan(&reviewSHA)
+	if reviewSHA != strings.Repeat("a", 40) {
+		t.Fatalf("首次审查未绑定提交: %s", reviewSHA)
+	}
+	if response := submitReviewVerdict(t, issue, reviewer, "pass", map[string]any{}); response.Code != 200 {
+		t.Fatalf("审查结果提交失败: %s", response.Body.String())
+	}
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", map[string]any{"id": delivery, "revision": deliveryRevision(t, delivery), "action": "claim"})).Want(200)
+	dbfx.QueryRow(t, deliveryPlanValidSQL, delivery).Scan(&valid)
+	if !valid {
+		t.Fatal("任务依据应可供系统验证")
+	}
+	dbfx.Exec(t, `UPDATE issue SET title='需求已变化' WHERE id=$1`, issue)
+	dbfx.QueryRow(t, deliveryPlanValidSQL, delivery).Scan(&valid)
+	if valid {
+		t.Fatal("需求变化后旧依据不能继续发布")
+	}
+}
+
 func businessFixture(t *testing.T) (string, string, string, string, coordinationOwner) {
 	t.Helper()
 	issue, plan := coordinationFixture(t)

@@ -1955,6 +1955,19 @@ func TestBuildPromptOmitsDeliveryContextWithoutDelivery(t *testing.T) {
 	}
 }
 
+func TestBuildPromptManagedProjectUsesVerifyAndAutomaticRelease(t *testing.T) {
+	context := DeliveryContextData{ID: "d1", Workflow: "project", Phase: "waiting_int", CandidateURL: "http://verify-1"}
+	out := buildDeliveryContextBlock(context)
+	if !strings.Contains(out, "code review") || !strings.Contains(out, "verify environment") || !strings.Contains(out, "http://verify-1") || strings.Contains(out, "fixed int candidate") {
+		t.Fatalf("项目交付上下文不正确：%s", out)
+	}
+	context.Phase = "approved"
+	out = buildDeliveryContextBlock(context)
+	if !strings.Contains(out, "managed release batch") || strings.Contains(out, "user authorized") {
+		t.Fatalf("项目发布提示错误：%s", out)
+	}
+}
+
 func TestBuildPromptDoesNotInjectUnrelatedSiblingContext(t *testing.T) {
 	out := BuildPrompt(Task{IssueID: "issue-target"}, "codex")
 	if strings.Contains(out, "## Active sibling runs") {

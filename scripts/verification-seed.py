@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -27,6 +28,7 @@ r = i.r
 
 SEEDS = Path(os.environ.get('MULTICA_VERIFICATION_SEEDS', '/data/cbs/multica-verification/seeds'))
 SCRUB = Path(__file__).with_name('verification-scrub.json')
+FIXTURES = Path(__file__).with_name('verification-fixtures.sql')
 BUILD_PREFIX = 'multica_seed_build_'
 FIXTURE_VERSION = 'business-samples-v1'
 
@@ -131,6 +133,17 @@ def resume(env, reason):
     return control_api('delivery-queue/slots/configure', dict(name=env, action='resume-maintenance', reason=reason))
 
 
+def begin_maintenance(env, reason):
+    slots = control_api('delivery-queue/slots')
+    matches = [slot for slot in slots if slot.get('name') == env]
+    if len(matches) != 1 or not isinstance(matches[0].get('enabled'), bool):
+        raise RuntimeError('无法核对验收槽位原有启用状态')
+    previous = matches[0]['enabled']
+    result = maintain(env, reason)
+    # 旧控制端没有返回原状态；新控制端在行锁内返回，避免读取与维护之间的竞态。
+    return result.get('previous_enabled', previous)
+
+
 def slot_seed(env):
     try:
         return control_api('delivery-queue/slots/seed?name=' + urllib.parse.quote(env))
@@ -164,12 +177,198 @@ def read_seed(seed):
     return path, manifest, artifact
 
 
+def read_sql_seed(path, manifest):
+    """读取已清理 SQL 的不可变身份；未验收前不影响快照恢复入口。"""
+    artifact = manifest.get('sql_artifact') or {}
+    if artifact.get('file') != 'seed.sql' or not artifact.get('sha256'):
+        raise RuntimeError('种子缺少 SQL 文件或校验和')
+    sql_path = Path(path) / 'seed.sql'
+    if not sql_path.is_file() or digest(sql_path) != artifact['sha256']:
+        raise RuntimeError('SQL 种子文件校验失败: ' + str(path))
+    return sql_path
+
+
+def verified_sql_seed(path, manifest):
+    verification = manifest.get('sql_verification') or {}
+    if verification.get('passed') is not True:
+        return None
+    if verification.get('sha256') != (manifest.get('sql_artifact') or {}).get('sha256'):
+        raise RuntimeError('SQL 种子已变化，需要重新验收')
+    return read_sql_seed(path, manifest)
+
+
+def import_sql_seed(container, database, sql_path):
+    # 导入阶段不产生业务事件；COPY 或 INSERT 出错时整次事务回滚。
+    content = Path(sql_path).read_bytes()
+    subprocess.run(['docker', 'exec', '-i', container, 'psql', '-q', '-U', 'postgres', '-d', database,
+                    '-v', 'ON_ERROR_STOP=1'], input=b'BEGIN;\nSET LOCAL session_replication_role=replica;\n'
+                   + content + b'\nSET LOCAL session_replication_role=origin;\nCOMMIT;\n', check=True)
+
+
+def clear_verification_uploads(env, cfg, record):
+    """只清除该槽位安装记录对应的上传目录。"""
+    if env not in r.VERIFICATION_ENVS or record.get('environment') != env:
+        raise RuntimeError('验收上传目录身份不匹配')
+    root = Path(record['data_root'])
+    app = root / 'app'
+    expected = app / 'uploads'
+    target = Path(cfg['server']['LOCAL_UPLOAD_DIR'])
+    if not root.is_absolute() or root.name != env or root.resolve() != root or any(path.is_symlink() for path in (root, app, expected)) or target != expected or target.resolve() != target:
+        raise RuntimeError('验收上传目录与安装记录不一致')
+    owner = i.pwd.getpwnam(cfg['server']['MULTICA_SERVICE_USER'])
+    try:
+        directory = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as error:
+        raise RuntimeError('验收上传目录不存在或归属不符') from error
+    try:
+        if os.fstat(directory).st_uid != owner.pw_uid:
+            raise RuntimeError('验收上传目录不存在或归属不符')
+        with os.scandir(directory) as entries:
+            for item in entries:
+                if item.is_dir(follow_symlinks=False):
+                    shutil.rmtree(item.name, dir_fd=directory)
+                else:
+                    os.unlink(item.name, dir_fd=directory)
+    finally:
+        os.close(directory)
+
+
+def clear_verification_database(env, cfg, pgconfig):
+    """Clear only a dedicated verification database while retaining its migration ledger."""
+    if env not in r.VERIFICATION_ENVS or os.environ.get('MULTICA_TASK_ID'):
+        raise RuntimeError('仅外部维护身份可清理固定验收环境')
+    container, port, _ = postgres(pgconfig)
+    target = urllib.parse.urlparse(cfg['server']['DATABASE_URL'])
+    database = 'multica_' + env.replace('-', '_')
+    if target.hostname != '127.0.0.1' or str(target.port) != port or target.path != '/' + database or target.username != env.replace('-', '_'):
+        raise RuntimeError('槽位实际连接与专属实例不一致')
+    if counter(container, 'postgres', "SELECT count(*) FROM pg_stat_activity WHERE datname='%s'" % database):
+        raise RuntimeError('验收数据库仍有消费者，拒绝清理')
+    statement = '''DO $$ DECLARE targets text; BEGIN
+      IF EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class parent ON parent.oid=c.confrelid JOIN pg_namespace pn ON pn.oid=parent.relnamespace JOIN pg_class child ON child.oid=c.conrelid JOIN pg_namespace cn ON cn.oid=child.relnamespace WHERE c.contype='f' AND pn.nspname='public' AND parent.relname<>'schema_migrations' AND (cn.nspname<>'public' OR child.relname='schema_migrations')) THEN
+        RAISE EXCEPTION '验收表被清理范围外的表引用';
+      END IF;
+      SELECT string_agg(format('%I.%I', n.nspname, c.relname), ', ' ORDER BY c.relname) INTO targets FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relname<>'schema_migrations';
+      IF targets IS NULL THEN RAISE EXCEPTION '验收数据库没有业务表'; END IF;
+      EXECUTE 'TRUNCATE TABLE ' || targets || ' RESTART IDENTITY';
+    END $$;'''
+    sql(container, database, statement)
+    return database
+
+
+def clear_slot(env, lease, pgconfig, fence):
+    """Stop and clear one released task's isolated environment; resume from its journal."""
+    if env not in r.VERIFICATION_ENVS or os.environ.get('MULTICA_TASK_ID'):
+        raise RuntimeError('仅外部维护身份可清理固定验收环境')
+    with r.lock(r.candidate_lock(env), wait=True):
+        cfg = r.read(r.config_path(env)); meta = r.read(r.meta_path(env))
+        r.validate_verification_config(env, cfg)
+        record_path = r.RUN / 'verification-install' / (env + '.json')
+        record = r.read(record_path)
+        if record.get('environment') != env or lease.get('name') != env or not lease.get('candidate_id'):
+            raise RuntimeError('清理目标或占用身份不符')
+        candidate = r.candidate(env=env)
+        if candidate.get('delivery_id') != lease.get('delivery_id') or candidate.get('id') != lease.get('candidate_id'):
+            raise RuntimeError('清理候选与槽位不一致')
+        if record.get('stage') in ('cleaning','cleaned'):
+            if record.get('cleanup_delivery') != lease['delivery_id'] or record.get('cleanup_generation') != lease['generation'] or record.get('cleanup_candidate') != lease['candidate_id']:
+                raise RuntimeError('未完成的清理属于其他槽位代次')
+            if record['stage'] == 'cleaned': return
+            r.check_process_ownership(env, meta, allow_unhealthy=True)
+        else:
+            r.check_process_ownership(env, meta)
+            r.check_live_environment(env, meta, cfg)
+            fence()
+            record.update(stage='cleaning',cleanup_delivery=lease['delivery_id'],cleanup_generation=lease['generation'],cleanup_candidate=lease['candidate_id'])
+            r.write(record_path, record, True)
+        fence()
+        daemon = meta.get('pids', {}).get('daemon')
+        if daemon and r.exists(daemon):
+            r.http(r.health_url(env) + '/shutdown', 'POST')
+            deadline=time.monotonic()+30
+            while r.exists(daemon) and time.monotonic()<deadline: time.sleep(.2)
+            if r.exists(daemon): raise RuntimeError('验收 Daemon 未退出')
+        for role in ('web','server'):
+            pid=meta.get('pids',{}).get(role)
+            if pid and r.exists(pid):
+                release=Path(meta.get('role_release_dirs',{}).get(role,meta['release_dir']))
+                r.owned_stop(pid,role,release/'apps/web' if role=='web' else release)
+        meta['pids']={};r.write(r.meta_path(env),meta,True)
+        fence()
+        clear_verification_uploads(env,cfg,record)
+        clear_verification_database(env,cfg,pgconfig)
+        record['stage']='cleaned';r.write(record_path,record,True)
+
+
+def adopt_cleaning(env, previous, current):
+    path=r.RUN/'verification-install'/(env+'.json')
+    if not path.exists(): return
+    record=r.read(path)
+    if record.get('stage') not in ('cleaning','cleaned'): return
+    if record.get('cleanup_delivery') != previous.get('delivery_id') or record.get('cleanup_generation') != previous.get('generation') or record.get('cleanup_candidate') != previous.get('candidate_id') or current.get('delivery_id') != previous.get('delivery_id') or current.get('generation',0) <= previous.get('generation',0):
+        raise RuntimeError('无法确认验收清理恢复代次')
+    record['cleanup_generation']=current['generation'];r.write(path,record,True)
+
+
+def verify_sql_seed(seed, release, pgconfig):
+    """在专属数据库中比较 SQL 与已清理快照，不修改当前种子指针。"""
+    path, manifest, artifact = read_seed(seed)
+    sql_path = read_sql_seed(path, manifest)
+    release = Path(release).resolve()
+    validate_seed_release(manifest, release)
+    container, port, password = postgres(pgconfig)
+    suffix = secrets.token_hex(8)
+    snapshot_db, sql_db = BUILD_PREFIX + 'snapshot_' + suffix, BUILD_PREFIX + 'sql_' + suffix
+    dsn = 'postgres://postgres:%s@127.0.0.1:%s/%s' % (urllib.parse.quote(password, safe=''), port, sql_db)
+    created = []
+    try:
+        for database in (snapshot_db, sql_db):
+            sql(container, 'postgres', 'CREATE DATABASE ' + database)
+            created.append(database)
+        with (path / artifact['dump']).open('rb') as stream:
+            subprocess.run(['docker', 'exec', '-i', container, 'pg_restore', '-U', 'postgres', '-d', snapshot_db,
+                            '--no-owner', '--no-acl', '--exit-on-error'], stdin=stream, check=True)
+        r.run([release/'server/bin/migrate', 'up'], cwd=release/'server',
+              env={**os.environ, 'DATABASE_URL': dsn, 'MULTICA_MIGRATION_BASELINE': 'true'})
+        import_sql_seed(container, sql_db, sql_path)
+        checks = check_restored_data(container, sql_db, manifest)
+        listing = "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> 'schema_migrations' ORDER BY tablename"
+        tables = sql(container, snapshot_db, listing).splitlines()
+        if tables != sql(container, sql_db, listing).splitlines():
+            raise RuntimeError('SQL 种子与快照的表集合不一致')
+        queries = []
+        for table in tables:
+            quoted = '"' + table.replace('"', '""') + '"'
+            literal = "'" + table.replace("'", "''") + "'"
+            queries.append("SELECT json_build_array(" + literal + ",count(*),md5(COALESCE(string_agg(md5(row_to_json(t)::text),'' ORDER BY md5(row_to_json(t)::text)),'')))::text FROM public." + quoted + ' t')
+        query = ' UNION ALL '.join(queries)
+        expected = sorted((json.loads(line) for line in sql(container, snapshot_db, query).splitlines()), key=lambda item: item[0])
+        actual = sorted((json.loads(line) for line in sql(container, sql_db, query).splitlines()), key=lambda item: item[0])
+        if expected != actual:
+            differences = [a[0] for a, b in zip(expected, actual) if a != b]
+            raise RuntimeError('SQL 种子与快照数据不一致: ' + ', '.join(differences))
+        rows = sum(item[1] for item in actual)
+        sequences = "SELECT sequencename || ':' || COALESCE(last_value::text,'NULL') FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename"
+        if sql(container, snapshot_db, sequences) != sql(container, sql_db, sequences):
+            raise RuntimeError('SQL 种子与快照的序列值不一致')
+        manifest['sql_verification'] = dict(passed=True, at=now(), sha256=manifest['sql_artifact']['sha256'],
+                                            tables=len(tables), rows=rows, checks=checks)
+        write_manifest(path, manifest)
+        print(json.dumps(dict(status='verified', seed=str(path), tables=len(tables), rows=rows), ensure_ascii=False))
+    finally:
+        for database in created:
+            sql(container, 'postgres', 'DROP DATABASE ' + database)
+
+
 def source_identity(manifest):
     source = manifest.get('source') or {}
-    return dict(environment=source.get('environment') or manifest.get('source_environment', 'int'),
-                commit=source.get('commit') or manifest.get('source_commit', ''),
-                database=source.get('database') or manifest.get('database', ''),
-                collected_at=source.get('collected_at') or manifest.get('collected_at', ''))
+    identity = dict(environment=source.get('environment') or manifest.get('source_environment', 'int'),
+                    commit=source.get('commit') or manifest.get('source_commit', ''),
+                    database=source.get('database') or manifest.get('database', ''),
+                    collected_at=source.get('collected_at') or manifest.get('collected_at', ''))
+    if source.get('fixture_sql_sha256'):
+        identity['fixture_sql_sha256'] = source['fixture_sql_sha256']
+    return identity
 
 
 def row_counts(container, database):
@@ -252,6 +451,8 @@ def scrub_checks(container, database):
         ('测试模型无命令行覆盖', 'agent', "SELECT count(*) FROM public.agent WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(custom_args,'[]'::jsonb)) a(value) WHERE value IN ('-m','--model','-c','--config') OR value LIKE '--model=%' OR value LIKE '--config=%')", 0),
         ('MCP 检查已清空', 'workspace_mcp_check', 'SELECT count(*) FROM public.workspace_mcp_check', 0),
         ('MCP OAuth 状态已清空', 'plugin_remote_mcp_oauth_state', 'SELECT count(*) FROM public.plugin_remote_mcp_oauth_state', 0),
+        ('旧插件配置已清空', 'plugin_installation_config', 'SELECT count(*) FROM public.plugin_installation_config', 0),
+        ('旧插件 MCP 凭据已清空', 'plugin_remote_mcp_secret', 'SELECT count(*) FROM public.plugin_remote_mcp_secret', 0),
         ('MCP 绑定已清空', 'agent_mcp_server', 'SELECT count(*) FROM public.agent_mcp_server', 0),
         ('MCP 凭据配置已清空', 'workspace_mcp_server', 'SELECT count(*) FROM public.workspace_mcp_server', 0),
         ('个人访问令牌已清空', 'personal_access_token', 'SELECT count(*) FROM public.personal_access_token', 0),
@@ -259,11 +460,13 @@ def scrub_checks(container, database):
         ('执行队列无待执行任务', 'agent_task_queue', "SELECT count(*) FROM public.agent_task_queue WHERE status NOT IN ('completed','failed','cancelled')", 0),
         ('执行任务未绑定自动化', 'agent_task_queue', 'SELECT count(*) FROM public.agent_task_queue WHERE autopilot_run_id IS NOT NULL', 0),
         ('自动化无运行记录', 'autopilot_run', 'SELECT count(*) FROM public.autopilot_run', 0),
+        ('自动化无额度预约', 'autopilot_quota_reservation', 'SELECT count(*) FROM public.autopilot_quota_reservation', 0),
         ('自动化已暂停', 'autopilot', "SELECT count(*) FROM public.autopilot WHERE status<>'paused'", 0),
         ('自动化触发器已停用', 'autopilot_trigger', 'SELECT count(*) FROM public.autopilot_trigger WHERE enabled', 0),
         ('插件钩子已停用', 'plugin_hook_schedule', 'SELECT count(*) FROM public.plugin_hook_schedule WHERE enabled', 0),
         ('监督已关闭', 'supervision_config', 'SELECT count(*) FROM public.supervision_config WHERE enabled', 0),
         ('代码审查已关闭', 'review_config', 'SELECT count(*) FROM public.review_config WHERE enabled', 0),
+        ('发布协调已关闭', 'release_agent_config', 'SELECT count(*) FROM public.release_agent_config WHERE enabled', 0),
         ('上游同步已暂停', 'upstream_sync_config', "SELECT count(*) FROM public.upstream_sync_config WHERE sync_state<>'paused'", 0),
         ('历史交付不再执行', 'issue_delivery', "SELECT count(*) FROM public.issue_delivery WHERE phase NOT IN ('needs_changes','published','cancelled')", 0),
         ('发布占用已清空', 'delivery_publication', 'SELECT count(*) FROM public.delivery_publication', 0),
@@ -401,6 +604,7 @@ def restore(env, seed, pgconfig):
     if env not in r.VERIFICATION_ENVS or os.environ.get('MULTICA_TASK_ID'):
         raise RuntimeError('仅外部维护身份可重置固定验收环境')
     path, manifest, artifact = read_seed(seed)
+    sql_source = verified_sql_seed(path, manifest)
     container, port, _ = postgres(pgconfig)
     with r.lock(r.candidate_lock(env), wait=True):
         meta = r.read(r.meta_path(env)); cfg = r.read(r.config_path(env))
@@ -413,6 +617,7 @@ def restore(env, seed, pgconfig):
         record_path = r.RUN/'verification-install'/(env + '.json')
         record = r.read(record_path)
         running = Path(meta['release_dir'])
+        cleaned = record.get('stage') == 'cleaned'
         restoring = record.get('stage') in ('stopping','resetting','account','starting')
         if restoring:
             if record.get('seed_id')!=(manifest.get('seed_id') or path.name) or record.get('seed_sha256')!=artifact['sha256']:
@@ -431,8 +636,13 @@ def restore(env, seed, pgconfig):
                 r.copy_tree(selected,release)
                 if r.checksums(release)!=r.read(selected/'release.json')['files']:
                     raise RuntimeError('种子基线复制后完整校验失败')
-            r.check_process_ownership(env, meta)
-            r.check_live_environment(env, meta, cfg)
+            if cleaned:
+                r.check_process_ownership(env, meta, allow_unhealthy=True)
+                if any(r.exists(pid) for pid in meta.get('pids',{}).values()):
+                    raise RuntimeError('清理后的槽位仍有运行进程')
+            else:
+                r.check_process_ownership(env, meta)
+                r.check_live_environment(env, meta, cfg)
         policy_spec=importlib.util.spec_from_file_location('test_agent_control',Path(__file__).with_name('test-agent-control.py'))
         policy_control=importlib.util.module_from_spec(policy_spec);policy_spec.loader.exec_module(policy_control)
         policy_control.refresh_default(r.ROOT,env)
@@ -454,7 +664,9 @@ def restore(env, seed, pgconfig):
         # 不使用 FORCE；出现未识别连接时保留现场并停止。
         if sql(container, 'postgres', "SELECT count(*) FROM pg_stat_activity WHERE datname='" + dbname + "'") != '0':
             raise RuntimeError('验收数据库仍有消费者，拒绝重置')
+        clear_verification_uploads(env, cfg, record)
         record['stage']='resetting';r.write(record_path,record,True)
+        # 前一个任务可能新增迁移；重新建立专属槽位数据库以免结构和迁移记录泄漏到下一个任务。
         sql(container, 'postgres', f'DROP DATABASE {dbname};\nCREATE DATABASE {dbname} OWNER {role};\nREVOKE CONNECT ON DATABASE {dbname} FROM PUBLIC;\nGRANT CONNECT ON DATABASE {dbname} TO {role};')
         r.run([release/'server/bin/migrate', 'up'], cwd=release/'server', env={**cfg['server'], 'MULTICA_MIGRATION_BASELINE':'true'})
         pending=record.get('staging_database')
@@ -463,15 +675,20 @@ def restore(env, seed, pgconfig):
             if counter(container,'postgres',"SELECT count(*) FROM pg_stat_activity WHERE datname='%s'" % pending):
                 raise RuntimeError('上次种子导入仍有消费者，保持维护')
             sql(container,'postgres','DROP DATABASE IF EXISTS '+pending+';')
-        staging = 'verification_seed_import_' + secrets.token_hex(8)
-        record['staging_database'] = staging; r.write(record_path, record, True)
-        sql(container, 'postgres', f'CREATE DATABASE {staging};')
-        try:
-            with (path/artifact['dump']).open('rb') as stream:
-                subprocess.run(['docker', 'exec', '-i', container, 'pg_restore', '-U', 'postgres', '-d', staging, '--no-owner', '--no-acl', '--exit-on-error'], stdin=stream, check=True)
-            r.run(['node', str(Path(__file__).with_name('verification-seed-copy.mjs')), env, staging, str(pgconfig)], cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT':str(r.ROOT)})
-        finally:
-            sql(container, 'postgres', f'DROP DATABASE {staging};')
+        record.pop('staging_database', None); r.write(record_path, record, True)
+        if sql_source:
+            import_sql_seed(container, dbname, sql_source)
+            r.run(['node', str(Path(__file__).with_name('verification-seed-copy.mjs')), env, 'direct', str(pgconfig)], cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT':str(r.ROOT)})
+        else:
+            staging = 'verification_seed_import_' + secrets.token_hex(8)
+            record['staging_database'] = staging; r.write(record_path, record, True)
+            sql(container, 'postgres', f'CREATE DATABASE {staging};')
+            try:
+                with (path/artifact['dump']).open('rb') as stream:
+                    subprocess.run(['docker', 'exec', '-i', container, 'pg_restore', '-U', 'postgres', '-d', staging, '--no-owner', '--no-acl', '--exit-on-error'], stdin=stream, check=True)
+                r.run(['node', str(Path(__file__).with_name('verification-seed-copy.mjs')), env, staging, str(pgconfig)], cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT':str(r.ROOT)})
+            finally:
+                sql(container, 'postgres', f'DROP DATABASE {staging};')
         check_restored_data(container, dbname, manifest)
         # 种子可能来自另一槽位；登录凭据属于槽位安装记录，重置后重新绑定到本槽位密码。
         hashed = password_hash(record['password']).replace("'", "''")
@@ -516,7 +733,7 @@ def restore(env, seed, pgconfig):
 def reset(env, seed, pgconfig):
     """单槽位维护：停接单、恢复种子、恢复接单；失败保持停用，不影响其他槽位。"""
     path, manifest, artifact = read_seed(seed)
-    maintain(env, '按种子恢复测试数据')
+    previously_enabled = begin_maintenance(env, '按种子恢复测试数据')
     try:
         result = restore(env, seed, pgconfig)
     except Exception as error:
@@ -526,7 +743,8 @@ def reset(env, seed, pgconfig):
             pass
         raise RuntimeError('种子恢复失败，槽位保持维护：' + str(error)) from error
     record_slot_seed(env, result['seed_id'], artifact['sha256'], True)
-    resume(env, '种子恢复完成')
+    if previously_enabled:
+        resume(env, '种子恢复完成')
     return result
 
 
@@ -550,21 +768,33 @@ def build_seed(seed_id, origin, release, pgconfig):
     destination = SEEDS / seed_id
     if destination.exists():
         raise RuntimeError('种子编号已存在；种子发布后不可原地覆盖')
-    path, manifest, artifact = read_seed(origin)
+    if origin is None:
+        path, artifact = None, None
+        manifest = dict(source=dict(environment='fixtures-sql', collected_at=now()))
+    else:
+        path, manifest, artifact = read_seed(origin)
     container, port, password = postgres(pgconfig)
     release = Path(release).resolve()
     if not (release/'server/bin/migrate').exists():
         raise RuntimeError('构建种子需要目标候选的迁移程序')
     migration_identity = release_schema_identity(release)
-    target = BUILD_PREFIX + re.sub(r'[^a-z0-9_]', '_', seed_id.lower())
+    target = BUILD_PREFIX + secrets.token_hex(8)
     staging = 'verification_seed_import_' + secrets.token_hex(8)
     dsn = 'postgres://postgres:%s@127.0.0.1:%s/%s' % (urllib.parse.quote(password, safe=''), port, target)
-    sql(container, 'postgres', f'DROP DATABASE IF EXISTS {target};\nCREATE DATABASE {target};')
-    sql(container, 'postgres', f'CREATE DATABASE {staging};')
+    created = []
     try:
+        for database in (target, staging):
+            sql(container, 'postgres', 'CREATE DATABASE ' + database)
+            created.append(database)
         r.run([release/'server/bin/migrate', 'up'], cwd=release/'server', env={**os.environ, 'DATABASE_URL': dsn, 'MULTICA_MIGRATION_BASELINE': 'true'})
-        with (path/artifact['dump']).open('rb') as stream:
-            subprocess.run(['docker', 'exec', '-i', container, 'pg_restore', '-U', 'postgres', '-d', staging, '--no-owner', '--no-acl', '--exit-on-error'], stdin=stream, check=True)
+        if origin is None:
+            staging_dsn = 'postgres://postgres:%s@127.0.0.1:%s/%s' % (urllib.parse.quote(password, safe=''), port, staging)
+            r.run([release/'server/bin/migrate', 'up'], cwd=release/'server',
+                  env={**os.environ, 'DATABASE_URL': staging_dsn, 'MULTICA_MIGRATION_BASELINE': 'true'})
+            import_sql_seed(container, staging, FIXTURES)
+        else:
+            with (path/artifact['dump']).open('rb') as stream:
+                subprocess.run(['docker', 'exec', '-i', container, 'pg_restore', '-U', 'postgres', '-d', staging, '--no-owner', '--no-acl', '--exit-on-error'], stdin=stream, check=True)
         copied = subprocess.run(['node', str(Path(__file__).with_name('verification-seed-copy.mjs')), 'build', staging, str(pgconfig), '--target-database', target, '127.0.0.1', port],
                                 cwd=r.ROOT, env={**os.environ, 'MULTICA_RELEASE_ROOT': str(r.ROOT)}, capture_output=True, text=True)
         if copied.returncode:
@@ -584,13 +814,25 @@ def build_seed(seed_id, origin, release, pgconfig):
         with dump_path.open('xb') as stream:
             dump_path.chmod(0o600)
             subprocess.run(['docker', 'exec', container, 'pg_dump', '-U', 'postgres', '-d', target, '-Fc', '--no-owner', '--no-acl'], stdout=stream, check=True)
+        # SQL 由已完成清理和检查的构建库生成；迁移台账属于目标库，不能从种子覆盖。
+        sql_path = destination/'seed.sql'
+        with sql_path.open('xb') as stream:
+            sql_path.chmod(0o600)
+            subprocess.run(['docker', 'exec', container, 'pg_dump', '-U', 'postgres', '-d', target,
+                            '--data-only', '--column-inserts', '--rows-per-insert=100', '--no-owner', '--no-acl',
+                            '--exclude-table=public.schema_migrations'], stdout=stream, check=True)
         record = dict(seed_id=seed_id, version=2, status='built', source=source_identity(manifest),
                       artifact=dict(dump='seed.dump', sha256=digest(dump_path), bytes=dump_path.stat().st_size),
+                      sql_artifact=dict(file='seed.sql', sha256=digest(sql_path), bytes=sql_path.stat().st_size),
                       schema=schema, fixture=dict(version=FIXTURE_VERSION, row_counts=counts),
                       scrub=scrub_identity(), build=dict(environment='isolated-build', at=now(), release=str(release), checks=checks, tables=copy_report.get('tables', [])))
+        if origin is None:
+            record['source']['fixture_sql_sha256'] = digest(FIXTURES)
         write_manifest(destination, record)
+        read_sql_seed(destination, record)
     finally:
-        sql(container, 'postgres', f'DROP DATABASE IF EXISTS {staging};\nDROP DATABASE IF EXISTS {target};')
+        for database in reversed(created):
+            sql(container, 'postgres', 'DROP DATABASE ' + database)
     print(json.dumps(dict(status='built', seed=str(destination), schema=schema, rows=counts), ensure_ascii=False))
     return destination
 
@@ -599,7 +841,7 @@ def verify_seed(env, seed, pgconfig, accept=False):
     """3. 恢复并验收当前种子；失败不替换当前版本，槽位保持维护。"""
     path, manifest, artifact = read_seed(seed)
     seed_id = manifest.get('seed_id') or path.name
-    maintain(env, '种子恢复验收')
+    previously_enabled = begin_maintenance(env, '种子恢复验收')
     try:
         result = restore(env, seed, pgconfig)
         container, database = result['container'], result['database']
@@ -617,7 +859,8 @@ def verify_seed(env, seed, pgconfig, accept=False):
         raise RuntimeError('种子恢复验收失败，槽位保持维护：' + str(error)) from error
     if failed:
         raise RuntimeError('种子恢复验收未通过，槽位保持维护：' + ', '.join(c['name'] for c in failed))
-    resume(env, '种子恢复验收完成')
+    if previously_enabled:
+        resume(env, '种子恢复验收完成')
     if accept:
         r.write(current_path(), dict(seed_id=seed_id, dump_sha256=artifact['sha256'], schema=(manifest.get('schema') or {}).get('fingerprint', ''),
                               accepted_at=now(), verified_by=env), True)
@@ -685,7 +928,8 @@ if __name__ == '__main__':
     sub = parser.add_subparsers(dest='action', required=True)
     export = sub.add_parser('export'); export.add_argument('--destination', type=Path, required=True)
     reset_command = sub.add_parser('reset'); reset_command.add_argument('--environment', choices=r.VERIFICATION_ENVS, required=True); reset_command.add_argument('--seed', type=Path, required=True); reset_command.add_argument('--postgres-config', type=Path, required=True)
-    build = sub.add_parser('build'); build.add_argument('--id', required=True); build.add_argument('--from', dest='origin', type=Path, required=True); build.add_argument('--release', type=Path, required=True); build.add_argument('--postgres-config', type=Path, required=True)
+    build = sub.add_parser('build'); build.add_argument('--id', required=True); source = build.add_mutually_exclusive_group(required=True); source.add_argument('--from', dest='origin', type=Path); source.add_argument('--from-sql', action='store_true'); build.add_argument('--release', type=Path, required=True); build.add_argument('--postgres-config', type=Path, required=True)
+    check_sql = sub.add_parser('check-sql'); check_sql.add_argument('--seed', type=Path, required=True); check_sql.add_argument('--release', type=Path, required=True); check_sql.add_argument('--postgres-config', type=Path, required=True)
     verify = sub.add_parser('verify'); verify.add_argument('--environment', choices=r.VERIFICATION_ENVS, required=True); verify.add_argument('--seed', type=Path, required=True); verify.add_argument('--postgres-config', type=Path, required=True); verify.add_argument('--accept', action='store_true')
     ensure_command = sub.add_parser('ensure'); ensure_command.add_argument('--environment', choices=r.VERIFICATION_ENVS, required=True); ensure_command.add_argument('--postgres-config', type=Path, required=True)
     status_command = sub.add_parser('status')
@@ -700,7 +944,9 @@ if __name__ == '__main__':
     elif args.action == 'ensure':
         print(json.dumps(ensure(args.environment, args.postgres_config.resolve()), ensure_ascii=False))
     elif args.action == 'build':
-        build_seed(args.id, args.origin.resolve(), args.release.resolve(), args.postgres_config.resolve())
+        build_seed(args.id, args.origin.resolve() if args.origin else None, args.release.resolve(), args.postgres_config.resolve())
+    elif args.action == 'check-sql':
+        verify_sql_seed(args.seed.resolve(), args.release.resolve(), args.postgres_config.resolve())
     elif args.action == 'verify':
         verify_seed(args.environment, args.seed.resolve(), args.postgres_config.resolve(), args.accept)
     else:

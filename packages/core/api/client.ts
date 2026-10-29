@@ -1,6 +1,7 @@
 import type { TestEnvironmentControl, TestAgentPolicy } from "../test-agents";
 import { supervisionSnapshotSchema, supervisionListSchema, supervisionDetailSchema, supervisionFeedbackSchema, supervisionEvidencePageSchema, supervisionInstructionsSchema, type SupervisionEvidencePage, type SupervisionSnapshot, type SupervisionList, type SupervisionDetail, type SupervisionFeedback, type SupervisionInstructions } from "../supervision/schema";
 import { reviewSettingsSchema, type ReviewSettings } from "../review/schema";
+import { releaseAgentSettingsSchema, type ReleaseAgentSettings } from "../release-agent/schema";
 import { TaskOutputPageSchema, TaskMessagePayloadSchema, type TaskOutputPage } from "./schemas";
 import { MealsSchema, mealWire, type MealsData, type MealCommand } from "../meals/schema";
 import { CookingListSchema, CookingDetailSchema, CookingCategoriesSchema, type CookingList, type CookingDetail, type CookingCategory } from "../cooking/schema";
@@ -984,6 +985,12 @@ export class ApiClient {
   }
   async getReviewSettings() {
     return parseOrThrow<ReviewSettings>(await this.fetch<unknown>("/api/review/settings"), reviewSettingsSchema, { endpoint: "GET /api/review/settings", sensitive: true });
+  }
+  async getReleaseAgentSettings() {
+    return parseOrThrow<ReleaseAgentSettings>(await this.fetch<unknown>("/api/release-agent/settings"), releaseAgentSettingsSchema, { endpoint: "GET /api/release-agent/settings", sensitive: true });
+  }
+  async updateReleaseAgentSettings(config: { enabled: boolean; project_id?: string; runtime_id?: string; model?: string; thinking_level?: string; instructions?: string }) {
+    return parseOrThrow<ReleaseAgentSettings>(await this.fetch<unknown>("/api/release-agent/settings", { method: "PUT", body: JSON.stringify(config) }), releaseAgentSettingsSchema, { endpoint: "PUT /api/release-agent/settings", sensitive: true, mayHaveCommitted: true });
   }
   async updateReviewSettings(config: { enabled: boolean; runtime_id?: string | null; model?: string | null; thinking_level?: string | null; instructions?: string | null }) {
     return parseOrThrow<ReviewSettings>(await this.fetch<unknown>("/api/review/settings", { method: "PUT", body: JSON.stringify(config) }), reviewSettingsSchema, { endpoint: "PUT /api/review/settings", sensitive: true, mayHaveCommitted: true });

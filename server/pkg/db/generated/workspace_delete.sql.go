@@ -303,6 +303,9 @@ WITH
 ws_agents AS MATERIALIZED (
     SELECT id FROM agent WHERE workspace_id = $1
 ),
+deleted_release_agent_config AS (
+    DELETE FROM release_agent_config WHERE workspace_id = $1
+),
 ws_issues AS MATERIALIZED (
     SELECT id FROM issue WHERE workspace_id = $1
 ),

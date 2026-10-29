@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY agent_issue_release_unique;

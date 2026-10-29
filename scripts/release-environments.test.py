@@ -472,6 +472,21 @@ class ReleaseTests(unittest.TestCase):
             unknown=target/'999_unknown.up.sql';unknown.write_bytes(migration_bytes(names[0]))
             self.assertFalse(r.reviewed_curated_nullable_columns(unknown))
 
+    def test_project_release_migrations_pass_personal_policy(self):
+        source=Path(__file__).parent.parent/'server/migrations'
+        with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'MULTICA_MIGRATION_POLICY':'personal'}):
+            old=Path(folder)/'old';new=Path(folder)/'new'
+            (old/'server/migrations').mkdir(parents=True)
+            target=new/'server/migrations';target.mkdir(parents=True)
+            for version in range(686,692):
+                for path in source.glob(str(version)+'_*.sql'):
+                    (target/path.name).write_bytes(path.read_bytes())
+            r.validate_pending_migrations(new,old)
+            migration=next(target.glob('690_*.up.sql'))
+            migration.write_text(migration.read_text().replace('-- @compat:', '-- compatibility:'))
+            with self.assertRaisesRegex(RuntimeError,'@compat'):
+                r.validate_pending_migrations(new,old)
+
     def test_personal_migration_policy_allows_reviewed_shapes(self):
         source = Path(__file__).parent.parent / 'server/migrations'
         with tempfile.TemporaryDirectory() as folder:

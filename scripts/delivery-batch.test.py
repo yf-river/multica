@@ -3,6 +3,8 @@ import datetime
 import http.server
 import importlib.util
 import json
+import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -57,6 +59,64 @@ class BatchFlowTests(unittest.TestCase):
 
     def actions(self):
         return [call['action'] for call in self.calls if call]
+
+    def test_project_batch_only_starts_for_its_project(self):
+        (self.root / 'delivery-batch.json').write_text(json.dumps(dict(enabled=True, controller_environment='prod', window_seconds=600, project_id='project-a')))
+        other = dict(delivery('other'), project_id='project-b')
+        self.assertFalse(self.worker.tick_batches([other]))
+        self.assertEqual(self.actions(), [])
+        ours = dict(delivery('ours'), project_id='project-a')
+        self.worker.tick_batches([other, ours])
+        opened = next(call for call in self.calls if call and call['action'] == 'open')
+        self.assertEqual(opened['project_id'], 'project-a')
+        self.assertEqual(opened['window_seconds'], 600)
+
+    def test_managed_project_settings_control_batch_and_pause(self):
+        settings = dict(configured=True, enabled=True, project_id='project-a')
+        with patch.dict(os.environ, {'MULTICA_RELEASE_REDESIGN': '1'}), patch.object(self.worker, 'api', return_value=settings):
+            self.worker.refresh_release_settings()
+            self.assertEqual(self.worker.batch_config()['window_seconds'], 600)
+            self.assertEqual(self.worker.batch_project(), 'project-a')
+            settings['enabled'] = False
+            self.worker.refresh_release_settings()
+            self.assertIsNone(self.worker.batch_config())
+            self.assertEqual(self.worker.batch_project(), 'project-a')
+
+    def test_project_conflict_holds_batch_without_rebuilding(self):
+        self.state = dict(batch=dict(id='b1', status='frozen', worker_token='w1', project_id='project-a', error='合并冲突'),
+                          members=[dict(delivery_id='d1', source_commit='a' * 40, result='pending')])
+        with patch.object(w.Worker, 'batch_prepare') as prepare:
+            self.worker.tick_batches([delivery('d1')])
+        prepare.assert_not_called()
+        self.assertEqual(self.actions(), ['dispatch-agent', 'retry'])
+        self.assertEqual(self.calls[-2]['stage'], 'conflict')
+        self.assertTrue(self.calls[-1]['automatic'])
+
+    def test_project_merge_conflict_preserves_the_batch(self):
+        member = dict(delivery_id='d1', source_commit='a' * 40, result='pending')
+        batch = dict(id='b1', status='frozen', worker_token='w1', project_id='project-a')
+        self.state = dict(batch=batch, members=[member])
+        self.worker.publication_guard = lambda d: contextlib.nullcontext((dict(generation=1), lambda: None))
+        with patch.object(w.Worker, 'batch_source', return_value=(self.root, 'b' * 40, None, member)), \
+                patch.object(w.Worker, 'finish_publication') as finished:
+            self.worker.batch_prepare(batch, [member], [delivery('d1')])
+        self.assertEqual(self.actions(), ['hold'])
+        self.assertEqual(self.calls[-1]['conflict_delivery_id'], 'd1')
+        finished.assert_called_once()
+
+    def test_project_integration_does_not_reuse_old_evidence(self):
+        candidate = dict(id='c1', commit='c' * 40, batch_id='b1', delivery_id='d1', status='verifying')
+        batch = dict(id='b1', status='validating', worker_token='w1', project_id='project-a')
+        row = dict(delivery('d1'), plan_snapshot={'required_checks': [{'name': '跨任务联调', 'stage': 'integration'}]},
+                   evidence=[{'name': '跨任务联调', 'status': 'passed', 'evidence': '旧候选'}])
+        (self.root / 'candidate.json').write_text('{}')
+        self.worker.publication = lambda *args: None
+        with patch.object(r, 'candidate_path', return_value=self.root / 'candidate.json'), \
+                patch.object(r, 'candidate', return_value=candidate), \
+                patch.object(w.Worker, 'notify_batch_ready'), \
+                patch.object(r, 'accept') as accept:
+            self.worker.batch_validate(batch, [dict(delivery_id='d1')], [row])
+        accept.assert_not_called()
 
     def test_collect_until_accepts_api_rfc3339_serialization(self):
         # 真实响应格式取自 Go 对 deliveryBatch 的序列化：RFC3339Nano，9 位小数并带时区或 Z。
@@ -267,6 +327,39 @@ class BatchFlowTests(unittest.TestCase):
         published = [call for call in self.calls if call and call['action'] == 'published']
         self.assertEqual(len(published), 1)
         self.assertEqual(published[0]['candidate_commit'], 'c' * 40)
+
+    def test_project_release_cleans_int_before_finishing_batch(self):
+        candidate = dict(id='c1', commit='c'*40, batch_id='b1', delivery_id='d1', status='succeeded')
+        batch = dict(id='b1', status='publishing', worker_token='w1', project_id='project')
+        request = self.root/'request.json';request.write_text(json.dumps({'status':'succeeded'}))
+        events=[]
+        self.worker.publication=lambda *a,**k:dict(generation=1)
+        self.worker.publication_guard=lambda d:contextlib.nullcontext(({},lambda:events.append('fence')))
+        self.worker.batch_call=lambda body=None:events.append(body['action'])
+        with patch.object(r,'candidate_path',return_value=request),patch.object(r,'candidate',return_value=candidate),patch.object(r,'request_path',return_value=request),patch.object(w.Worker,'sync_environment_baselines',side_effect=lambda *a:events.append('sync')),patch.object(w.integration,'clear_environment',side_effect=lambda *a:events.append('clean')),patch.object(r,'release_candidate',side_effect=lambda *a:events.append('release')),patch.object(w.Worker,'finish_publication',side_effect=lambda *a:events.append('finish')):
+            self.worker.batch_check_release(batch,[delivery('d1')])
+        self.assertEqual(events,['sync','clean','published','finish','release'])
+
+    def test_project_cleanup_failure_preserves_publication_and_batch(self):
+        candidate = dict(id='c1', commit='c'*40, batch_id='b1', delivery_id='d1', status='succeeded')
+        batch = dict(id='b1', status='publishing', worker_token='w1', project_id='project')
+        request=self.root/'request.json';request.write_text(json.dumps({'status':'succeeded'}))
+        self.worker.publication=lambda *a,**k:dict(generation=1)
+        self.worker.publication_guard=lambda d:contextlib.nullcontext(({},lambda:None))
+        with patch.object(r,'candidate_path',return_value=request),patch.object(r,'candidate',return_value=candidate),patch.object(r,'request_path',return_value=request),patch.object(w.Worker,'sync_environment_baselines'),patch.object(w.integration,'clear_environment',side_effect=r.RecoveryRequired('cleanup interrupted')),patch.object(r,'release_candidate') as release,patch.object(w.Worker,'finish_publication') as finish:
+            with self.assertRaises(r.RecoveryRequired):self.worker.batch_check_release(batch,[delivery('d1')])
+        self.assertNotIn('published',self.actions())
+        release.assert_not_called();finish.assert_not_called()
+
+    def test_unresolved_production_recovery_preserves_batch_and_publication(self):
+        candidate=dict(id='c1',commit='c'*40,batch_id='b1',delivery_id='d1',status='recovery_required')
+        batch=dict(id='b1',status='publishing',worker_token='w1',project_id='project')
+        request=self.root/'request.json';request.write_text(json.dumps({'status':'recovery_required','error':'restore incomplete'}))
+        self.worker.publication=lambda *a,**k:dict(generation=1)
+        with patch.object(r,'candidate_path',return_value=request),patch.object(r,'candidate',return_value=candidate),patch.object(r,'request_path',return_value=request),patch.object(w.integration,'clear_environment') as clear,patch.object(r,'release_candidate') as release,patch.object(w.Worker,'finish_publication') as finish:
+            with self.assertRaisesRegex(r.RecoveryRequired,'恢复尚未确认'):self.worker.batch_check_release(batch,[delivery('d1')])
+        self.assertNotIn('fail',self.actions());self.assertNotIn('published',self.actions())
+        clear.assert_not_called();release.assert_not_called();finish.assert_not_called()
 
     def test_failed_release_keeps_members_for_next_batch(self):
         candidate = dict(id='c1', commit='c' * 40, source='/tmp/source', batch_id='b1', delivery_id='d1', status='accepted')
@@ -499,6 +592,38 @@ class BatchAuthorizationGateTests(unittest.TestCase):
 
 
 class BatchAcceptanceTests(unittest.TestCase):
+    def test_project_initialization_checks_seed_before_cleaning(self):
+        worker=object.__new__(w.Worker)
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(worker,'require_sql_seed',side_effect=r.RecoveryRequired('unverified seed')),patch.object(w.integration,'clear_environment') as clear,patch.object(w.integration,'restore_environment') as restore:
+            with self.assertRaises(r.RecoveryRequired):worker.ensure_int_data('batch',lambda:None,mandatory=True)
+            clear.assert_not_called();restore.assert_not_called()
+
+    def test_legacy_delivery_restores_an_already_cleaned_int(self):
+        worker=object.__new__(w.Worker)
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)),patch.object(worker,'require_sql_seed',return_value={'seed_id':'seed'}),patch.object(w.integration,'clear_environment') as clear,patch.object(w.integration,'restore_environment') as restore:
+            r.write(Path(tmp)/'integration-data.json',{'stage':'cleaned','batch':'earlier'})
+            fence=lambda:None
+            worker.ensure_int_data('delivery',fence,mandatory=False)
+            clear.assert_not_called()
+            restore.assert_called_once_with(r,w.seed,'delivery',{'seed_id':'seed'},fence)
+
+    def test_project_requires_evidence_from_the_current_candidate(self):
+        worker=object.__new__(w.Worker)
+        candidate=dict(id='combo',commit='c'*40,delivery_id='d1')
+        row=dict(id='d1',candidate_id='combo',acceptance_submitted=True,evidence=[dict(name='check',status='passed',evidence='actual')],plan_snapshot=dict(candidate_commit='c'*40))
+        self.assertIsNone(worker.batch_acceptance(candidate,[],[row],project=True))
+        row['integration_accepted']=True
+        self.assertEqual(worker.batch_acceptance(candidate,[],[row],project=True),row['evidence'])
+
+    def test_independent_project_task_is_not_notified_for_integration(self):
+        worker=object.__new__(w.Worker)
+        worker.release_settings=dict(configured=True,enabled=True,project_id='p1')
+        rows=[dict(id='d1',project_id='p1',plan_snapshot=dict(integration_skip_reason='独立文案',required_checks=[dict(stage='verification')])),
+              dict(id='d2',project_id='p1',plan_snapshot=dict(required_checks=[dict(stage='integration')]))]
+        with patch.object(worker,'api',return_value=rows),patch.object(worker,'advance') as advance:
+            worker.notify_batch_ready([dict(delivery_id='d1'),dict(delivery_id='d2')])
+        advance.assert_called_once_with(rows[1],'notify-result',stage='batch_ready')
+
     def test_only_exact_representative_evidence_accepts_combination(self):
         worker=object.__new__(w.Worker)
         candidate=dict(id='combo',commit='c'*40,delivery_id='d1')
@@ -521,6 +646,87 @@ class BatchAcceptanceTests(unittest.TestCase):
             worker.batch_check_release(batch,[dict(id='d1')])
             self.assertEqual(api.call_args.args[0]['action'],'publishing')
             release.assert_called_once()
+
+
+class EnvironmentBranchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name);self.repo=self.root/'work';self.remote=self.root/'remote.git'
+        subprocess.run(['git','init','--bare','-q',str(self.remote)],check=True)
+        subprocess.run(['git','init','-q',str(self.repo)],check=True)
+        self.git('config','user.name','Integration Fixture');self.git('config','user.email','fixture@example.invalid')
+        self.git('symbolic-ref','HEAD','refs/heads/personal-studio-upstream')
+        self.git('remote','add','origin',str(self.remote))
+        (self.repo/'tracked').write_text('a');self.git('add','tracked');self.git('commit','-qm','base')
+        self.base=self.git('rev-parse','HEAD')
+        (self.repo/'tracked').write_text('b');self.git('commit','-qam','released')
+        self.commit=self.git('rev-parse','HEAD')
+        self.git('push','-q','origin',self.commit+':refs/heads/personal-studio-upstream')
+
+    def git(self,*args):
+        return subprocess.run(['git','-C',str(self.repo),*args],check=True,capture_output=True,text=True).stdout.strip()
+
+    def remote_refs(self):
+        return dict((ref,sha) for sha,ref in (line.split() for line in self.git('ls-remote','--heads','origin').splitlines()))
+
+    def test_all_environment_refs_advance_without_changing_checkout(self):
+        self.git('push','-q','origin',self.base+':refs/heads/multica-env/int')
+        (self.repo/'tracked').write_text('uncommitted')
+        before=self.git('status','--porcelain')
+        refs=w.sync_environment_refs(self.repo,self.commit,lambda:None)
+        self.assertEqual(set(refs),set(w.ENVIRONMENT_BRANCHES))
+        self.assertTrue(all(value==self.commit for value in refs.values()))
+        self.assertEqual(self.git('status','--porcelain'),before)
+        self.assertEqual(self.git('rev-parse','HEAD'),self.commit)
+        self.assertEqual(self.git('for-each-ref','--format=%(refname)','refs/multica-release-sync/'),'')
+        self.assertEqual(w.sync_environment_refs(self.repo,self.commit,lambda:None),refs)
+
+    def test_divergent_environment_ref_does_not_update_any_branch(self):
+        tree=self.git('rev-parse',self.commit+'^{tree}')
+        other=self.git('commit-tree',tree,'-m','unrelated')
+        self.git('push','-q','origin',other+':refs/heads/multica-env/verify-2')
+        before=self.remote_refs()
+        with self.assertRaisesRegex(r.RecoveryRequired,'独立提交'):
+            w.sync_environment_refs(self.repo,self.commit,lambda:None)
+        self.assertEqual(self.remote_refs(),before)
+        self.assertEqual(self.git('for-each-ref','--format=%(refname)','refs/multica-release-sync/'),'')
+
+    def test_changed_main_prevents_environment_updates(self):
+        before=self.remote_refs()
+        with self.assertRaisesRegex(r.RecoveryRequired,'主分支'):
+            w.sync_environment_refs(self.repo,self.base,lambda:None)
+        self.assertEqual(self.remote_refs(),before)
+
+    def test_lost_publication_fence_prevents_branch_push(self):
+        self.git('push','-q','origin',self.base+':refs/heads/multica-env/int')
+        before=self.remote_refs();checks=[]
+        def fence():
+            checks.append(True)
+            if len(checks)==2:raise r.RecoveryRequired('lease lost')
+        with self.assertRaisesRegex(r.RecoveryRequired,'lease lost'):
+            w.sync_environment_refs(self.repo,self.commit,fence)
+        self.assertEqual(self.remote_refs(),before)
+        self.assertEqual(self.git('for-each-ref','--format=%(refname)','refs/multica-release-sync/'),'')
+
+    def test_production_identity_is_checked_before_sync(self):
+        worker=object.__new__(w.Worker)
+        candidate=dict(id='candidate',commit=self.commit,source_digest='digest')
+        runtime=self.root/'runtime';runtime.mkdir()
+        files={'server/bin/server':'a','server/bin/multica':'b','apps/web/server.js':'c'}
+        (runtime/'release.json').write_text(json.dumps(dict(source_commit=self.commit,source_digest='digest',files=files)))
+        meta=dict(commit=self.commit,source_digest='digest',release_dir=str(runtime),backend_url='http://fixture')
+        with patch.object(r,'RUN',self.root),patch.object(r,'ROOT',self.repo):
+            r.write(r.RUN/'published.json',dict(candidate='candidate',commit=self.commit,source_digest='digest'))
+            r.write(r.meta_path('prod'),meta);r.write(r.config_path('prod'),{})
+            with patch.object(r,'check_process_ownership'),patch.object(r,'check_live_environment'),patch.object(r,'checksums',return_value=files),patch.object(r,'http',return_value={'commit':'unexpected'}),patch.object(w,'sync_environment_refs') as sync:
+                with self.assertRaisesRegex(r.RecoveryRequired,'运行程序'):
+                    worker.sync_environment_baselines(candidate,lambda:None)
+                sync.assert_not_called()
+            with patch.object(r,'check_process_ownership'),patch.object(r,'check_live_environment'),patch.object(r,'checksums',return_value=files),patch.object(r,'http',return_value={'commit':self.commit}),patch.object(w,'sync_environment_refs',return_value={'fixture':self.commit}) as sync:
+                worker.sync_environment_baselines(candidate,lambda:None)
+                sync.assert_called_once()
+                saved=r.read(r.RUN/'environment-baselines.json')
+                self.assertEqual((saved['candidate_id'],saved['commit']),('candidate',self.commit))
 
 
 if __name__ == '__main__':

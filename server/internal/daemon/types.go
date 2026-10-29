@@ -67,6 +67,9 @@ type ConnectedAppData = runtimeapps.ConnectedApp
 type DeliveryContextData struct {
 	ID               string `json:"id"`
 	Phase            string `json:"phase"`
+	Workflow         string `json:"workflow,omitempty"`
+	CandidateURL     string `json:"candidate_url,omitempty"`
+	OwnsCheckout     bool   `json:"owns_checkout,omitempty"`
 	CandidateID      string `json:"candidate_id,omitempty"`
 	CandidateCommit  string `json:"candidate_commit,omitempty"`
 	Environment      string `json:"environment,omitempty"`

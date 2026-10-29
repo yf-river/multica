@@ -1,5 +1,5 @@
 {
- "version": 8,
+ "version": 9,
  "description": "验收种子导入后必须执行的清理规则。导入完成后在真实外键约束下执行，规则顺序即清理顺序；新增执行型表没有规则或显式豁免时恢复直接失败。",
  "rules": [
   {
@@ -17,6 +17,18 @@
   {
    "table": "test_agent_control",
    "sql": "DELETE FROM public.\"test_agent_control\""
+  },
+  {
+   "table": "plugin_remote_mcp_oauth_state",
+   "sql": "DELETE FROM public.\"plugin_remote_mcp_oauth_state\""
+  },
+  {
+   "table": "plugin_installation_config",
+   "sql": "DELETE FROM public.\"plugin_installation_config\""
+  },
+  {
+   "table": "plugin_remote_mcp_secret",
+   "sql": "DELETE FROM public.\"plugin_remote_mcp_secret\""
   },
   {
    "table": "workspace_mcp_check",
@@ -41,6 +53,10 @@
   {
    "table": "autopilot_run",
    "sql": "DELETE FROM public.\"autopilot_run\""
+  },
+  {
+   "table": "autopilot_quota_reservation",
+   "sql": "DELETE FROM public.\"autopilot_quota_reservation\""
   },
   {
    "table": "personal_access_token",
@@ -157,6 +173,10 @@
   {
    "table": "review_config",
    "sql": "UPDATE public.\"review_config\" SET enabled=false"
+  },
+  {
+   "table": "release_agent_config",
+   "sql": "UPDATE public.\"release_agent_config\" SET enabled=false"
   },
   {
    "table": "issue_review",

@@ -90,7 +90,7 @@ type resolvedIssueTableGroup struct {
 	secondaryFiltered bool
 	// secondaryCategory 标记复合分组的次级轴是状态「类别」而不是状态 key 本身——泳道契约。
 	secondaryCategory bool
-	// categoryKeys 把 7 个类别各自映射到属于它的具体状态 key，每个请求只解析一次。类别谓词经
+	// categoryKeys 把 8 个类别各自映射到属于它的具体状态 key，每个请求只解析一次。类别谓词经
 	// 它展开成 `i.status = ANY(...)`，让 (workspace_id, status) 索引保持可用——见
 	// issuestatus.ExpandCategories。（MUL-6243）
 	categoryKeys map[string][]string
@@ -401,7 +401,7 @@ func (group resolvedIssueTableGroup) orderExpression(addArg func(any) string) st
 	}
 	switch group.kind {
 	case "status", "status_category":
-		return "CASE group_value WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'done' THEN 4 WHEN 'blocked' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END"
+		return "CASE group_value WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'pending_release' THEN 4 WHEN 'done' THEN 5 WHEN 'blocked' THEN 6 WHEN 'cancelled' THEN 7 ELSE 8 END"
 	case "assignee":
 		return "CASE split_part(group_value, ':', 1) WHEN 'member' THEN 0 WHEN 'agent' THEN 1 WHEN 'squad' THEN 2 ELSE 3 END"
 	case "project":
@@ -512,7 +512,7 @@ func (group resolvedIssueTableGroup) descriptor(raw string, count int64, context
 	descriptor := issueTableGroupDescriptorResponse{Count: count}
 	switch group.kind {
 	case "status":
-		// 任意非空的状态 KEY 都合法，不只那 7 个内置。自 MUL-6243 起工作区可以有自定义状态，
+		// 任意非空的状态 KEY 都合法，不只那 8 个内置。自 MUL-6243 起工作区可以有自定义状态，
 		// 若在这里拒绝它们会让「按状态分组」整组响应 500——一条自定义状态就能让整个工作区的
 		// 按状态分组不可用。
 		if raw == "" {

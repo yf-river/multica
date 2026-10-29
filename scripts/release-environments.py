@@ -2,7 +2,7 @@
 """固定 int 验证后更新 prod；Git 保存历史，运行目录仅在切换期间保留旧副本。"""
 import pwd
 import threading
-import argparse, contextlib, fcntl, hashlib, json, os, re, shutil, signal, subprocess, sys, time, urllib.request, urllib.error, urllib.parse
+import argparse, contextlib, fcntl, hashlib, importlib.util, json, os, re, shutil, signal, subprocess, sys, time, types, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 
 ROOT = Path(os.environ.get('MULTICA_RELEASE_ROOT', Path(__file__).resolve().parent.parent)).resolve()
@@ -277,7 +277,7 @@ def executor_preflight(source, *, env=None, integration=False):
         raise RuntimeError('发布预检失败：pnpm 版本与 packageManager 不一致')
     required=('pnpm-lock.yaml','pnpm-workspace.yaml','server/go.mod','server/go.sum',
               'scripts/release-environments.py','scripts/issue-delivery-worker.py','scripts/release-maintenance.py',
-              'scripts/verification-environments.py','scripts/verification-seed.py','scripts/verification-seed-copy.mjs',
+              'scripts/verification-environments.py','scripts/integration-data.py','scripts/verification-seed.py','scripts/verification-fixtures.sql','scripts/verification-seed-copy.mjs',
               'scripts/test-agent-policy.py','scripts/test-agent-models.py','scripts/test-agent-models.mjs',
               'scripts/verification-scrub.json','scripts/lib/verification-scrub.mjs','scripts/check-release-database.mjs',
               'scripts/verify-release-browser.mjs','scripts/lib/goal-test-audit-env.mjs',
@@ -345,7 +345,8 @@ def build_dsh_runtime(source, target, env):
         raise RuntimeError('bridge 制品与源码版本不符')
     return manifest
 
-def build(source, target, *, verification=False):
+def build(source, target, *, verification=False, dev_web=False):
+    if dev_web and not verification: raise RuntimeError('开发前端只能用于任务验收')
     source, sha = checked_source(source, verification=verification)
     with build_stage('preflight'):
         operation_files(source/'scripts')
@@ -377,7 +378,11 @@ def build(source, target, *, verification=False):
     if has_bridge:
         with build_stage('dependencies'):
             run(['pnpm','install','--frozen-lockfile'],cwd=source,env=env)
-    if reusable and previous.get('inputs', {}).get('web') == inputs['web']:
+    if dev_web:
+        if not previous.get('files') or any(current_files.get(k) != v for k,v in previous['files'].items()):
+            raise RuntimeError('验收前端启动基线校验失败')
+        copy_tree(current, target, excludes=('/server/', '/release.json', '**/.next/cache/***'))
+    elif reusable and previous.get('inputs', {}).get('web') == inputs['web']:
         copy_tree(current, target, excludes=('/server/', '/release.json', '**/.next/cache/***'))
     else:
         if not has_bridge:
@@ -415,6 +420,7 @@ def build(source, target, *, verification=False):
     write(target/'server/queries.json', queries)
     manifest = dict(id=sha+'-'+str(time.time_ns()), source_commit=sha, source_directory=str(source), source_digest=digest,
                     version=version, inputs=inputs, files=checksums(target), built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+    if dev_web: manifest['verification_frontend'] = 'dev'
     if bridge: manifest['dsh_bridge']=bridge
     write(target/'release.json', manifest)
     for cache in (source/'apps/web/.next/cache', source/'.turbo'):
@@ -443,7 +449,15 @@ def check_process_ownership(env, metadata, allow_unhealthy=False):
                 raise RuntimeError(f'{env} {role} PID 执行文件不属于记录的版本')
         elif not allow_unhealthy:
             listener = output(['ss', '-ltnp', f"( sport = :{metadata['frontend_port']} )"])
-            if f'pid={pid},' not in listener:
+            listener_pids = [int(value) for value in re.findall(r'pid=(\d+),', listener)]
+            def belongs_to_parent(child):
+                for _ in range(16):
+                    if child == pid:return True
+                    try:child=int(Path(f'/proc/{child}/stat').read_text().split(') ')[1].split()[1])
+                    except (OSError,ValueError,IndexError):return False
+                    if child <= 1:return False
+                return False
+            if not any(belongs_to_parent(child) if metadata.get('frontend_mode')=='dev' else child==pid for child in listener_pids):
                 raise RuntimeError(f'{env} Web PID 未监听记录的端口')
         if role == 'server' and not allow_unhealthy:
             listener = output(['ss', '-ltnp', f"( sport = :{metadata['backend_port']} )"])
@@ -1016,11 +1030,11 @@ def discard_previous(env):
     file.unlink()
     metadata=read(meta_path(env));metadata.pop('previous_release_id',None);write(meta_path(env),metadata)
 
-def publish(env, directory, timeout=900):
+def publish(env, directory, timeout=900, after_deploy=None, on_failure=None):
     with release_task_window(env,directory):
-        return publish_in_window(env,directory,timeout)
+        return publish_in_window(env,directory,timeout,after_deploy,on_failure)
 
-def publish_in_window(env, directory, timeout=900):
+def publish_in_window(env, directory, timeout=900, after_deploy=None, on_failure=None):
     try:
         deploy(env, directory, timeout)
     except Exception:
@@ -1030,6 +1044,7 @@ def publish_in_window(env, directory, timeout=900):
             raise RecoveryRequired(f'{env} 启动或恢复未完成: {recovery_error}') from recovery_error
         raise
     try:
+        if after_deploy: after_deploy()
         verify_browser(env)
         verify_logs(env)
         operations=Path(directory)/'operations'
@@ -1040,6 +1055,7 @@ def publish_in_window(env, directory, timeout=900):
             run([sys.executable,bundle/'issue-delivery-worker.py','--env',env,'--install'],env={**os.environ,'MULTICA_RELEASE_ROOT':str(ROOT)})
     except Exception:
         try:
+            if on_failure: on_failure()
             restore(env, timeout)
         except Exception as recovery_error:
             raise RecoveryRequired(f'{env} 验收失败且恢复未完成: {recovery_error}') from recovery_error
@@ -1116,11 +1132,11 @@ def prepare_int(source, timeout=900, delivery=None, fence=None):
     except BlockingIOError:
         raise RuntimeError('其他候选正在构建或发布；结束当前运行后重试') from None
 
-def build_verification(source, delivery_id):
+def build_verification(source, delivery_id, *, dev_web=False):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', delivery_id):
         raise RuntimeError('非法交付编号')
     source, sha = checked_source(source, verification=True)
-    target = RUN/'verification-builds'/'commits'/sha
+    target = RUN/'verification-builds'/('commits-dev' if dev_web else 'commits')/sha
     with lock('verification-build', wait=True):
         if (target/'release.json').exists():
             manifest = read(target/'release.json')
@@ -1130,11 +1146,11 @@ def build_verification(source, delivery_id):
         if target.exists():
             assert_unused(target)
             shutil.rmtree(target)
-        build(source, target, verification=True)
+        build(source, target, verification=True, dev_web=dev_web)
     return target
 
 
-def prepare_verification(source, artifact, lease):
+def prepare_verification(source, artifact, lease, *, dev_web=False):
     env = lease['name']
     if env not in VERIFICATION_ENVS:
         raise RuntimeError('非法任务验收槽位')
@@ -1146,6 +1162,8 @@ def prepare_verification(source, artifact, lease):
         manifest = read(Path(artifact)/'release.json')
         if manifest['source_commit'] != sha or manifest['files'] != checksums(artifact):
             raise RuntimeError('构建产物与候选提交不匹配')
+        if dev_web != (manifest.get('verification_frontend') == 'dev'):
+            raise RuntimeError('验收前端模式与构建产物不一致')
         record = dict(id=sha+'-'+str(time.time_ns()), environment=env,
                       generation=lease['generation'], delivery_id=lease['delivery_id'],
                       commit=sha, source=str(source), status='building',
@@ -1156,7 +1174,13 @@ def prepare_verification(source, artifact, lease):
         try:
             target = idle_slot(env)
             copy_tree(artifact, target)
-            publish(env, target)
+            if dev_web:
+                spec=importlib.util.spec_from_file_location('verification_dev',Path(__file__).with_name('verification-dev.py'))
+                helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(helper)
+                api=types.SimpleNamespace(**globals())
+                publish(env, target, after_deploy=lambda:helper.start(api,env,source,lease), on_failure=lambda:helper.stop(api,env,lease))
+            else:
+                publish(env, target)
             # 3. 候选登记时带上含种子的身份，证据才能区分同一程序在不同测试数据上的结果。
             record.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],
                           validation_identity=validation_identity(source, env),deployed_at=read(meta_path(env))['deployed_at'])
@@ -1237,7 +1261,7 @@ def batch_approval_records(record, records, meta, profile):
         if authorization.get('business_error'):raise RuntimeError(authorization['business_error'])
         if not authorization.get('ready'):
             raise RuntimeError('成员 %s 的发布授权或用户要求已变化，需要负责人重新核对'%member['delivery_id'])
-        if (not delivery or delivery['phase']!='publishing' or not delivery.get('approved_by')
+        if (not delivery or delivery['phase']!='publishing' or not (delivery.get('approved_by') or delivery.get('auto_release'))
                 or not delivery.get('release_validated') or delivery['source_commit']!=member['source_commit']
                 or delivery['candidate_id']!=record['id']):
             raise RuntimeError('成员 %s 的生产批准或组合复核已失效'%member['delivery_id'])

@@ -102,6 +102,10 @@ function InReviewIcon() {
   return <ProgressCircle progress={0.75} />;
 }
 
+function PendingReleaseIcon() {
+  return <ProgressCircle progress={0.875} />;
+}
+
 function DoneIcon() {
   return (
     <ProgressCircle progress={1}>
@@ -154,6 +158,7 @@ const STATUS_RENDERERS: Record<IssueStatusCategory, () => React.ReactNode> = {
   todo: TodoIcon,
   in_progress: InProgressIcon,
   in_review: InReviewIcon,
+  pending_release: PendingReleaseIcon,
   done: DoneIcon,
   blocked: BlockedIcon,
   cancelled: CancelledIcon,
@@ -166,7 +171,7 @@ const STATUS_RENDERERS: Record<IssueStatusCategory, () => React.ReactNode> = {
 /**
  * 状态图标。按状态类别渲染固定图形集：
  * - `category`：已解析的类别，给持有工作区目录的调用方用；缺省时按 key 自行
- *   解析（对 7 个内置状态是精确的，自定义 key 在没有目录的本组件里回退为 todo）；
+ *   解析（对 8 个内置状态是精确的，自定义 key 在没有目录的本组件里回退为 todo）；
  * - `color`：自定义状态的 `#rrggbb`。内置状态保留各自的语义 token 色；
  * - `inheritColor`：为 true 时强制继承父级文字色（选中行/深色 chip 等场景）。
  */
@@ -180,7 +185,7 @@ export function StatusIcon({
   status: IssueStatus | string;
   /**
    * 已解析的类别，给持有工作区目录的调用方。不传则按 key 自行解析——
-   * 对 7 个内置状态是精确的；对目录外自定义 key 会回退到 `todo`。
+   * 对 8 个内置状态是精确的；对目录外自定义 key 会回退到 `todo`。
    */
   category?: IssueStatusCategory;
   /** 自定义状态的 `#rrggbb` 色值。内置状态保留各自的语义 token 色。 */

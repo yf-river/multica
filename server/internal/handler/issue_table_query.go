@@ -521,7 +521,7 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		return "$" + strconv.Itoa(len(args))
 	}
 
-	// 任意非空的状态 KEY 都合法，不只那 7 个内置。状态过滤点名的是用户勾选的具体状态，自
+	// 任意非空的状态 KEY 都合法，不只那 8 个内置。状态过滤点名的是用户勾选的具体状态，自
 	// MUL-6243 起工作区可以有自定义状态——若在这里拒绝它们会让整个请求 400：按自定义状态筛
 	// 看板报错而不是收窄。谓词是参数化的 `status = ANY(...)`，未知 key 自然匹配不到任何行；加上
 	// 长度上限，防止任意大段文本冒充状态 key 混进来。

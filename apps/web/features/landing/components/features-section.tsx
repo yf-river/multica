@@ -150,6 +150,7 @@ const statusLabels: Record<IssueStatusCategory, string> = {
   todo: "待办",
   in_progress: "进行中",
   in_review: "评审中",
+  pending_release: "待发布",
   done: "已完成",
   blocked: "已阻塞",
   cancelled: "已取消",

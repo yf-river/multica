@@ -39,6 +39,7 @@ func TestClaimTasksCarriesDeliveryContext(t *testing.T) {
 	ctx := context.Background()
 
 	runtime := createClaimReclaimRuntime(t, ctx, "Delivery context runtime")
+	dbfx.Exec(t, `UPDATE agent_runtime SET daemon_id=$2 WHERE id=$1`, runtime, batchClaimTestDaemonID)
 	agent, issue := createClaimReclaimAgentAndIssue(t, ctx, runtime, "Delivery context agent")
 
 	comment := dbfx.Insert(t, "comment", testutil.Cols{
@@ -105,5 +106,43 @@ ON CONFLICT(name) DO UPDATE SET seed_id=EXCLUDED.seed_id,seed_sha256=EXCLUDED.se
 	}
 	if got.BatchID != batch || got.BatchStatus != "frozen" || got.BatchMembers != 1 {
 		t.Fatalf("batch context wrong: %+v", got)
+	}
+}
+
+func TestTaskDeliveryWorktreeRetentionUsesExecutionIdentity(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	runtime := createClaimReclaimRuntime(t, ctx, "retention runtime")
+	dbfx.Exec(t, `UPDATE agent_runtime SET daemon_id=$2 WHERE id=$1`, runtime, batchClaimTestDaemonID)
+	agent, issue := createClaimReclaimAgentAndIssue(t, ctx, runtime, "retention agent")
+	task := seedQueuedIssueTask(t, ctx, agent, runtime, issue)
+	delivery := dbfx.Insert(t, "issue_delivery", testutil.Cols{
+		"id": dbid.NewV7(), "workspace_id": testWorkspaceID, "issue_id": issue, "operation_id": dbid.NewV7(),
+		"plan_id": dbid.NewV7(), "plan_snapshot": testutil.Raw(fmt.Sprintf(`'{"workflow":"project","source_execution_id":"%s"}'::jsonb`, task)),
+		"source_commit": strings.Repeat("a", 40), "source_branch": "feature/task", "base_commit": strings.Repeat("b", 40),
+		"phase": "waiting_int", "verification_comment_id": dbid.NewV7(), "release_comment_id": dbid.NewV7(),
+	})
+	request := func() map[string]any {
+		w := httptest.NewRecorder()
+		req := newDaemonTokenRequest("GET", "/api/daemon/tasks/"+task+"/delivery-worktree", nil, testWorkspaceID, batchClaimTestDaemonID)
+		req = withURLParam(req, "taskId", task)
+		testHandler.GetTaskDeliveryWorktree(w, req)
+		if w.Code != 200 {
+			t.Fatalf("查询目录归属失败: %d %s", w.Code, w.Body.String())
+		}
+		var data map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	if got := request(); got["retain"] != true || got["source_commit"] != strings.Repeat("a", 40) {
+		t.Fatalf("目录未绑定交付: %v", got)
+	}
+	dbfx.Exec(t, `UPDATE issue_delivery SET phase='published' WHERE id=$1`, delivery)
+	if got := request(); got["retain"] != false {
+		t.Fatalf("发布后不应继续保留: %v", got)
 	}
 }

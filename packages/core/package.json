@@ -172,6 +172,7 @@
     "./upstream/queries": "./upstream/queries.ts",
     "./upstream/mutations": "./upstream/mutations.ts",
     "./review/*": "./review/*.ts",
+    "./release-agent/*": "./release-agent/*.ts",
     "./types/task-interaction": "./types/task-interaction.ts"
   },
   "dependencies": {

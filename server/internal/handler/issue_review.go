@@ -376,6 +376,16 @@ func (h *Handler) SubmitIssueReviewVerdict(w http.ResponseWriter, r *http.Reques
 	case verdict == review.VerdictPass:
 		h.recordReviewState(r.Context(), issue.ID, ws, cfg.AgentID, review.StatePassed, round, findingsJSON, findings.Summary)
 		h.setReviewPassed(r.Context(), issue, true)
+		var managed, tested bool
+		err = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM release_agent_config c WHERE c.workspace_id=$1 AND c.project_id=$2 AND c.enabled),EXISTS(SELECT 1 FROM issue_delivery d WHERE d.workspace_id=$1 AND d.issue_id=$3 AND d.phase='testing' AND d.acceptance_submitted)`, ws, issue.ProjectID, issue.ID).Scan(&managed, &tested)
+		if err == nil && managed {
+			h.reviewSetStatus(r.Context(), issue, "in_progress")
+			if !tested {
+				if comment := h.postReviewPassedComment(r.Context(), issue, cfg.AgentID); comment.Valid {
+					h.wakeReviewDeveloper(r.Context(), issue, cfg.AgentID, comment)
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"state": review.StatePassed, "round": round})
 
 	case verdict == review.VerdictReject:
@@ -398,6 +408,27 @@ func (h *Handler) SubmitIssueReviewVerdict(w http.ResponseWriter, r *http.Reques
 		h.stopReviewAutomation(r.Context(), issue, cfg, round, reason, findings, findingsJSON)
 		writeJSON(w, http.StatusOK, map[string]any{"state": review.StateStopped, "round": round, "reason": reason})
 	}
+}
+
+// postReviewPassedComment 通知负责人开始单任务测试。
+func (h *Handler) postReviewPassedComment(ctx context.Context, issue db.Issue, agentID pgtype.UUID) pgtype.UUID {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	defer tx.Rollback(ctx)
+	q := h.Queries.WithTx(tx)
+	created, err := q.CreateComment(ctx, db.CreateCommentParams{ID: dbid.NewV7(), IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, AuthorType: "agent", AuthorID: agentID, Content: "代码审查已通过，可以开始单任务测试。", Type: "comment"})
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	comment := created.Comment()
+	event, err := eventoutbox.Enqueue(ctx, q, buildCommentCreatedEvent(issue, commentToResponse(comment, nil, nil), "agent", uuidToString(agentID)))
+	if err != nil || tx.Commit(ctx) != nil {
+		return pgtype.UUID{}
+	}
+	h.publishEvent(event)
+	return comment.ID
 }
 
 // afterIssueStatusChangeForReview 在任务进入「审核中」时启动新一轮审查。只在类别变化时
@@ -568,7 +599,8 @@ func (h *Handler) reviewSetStatus(ctx context.Context, issue db.Issue, status st
 // setReviewPassed 写入/清除绿勾标记，并落一次 metadata 变更事件让前端即时刷新。
 func (h *Handler) setReviewPassed(ctx context.Context, issue db.Issue, passed bool) {
 	// 值没变就不写，避免无意义的 revision 递增与前端抖动。
-	if current, ok := parseIssueMetadata(issue.Metadata)[reviewPassedKey]; ok && current == passed {
+	metadata := parseIssueMetadata(issue.Metadata)
+	if current, ok := metadata[reviewPassedKey]; ok && current == passed && (passed || (metadata["verification_passed"] != true && metadata["integration_passed"] != true)) {
 		return
 	}
 	value, _ := json.Marshal(passed)
@@ -587,6 +619,14 @@ func (h *Handler) setReviewPassed(ctx context.Context, issue db.Issue, passed bo
 	})
 	if err != nil {
 		slog.Warn("review: set passed flag failed", "issue_id", uuidToString(issue.ID), "error", err)
+		return
+	}
+	_, err = tx.Exec(ctx, `UPDATE issue i SET metadata=metadata||jsonb_build_object('release_workflow',true)||CASE WHEN $3 THEN '{}'::jsonb ELSE jsonb_build_object('verification_passed',false,'verification_commit','','integration_passed',false,'integration_commit','') END WHERE i.id=$1 AND i.workspace_id=$2 AND EXISTS(SELECT 1 FROM release_agent_config c WHERE c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled)`, issue.ID, issue.WorkspaceID, passed)
+	if err == nil {
+		updated, err = qtx.GetIssue(ctx, issue.ID)
+	}
+	if err != nil {
+		slog.Warn("review: update release checks failed", "issue_id", uuidToString(issue.ID), "error", err)
 		return
 	}
 	event, err := service.RecordDurableEventTx(ctx, qtx, events.Event{

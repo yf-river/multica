@@ -2,13 +2,27 @@
 
 本流程用于需要验证、发布 Multica 程序的任务。咨询、调查、文档等普通任务使用现有任务状态与评论，其他项目按各自规则处理；不因 Agent 名称或任务所在平台自动登记交付。
 
-Multica 程序改动从确认计划、独立分支开发、固定 int 验证进入待审核；用户确认生产后，由现有外部发布器整合并发布。生产批准、代码提交、测试证据和实际运行版本分别保存，不能相互代替。
+未启用项目发布 Agent 的交付沿用本页原有的单项授权和发布流程。配置并启用发布 Agent 的项目使用下述项目流程；生产批准、代码提交、测试证据和实际运行版本分别保存，不能相互代替。
+
+## 发布 Agent 管理的项目
+
+在任务看板的待发布列配置发布 Agent 和项目。任务负责人在独立分支登记准确提交与业务检查，提交审核；审核通过后进入进行中并分配空闲的 verify 槽位。verify 前端从任务工作目录运行开发服务，后端按固定提交构建；测试中修复须登记新提交，在原槽位更新并重新审查。审查、任务测试和最终组合联调分别对应三个对勾，提交或候选变化时旧结果失效。
+
+测试完成的任务进入待发布。发布器按第一项等待时间收集 10 分钟，冻结成员与各自提交；只允许一批占用 int 和生产发布通道。合并冲突保留批次，修复代码须重新审查和测试。发布器基于最新主分支生成组合候选并构建一次，int 对固定候选进行共同检查和必要的成员联调；各成员按自身检查清单提交证据。无独立联调项的任务需记录原因，组合仍须完成基本业务检查。通过后同一制品应用到生产，生产验收通知交给各任务负责人，验收通过后完成任务。
+
+任务交付登记时固定用户评论版本。之后出现新评论时，发布暂停并由负责人核对用户最新决定；若范围不变且未要求暂停，负责人使用 `multica issue delivery review-project-comments` 提交当前 `revision`、`user_comments_version` 和具体 `scope_review`，不重设排队时间。需要修改或用户要求暂停时按实际要求处理，不能以该动作代替修改或解除暂停。
+
+项目批次开始前，发布器核对当前 SQL 种子、int 数据库和发布占用；已清理的 int 按基线迁移重建结构、导入种子并绑定测试账号，再启动服务。成功发布后排空 int，确认没有未完成任务，停止属于 int 的进程并清理专属业务数据和上传目录；清理记录用于故障接续，下一批重新初始化。旧版单项交付若遇到已清理的 int，同样先恢复该环境。生产与 int 虽共用 PostgreSQL 实例，清理仅指向核对过的 int 数据库，不能停止共享实例或使用强制断开。未完成的任务、身份不符或恢复失败时保留现场和发布占用。
+
+生产运行程序、产物和主分支核对一致后，发布器将 `multica-env/prod`、`multica-env/int`、`multica-env/verify-1`、`multica-env/verify-2`、`multica-env/verify-3` 作为远端环境基线原子快进至该提交，结果记录在 `.run/environment-baselines.json`。已有分支含未发布的独立提交、远端主分支变化或生产身份不一致时停止并保留发布占用，不能强制覆盖。基线引用不修改正在运行的 verify 任务工作树；槽位使用的实际程序版本以槽位部署记录和候选为准。
+
+迁移 686 和 691 只为交付批次及交付记录增加字段；690 原子放宽状态分类约束。旧程序在没有待发布任务时可使用既有状态，旧前端不具备待发布列；一旦出现待发布任务，不能把恢复旧程序视为完整回滚，须先核对这些任务和旧版界面的实际行为，禁止通过删除任务或直接修改迁移台账来恢复。
 
 ## 固定验收槽位
 
 需要并行验收时使用专属 `verify-1`、`verify-2`、`verify-3` 三套环境；固定 `int` 仍是最终集成入口，`prod` 只接受经过 int 和用户发布授权的候选。验收槽位默认关闭，启用、排空和占用由现有交付记录及槽位接口驱动，候选历史按环境保留，verify 候选不能直接晋级生产。 独立 verify 候选从构建、部署到验收与中断续接固定源码和产物；其他任务推进主分支或生产版本，不使该候选失效。源码、分支、产物、实际运行身份及槽位租约与种子仍须一致。最终 int 整合与生产发布核对届时最新主分支和已发布基线，必要变化按影响补测。
 
-槽位安装、重启核对和种子维护入口位于发布制品的 `operations/`，源码入口为 `scripts/verification-environments.py`、`scripts/verification-seed.py` 和 `scripts/verification-seed-copy.mjs`。只允许重置专属验收数据库，禁止触碰 int、prod 和事故留证库。
+槽位安装、重启核对和种子维护入口位于发布制品的 `operations/`，源码入口为 `scripts/verification-environments.py`、`scripts/verification-seed.py` 和 `scripts/verification-seed-copy.mjs`。槽位维护只允许重置专属验收数据库；int 由上述专用发布流程维护，prod 和事故留证库不属于测试数据清理范围。
 
 ### 种子生命周期
 
@@ -18,10 +32,16 @@ Multica 程序改动从确认计划、独立分支开发、固定 int 验证进�
 
 ```bash
 python3 scripts/verification-seed.py build  --id seed-<日期>-vN --from <已有种子目录> --release <候选产物目录> --postgres-config .run/verification-postgres.json
+python3 scripts/verification-seed.py build --id seed-<日期>-vN --from-sql --release <候选产物目录> --postgres-config .run/verification-postgres.json
+python3 scripts/verification-seed.py check-sql --seed <种子目录> --release <候选产物目录> --postgres-config .run/verification-postgres.json
 python3 scripts/verification-seed.py verify --environment verify-1 --seed <seed-id> --postgres-config .run/verification-postgres.json --accept
 python3 scripts/verification-seed.py ensure --environment verify-1 --postgres-config .run/verification-postgres.json
 python3 scripts/verification-seed.py status
 ```
+
+`--from-sql` 使用 `scripts/verification-fixtures.sql` 创建基础样本，账号密码与运行时绑定由目标槽位设置。构建生成快照和仅含数据的 SQL，并分别记录校验和。`check-sql` 在临时隔离库验证迁移身份、清理结果、全部表数据与序列值；通过后该种子的槽位恢复使用 SQL 导入，并沿用清理和关联校验。该检查不代表浏览器或真实 Agent 验收，也不更新当前种子指针。
+
+槽位恢复时同时清空该槽位登记的上传目录；目录路径、属主和环境身份不符时停止恢复。任务代码目录和验收证据不属于上传目录。
 
 `build` 在本轮新建的隔离构建库中按目标候选迁移建表，导入来源样本、执行清理、核对必需样本、序列、外键与结构指纹后写出新种子；构建库和导入库随后删除，不写 int 或 prod。`verify` 把种子装进指定槽位，在真实服务上核对登录、工作区、任务列表、Agent 列表及清理结果，全部通过后写入当前指针并把种子标记为已验证；任一项失败时槽位保持维护，当前版本不变。`ensure` 是发布器换任务前的门禁：槽位种子与当前版本不一致（或未标记已验证）时先按单槽位维护恢复，成功后才允许领取新候选。
 

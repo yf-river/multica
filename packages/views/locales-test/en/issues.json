@@ -88,6 +88,7 @@
     "todo": "Todo",
     "in_progress": "In Progress",
     "in_review": "In Review",
+    "pending_release": "Pending Release",
     "done": "Done",
     "blocked": "Blocked",
     "cancelled": "Cancelled"
@@ -991,6 +992,15 @@
     "authorization_revoke": "Revoke release authorization",
     "authorization_revoked": "Revoked"
   },
+  "release_agent": {
+    "settings": "Release Agent settings",
+    "description": "Configure the agent that coordinates pending tasks, integration and production releases.",
+    "enable": "Enable Release Agent",
+    "enable_hint": "Collect pending tasks for 10 minutes, then release them as a batch.",
+    "project": "Project",
+    "project_placeholder": "Select a project",
+    "saved": "Release Agent settings saved"
+  },
   "review": {
     "settings": "Review settings",
     "settings_description": "When a task enters review, a reviewer checks the requirement, code and evidence first; you confirm only after it passes.",
@@ -1015,7 +1025,12 @@
     "saving": "Saving…",
     "cancel": "Cancel",
     "review_passed": "Review passed",
-    "review_passed_hint": "The reviewer approved; the task is still in review for your confirmation."
+    "review_passed_hint": "Code review passed.",
+    "review_waiting": "Awaiting code review",
+    "verification_passed": "Task verification passed",
+    "verification_waiting": "Awaiting task verification",
+    "integration_passed": "Integration passed",
+    "integration_waiting": "Awaiting integration"
   },
   "inline_run": {},
   "status_category": {}

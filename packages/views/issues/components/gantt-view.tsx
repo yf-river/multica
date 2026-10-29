@@ -306,6 +306,7 @@ const STATUS_BAR_BG: Record<IssueStatusCategory, string> = {
   todo: "bg-muted-foreground/70",
   in_progress: "bg-warning",
   in_review: "bg-success",
+  pending_release: "bg-violet-500",
   done: "bg-info",
   blocked: "bg-destructive",
   cancelled: "bg-muted-foreground/40",

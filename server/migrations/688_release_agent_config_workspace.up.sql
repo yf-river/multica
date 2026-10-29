@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY release_agent_config_workspace ON release_agent_config(workspace_id);

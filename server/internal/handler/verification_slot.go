@@ -67,7 +67,7 @@ func (h *Handler) ConfigureVerificationSlot(w http.ResponseWriter, r *http.Reque
 		if body.Action == "resume-maintenance" {
 			action = "resume"
 		}
-		state, enabled, err := h.setVerificationMaintenance(r, body.Name, action, user, strings.TrimSpace(body.Reason))
+		state, enabled, previousEnabled, err := h.setVerificationMaintenance(r, body.Name, action, user, strings.TrimSpace(body.Reason))
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "槽位尚未登记")
 			return
@@ -80,7 +80,7 @@ func (h *Handler) ConfigureVerificationSlot(w http.ResponseWriter, r *http.Reque
 			writeError(w, 500, "更新槽位维护状态失败")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"name": body.Name, "enabled": enabled, "state": state, "action": body.Action})
+		writeJSON(w, 200, map[string]any{"name": body.Name, "enabled": enabled, "previous_enabled": previousEnabled, "state": state, "action": body.Action})
 		return
 	}
 	// 1. 收回动作单独走 Reset：隔离态可立即收回，其余状态必须等租约过期；
@@ -201,21 +201,22 @@ func (h *Handler) GetVerificationLease(w http.ResponseWriter, r *http.Request) {
 }
 
 // setVerificationMaintenance 只调整本槽位的接单开关并留下审计；槽位被占用时拒绝，不打断验收。
-func (h *Handler) setVerificationMaintenance(r *http.Request, name, action, actor, reason string) (string, bool, error) {
+func (h *Handler) setVerificationMaintenance(r *http.Request, name, action, actor, reason string) (string, bool, bool, error) {
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	defer tx.Rollback(r.Context())
 	var state string
 	var delivery string
-	err = tx.QueryRow(r.Context(), `SELECT state,COALESCE(delivery_id::text,'') FROM verification_slot WHERE name=$1 FOR UPDATE`, name).Scan(&state, &delivery)
+	var previousEnabled bool
+	err = tx.QueryRow(r.Context(), `SELECT state,COALESCE(delivery_id::text,''),enabled FROM verification_slot WHERE name=$1 FOR UPDATE`, name).Scan(&state, &delivery, &previousEnabled)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	// 修改 3. 维护与恢复都要求槽位空闲：正在验收的槽位不能被重新放回调度，也不能被当成干净数据重置。
 	if state != "idle" || delivery != "" {
-		return "", false, errSlotBusy
+		return "", false, false, errSlotBusy
 	}
 	enabled := action == "resume"
 	_, err = tx.Exec(r.Context(), `UPDATE verification_slot SET enabled=$2,updated_at=now() WHERE name=$1`, name, enabled)
@@ -225,7 +226,7 @@ func (h *Handler) setVerificationMaintenance(r *http.Request, name, action, acto
 	if err == nil {
 		err = tx.Commit(r.Context())
 	}
-	return state, enabled, err
+	return state, enabled, previousEnabled, err
 }
 
 // resetVerificationQuarantine 把被隔离的槽位放回空闲调度；只允许 operator 在写明原因后执行，

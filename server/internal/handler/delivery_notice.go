@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"net/http"
+	"strings"
 )
 
 // 发布结果通知文案：已发布按「生产验证通过即收尾」，失败按「暂停并修复」，两者都不能让 Agent 把未完成的交付当成完成。
@@ -22,6 +23,9 @@ const (
 
 // deliveryNoticeText 按阶段选择通知文案，避免两处各写一份而漂移。
 func deliveryNoticeText(stage, delivery, candidate, detail string) string {
+	if strings.HasPrefix(stage, "verification_failed:") || strings.HasPrefix(stage, "verification_update_failed:") {
+		return fmt.Sprintf("交付 %s 的测试执行未提交通过证据：%s。原测试环境仍保留，请在原任务目录检查问题并继续测试；代码有改动时登记新提交后重新验收。", delivery, detail)
+	}
 	if stage == "needs_changes" {
 		return fmt.Sprintf(pausedNotice, delivery, detail)
 	}
@@ -78,13 +82,18 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 		}
 		completedAudit = completed
 	}
+	projectBatch := false
 	if stage == "batch_ready" {
 		var representative string
-		err = h.DB.QueryRow(r.Context(), `SELECT m.delivery_id::text FROM delivery_batch_member m JOIN delivery_batch b ON b.id=m.batch_id WHERE b.id=(SELECT b.id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE m.delivery_id=$1 AND b.status='validating' ORDER BY b.created_at DESC LIMIT 1) AND m.result='pending' ORDER BY m.created_at,m.delivery_id LIMIT 1`, delivery).Scan(&representative)
+		err = h.DB.QueryRow(r.Context(), `SELECT m.delivery_id::text,b.project_id IS NOT NULL FROM delivery_batch_member m JOIN delivery_batch b ON b.id=m.batch_id WHERE b.id=(SELECT b.id FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id WHERE m.delivery_id=$1 AND b.status='validating' ORDER BY b.created_at DESC LIMIT 1) AND m.result='pending' ORDER BY m.created_at,m.delivery_id LIMIT 1`, delivery).Scan(&representative, &projectBatch)
 		if err != nil {
 			return false, err
 		}
-		detail = fmt.Sprintf("本批代表交付为 %s；由代表汇总全部成员及集成冒烟证据，使用 multica issue delivery accept --delivery <代表交付> --file <JSON> 提交。JSON 必须包含当前 revision、candidate_id=%s 和实际 evidence。其他成员协助验收，不重复登记候选或单独发布。", representative, candidate)
+		if projectBatch {
+			detail = fmt.Sprintf("请在这个组合候选上验证本任务需要联调的业务，使用 multica issue delivery accept --delivery %s --file <JSON> 提交结果。JSON 必须包含当前 revision、candidate_id=%s 和实际 evidence；发布 Agent 负责协调本批和基本业务检查。", delivery, candidate)
+		} else {
+			detail = fmt.Sprintf("本批代表交付为 %s；由代表汇总全部成员及集成冒烟证据，使用 multica issue delivery accept --delivery <代表交付> --file <JSON> 提交。JSON 必须包含当前 revision、candidate_id=%s 和实际 evidence。其他成员协助验收，不重复登记候选或单独发布。", representative, candidate)
+		}
 	}
 	var exists bool
 	if err = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM comment WHERE id=$1 AND issue_id=$2)`, id, issue).Scan(&exists); err != nil {
@@ -96,6 +105,9 @@ func (h *Handler) notifyDeliveryResult(r *http.Request, ws, issue, delivery, sta
 			mention = fmt.Sprintf("[@负责人](mention://%s/%s)\n\n", kind, assignee)
 		}
 		text := deliveryNoticeText(stage, delivery, candidate, detail)
+		if projectBatch {
+			text = fmt.Sprintf("交付 %s 已进入组合候选 %s。", delivery, candidate) + detail
+		}
 		if completedAudit {
 			// 便签在创建、完成补派和评论重放路径都持久免触发。
 			mention = ""

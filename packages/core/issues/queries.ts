@@ -241,7 +241,7 @@ export const ISSUE_PAGE_SIZE = 50;
  *
  * 分桶依据是“状态分类”而不是“单个状态 key”（MUL-6243）。工作区可以自定义任意
  * 数量的状态；若按状态分桶，每新增一个状态，每次加载看板就要多发一个并行的
- * `listIssues` 请求。按分类分桶能把并发请求数恒定钉在 7 个；自定义状态显示在其
+ * `listIssues` 请求。按分类分桶能把并发请求数恒定钉在 8 个；自定义状态显示在其
  * 所继承分类的那一列里，卡片上自己的徽标才用来标识它具体处于哪个状态。
  */
 export const PAGINATED_CATEGORIES: readonly IssueStatusCategory[] = ALL_STATUSES;

@@ -102,6 +102,27 @@ func prepareForTest(t *testing.T, localPath string) *LocalWorktree {
 	return wt
 }
 
+func TestFinalizeRetainedPreservesOnlyExactSubmittedCommit(t *testing.T) {
+	repo := newTestRepo(t)
+	wt := prepareForTest(t, repo)
+	t.Cleanup(func() { _ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", wt.Path).Run() })
+	commit := gitRun(t, wt.Path, "rev-parse", "HEAD")
+	outcome, err := wt.FinalizeRetained(worktreeTestLogger(), wt.Branch, commit)
+	if err != nil || outcome.PreservedPath != wt.Path {
+		t.Fatalf("提交目录未保留: %+v %v", outcome, err)
+	}
+	if _, err := os.Stat(wt.Path); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt.Path, "tracked.txt"), "changed after submission\n")
+	if _, err := wt.FinalizeRetained(worktreeTestLogger(), wt.Branch, commit); err == nil {
+		t.Fatal("提交后变化不能被登记为原验收提交")
+	}
+	if _, err := os.Stat(wt.Path); err != nil {
+		t.Fatal("不匹配时必须保留工作目录")
+	}
+}
+
 // The agent must see the user's uncommitted work, not a clean HEAD checkout.
 // This is the property that makes worktree mode usable rather than confusing:
 // otherwise the agent silently reviews code the user hasn't got open.

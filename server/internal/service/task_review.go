@@ -20,32 +20,41 @@ import (
 // 成员，作为本次运行的负责人类（审查不是某个人委托的动作，但仍需可追溯的人类归属）。
 // 与提及/指派路径一样，重复入队由 (issue_id, agent_id) pending 唯一索引兜底。
 func (s *TaskService) EnqueueIssueReviewTask(ctx context.Context, issue db.Issue, agentID, ownerUserID pgtype.UUID, handoff, headSHA string) (db.AgentTaskQueue, error) {
+	return s.enqueueManagedIssueTask(ctx, issue, agentID, ownerUserID, issue.ID, handoff, headSHA, "issue_review")
+}
+
+// EnqueueIssueReleaseTask 为发布协调 Agent 派发一项与任务关联的工作。
+func (s *TaskService) EnqueueIssueReleaseTask(ctx context.Context, issue db.Issue, agentID, ownerUserID, evidenceRef pgtype.UUID, handoff, headSHA string) (db.AgentTaskQueue, error) {
+	return s.enqueueManagedIssueTask(ctx, issue, agentID, ownerUserID, evidenceRef, handoff, headSHA, "issue_release")
+}
+
+func (s *TaskService) enqueueManagedIssueTask(ctx context.Context, issue db.Issue, agentID, ownerUserID, evidenceRef pgtype.UUID, handoff, headSHA, evidence string) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("load review agent: %w", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("load managed agent: %w", err)
 	}
 	if agent.WorkspaceID != issue.WorkspaceID || agent.ArchivedAt.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("review agent is unavailable")
+		return db.AgentTaskQueue{}, fmt.Errorf("managed agent is unavailable")
 	}
 	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("review agent has no runtime")
+		return db.AgentTaskQueue{}, fmt.Errorf("managed agent has no runtime")
 	}
 	runtime, err := s.runtimeLookup().Get(ctx, agent.RuntimeID)
 	if err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("load review runtime: %w", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("load managed runtime: %w", err)
 	}
 	if runtime.Provider != "codex" && runtime.Provider != "codebuddy" {
-		return db.AgentTaskQueue{}, fmt.Errorf("代码审查只支持 Codex 或 CodeBuddy 运行时")
+		return db.AgentTaskQueue{}, fmt.Errorf("托管 Agent 只支持 Codex 或 CodeBuddy 运行时")
 	}
 	ready, err := AgentReadiness(ctx, s.runtimeLookup(), agent)
 	if err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("check review agent readiness: %w", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("check managed agent readiness: %w", err)
 	}
 	if !ready.Ready() {
-		return db.AgentTaskQueue{}, fmt.Errorf("审查 Agent 暂不可用：%s", ready.Detail)
+		return db.AgentTaskQueue{}, fmt.Errorf("托管 Agent 暂不可用：%s", ready.Detail)
 	}
 
-	attr := attribution.TriggerOwner(ownerUserID, attribution.EvidenceKind("issue_review"), issue.ID)
+	attr := attribution.TriggerOwner(ownerUserID, attribution.EvidenceKind(evidence), evidenceRef)
 	src, delegatedFrom, evidenceKind, evidenceRef := attributionCreateParams(attr)
 	createParams := db.CreateAgentTaskParams{
 		ID:                   dbid.NewV7(),
@@ -81,14 +90,14 @@ func (s *TaskService) EnqueueIssueReviewTask(ctx context.Context, issue db.Issue
 	})
 	if err != nil {
 		if isDuplicatePendingTaskErr(err) {
-			slog.Debug("review task enqueue coalesced: pending task already exists",
+			slog.Debug("managed task enqueue coalesced: pending task already exists",
 				"issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agent.ID))
 			return db.AgentTaskQueue{}, ErrDuplicatePendingTask
 		}
-		return db.AgentTaskQueue{}, fmt.Errorf("create review task: %w", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("create managed task: %w", err)
 	}
 
-	slog.Info("review task enqueued",
+	slog.Info("managed task enqueued",
 		"task_id", util.UUIDToString(task.ID),
 		"issue_id", util.UUIDToString(issue.ID),
 		"agent_id", util.UUIDToString(agent.ID),

@@ -8,7 +8,7 @@
 
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Virtuoso } from "react-virtuoso";
-import { EyeOff, FolderMinus, MoreHorizontal, Plus, ScanEye, UserMinus } from "lucide-react";
+import { EyeOff, FolderMinus, MoreHorizontal, Package, Plus, ScanEye, UserMinus } from "lucide-react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type {
@@ -31,6 +31,7 @@ import { useViewBaseline } from "../surface/view-baseline-context";
 import { StatusHeading } from "./status-heading";
 import { DraggableBoardCard } from "./board-card";
 import { ReviewSettingsSheet } from "./review-settings-sheet";
+import { ReleaseAgentSettingsSheet } from "./release-agent-settings-sheet";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -126,6 +127,7 @@ export const BoardColumn = memo(function BoardColumn({
   const status = group.status;
   const cfg = status ? STATUS_CONFIG[status] : null;
   const [reviewSettingsOpen, setReviewSettingsOpen] = useState(false);
+  const [releaseSettingsOpen, setReleaseSettingsOpen] = useState(false);
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
   const viewStoreApi = useViewStoreApi();
   // 被已打开保存视图固定的状态不能在看板里被隐藏——那等于悄悄抽掉视图自身的
@@ -229,6 +231,12 @@ export const BoardColumn = memo(function BoardColumn({
                       <DropdownMenuItem onClick={() => setReviewSettingsOpen(true)}>
                         <ScanEye className="size-3.5" />
                         {t(($) => $.review.settings)}
+                      </DropdownMenuItem>
+                    )}
+                    {status === "pending_release" && (
+                      <DropdownMenuItem onClick={() => setReleaseSettingsOpen(true)}>
+                        <Package className="size-3.5" />
+                        {t(($) => $.release_agent.settings)}
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
@@ -350,6 +358,9 @@ export const BoardColumn = memo(function BoardColumn({
       </div>
       {status === "in_review" && (
         <ReviewSettingsSheet open={reviewSettingsOpen} onClose={() => setReviewSettingsOpen(false)} />
+      )}
+      {status === "pending_release" && (
+        <ReleaseAgentSettingsSheet open={releaseSettingsOpen} onClose={() => setReleaseSettingsOpen(false)} />
       )}
     </div>
   );

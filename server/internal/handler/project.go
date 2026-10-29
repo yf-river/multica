@@ -712,6 +712,19 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to lock project")
 		return
 	}
+	var releaseActive bool
+	if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM delivery_batch WHERE workspace_id=$1 AND project_id=$2 AND status IN ('collecting','frozen','preparing','validating','publishing')) OR EXISTS(SELECT 1 FROM release_agent_config c JOIN agent_task_queue q ON q.agent_id=c.agent_id WHERE c.workspace_id=$1 AND c.project_id=$2 AND q.status NOT IN ('completed','failed','cancelled'))`, project.WorkspaceID, project.ID).Scan(&releaseActive); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project release")
+		return
+	}
+	if releaseActive {
+		writeError(w, http.StatusConflict, "项目仍有发布批次或发布 Agent 运行")
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `DELETE FROM release_agent_config WHERE workspace_id=$1 AND project_id=$2`, project.WorkspaceID, project.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remove project release settings")
+		return
+	}
 	if err := qtx.ClearChatSessionProjectByProject(r.Context(), db.ClearChatSessionProjectByProjectParams{
 		ProjectID:   project.ID,
 		WorkspaceID: project.WorkspaceID,

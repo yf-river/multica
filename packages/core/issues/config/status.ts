@@ -2,7 +2,7 @@
 import type { IssueStatusCategory } from "../../types";
 
 // 下面这三个都是按“分类”而不是“状态 key”建索引的。一个工作区可以定义任意数量的
-// 自定义状态，但每一个都恰好属于下面 7 个分类之一——于是看板列、展示配置、分页拉取
+// 自定义状态，但每一个都恰好属于下面 8 个分类之一——于是看板列、展示配置、分页拉取
 // 都保持固定形状。要先用工作区目录（`useIssueStatuses`）把状态 KEY 解析成它的分类，
 // 再来索引这些配置。（MUL-6243）
 
@@ -12,6 +12,7 @@ export const STATUS_ORDER: IssueStatusCategory[] = [
   "todo",
   "in_progress",
   "in_review",
+  "pending_release",
   "done",
   "blocked",
   "cancelled",
@@ -23,6 +24,7 @@ export const ALL_STATUSES: IssueStatusCategory[] = [
   "todo",
   "in_progress",
   "in_review",
+  "pending_release",
   "done",
   "blocked",
   "cancelled",
@@ -43,6 +45,7 @@ export const STATUS_CONFIG: Record<
   todo: { label: "Todo", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent", dividerColor: "bg-muted-foreground/40", columnBg: "bg-muted/40" },
   in_progress: { label: "In Progress", iconColor: "text-warning", hoverBg: "hover:bg-warning/10", dividerColor: "bg-warning", columnBg: "bg-warning/5" },
   in_review: { label: "In Review", iconColor: "text-success", hoverBg: "hover:bg-success/10", dividerColor: "bg-success", columnBg: "bg-success/5" },
+  pending_release: { label: "Pending Release", iconColor: "text-violet-600 dark:text-violet-400", hoverBg: "hover:bg-violet-500/10", dividerColor: "bg-violet-500", columnBg: "bg-violet-500/5" },
   done: { label: "Done", iconColor: "text-info", hoverBg: "hover:bg-info/10", dividerColor: "bg-info", columnBg: "bg-info/5" },
   blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10", dividerColor: "bg-destructive", columnBg: "bg-destructive/5" },
   cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent", dividerColor: "bg-muted-foreground/40", columnBg: "bg-muted/40" },

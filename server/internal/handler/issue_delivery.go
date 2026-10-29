@@ -12,6 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
@@ -106,7 +108,7 @@ func (h *Handler) RegisterIssuePlan(w http.ResponseWriter, r *http.Request) {
 	if !unchanged {
 		_, err = tx.Exec(r.Context(), `INSERT INTO issue_delivery_plan(id,workspace_id,issue_id,comment_id,comment_revision,confirmation_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,issue_id) DO UPDATE SET id=EXCLUDED.id,comment_id=EXCLUDED.comment_id,comment_revision=EXCLUDED.comment_revision,confirmed_by=NULL,confirmed_at=NULL,confirmation_id=EXCLUDED.confirmation_id,updated_at=now()`, dbid.NewV7(), ws, issue, comment, revision, dbid.NewV7())
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `WITH changed AS (UPDATE issue_delivery SET phase='needs_changes',error='方案已更新，需要重新确认与验收',approved_by=NULL,approved_at=NULL,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing') RETURNING *) INSERT INTO verification_event(workspace_id,delivery_id,candidate_id,stage,detail) SELECT workspace_id,id,candidate_id,'delivery.plan_updated',jsonb_build_object('phase',phase,'revision',revision)::text FROM changed`, ws, issue)
+			_, err = tx.Exec(r.Context(), `WITH changed AS (UPDATE issue_delivery SET phase='needs_changes',error='方案已更新，需要重新确认与验收',approved_by=NULL,approved_at=NULL,auto_release=false,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND phase NOT IN ('published','cancelled','publishing') RETURNING *) INSERT INTO verification_event(workspace_id,delivery_id,candidate_id,stage,detail) SELECT workspace_id,id,candidate_id,'delivery.plan_updated',jsonb_build_object('phase',phase,'revision',revision)::text FROM changed`, ws, issue)
 		}
 	}
 	if err == nil {
@@ -226,14 +228,15 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		OperationID     string                  `json:"operation_id"`
-		Commit          string                  `json:"source_commit"`
-		Branch          string                  `json:"source_branch"`
-		Base            string                  `json:"base_commit"`
-		Checks          []deliveryCheck         `json:"evidence"`
-		ReplaceID       string                  `json:"replace_delivery_id"`
-		ReplaceRevision int64                   `json:"replace_revision"`
-		RequiredChecks  []requiredDeliveryCheck `json:"required_checks"`
+		OperationID           string                  `json:"operation_id"`
+		Commit                string                  `json:"source_commit"`
+		Branch                string                  `json:"source_branch"`
+		Base                  string                  `json:"base_commit"`
+		Checks                []deliveryCheck         `json:"evidence"`
+		ReplaceID             string                  `json:"replace_delivery_id"`
+		ReplaceRevision       int64                   `json:"replace_revision"`
+		RequiredChecks        []requiredDeliveryCheck `json:"required_checks"`
+		IntegrationSkipReason string                  `json:"integration_skip_reason"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body) != nil || !deliveryCommit.MatchString(body.Commit) || !deliveryCommit.MatchString(body.Base) || !deliveryBranch.MatchString(body.Branch) || strings.Contains(body.Branch, "..") || !validDeliveryChecks(body.Checks) {
 		writeError(w, 400, "需要完整提交、任务分支、基线及通过的检查证据")
@@ -255,7 +258,18 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	var plan string
 	var planSnapshot json.RawMessage
-	err = tx.QueryRow(r.Context(), `SELECT p.id::text,jsonb_build_object('comment_id',p.comment_id,'revision',p.comment_revision,'body',c.content,'confirmed_by',p.confirmed_by,'confirmed_at',p.confirmed_at,'execute_authorizations',(SELECT COALESCE(jsonb_agg(a),'[]') FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked)) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE p.workspace_id=$1 AND p.issue_id=$2 AND p.confirmed_by IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute') OR EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment ac ON ac.id=a.comment_id AND ac.revision=a.comment_revision AND ac.author_type='member' JOIN member m ON m.workspace_id=a.workspace_id AND m.user_id=ac.author_id WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked AND m.role IN ('owner','admin','member'))) FOR UPDATE OF p`, ws, issue).Scan(&plan, &planSnapshot)
+	var managedProject bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM issue i JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled WHERE i.workspace_id=$1 AND i.id=$2)`, ws, issue).Scan(&managedProject)
+	if err != nil {
+		writeError(w, 500, "读取发布项目设置失败")
+		return
+	}
+	if managedProject {
+		plan = issue
+		err = tx.QueryRow(r.Context(), `SELECT jsonb_build_object('workflow','project','project_id',i.project_id,'title',i.title,'description',COALESCE(i.description,''),'source_execution_id',COALESCE((SELECT execution_id FROM delivery_owner WHERE workspace_id=i.workspace_id AND issue_id=i.id),'')) FROM issue i WHERE i.workspace_id=$1 AND i.id=$2 FOR SHARE`, ws, issue).Scan(&planSnapshot)
+	} else {
+		err = tx.QueryRow(r.Context(), `SELECT p.id::text,jsonb_build_object('comment_id',p.comment_id,'revision',p.comment_revision,'body',c.content,'confirmed_by',p.confirmed_by,'confirmed_at',p.confirmed_at,'execute_authorizations',(SELECT COALESCE(jsonb_agg(a),'[]') FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked)) FROM issue_delivery_plan p JOIN comment c ON c.id=p.comment_id AND c.revision=p.comment_revision WHERE p.workspace_id=$1 AND p.issue_id=$2 AND p.confirmed_by IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM issue_delivery_authorization a WHERE a.plan_id=p.id AND a.kind='execute') OR EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment ac ON ac.id=a.comment_id AND ac.revision=a.comment_revision AND ac.author_type='member' JOIN member m ON m.workspace_id=a.workspace_id AND m.user_id=ac.author_id WHERE a.plan_id=p.id AND a.kind='execute' AND NOT a.revoked AND m.role IN ('owner','admin','member'))) FOR UPDATE OF p`, ws, issue).Scan(&plan, &planSnapshot)
+	}
 	if err != nil {
 		writeError(w, 409, "请先确认当前方案")
 		return
@@ -300,7 +314,15 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "替换交付失败")
 		return
 	}
-	required, checkErr := normalizeRequiredDeliveryChecks(body.RequiredChecks)
+	skipReason := strings.TrimSpace(body.IntegrationSkipReason)
+	managed := managedProject
+	if skipReason != "" {
+		if !managed || len(skipReason) > 1000 {
+			writeError(w, 400, "仅发布项目可说明无需单独联调的原因")
+			return
+		}
+	}
+	required, checkErr := normalizeRequiredDeliveryChecksWithSkip(body.RequiredChecks, managed && skipReason != "")
 	if checkErr != nil {
 		writeError(w, 400, checkErr.Error())
 		return
@@ -311,6 +333,17 @@ func (h *Handler) SubmitIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snapshot["required_checks"], _ = json.Marshal(required)
+	if managed {
+		version, versionErr := deliveryCommentsVersion(r.Context(), tx, ws, issue)
+		if versionErr != nil {
+			writeError(w, 500, "读取任务评论版本失败")
+			return
+		}
+		snapshot["project_comments_version"], _ = json.Marshal(version)
+	}
+	if skipReason != "" {
+		snapshot["integration_skip_reason"], _ = json.Marshal(skipReason)
+	}
 	planSnapshot, _ = json.Marshal(snapshot)
 	evidence, _ := json.Marshal(body.Checks)
 	tag, err := tx.Exec(r.Context(), `INSERT INTO issue_delivery(id,workspace_id,issue_id,operation_id,plan_id,source_commit,source_branch,base_commit,evidence,verification_comment_id,release_comment_id,plan_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(workspace_id,operation_id) DO NOTHING`, dbid.NewV7(), ws, issue, op, plan, body.Commit, body.Branch, body.Base, evidence, dbid.NewV7(), dbid.NewV7(), planSnapshot)
@@ -380,6 +413,11 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Action == "accept" && phase != "published" {
+		var updatePending bool
+		if err = tx.QueryRow(r.Context(), `SELECT COALESCE(plan_snapshot->'verification_update'->>'state'='pending',false) FROM issue_delivery WHERE id=$1`, id).Scan(&updatePending); err != nil || updatePending {
+			writeError(w, 409, "测试版本正在更新，请等待当前提交部署完成")
+			return
+		}
 		stage := "verification"
 		if phase == "preparing_release" || phase == "approved" {
 			stage = "integration"
@@ -407,6 +445,26 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		h.deliveryJSON(w, r, ws, issue)
 		return
 	}
+	if body.Action == "review-project-comments" && body.CommentsVersion != "" && strings.TrimSpace(body.ScopeReview) != "" {
+		var same bool
+		err = tx.QueryRow(r.Context(), `SELECT COALESCE(d.plan_snapshot->'project_comments_review'->>'version'=$2 AND d.plan_snapshot->'project_comments_review'->>'scope'=$3 AND d.phase='approved' AND d.auto_release AND EXISTS(SELECT 1 FROM issue i JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled WHERE i.id=d.issue_id AND i.workspace_id=d.workspace_id AND i.status='pending_release' AND COALESCE(i.metadata->>'release_hold','')<>'true'),false) FROM issue_delivery d WHERE d.id=$1`, id, body.CommentsVersion, strings.TrimSpace(body.ScopeReview)).Scan(&same)
+		if err != nil {
+			writeError(w, 500, "读取评论复核记录失败")
+			return
+		}
+		if same {
+			current, versionErr := deliveryCommentsVersion(r.Context(), tx, ws, issue)
+			if versionErr != nil {
+				writeError(w, 500, "读取任务评论版本失败")
+				return
+			}
+			if current == body.CommentsVersion {
+				tx.Rollback(r.Context())
+				h.deliveryJSON(w, r, ws, issue)
+				return
+			}
+		}
+	}
 	// 1. Replay a repair only after checking the current owner; an old revision cannot create a second attempt.
 	if body.Action == "retest" && body.Repair != nil {
 		replay, replayErr := deliveryRepairReplay(r, tx, id, *body.Repair, body.Checks)
@@ -424,7 +482,7 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "交付版本已变化，请刷新后重试")
 		return
 	}
-	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" || body.Action == "bind-checks" {
+	if body.Action == "accept" || body.Action == "approve" || body.Action == "retest" || body.Action == "bind-checks" || body.Action == "review-project-comments" {
 		var valid bool
 		err = tx.QueryRow(r.Context(), deliveryPlanValidSQL, id).Scan(&valid)
 		if err != nil || !valid {
@@ -432,7 +490,20 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var repairEvent *events.Event
 	switch body.Action {
+	case "review-project-comments":
+		version, versionErr := deliveryCommentsVersion(r.Context(), tx, ws, issue)
+		var eligible bool
+		if versionErr == nil {
+			versionErr = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled JOIN issue_review v ON v.workspace_id=i.workspace_id AND v.issue_id=i.id AND v.state='passed' AND v.head_sha=d.source_commit WHERE d.id=$1 AND d.workspace_id=$2 AND d.issue_id=$3 AND d.phase='approved' AND d.auto_release AND i.status='pending_release' AND COALESCE(i.metadata->>'release_hold','')<>'true' AND EXISTS(SELECT 1 FROM delivery_evidence e WHERE e.delivery_id=d.id AND e.workspace_id=d.workspace_id AND e.issue_id=d.issue_id AND e.source_commit=d.source_commit AND e.candidate_id<>''))`, id, ws, issue).Scan(&eligible)
+		}
+		if versionErr != nil || !eligible || phase != "approved" || version != body.CommentsVersion || strings.TrimSpace(body.ScopeReview) == "" {
+			writeError(w, 409, "请核对最新评论、当前范围及审查测试状态")
+			return
+		}
+		actorType, actorID := h.resolveActor(r, requestUserID(r), ws)
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{project_comments_version}',to_jsonb($2::text))||jsonb_build_object('project_comments_review',jsonb_build_object('version',$2::text,'scope',$3::text,'actor_type',$4::text,'actor_id',$5::text,'reviewed_at',now())),revision=revision+1,updated_at=now() WHERE id=$1`, id, version, strings.TrimSpace(body.ScopeReview), actorType, actorID)
 	case "bind-checks":
 		if err = bindDeliveryRequiredChecks(r.Context(), tx, id, body.PlanID, body.RequiredChecks); err != nil {
 			writeError(w, 409, err.Error())
@@ -519,6 +590,55 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	case "retest":
 		// 2. A failed verification is repaired in place without granting production approval.
 		if body.Repair != nil {
+			if phase == "testing" {
+				q := h.Queries.WithTx(tx)
+				previous, readErr := q.GetIssue(r.Context(), parseUUID(issue))
+				if readErr != nil {
+					writeError(w, 500, "读取任务失败")
+					return
+				}
+				if err = requestVerificationUpdate(r, tx, ws, issue, id, *body.Repair, body.Checks); err != nil {
+					writeError(w, 409, err.Error())
+					return
+				}
+				updated, readErr := q.GetIssue(r.Context(), parseUUID(issue))
+				if readErr != nil {
+					writeError(w, 500, "读取任务失败")
+					return
+				}
+				event, eventErr := service.RecordDurableEventTx(r.Context(), q, buildIssueUpdatedEvent(r.Context(), h, updated, previous, UpdateIssueRequest{}, nil, "system", ""))
+				if eventErr != nil {
+					writeError(w, 500, "记录任务更新失败")
+					return
+				}
+				repairEvent = &event
+				break
+			}
+			if phase == "approved" {
+				q := h.Queries.WithTx(tx)
+				previous, readErr := q.GetIssue(r.Context(), parseUUID(issue))
+				if readErr != nil {
+					writeError(w, 500, "读取任务失败")
+					return
+				}
+				if err = repairBatchConflict(r, tx, ws, issue, id, *body.Repair, body.Checks); err != nil {
+					writeError(w, 409, err.Error())
+					return
+				}
+				updated, readErr := q.GetIssue(r.Context(), parseUUID(issue))
+				if readErr != nil {
+					writeError(w, 500, "读取任务失败")
+					return
+				}
+				status := "in_progress"
+				event, eventErr := service.RecordDurableEventTx(r.Context(), q, buildIssueUpdatedEvent(r.Context(), h, updated, previous, UpdateIssueRequest{Status: &status}, nil, "system", ""))
+				if eventErr != nil {
+					writeError(w, 500, "记录任务状态失败")
+					return
+				}
+				repairEvent = &event
+				break
+			}
 			if phase != "needs_changes" {
 				writeError(w, 409, "只有失败交付可以提交修复候选")
 				return
@@ -554,6 +674,9 @@ func (h *Handler) ActIssueDelivery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, "交付操作失败")
 		return
+	}
+	if repairEvent != nil {
+		h.publishEvent(*repairEvent)
 	}
 	h.deliveryJSON(w, r, ws, issue)
 }

@@ -5,7 +5,7 @@ import type { Label } from "./label";
 import type { IssuePropertyValues } from "./property";
 
 /**
- * 状态「类别」——议题状态所属的行为等价类。恰好有 7 个，每个同时也是定义
+ * 状态「类别」——议题状态所属的行为等价类。恰好有 8 个，每个同时也是定义
  * 它的内建状态的 key，因此它保持封闭联合而 `Issue.status` 变成开放值。
  * 看板列、筛选与展示配置都以类别为键，所以无论 workspace 定义多少自定义
  * 状态，类别形状都固定。（MUL-6243）
@@ -15,15 +15,16 @@ export type IssueStatusCategory =
   | "todo"
   | "in_progress"
   | "in_review"
+  | "pending_release"
   | "done"
   | "blocked"
   | "cancelled";
 
 /**
- * 存在议题上的状态 KEY：7 个内建之一，或管理员为本 workspace 定义的自定义
+ * 存在议题上的状态 KEY：8 个内建之一，或管理员为本 workspace 定义的自定义
  * key。
  *
- * 刻意开放。`(string & {})` 在保留 7 个内建值的编辑器自动补全的同时，接受
+ * 刻意开放。`(string & {})` 在保留 8 个内建值的编辑器自动补全的同时，接受
  * 目录里的任意 key——这正是服务器一直能发送的。任何需要展示的（标签、颜色、
  * 看板列）都必须先把 key 解析到其「类别」——组件里用 `useIssueStatuses(wsId)`，
  * 纯路径里用 `statusCategoryOfKey`。（MUL-6243）
@@ -193,7 +194,7 @@ export interface Issue {
    */
   status_category?: IssueStatusCategory;
   /**
-   * 自定义状态的显示名，随 key 一起携带。7 个内建状态为空，它们从 key 做
+   * 自定义状态的显示名，随 key 一起携带。8 个内建状态为空，它们从 key 做
    * 本地化——优先用 `useStatusLabel`，它两者都能处理且管理员重命名状态后
    * 仍保持正确。
    *

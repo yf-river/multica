@@ -5,6 +5,7 @@ import os
 import subprocess
 from contextlib import nullcontext
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -24,6 +25,27 @@ def write_seed(directory, manifest, payload=b'dump'):
 
 
 class SeedManifestTests(unittest.TestCase):
+    def test_sql_seed_checks_file_identity_and_checksum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            payload = b'SELECT 1;\n'
+            (path / 'seed.sql').write_bytes(payload)
+            manifest = {'sql_artifact': {'file': 'seed.sql', 'sha256': hashlib.sha256(payload).hexdigest()}}
+            self.assertEqual(s.read_sql_seed(path, manifest), path / 'seed.sql')
+            self.assertIsNone(s.verified_sql_seed(path, manifest))
+            manifest['sql_verification'] = {'passed': True, 'sha256': manifest['sql_artifact']['sha256']}
+            self.assertEqual(s.verified_sql_seed(path, manifest), path / 'seed.sql')
+            manifest['sql_verification']['sha256'] = 'stale'
+            with self.assertRaisesRegex(RuntimeError, '需要重新验收'):
+                s.verified_sql_seed(path, manifest)
+            manifest['sql_verification']['sha256'] = manifest['sql_artifact']['sha256']
+            (path / 'seed.sql').write_bytes(b'SELECT 2;\n')
+            with self.assertRaisesRegex(RuntimeError, 'SQL 种子文件校验失败'):
+                s.read_sql_seed(path, manifest)
+            manifest['sql_artifact']['file'] = '../seed.sql'
+            with self.assertRaisesRegex(RuntimeError, '种子缺少 SQL 文件或校验和'):
+                s.read_sql_seed(path, manifest)
+
     def test_read_seed_rejects_modified_dump(self):
         with tempfile.TemporaryDirectory() as tmp:
             seed = Path(tmp) / 'seed-1'
@@ -47,6 +69,47 @@ class SeedManifestTests(unittest.TestCase):
         identity = s.scrub_identity()
         self.assertEqual(identity['version'], json.loads(s.SCRUB.read_text())['version'])
         self.assertEqual(len(identity['sha256']), 64)
+
+    def test_sql_fixture_source_identity_survives_verification(self):
+        source = s.source_identity({'source': {'environment': 'fixtures-sql', 'fixture_sql_sha256': SHA}})
+        self.assertEqual(source['environment'], 'fixtures-sql')
+        self.assertEqual(source['fixture_sql_sha256'], SHA)
+
+
+class UploadCleanupTests(unittest.TestCase):
+    def test_only_registered_slot_uploads_are_cleared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'verify-1'
+            uploads = root / 'app' / 'uploads'
+            uploads.mkdir(parents=True)
+            (uploads / 'nested').mkdir()
+            (uploads / 'nested' / 'image').write_text('fixture')
+            outside = Path(tmp) / 'other'
+            outside.mkdir()
+            (outside / 'retained').write_text('keep')
+            (uploads / 'link').symlink_to(outside, target_is_directory=True)
+            cfg = {'server': {'LOCAL_UPLOAD_DIR': str(uploads), 'MULTICA_SERVICE_USER': 'fixture'}}
+            record = {'environment': 'verify-1', 'data_root': str(root)}
+            with patch.object(s.i.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=os.getuid())):
+                s.clear_verification_uploads('verify-1', cfg, record)
+            self.assertEqual(list(uploads.iterdir()), [])
+            self.assertEqual((outside / 'retained').read_text(), 'keep')
+
+    def test_mismatched_or_symlinked_root_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'verify-1'
+            uploads = root / 'app' / 'uploads'
+            uploads.mkdir(parents=True)
+            cfg = {'server': {'LOCAL_UPLOAD_DIR': str(uploads), 'MULTICA_SERVICE_USER': 'fixture'}}
+            record = {'environment': 'verify-2', 'data_root': str(root)}
+            with self.assertRaisesRegex(RuntimeError, '身份不匹配'):
+                s.clear_verification_uploads('verify-1', cfg, record)
+            alias = Path(tmp) / 'alias'
+            alias.symlink_to(root, target_is_directory=True)
+            cfg['server']['LOCAL_UPLOAD_DIR'] = str(alias / 'app' / 'uploads')
+            record = {'environment': 'verify-1', 'data_root': str(alias)}
+            with self.assertRaisesRegex(RuntimeError, '不一致'):
+                s.clear_verification_uploads('verify-1', cfg, record)
 
 
 class EnsureTests(unittest.TestCase):
@@ -190,7 +253,7 @@ class ResetTests(unittest.TestCase):
         write_seed(self.seed, dict(seed_id='seed-x', version=2, restore_verification=dict(passed=True)))
 
     def test_success_marks_seed_and_resumes_slot(self):
-        with patch.object(s, 'maintain') as maintain, patch.object(s, 'restore', return_value=dict(seed_id='seed-x')), patch.object(s, 'record_slot_seed') as record, patch.object(s, 'resume') as resume:
+        with patch.object(s, 'begin_maintenance', return_value=True) as maintain, patch.object(s, 'restore', return_value=dict(seed_id='seed-x')), patch.object(s, 'record_slot_seed') as record, patch.object(s, 'resume') as resume:
             s.reset('verify-1', self.seed, Path('/pg'))
             maintain.assert_called_once()
             record.assert_called_once()
@@ -198,11 +261,30 @@ class ResetTests(unittest.TestCase):
             resume.assert_called_once()
 
     def test_failure_keeps_slot_in_maintenance_and_marks_unverified(self):
-        with patch.object(s, 'maintain'), patch.object(s, 'restore', side_effect=RuntimeError('恢复失败')), patch.object(s, 'record_slot_seed') as record, patch.object(s, 'resume') as resume:
+        with patch.object(s, 'begin_maintenance', return_value=True), patch.object(s, 'restore', side_effect=RuntimeError('恢复失败')), patch.object(s, 'record_slot_seed') as record, patch.object(s, 'resume') as resume:
             with self.assertRaisesRegex(RuntimeError, '槽位保持维护'):
                 s.reset('verify-1', self.seed, Path('/pg'))
             self.assertFalse(record.call_args[0][3])
             resume.assert_not_called()
+
+    def test_disabled_slot_stays_disabled_after_restore(self):
+        with patch.object(s, 'begin_maintenance', return_value=False), patch.object(s, 'restore', return_value=dict(seed_id='seed-x')), patch.object(s, 'record_slot_seed') as record, patch.object(s, 'resume') as resume:
+            s.reset('verify-1', self.seed, Path('/pg'))
+            record.assert_called_once()
+            resume.assert_not_called()
+
+    def test_seed_verification_keeps_disabled_slot_disabled(self):
+        restored=dict(container='fixture',database='fixture')
+        with patch.object(s,'begin_maintenance',return_value=False),patch.object(s,'restore',return_value=restored),patch.object(s,'api_checks',return_value=[]),patch.object(s,'data_checks',return_value=[]),patch.object(s,'scrub_checks',return_value=[]),patch.object(s,'record_slot_seed'),patch.object(s,'resume') as resume:
+            s.verify_seed('verify-1',self.seed,Path('/pg'))
+            resume.assert_not_called()
+
+    def test_maintenance_uses_atomic_previous_state_and_old_server_fallback(self):
+        slots=[dict(name='verify-1',enabled=True)]
+        with patch.object(s,'control_api',return_value=slots),patch.object(s,'maintain',return_value={'previous_enabled':False}):
+            self.assertFalse(s.begin_maintenance('verify-1','test'))
+        with patch.object(s,'control_api',return_value=slots),patch.object(s,'maintain',return_value={'enabled':False}):
+            self.assertTrue(s.begin_maintenance('verify-1','test'))
 
 
 
@@ -305,7 +387,7 @@ class CompatibilityTests(unittest.TestCase):
         write_seed(seed, self.manifest)
         for failure in ['数据库结构与种子一致', 'MCP 凭据配置已清空']:
             with self.subTest(failure=failure), \
-                 patch.object(s, 'maintain'), patch.object(s, 'resume') as resume, \
+                 patch.object(s, 'begin_maintenance', return_value=True), patch.object(s, 'resume') as resume, \
                  patch.object(s, 'record_slot_seed') as record, \
                  patch.object(s, 'data_checks', return_value=[{'name': failure, 'status': 'failed'}]), \
                  patch.object(s, 'scrub_checks', return_value=[]), \

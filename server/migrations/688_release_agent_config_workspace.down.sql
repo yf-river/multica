@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY release_agent_config_workspace;

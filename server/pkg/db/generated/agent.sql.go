@@ -4202,6 +4202,21 @@ func (q *Queries) GetIssueDeliveryReviewSHA(ctx context.Context, issueID pgtype.
 	return source_commit, err
 }
 
+const getIssueTestingReviewSHA = `-- name: GetIssueTestingReviewSHA :one
+SELECT d.source_commit FROM issue_delivery d
+JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id
+JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled
+WHERE d.issue_id=$1 AND ((d.phase='testing' AND d.acceptance_submitted) OR (d.phase='waiting_int' AND i.status='in_review'))
+ORDER BY d.created_at DESC,d.id DESC LIMIT 1
+`
+
+func (q *Queries) GetIssueTestingReviewSHA(ctx context.Context, issueID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getIssueTestingReviewSHA, issueID)
+	var sha string
+	err := row.Scan(&sha)
+	return sha, err
+}
+
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
@@ -5711,7 +5726,7 @@ WHERE recovery.author_type = 'system'
   AND source.autopilot_run_id IS NULL
   AND source.issue_id IS NOT NULL
   AND source.agent_id <> failed.agent_id
-  AND CASE WHEN source_issue.status IN ('backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled') THEN source_issue.status ELSE source_status.category END
+  AND CASE WHEN source_issue.status IN ('backlog', 'todo', 'in_progress', 'in_review', 'pending_release', 'blocked', 'done', 'cancelled') THEN source_issue.status ELSE source_status.category END
       IN ('todo', 'in_progress', 'in_review', 'blocked')
   AND source_agent.archived_at IS NULL
   AND source_agent.runtime_id IS NOT NULL

@@ -1377,6 +1377,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
+		r.Get("/tasks/{taskId}/delivery-worktree", h.GetTaskDeliveryWorktree)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
 		r.Post("/tasks/{taskId}/runtime-inputs/capabilities", h.RegisterTaskRuntimeCapability)
 		r.Post("/tasks/{taskId}/runtime-inputs/claim", h.ClaimTaskRuntimeInput)
@@ -1809,6 +1810,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/review", func(r chi.Router) {
 				r.Get("/settings", h.GetReviewSettings)
 				r.Put("/settings", h.UpdateReviewSettings)
+			})
+			r.Route("/api/release-agent", func(r chi.Router) {
+				r.Get("/settings", h.GetReleaseAgentSettings)
+				r.Put("/settings", h.UpdateReleaseAgentSettings)
 			})
 
 			// 任务消息（面向用户，非 daemon 认证）

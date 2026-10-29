@@ -22,6 +22,10 @@ type deliveryChecksGap struct{ message string }
 func (e *deliveryChecksGap) Error() string { return e.message }
 
 func normalizeRequiredDeliveryChecks(checks []requiredDeliveryCheck) ([]requiredDeliveryCheck, error) {
+	return normalizeRequiredDeliveryChecksWithSkip(checks, false)
+}
+
+func normalizeRequiredDeliveryChecksWithSkip(checks []requiredDeliveryCheck, skipIntegration bool) ([]requiredDeliveryCheck, error) {
 	if len(checks) == 0 || len(checks) > 100 {
 		return nil, &deliveryChecksGap{"缺少方案业务验收清单，请由负责人使用 bind-checks 绑定 required_checks"}
 	}
@@ -42,7 +46,7 @@ func normalizeRequiredDeliveryChecks(checks []requiredDeliveryCheck) ([]required
 		}
 		seen[key], stages[c.Stage] = true, true
 	}
-	if !stages["verification"] || !stages["integration"] {
+	if !stages["verification"] || (!stages["integration"] && !skipIntegration) {
 		return nil, &deliveryChecksGap{"业务清单须分别声明独立验收 verification 和最终集成 integration 的必要检查"}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -53,12 +57,13 @@ func normalizeRequiredDeliveryChecks(checks []requiredDeliveryCheck) ([]required
 
 func deliveryRequiredChecks(snapshot json.RawMessage) ([]requiredDeliveryCheck, error) {
 	var value struct {
-		Checks []requiredDeliveryCheck `json:"required_checks"`
+		Checks                []requiredDeliveryCheck `json:"required_checks"`
+		IntegrationSkipReason string                  `json:"integration_skip_reason"`
 	}
 	if err := json.Unmarshal(snapshot, &value); err != nil {
 		return nil, err
 	}
-	return normalizeRequiredDeliveryChecks(value.Checks)
+	return normalizeRequiredDeliveryChecksWithSkip(value.Checks, strings.TrimSpace(value.IntegrationSkipReason) != "")
 }
 
 func missingDeliveryChecks(required []requiredDeliveryCheck, evidence []deliveryCheck, stage string) error {
@@ -138,7 +143,7 @@ func requireDeliveryChecks(ctx context.Context, tx pgx.Tx, id, candidate, stage 
 	rows, err := tx.Query(ctx, `SELECT d.id::text,d.candidate_id,d.plan_snapshot FROM issue_delivery d
  WHERE d.id=$1 OR ($3='integration' AND EXISTS(
  SELECT 1 FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id
- WHERE m.delivery_id=d.id AND m.result='pending' AND b.status IN ('validating','publishing')
+ WHERE m.delivery_id=d.id AND m.result='pending' AND b.project_id IS NULL AND b.status IN ('validating','publishing')
  AND b.candidate_id=$2 AND b.workspace_id=d.workspace_id
  AND $1::uuid=(SELECT delivery_id FROM delivery_batch_member WHERE batch_id=b.id AND result='pending' ORDER BY created_at,delivery_id LIMIT 1)))
  ORDER BY d.id`, id, candidate, stage)

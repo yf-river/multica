@@ -35,6 +35,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/releaseagent"
 	"github.com/multica-ai/multica/server/internal/review"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -344,6 +345,9 @@ type ConnectedAppData = runtimeapps.ConnectedApp
 type DeliveryContextData struct {
 	ID               string `json:"id"`
 	Phase            string `json:"phase"`
+	Workflow         string `json:"workflow,omitempty"`
+	CandidateURL     string `json:"candidate_url,omitempty"`
+	OwnsCheckout     bool   `json:"owns_checkout,omitempty"`
 	CandidateID      string `json:"candidate_id,omitempty"`
 	CandidateCommit  string `json:"candidate_commit,omitempty"`
 	Environment      string `json:"environment,omitempty"`
@@ -1142,7 +1146,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 
 		if a.SystemKey.Valid && (a.SystemKey.String == service.SupervisionSystemKey ||
 			upstream.IsExecutorSystemKey(a.SystemKey.String) ||
-			(!includeManaged && a.SystemKey.String == review.SystemKey)) {
+			(!includeManaged && (a.SystemKey.String == review.SystemKey || a.SystemKey.String == releaseagent.SystemKey))) {
 			continue
 		}
 		targets := targetsByAgent[uuidToString(a.ID)]
@@ -1861,6 +1865,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	if existing.SystemKey.Valid && existing.SystemKey.String == review.SystemKey {
 		writeError(w, http.StatusForbidden, "该 Agent 由审查设置托管，请到审核中列的审查设置中修改")
+		return
+	}
+	if existing.SystemKey.Valid && existing.SystemKey.String == releaseagent.SystemKey {
+		writeError(w, http.StatusForbidden, "该 Agent 由待发布设置托管，请到待发布列的设置中修改")
 		return
 	}
 	if existing.SystemKey.Valid && existing.SystemKey.String == service.SupervisionSystemKey {

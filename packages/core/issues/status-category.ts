@@ -25,7 +25,7 @@ export function issueStatusCategory(issue: Pick<Issue, "status" | "status_catego
 /**
  * 只拿到“状态 key 字符串”的渲染路径，用它求分类。
  *
- * 对 7 个内置状态是精确的（在管理员定义自定义状态之前，它们就是全部状态）。
+ * 对 8 个内置状态是精确的（在管理员定义自定义状态之前，它们就是全部状态）。
  * 自定义 key 返回 `todo`，让展示查找总能解析出一个可渲染的值；必须显示真实状态的
  * 视图改用目录（`useIssueStatuses`）。（MUL-6243）
  */

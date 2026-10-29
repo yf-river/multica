@@ -44,6 +44,7 @@
       "todo": "Queued. Moving an issue here starts the assigned agent.",
       "in_progress": "Actively being worked on.",
       "in_review": "Delivered, waiting on human review. Finalizes the autopilot run.",
+      "pending_release": "Verified and waiting for production release.",
       "done": "Completed.",
       "blocked": "Stalled on an external dependency.",
       "cancelled": "Decided not to do."

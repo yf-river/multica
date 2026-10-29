@@ -197,8 +197,8 @@ func TestCategoriesAndBuiltInsAreTheSameSet(t *testing.T) {
 			t.Errorf("built-in %q is not a valid category", key)
 		}
 	}
-	if len(Canonical()) != 7 {
-		t.Fatalf("expected 7 canonical statuses, got %d", len(Canonical()))
+	if len(Canonical()) != 8 {
+		t.Fatalf("expected 8 canonical statuses, got %d", len(Canonical()))
 	}
 }
 
@@ -206,7 +206,7 @@ func TestCategoriesAndBuiltInsAreTheSameSet(t *testing.T) {
 // Reordering it would visibly rearrange every existing user's board, so it is
 // pinned here rather than left to look tidy.
 func TestCategoryRankPreservesHistoricalStatusOrder(t *testing.T) {
-	want := []string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"}
+	want := []string{"backlog", "todo", "in_progress", "in_review", "pending_release", "done", "blocked", "cancelled"}
 	got := Canonical()
 	for i := range want {
 		if got[i] != want[i] {

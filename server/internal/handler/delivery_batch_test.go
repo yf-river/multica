@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,6 +112,318 @@ func acceptBatchFixture(t *testing.T, batch string) {
 	var revision int64
 	dbfx.QueryRow(t, `SELECT d.id::text,b.candidate_id,d.revision FROM delivery_batch b JOIN delivery_batch_member m ON m.batch_id=b.id JOIN issue_delivery d ON d.id=m.delivery_id WHERE b.id=$1 AND m.result='pending' ORDER BY m.created_at,m.delivery_id LIMIT 1`, batch).Scan(&delivery, &candidate, &revision)
 	testutil.Call(t, testHandler.ActIssueDelivery, batchAcceptRequest(t, delivery, candidate, revision)).Want(200)
+}
+
+func TestDeliveryBatchTenMinuteWindow(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	batch, _ := openBatch(t, 600)
+	var seconds int
+	var duration float64
+	dbfx.QueryRow(t, `SELECT window_seconds,extract(epoch FROM collect_until-created_at) FROM delivery_batch WHERE id=$1`, batch.ID).Scan(&seconds, &duration)
+	if seconds != 600 || duration < 599 || duration > 601 {
+		t.Fatalf("窗口应为十分钟：seconds=%d duration=%f", seconds, duration)
+	}
+}
+
+func TestDeliveryBatchConcurrentOpenUsesOneBatch(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	const workers = 12
+	var wg sync.WaitGroup
+	responses := make([]*httptest.ResponseRecorder, workers)
+	start := make(chan struct{})
+	for n := range responses {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			<-start
+			recorder := httptest.NewRecorder()
+			testHandler.DeliveryBatch(recorder, newRequest("POST", "/api/delivery-queue/batches", map[string]any{"action": "open", "window_seconds": 600}))
+			responses[n] = recorder
+		}(n)
+	}
+	close(start)
+	wg.Wait()
+	ids := map[string]bool{}
+	for _, response := range responses {
+		if response.Code != http.StatusOK {
+			t.Fatalf("并发创建批次失败: %d %s", response.Code, response.Body.String())
+		}
+		var payload struct {
+			Batch deliveryBatch `json:"batch"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		ids[payload.Batch.ID] = true
+	}
+	if len(ids) != 1 {
+		t.Fatalf("并发创建得到多个批次: %v", ids)
+	}
+}
+
+func TestDeliveryBatchProjectWindowAndIsolation(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	other := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "其他项目"})
+	first, _ := batchFixture(t)
+	second, _ := batchFixture(t)
+	outside, _ := batchFixture(t)
+	ctx := context.Background()
+	for _, item := range []struct{ delivery, project string }{{first, project}, {second, project}, {outside, other}} {
+		if _, err := testPool.Exec(ctx, `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, item.delivery, item.project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE issue_delivery SET approved_at=now()-interval '3 minutes' WHERE id=$1`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE comment SET created_at=now()-interval '1 hour',updated_at=now()-interval '1 hour' WHERE issue_id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, first); err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	batchAction(t, map[string]any{"action": "open", "window_seconds": 600, "project_id": project}).Want(200).JSON(&state)
+	id := state["batch"].(map[string]any)["id"].(string)
+	batchAction(t, map[string]any{"action": "freeze", "batch_id": id}).Want(409)
+	var remaining float64
+	dbfx.QueryRow(t, `SELECT extract(epoch FROM collect_until-now()) FROM delivery_batch WHERE id=$1`, id).Scan(&remaining)
+	if remaining < 415 || remaining > 425 {
+		t.Fatalf("三分钟前进入队列应剩七分钟，实际剩余 %f 秒", remaining)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	batch, members := freezeBatch(t, id)
+	if batch.Status != "frozen" || len(members) != 2 {
+		t.Fatalf("项目批次成员错误：status=%s members=%v", batch.Status, members)
+	}
+	for _, member := range members {
+		if member.DeliveryID == outside {
+			t.Fatal("其他项目进入了本批")
+		}
+	}
+}
+
+func TestDeliveryBatchProjectWaitsDuringPreviousRelease(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	delivery, _ := batchFixture(t)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, delivery, project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE issue_delivery SET approved_at=now()-interval '15 minutes' WHERE id=$1`, delivery); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE comment SET created_at=now()-interval '1 hour',updated_at=now()-interval '1 hour' WHERE issue_id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, delivery); err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	batchAction(t, map[string]any{"action": "open", "window_seconds": 600, "project_id": project}).Want(200).JSON(&state)
+	id := state["batch"].(map[string]any)["id"].(string)
+	batch, members := freezeBatch(t, id)
+	if batch.Status != "frozen" || len(members) != 1 {
+		t.Fatalf("等待十五分钟的任务应立即冻结：status=%s members=%v", batch.Status, members)
+	}
+}
+
+func TestDeliveryBatchProjectIncludesAllWaitingMembers(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	ctx := context.Background()
+	for n := 0; n < 9; n++ {
+		delivery, _ := batchFixture(t)
+		if _, err := testPool.Exec(ctx, `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, delivery, project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var state map[string]any
+	batchAction(t, map[string]any{"action": "open", "window_seconds": 1, "project_id": project}).Want(200).JSON(&state)
+	id := state["batch"].(map[string]any)["id"].(string)
+	if _, err := testPool.Exec(ctx, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	batch, members := freezeBatch(t, id)
+	if batch.Status != "frozen" || len(members) != 9 {
+		t.Fatalf("项目批次应固定全部九个任务：status=%s members=%d", batch.Status, len(members))
+	}
+}
+
+func TestDeliveryBatchProjectConflictKeepsWholeBatch(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	first, _ := batchFixture(t)
+	second, _ := batchFixture(t)
+	for _, delivery := range []string{first, second} {
+		if _, err := testPool.Exec(context.Background(), `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, delivery, project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var state map[string]any
+	batchAction(t, map[string]any{"action": "open", "window_seconds": 1, "project_id": project}).Want(200).JSON(&state)
+	id := state["batch"].(map[string]any)["id"].(string)
+	dbfx.Exec(t, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, id)
+	batch, members := freezeBatch(t, id)
+	if len(members) != 2 {
+		t.Fatalf("固定成员数错误: %d", len(members))
+	}
+	response := batchAction(t, map[string]any{"action": "hold", "batch_id": id, "worker_token": batch.WorkerToken, "error": "合并冲突", "conflict_delivery_id": second})
+	held, heldMembers := batchResponse(t, response)
+	if held.Status != "frozen" || len(heldMembers) != 2 || deliveryPhase(t, first) != "approved" || deliveryPhase(t, second) != "approved" {
+		t.Fatalf("冲突必须保留整批: status=%s members=%v", held.Status, heldMembers)
+	}
+	var message string
+	dbfx.QueryRow(t, `SELECT error FROM delivery_batch WHERE id=$1`, id).Scan(&message)
+	if message != "合并冲突" {
+		t.Fatalf("批次未记录冲突原因: %s", message)
+	}
+	batchAction(t, map[string]any{"action": "retry", "batch_id": id, "worker_token": batch.WorkerToken, "automatic": true}).Want(409)
+	var issue string
+	dbfx.QueryRow(t, `SELECT issue_id::text FROM issue_delivery WHERE id=$1`, second).Scan(&issue)
+	var owner coordinationOwner
+	testutil.Call(t, testHandler.ManageDeliveryOwner, ownerRequest(issue, "claim", "conflict-repair", owner, "")).Want(200).JSON(&owner)
+	revision := deliveryRevision(t, second)
+	repair := deliveryRepairRequest{OperationID: dbid.NewV7().String(), Source: strings.Repeat("c", 40), Branch: "feature/batch", Base: strings.Repeat("b", 40)}
+	checks := []deliveryCheck{{Name: "本地检查", Status: "passed", Evidence: "冲突已解决"}}
+	req := func() *http.Request {
+		r := deliveryRequest(issue, map[string]any{"action": "retest", "revision": revision, "repair": repair, "evidence": checks}, owner)
+		chi.RouteContext(r.Context()).URLParams.Add("deliveryId", second)
+		return r
+	}
+	testutil.Call(t, testHandler.ActIssueDelivery, req()).Want(200)
+	testutil.Call(t, testHandler.ActIssueDelivery, req()).Want(200)
+	if deliveryPhase(t, second) != "waiting_int" || deliveryRevision(t, second) != revision+1 {
+		t.Fatal("修复提交没有幂等地进入重新测试")
+	}
+	batchAction(t, map[string]any{"action": "retry", "batch_id": id, "worker_token": batch.WorkerToken}).Want(409)
+	reviewer := createHandlerTestAgent(t, "重试审查", []byte("[]"))
+	dbfx.Cleanup(t, `DELETE FROM issue_review WHERE issue_id=$1`, issue)
+	dbfx.Cleanup(t, `DELETE FROM verification_event WHERE delivery_id=$1`, second)
+	dbfx.Exec(t, `INSERT INTO issue_review(issue_id,workspace_id,agent_id,state,head_sha) VALUES($1,$2,$3,'passed',$4)`, issue, testWorkspaceID, reviewer, strings.Repeat("c", 40))
+	dbfx.Exec(t, `UPDATE issue_delivery SET phase='approved',approved_by=$2,approved_at=now(),candidate_id='verify-retry',evidence='[{"name":"组合业务","status":"passed","evidence":"修复后已测试"}]'::jsonb WHERE id=$1`, second, testUserID)
+	dbfx.Exec(t, `INSERT INTO delivery_evidence(id,workspace_id,issue_id,delivery_id,candidate_id,source_commit,identity,evidence) VALUES($1,$2,$3,$4,'verify-retry',$5,'{}','[{"name":"组合业务","status":"passed","evidence":"修复后已测试"}]')`, dbid.NewV7(), testWorkspaceID, issue, second, strings.Repeat("c", 40))
+	batchAction(t, map[string]any{"action": "retry", "batch_id": id, "worker_token": batch.WorkerToken, "automatic": true}).Want(200)
+	var source string
+	dbfx.QueryRow(t, `SELECT source_commit FROM delivery_batch_member WHERE batch_id=$1 AND delivery_id=$2`, id, second).Scan(&source)
+	if source != strings.Repeat("c", 40) {
+		t.Fatalf("批次没有接收已重新验收的提交: %s", source)
+	}
+	var events int
+	dbfx.QueryRow(t, `SELECT count(*) FROM verification_event WHERE delivery_id=$1 AND stage='delivery.batch_source_replaced' AND detail::jsonb->>'previous_commit'=$2`, second, strings.Repeat("a", 40)).Scan(&events)
+	if events != 1 {
+		t.Fatalf("缺少原提交的审计记录: %d", events)
+	}
+}
+
+func TestDeliveryBatchProjectDoesNotDropUnreadyMember(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	first, _ := batchFixture(t)
+	second, _ := batchFixture(t)
+	for _, delivery := range []string{first, second} {
+		dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, delivery, project)
+	}
+	var state map[string]any
+	batchAction(t, map[string]any{"action": "open", "window_seconds": 1, "project_id": project}).Want(200).JSON(&state)
+	id := state["batch"].(map[string]any)["id"].(string)
+	dbfx.Exec(t, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, id)
+	batch, members := freezeBatch(t, id)
+	if len(members) != 2 {
+		t.Fatalf("固定成员数错误: %d", len(members))
+	}
+	dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL WHERE id=$1`, second)
+	held, heldMembers := batchResponse(t, batchAction(t, map[string]any{"action": "preparing", "batch_id": id, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("b", 40)}))
+	if held.Status != "frozen" || len(heldMembers) != 2 {
+		t.Fatalf("成员未就绪时必须保留整批: status=%s members=%v", held.Status, heldMembers)
+	}
+	for _, member := range heldMembers {
+		if member.Result != "pending" {
+			t.Fatalf("成员被移出批次: %+v", member)
+		}
+	}
+}
+
+func TestDeliveryBatchProjectKeepsInvalidMemberAtFreeze(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	first, _ := batchFixture(t)
+	second, _ := batchFixture(t)
+	for _, delivery := range []string{first, second} {
+		dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, delivery, project)
+	}
+	dbfx.Exec(t, `UPDATE comment SET revision=revision+1 WHERE id=(SELECT p.comment_id FROM issue_delivery d JOIN issue_delivery_plan p ON p.id=d.plan_id WHERE d.id=$1)`, second)
+	var state map[string]any
+	batchAction(t, map[string]any{"action": "open", "window_seconds": 1, "project_id": project}).Want(200).JSON(&state)
+	id := state["batch"].(map[string]any)["id"].(string)
+	dbfx.Exec(t, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, id)
+	batch, members := freezeBatch(t, id)
+	if batch.Status != "frozen" || len(members) != 2 {
+		t.Fatalf("组批不能忽略方案变化的成员: status=%s members=%v", batch.Status, members)
+	}
+	held, members := batchResponse(t, batchAction(t, map[string]any{"action": "preparing", "batch_id": id, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("b", 40)}))
+	if held.Status != "frozen" || len(members) != 2 {
+		t.Fatalf("方案变化后批次应等待全部成员: status=%s members=%v", held.Status, members)
+	}
+}
+
+func TestDeliveryBatchProjectHoldsWhenMemberChangesAfterBuild(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	for _, stage := range []string{"validating", "publishing"} {
+		t.Run(stage, func(t *testing.T) {
+			batchCleanup(t)
+			project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+			first, _ := batchFixture(t)
+			second, _ := batchFixture(t)
+			for _, delivery := range []string{first, second} {
+				dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, delivery, project)
+			}
+			var state map[string]any
+			batchAction(t, map[string]any{"action": "open", "window_seconds": 1, "project_id": project}).Want(200).JSON(&state)
+			id := state["batch"].(map[string]any)["id"].(string)
+			dbfx.Exec(t, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, id)
+			batch, _ := freezeBatch(t, id)
+			batchAction(t, map[string]any{"action": "preparing", "batch_id": id, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("b", 40)}).Want(200)
+			if stage == "publishing" {
+				batchAction(t, map[string]any{"action": "validating", "batch_id": id, "worker_token": batch.WorkerToken, "candidate_id": "candidate", "candidate_commit": strings.Repeat("c", 40)}).Want(200)
+			}
+			dbfx.Exec(t, `UPDATE issue_delivery SET approved_by=NULL WHERE id=$1`, second)
+			body := map[string]any{"action": stage, "batch_id": id, "worker_token": batch.WorkerToken, "candidate_id": "candidate", "candidate_commit": strings.Repeat("c", 40)}
+			held, members := batchResponse(t, batchAction(t, body))
+			if held.Status != "frozen" || len(members) != 2 {
+				t.Fatalf("成员变化后必须保留整批: status=%s members=%v", held.Status, members)
+			}
+			for _, member := range members {
+				if member.Result != "pending" {
+					t.Fatalf("成员被移出批次: %+v", member)
+				}
+			}
+		})
+	}
 }
 
 func TestDeliveryBatchCollectsApprovedDeliveriesInOneWindow(t *testing.T) {
@@ -328,6 +642,51 @@ func TestDeliveryBatchPublishesMembersOnceWithOneCandidate(t *testing.T) {
 	again.JSON(&repeat)
 	if repeat["batch"].(map[string]any)["status"] != "published" {
 		t.Fatal("重复发布改变了批次状态")
+	}
+}
+
+func TestDeliveryBatchProjectIntegrationChecksFollowCandidate(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	batchCleanup(t)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	first, _ := batchFixture(t)
+	second, _ := batchFixture(t)
+	for _, id := range []string{first, second} {
+		dbfx.Exec(t, `UPDATE issue SET project_id=$2,metadata='{"release_workflow":true,"integration_passed":true,"integration_commit":"old-candidate"}' WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, id, project)
+	}
+	var state map[string]any
+	batchAction(t, map[string]any{"action": "open", "window_seconds": 1, "project_id": project}).Want(200).JSON(&state)
+	id := state["batch"].(map[string]any)["id"].(string)
+	dbfx.Exec(t, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, id)
+	batch, _ := freezeBatch(t, id)
+	batchAction(t, map[string]any{"action": "preparing", "batch_id": id, "worker_token": batch.WorkerToken, "base_commit": strings.Repeat("b", 40)}).Want(200)
+	commit := strings.Repeat("d", 40)
+	batchAction(t, map[string]any{"action": "validating", "batch_id": id, "worker_token": batch.WorkerToken, "candidate_id": "candidate-2", "candidate_commit": commit}).Want(200)
+	for _, delivery := range []string{first, second} {
+		var passed bool
+		var recorded string
+		dbfx.QueryRow(t, `SELECT (i.metadata->>'integration_passed')::boolean,i.metadata->>'integration_commit' FROM issue i JOIN issue_delivery d ON d.issue_id=i.id WHERE d.id=$1`, delivery).Scan(&passed, &recorded)
+		if passed || recorded != "" {
+			t.Fatalf("新候选仍显示旧联调结果: passed=%v commit=%s", passed, recorded)
+		}
+	}
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": id, "worker_token": batch.WorkerToken}).Want(409)
+	acceptBatchFixture(t, id)
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": id, "worker_token": batch.WorkerToken}).Want(409)
+	var other string
+	var revision int64
+	dbfx.QueryRow(t, `SELECT d.id::text,d.revision FROM issue_delivery d JOIN delivery_batch_member m ON m.delivery_id=d.id WHERE m.batch_id=$1 AND NOT EXISTS(SELECT 1 FROM delivery_evidence e WHERE e.delivery_id=d.id AND e.candidate_id='candidate-2')`, id).Scan(&other, &revision)
+	testutil.Call(t, testHandler.ActIssueDelivery, batchAcceptRequest(t, other, "candidate-2", revision)).Want(200)
+	batchAction(t, map[string]any{"action": "publishing", "batch_id": id, "worker_token": batch.WorkerToken}).Want(200)
+	for _, delivery := range []string{first, second} {
+		var passed bool
+		var recorded string
+		dbfx.QueryRow(t, `SELECT (i.metadata->>'integration_passed')::boolean,i.metadata->>'integration_commit' FROM issue i JOIN issue_delivery d ON d.issue_id=i.id WHERE d.id=$1`, delivery).Scan(&passed, &recorded)
+		if !passed || recorded != commit {
+			t.Fatalf("联调对勾与候选不符: passed=%v commit=%s", passed, recorded)
+		}
 	}
 }
 

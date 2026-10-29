@@ -41,7 +41,7 @@ func (h *Handler) ListDeliveryQueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,(d.phase='awaiting_review' AND d.approved_by IS NULL AND d.acceptance_submitted AND d.plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(d.plan_snapshot->'required_checks','[]')) c WHERE c->>'stage'='integration')) AS integration_pending,i.number,i.project_id,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds') FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND (q.trigger_comment_id=CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END OR CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END=ANY(q.coalesced_comment_ids)) ORDER BY q.created_at DESC LIMIT 1) AS verification_run,(SELECT jsonb_build_object('execution_id',o.execution_id,'generation',o.generation,'expires_at',o.expires_at,'external',NOT EXISTS(SELECT 1 FROM agent_task_queue native WHERE native.id::text=o.execution_id)) FROM delivery_owner o WHERE o.workspace_id=d.workspace_id AND o.issue_id=d.issue_id AND o.expires_at>now()) AS verification_owner,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.approved_by IS NULL AND d.acceptance_submitted AND d.plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(d.plan_snapshot->'required_checks','[]')) c WHERE c->>'stage'='integration')) OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR (d.phase='awaiting_review' AND COALESCE(d.plan_snapshot->>'authorization_stalled','')<>'true' AND NOT EXISTS(SELECT 1 FROM agent_task_queue aq WHERE aq.issue_id=d.issue_id AND aq.status IN('queued','dispatched','running','waiting_local_directory')) AND ((d.plan_snapshot->'authorization_notice' IS NOT NULL AND COALESCE((d.plan_snapshot->'authorization_notice'->>'notified_at')::timestamptz,'-infinity'::timestamptz)<=now()-interval '10 minutes') OR (d.plan_snapshot->'authorization_notice' IS NULL AND d.plan_snapshot->>'authorization_pending' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member'))))) OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage IN ('published','needs_changes','batch_ready') AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
+	err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(x ORDER BY priority DESC,created_at),'[]') FROM (SELECT d.*,(d.phase='awaiting_review' AND d.approved_by IS NULL AND d.acceptance_submitted AND d.plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(d.plan_snapshot->'required_checks','[]')) c WHERE c->>'stage'='integration')) AS integration_pending,i.number,i.project_id,i.status AS issue_status,COALESCE((SELECT pn.stage FROM delivery_notice pn WHERE pn.delivery_id=d.id AND pn.stage LIKE 'verification_update_failed:%' AND pn.delivered_at IS NULL ORDER BY pn.created_at LIMIT 1),'') AS pending_update_notice,COALESCE((SELECT src.work_dir FROM agent_task_queue src WHERE src.id::text=d.plan_snapshot->>'source_execution_id' AND src.issue_id=d.issue_id AND src.status='completed'),'') AS source_work_dir,(NOT EXISTS(SELECT 1 FROM agent_task_queue src WHERE src.id::text=d.plan_snapshot->>'source_execution_id') OR EXISTS(SELECT 1 FROM agent_task_queue src WHERE src.id::text=d.plan_snapshot->>'source_execution_id' AND src.issue_id=d.issue_id AND src.status='completed' AND COALESCE(src.work_dir,'')<>'')) AS source_ready,EXISTS(SELECT 1 FROM delivery_evidence be WHERE be.delivery_id=d.id AND be.workspace_id=d.workspace_id AND be.issue_id=d.issue_id AND be.candidate_id=d.candidate_id AND be.source_commit=d.plan_snapshot->>'candidate_commit') AS integration_accepted,(SELECT jsonb_build_object('state',r.state,'head_sha',r.head_sha) FROM issue_review r WHERE r.issue_id=i.id AND r.workspace_id=i.workspace_id) AS final_review,(SELECT jsonb_build_object('id',q.id,'status',q.status,'error',q.error,'settled',q.completed_at<now()-interval '30 seconds','failure_notice',EXISTS(SELECT 1 FROM delivery_notice fn WHERE fn.delivery_id=d.id AND fn.stage='verification_failed:'||d.candidate_id||':'||q.id::text)) FROM agent_task_queue q WHERE q.issue_id=d.issue_id AND (q.trigger_comment_id=CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END OR CASE WHEN d.phase='approved' THEN (SELECT n.comment_id FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage='batch_ready') WHEN d.phase='preparing_release' THEN d.release_comment_id ELSE d.verification_comment_id END=ANY(q.coalesced_comment_ids) OR EXISTS(SELECT 1 FROM delivery_notice vn WHERE vn.delivery_id=d.id AND (vn.stage LIKE 'verification_failed:'||d.candidate_id||':%' OR vn.stage LIKE 'verification_update_failed:%') AND (vn.comment_id=q.trigger_comment_id OR vn.comment_id=ANY(q.coalesced_comment_ids)))) ORDER BY q.created_at DESC LIMIT 1) AS verification_run,(SELECT count(*) FROM delivery_notice vn WHERE vn.delivery_id=d.id AND vn.stage LIKE 'verification_failed:'||d.candidate_id||':%') AS verification_failure_count,(SELECT jsonb_build_object('execution_id',o.execution_id,'generation',o.generation,'expires_at',o.expires_at,'external',NOT EXISTS(SELECT 1 FROM agent_task_queue native WHERE native.id::text=o.execution_id)) FROM delivery_owner o WHERE o.workspace_id=d.workspace_id AND o.issue_id=d.issue_id AND o.expires_at>now()) AS verification_owner,CASE WHEN d.id=NULLIF($2,'')::uuid THEN 3 WHEN d.phase IN('testing','preparing_release','publishing') THEN 2 WHEN d.phase IN('waiting_int','approved') THEN 1 ELSE 0 END AS priority FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND (d.phase IN('waiting_int','testing','approved','preparing_release','publishing') OR (d.phase='awaiting_review' AND d.approved_by IS NULL AND d.acceptance_submitted AND d.plan_snapshot->>'integration_complete' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(d.plan_snapshot->'required_checks','[]')) c WHERE c->>'stage'='integration')) OR (d.phase='awaiting_review' AND d.plan_snapshot->>'authorization_pending'='true') OR (d.phase='awaiting_review' AND COALESCE(d.plan_snapshot->>'authorization_stalled','')<>'true' AND NOT EXISTS(SELECT 1 FROM agent_task_queue aq WHERE aq.issue_id=d.issue_id AND aq.status IN('queued','dispatched','running','waiting_local_directory')) AND ((d.plan_snapshot->'authorization_notice' IS NOT NULL AND COALESCE((d.plan_snapshot->'authorization_notice'->>'notified_at')::timestamptz,'-infinity'::timestamptz)<=now()-interval '10 minutes') OR (d.plan_snapshot->'authorization_notice' IS NULL AND d.plan_snapshot->>'authorization_pending' IS DISTINCT FROM 'true' AND EXISTS(SELECT 1 FROM issue_delivery_authorization a JOIN comment c ON c.id=a.comment_id AND c.workspace_id=a.workspace_id AND c.issue_id=a.issue_id AND c.revision=a.comment_revision JOIN member m ON m.workspace_id=c.workspace_id AND m.user_id=c.author_id WHERE a.workspace_id=d.workspace_id AND a.issue_id=d.issue_id AND a.plan_id=d.plan_id AND a.kind='release' AND NOT a.revoked AND c.author_type='member' AND m.role IN ('owner','admin','member'))))) OR d.id=NULLIF($2,'')::uuid OR EXISTS(SELECT 1 FROM delivery_notice n WHERE n.delivery_id=d.id AND n.stage IN ('published','needs_changes','batch_ready') AND n.delivered_at IS NULL)) ORDER BY priority DESC,d.created_at LIMIT 100)x`, ws, current).Scan(&data)
 	if err != nil {
 		writeError(w, 500, "读取交付队列失败")
 		return
@@ -66,6 +66,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		Source          string          `json:"source_commit"`
 		Identity        json.RawMessage `json:"candidate_identity"`
 		Generation      int64           `json:"publication_generation"`
+		SlotGeneration  int64           `json:"slot_generation"`
 		ValidationPlan  json.RawMessage `json:"validation_plan"`
 		CandidateCommit string          `json:"candidate_commit"`
 		Stage           string          `json:"stage"`
@@ -92,7 +93,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	var phase, token, issue, commit string
 	var rev int64
 	var approved, integrationOnly bool
-	err = tx.QueryRow(r.Context(), `SELECT phase,COALESCE(worker_token::text,''),issue_id::text,source_commit,revision,approved_by IS NOT NULL,COALESCE(plan_snapshot->>'integration_only'='true',false) FROM issue_delivery WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, ws, body.ID).Scan(&phase, &token, &issue, &commit, &rev, &approved, &integrationOnly)
+	err = tx.QueryRow(r.Context(), `SELECT phase,COALESCE(worker_token::text,''),issue_id::text,source_commit,revision,(approved_by IS NOT NULL OR auto_release),COALESCE(plan_snapshot->>'integration_only'='true',false) FROM issue_delivery WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, ws, body.ID).Scan(&phase, &token, &issue, &commit, &rev, &approved, &integrationOnly)
 	if err != nil {
 		writeError(w, 404, "交付不存在")
 		return
@@ -120,6 +121,124 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token, "notification_deferred": deferred})
+		return
+	}
+	if body.Action == "notify-verification-failure" {
+		if phase != "testing" || token == "" || token != body.Token || body.VerificationRun == "" || strings.TrimSpace(body.Error) == "" {
+			writeError(w, 409, "当前测试执行不能发送失败通知")
+			return
+		}
+		if _, ok = parseUUIDOrBadRequest(w, body.VerificationRun, "verification_run_id"); !ok {
+			return
+		}
+		ended, checkErr := deliveryVerificationRunEnded(r.Context(), tx, ws, issue, body.ID, body.VerificationRun)
+		var managed bool
+		if checkErr == nil {
+			checkErr = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM issue i JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled WHERE i.workspace_id=$1 AND i.id=$2)`, ws, issue).Scan(&managed)
+		}
+		if checkErr != nil || !ended || !managed {
+			writeError(w, 409, "测试执行或项目状态已变化")
+			return
+		}
+		var candidate string
+		if err = tx.QueryRow(r.Context(), `SELECT candidate_id FROM issue_delivery WHERE id=$1`, body.ID).Scan(&candidate); err != nil || candidate == "" {
+			writeError(w, 409, "当前测试候选已变化")
+			return
+		}
+		stage := "verification_failed:" + candidate + ":" + body.VerificationRun
+		_, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,$2,$3) ON CONFLICT(delivery_id,stage) DO NOTHING`, body.ID, stage, dbid.NewV7())
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET error=$2 WHERE id=$1`, body.ID, body.Error)
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+		if err != nil {
+			writeError(w, 500, "记录测试失败通知失败")
+			return
+		}
+		deferred, noticeErr := h.notifyDeliveryResult(r, ws, issue, body.ID, stage)
+		if noticeErr != nil {
+			writeError(w, 500, "发送测试失败通知失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token, "notification_deferred": deferred})
+		return
+	}
+	if body.Action == "verification-update-failed" {
+		if phase != "testing" || token == "" || token != body.Token || body.Source != commit || strings.TrimSpace(body.Error) == "" {
+			writeError(w, 409, "当前测试更新不能标记失败")
+			return
+		}
+		var operation string
+		err = tx.QueryRow(r.Context(), `SELECT plan_snapshot->'verification_update'->'request'->>'operation_id' FROM issue_delivery WHERE id=$1 AND plan_snapshot->'verification_update'->>'state'='pending'`, body.ID).Scan(&operation)
+		if err != nil {
+			writeError(w, 409, "测试更新已变化")
+			return
+		}
+		stage := "verification_update_failed:" + operation
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{verification_update,state}','"failed"'::jsonb),error=$2,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, body.Error)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `INSERT INTO delivery_notice(delivery_id,stage,comment_id) VALUES($1,$2,$3) ON CONFLICT(delivery_id,stage) DO NOTHING`, body.ID, stage, dbid.NewV7())
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+		if err != nil {
+			writeError(w, 500, "记录测试更新失败")
+			return
+		}
+		deferred, noticeErr := h.notifyDeliveryResult(r, ws, issue, body.ID, stage)
+		if noticeErr != nil {
+			deferred = true
+		}
+		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev + 1, "worker_token": token, "notification_deferred": deferred})
+		return
+	}
+	if body.Action == "notify-pending-verification" {
+		if phase != "testing" || token == "" || token != body.Token || !strings.HasPrefix(body.Stage, "verification_update_failed:") {
+			writeError(w, 409, "测试通知已变化")
+			return
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			writeError(w, 500, "读取测试通知失败")
+			return
+		}
+		deferred, noticeErr := h.notifyDeliveryResult(r, ws, issue, body.ID, body.Stage)
+		if noticeErr != nil {
+			writeError(w, 500, "发送测试通知失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev, "worker_token": token, "notification_deferred": deferred})
+		return
+	}
+	if body.Action == "begin-verification-update" {
+		if phase != "testing" || token == "" || token != body.Token || body.Source != commit || !deliveryCommit.MatchString(body.CandidateCommit) {
+			writeError(w, 409, "测试更新缺少准确候选或占用身份")
+			return
+		}
+		var slotName, pendingSource, pendingBranch, pendingBase, oldCandidate string
+		var generation int64
+		err = tx.QueryRow(r.Context(), `SELECT s.name,s.generation,d.plan_snapshot->'verification_update'->'request'->>'source_commit',d.plan_snapshot->'verification_update'->'request'->>'source_branch',d.plan_snapshot->'verification_update'->'request'->>'base_commit',s.candidate_id FROM verification_slot s JOIN issue_delivery d ON d.id=s.delivery_id WHERE d.id=$1 AND d.workspace_id=$2 AND s.workspace_id=$2 AND s.worker_token::text=$3 AND s.source_commit=$4 AND s.state='verifying' AND s.lease_expires_at>now() AND s.generation=$5 AND d.plan_snapshot->'verification_update'->>'state'='pending' FOR UPDATE OF s`, body.ID, ws, token, commit, body.SlotGeneration).Scan(&slotName, &generation, &pendingSource, &pendingBranch, &pendingBase, &oldCandidate)
+		if err != nil || pendingSource != body.CandidateCommit || !deliveryBranch.MatchString(pendingBranch) || !deliveryCommit.MatchString(pendingBase) {
+			writeError(w, 409, "测试更新或槽位代次已变化")
+			return
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE verification_slot SET source_commit=$2,candidate_id='',state='preparing',generation=generation+1,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE name=$1`, slotName, pendingSource)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET source_commit=$2,source_branch=$3,base_commit=$4,candidate_id='',candidate_url='',verification_comment_id=$5,acceptance_submitted=false,evidence='[]'::jsonb,plan_snapshot=jsonb_set((plan_snapshot-'candidate_commit'-'candidate_identity'),'{verification_update,state}','"applying"'::jsonb),error='',revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, pendingSource, pendingBranch, pendingBase, dbid.NewV7())
+		}
+		if err == nil {
+			err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, "verification_update", phase, generation+1)
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+		if err != nil {
+			writeError(w, 500, "保存测试更新失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"id": body.ID, "phase": phase, "revision": rev + 1, "worker_token": token, "source_commit": pendingSource, "candidate_id": "", "slot_generation": generation + 1, "previous_candidate": oldCandidate})
 		return
 	}
 	if (body.Action == "validated" || body.Action == "publishing") && (phase != "preparing_release" || token == "" || token != body.Token) {
@@ -151,12 +270,12 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				var notice json.RawMessage
 				notice, err = deliveryAuthorizationNoticeFor(r.Context(), tx, ws, issue, body.ID, authorization)
 				if err == nil {
-					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,phase='awaiting_review',error=$3,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, notice, "已有发布授权，等待负责人复核当前候选")
+					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,phase='awaiting_review',error=$3,approved_by=NULL,approved_at=NULL,auto_release=false,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, notice, "已有发布授权，等待负责人复核当前候选")
 				}
 				reason = "已有发布授权，等待负责人复核当前候选"
 				notify = true
 			} else {
-				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase='awaiting_review',error=$2,approved_by=NULL,approved_at=NULL,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, reason)
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',phase='awaiting_review',error=$2,approved_by=NULL,approved_at=NULL,auto_release=false,release_validated=false,revision=revision+1,updated_at=now() WHERE id=$1`, body.ID, reason)
 			}
 			if err == nil {
 				err = recordDeliveryProgress(r.Context(), tx, ws, body.ID, "authorization_wait", phase, body.Generation)
@@ -215,7 +334,7 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if phase == "testing" && (body.Action == "prepared" || body.Action == "accepted" || body.Action == "notify" || body.Action == "tested") {
+	if phase == "testing" && (body.Action == "prepared" || body.Action == "accepted" || body.Action == "notify" || body.Action == "tested" || body.Action == "request-final-review") {
 		var valid bool
 		candidate := body.Candidate
 		err = tx.QueryRow(r.Context(), `SELECT NOT EXISTS(SELECT 1 FROM verification_slot WHERE delivery_id=$1) OR EXISTS(SELECT 1 FROM verification_slot s JOIN issue_delivery d ON d.id=s.delivery_id WHERE s.delivery_id=$1 AND s.workspace_id=$2 AND s.worker_token::text=$3 AND s.source_commit=$4 AND s.state='verifying' AND s.lease_expires_at>now() AND s.candidate_id=CASE WHEN $5='' THEN d.candidate_id ELSE $5 END)`, body.ID, ws, token, commit, candidate).Scan(&valid)
@@ -232,6 +351,8 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	// 5. 待复核意图先随事务落库，提交后再定向通知；通知失败由队列重试，不影响状态真源。
 	notifyReview := false
 	automaticComplete := false
+	projectReleaseReady := false
+	requestFinalReview := false
 	switch body.Action {
 	case "claim-integration":
 		// Modification 1. Reuse the serialized int stage without granting production approval.
@@ -262,6 +383,18 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		token = dbid.NewV7().String()
 		next = "preparing_release"
 	case "claim":
+		if phase == "waiting_int" {
+			var project, reviewed bool
+			err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM issue i JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled WHERE i.workspace_id=$1 AND i.id=$2),EXISTS(SELECT 1 FROM issue i JOIN issue_review r ON r.issue_id=i.id AND r.workspace_id=i.workspace_id AND r.state='passed' AND r.head_sha=$3 WHERE i.workspace_id=$1 AND i.id=$2 AND i.status='in_progress')`, ws, issue, commit).Scan(&project, &reviewed)
+			if err != nil {
+				writeError(w, 500, "读取审查状态失败")
+				return
+			}
+			if project && !reviewed {
+				writeError(w, 409, "当前提交需要先完成代码审查")
+				return
+			}
+		}
 
 		var valid bool
 		if tx.QueryRow(r.Context(), deliveryPlanValidSQL, body.ID).Scan(&valid) != nil || !valid {
@@ -356,6 +489,18 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+		case "request-final-review":
+			var allowed bool
+			err = tx.QueryRow(r.Context(), `SELECT d.phase='testing' AND d.acceptance_submitted AND EXISTS(SELECT 1 FROM issue i JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled WHERE i.id=d.issue_id AND i.workspace_id=d.workspace_id) FROM issue_delivery d WHERE d.id=$1`, body.ID).Scan(&allowed)
+			if err != nil || !allowed {
+				writeError(w, 409, "当前交付不能请求最终审查")
+				return
+			}
+			if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "verification"); err != nil {
+				writeError(w, 409, err.Error())
+				return
+			}
+			requestFinalReview = true
 		case "accepted":
 			if err = requireStoredDeliveryChecks(r.Context(), tx, body.ID, "verification"); err != nil {
 				writeError(w, 409, err.Error())
@@ -369,6 +514,31 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 			if tx.QueryRow(r.Context(), `SELECT acceptance_submitted FROM issue_delivery WHERE id=$1`, body.ID).Scan(&submitted) != nil || !submitted {
 				writeError(w, 409, "缺少功能验收证据")
 				return
+			}
+			var managed, held, reviewed bool
+			err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM issue i JOIN release_agent_config c ON c.workspace_id=i.workspace_id AND c.project_id=i.project_id AND c.enabled WHERE i.id=$1 AND i.workspace_id=$2),COALESCE((SELECT metadata->>'release_hold'='true' FROM issue WHERE id=$1 AND workspace_id=$2),false),EXISTS(SELECT 1 FROM issue_review r JOIN issue_delivery d ON d.issue_id=r.issue_id AND d.workspace_id=r.workspace_id WHERE d.id=$3 AND r.state='passed' AND r.head_sha=d.source_commit AND EXISTS(SELECT 1 FROM delivery_evidence e WHERE e.delivery_id=d.id AND e.issue_id=d.issue_id AND e.workspace_id=d.workspace_id AND e.source_commit=d.source_commit AND e.candidate_id=d.candidate_id))`, issue, ws, body.ID).Scan(&managed, &held, &reviewed)
+			if err != nil {
+				writeError(w, 500, "核对任务审查与测试失败")
+				return
+			}
+			if managed && !held {
+				if !reviewed {
+					writeError(w, 409, "当前提交需要完成审查后再进入待发布")
+					return
+				}
+				commentsVersion, versionErr := deliveryCommentsVersion(r.Context(), tx, ws, issue)
+				if versionErr != nil {
+					writeError(w, 500, "核对任务评论失败")
+					return
+				}
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET auto_release=true,approved_by=NULL,approved_at=now(),plan_snapshot=jsonb_set(plan_snapshot-'authorization_pending'-'authorization_notice','{project_comments_version}',to_jsonb(COALESCE(plan_snapshot->>'project_comments_version',$2::text))),error='' WHERE id=$1`, body.ID, commentsVersion)
+				if err != nil {
+					writeError(w, 500, "登记待发布失败")
+					return
+				}
+				next = "approved"
+				projectReleaseReady = true
+				break
 			}
 			next = "awaiting_review"
 			// 4. int 验收完成后按授权状态分流：已复核当前候选直接推进；有授权但缺候选复核
@@ -392,11 +562,11 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					body.Error = "已有发布授权，等待负责人复核当前候选"
 					notifyReview = true
-					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,approved_by=NULL,approved_at=NULL WHERE id=$1`, body.ID, notice)
+					_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{authorization_notice}',$2::jsonb)||'{"authorization_pending":true}'::jsonb,approved_by=NULL,approved_at=NULL,auto_release=false WHERE id=$1`, body.ID, notice)
 				}
 			default:
 				body.Error = "等待用户发布授权：当前候选没有有效发布授权"
-				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',approved_by=NULL,approved_at=NULL WHERE id=$1`, body.ID)
+				_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=plan_snapshot-'authorization_pending'-'authorization_notice',approved_by=NULL,approved_at=NULL,auto_release=false WHERE id=$1`, body.ID)
 			}
 			if err != nil {
 				writeError(w, 500, "保存授权复核状态失败")
@@ -532,6 +702,9 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err == nil && body.Action == "prepared" {
+		_, err = tx.Exec(r.Context(), `UPDATE issue_delivery SET plan_snapshot=jsonb_set(plan_snapshot,'{verification_update,state}','"applied"'::jsonb) WHERE id=$1 AND plan_snapshot->'verification_update'->>'state'='applying'`, body.ID)
+	}
+	if err == nil && body.Action == "prepared" {
 		err = tx.QueryRow(r.Context(), `SELECT acceptance_submitted FROM issue_delivery WHERE id=$1`, body.ID).Scan(&automaticComplete)
 		if err == nil && automaticComplete {
 			stage := "verification"
@@ -565,16 +738,23 @@ func (h *Handler) AdvanceDelivery(w http.ResponseWriter, r *http.Request) {
 	// 1. 交付验收通过也把任务推进到审核中；把前后两版任务行留到事务外，提交后
 	// 与手动改状态共用同一个后处理入口，避免这条写入路径单独漏掉审查派发和清绿勾。
 	var previous, updated db.Issue
-	if err == nil && (body.Action == "integrated" || body.Action == "validated") {
+	if err == nil && (body.Action == "integrated" || body.Action == "validated" || projectReleaseReady || requestFinalReview) {
 		q := h.Queries.WithTx(tx)
 		previous, err = q.GetIssue(r.Context(), parseUUID(issue))
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `UPDATE issue SET status='in_review',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, issue)
+			if projectReleaseReady {
+				_, err = tx.Exec(r.Context(), `UPDATE issue SET status='pending_release',metadata=metadata||jsonb_build_object('release_workflow',true,'verification_passed',true,'verification_commit',$3::text,'integration_passed',false,'integration_commit',''),revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, issue, commit)
+			} else {
+				_, err = tx.Exec(r.Context(), `UPDATE issue SET status='in_review',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, ws, issue)
+			}
 		}
 		if err == nil {
 			updated, err = q.GetIssue(r.Context(), parseUUID(issue))
 			if err == nil {
 				status := "in_review"
+				if projectReleaseReady {
+					status = "pending_release"
+				}
 				event, recordErr := service.RecordDurableEventTx(r.Context(), q, buildIssueUpdatedEvent(r.Context(), h, updated, previous, UpdateIssueRequest{Status: &status}, nil, "member", requestUserID(r)))
 				err = recordErr
 				issueEvent = &event

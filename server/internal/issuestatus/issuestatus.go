@@ -1,10 +1,10 @@
 // Package issuestatus 负责「每个 workspace 的 issue 状态目录」（MUL-6243）。
 //
-// 模型：有 7 个「内置类别」，与 7 个内置状态一一对应：类别的值本身就是规范状态键。
+// 模型：有 8 个「内置类别」，与 8 个内置状态一一对应：类别的值本身就是规范状态键。
 // 自定义状态声明一个类别，然后完整继承该 canonical 状态在平台侧的一切行为。
 //
 // 这个「一一对应」正是让本模块保持廉价的关键。类别被定义成「行为等价类」——两个状态
-// 只有在平台对它们一视同仁时才共享同一类别——按这一定义，7 个内置状态恰是 7 个不同
+// 只有在平台对它们一视同仁时才共享同一类别——按这一定义，8 个内置状态恰是 8 个不同
 // 类别：in_progress、in_review、blocked 在「是否结束一次 autopilot 运行、是否通知委托
 // 订阅者、是否清除过期的 task_failed 收件箱行、是否会被卡住 issue 清扫器重置」上都不
 // 一样。若把它们折叠成一个 "started" 类别（Linear 的做法），就得再引入每个状态自己的
@@ -28,15 +28,16 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// 7 个规范状态键。每个键同时是状态键，也是它定义的类别的名字。
+// 8 个规范状态键。每个键同时是状态键，也是它定义的类别的名字。
 const (
-	Backlog    = "backlog"
-	Todo       = "todo"
-	InProgress = "in_progress"
-	InReview   = "in_review"
-	Done       = "done"
-	Blocked    = "blocked"
-	Cancelled  = "cancelled"
+	Backlog        = "backlog"
+	Todo           = "todo"
+	InProgress     = "in_progress"
+	InReview       = "in_review"
+	PendingRelease = "pending_release"
+	Done           = "done"
+	Blocked        = "blocked"
+	Cancelled      = "cancelled"
 )
 
 // canonicalOrder 是前端静态状态配置里的历史 STATUS_ORDER。类别排序原样照搬它，这样
@@ -50,6 +51,7 @@ var canonicalOrder = []string{
 	Todo,
 	InProgress,
 	InReview,
+	PendingRelease,
 	Done,
 	Blocked,
 	Cancelled,
@@ -79,14 +81,14 @@ type Querier interface {
 	ListIssueStatusKeysByCategories(ctx context.Context, arg db.ListIssueStatusKeysByCategoriesParams) ([]string, error)
 }
 
-// Canonical 按展示顺序返回 7 个内置状态键。
+// Canonical 按展示顺序返回 8 个内置状态键。
 func Canonical() []string {
 	out := make([]string, len(canonicalOrder))
 	copy(out, canonicalOrder)
 	return out
 }
 
-// IsBuiltIn 报告 key 是否是 7 个规范状态之一。
+// IsBuiltIn 报告 key 是否是 8 个规范状态之一。
 func IsBuiltIn(key string) bool {
 	_, ok := canonicalRank[key]
 	return ok
@@ -191,7 +193,7 @@ func DeriveKey(name, category string, taken map[string]bool) (string, error) {
 // n 从 2 开始，让序列读起来像「第二个」。
 //
 // 扫描的上界来自「目录规模」而不是某个拍脑袋的数字。每个候选互不相同；最多只有
-// len(taken)+7 个键可能被占（workspace 自己的加上内置的），按鸽笼原理，空闲键一定
+// len(taken)+8 个键可能被占（workspace 自己的加上内置的），按鸽笼原理，空闲键一定
 // 会在这么多次尝试加一次之内出现。若改用取整的常量，就会凭空给自定义状态套一个产品
 // 里别处不存在的上限，而且会以「请显式提供一个」失败——正是本包当初为了避免向「没有
 // key 输入框的 UI」展示而改掉的报错。
@@ -231,7 +233,7 @@ func truncateForSuffix(base string, suffixLen int) string {
 	return strings.TrimRight(base[:limit], "_")
 }
 
-// Ensure 幂等地为一个 workspace 播种 7 个内置状态。可以并发调用——(workspace_id, key)
+// Ensure 幂等地为一个 workspace 播种 8 个内置状态。可以并发调用——(workspace_id, key)
 // 唯一索引会把抢输的并发调用变成无操作。滚动部署期间这点很重要：旧 pod 可能在新建
 // workspace，新 pod 同时在播种它。
 func Ensure(ctx context.Context, q Querier, workspaceID pgtype.UUID) error {
@@ -292,8 +294,8 @@ func EffectiveAndName(ctx context.Context, q Querier, workspaceID pgtype.UUID, s
 // Resolve 校验 status 在该 workspace 可用，并返回目录条目。写路径用它；它是迁移 337
 // 删掉的 enum CHECK 的应用层替代。
 //
-// 即使 workspace 没有对应目录行，7 个内置键也能解析成功。目录是「扩展」内置状态，而
-// 不是「定义」它们——workspace 一直能用全部 7 个。若要求必须有行，那么「播种还没落
+// 即使 workspace 没有对应目录行，8 个内置键也能解析成功。目录是「扩展」内置状态，而
+// 不是「定义」它们——workspace 一直能用全部 8 个。若要求必须有行，那么「播种还没落
 // 地」的 workspace（由早于该功能的 pod 创建，或在迁移 339 之前的滚动部署中段）将完全
 // 无法创建或更新 issue。这里的失败开放被精确限定在「该功能出现前本来就有效」的集合上；
 // 其余任何键都仍需要有行。
@@ -334,7 +336,7 @@ func builtInEntry(workspaceID pgtype.UUID, key string) db.IssueStatus {
 }
 
 // ActiveKeys 按展示顺序返回 workspace 可用的状态键，用于错误消息与 CLI 校验。未播种
-// 的 workspace 仍会报告 7 个内置键，保证错误消息永远不遗漏 Resolve 会接受的键。
+// 的 workspace 仍会报告 8 个内置键，保证错误消息永远不遗漏 Resolve 会接受的键。
 func ActiveKeys(ctx context.Context, q Querier, workspaceID pgtype.UUID) ([]string, error) {
 	entries, err := q.ListIssueStatusEntries(ctx, db.ListIssueStatusEntriesParams{
 		WorkspaceID:     workspaceID,

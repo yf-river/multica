@@ -1042,7 +1042,15 @@ func (s *TaskService) ResolveIssueReviewSHA(ctx context.Context, issueID pgtype.
 	if !issueID.Valid {
 		return ""
 	}
-	sha, err := s.Queries.GetIssueReviewHeadSha(ctx, issueID)
+	sha, err := s.Queries.GetIssueTestingReviewSHA(ctx, issueID)
+	if err == nil && sha != "" {
+		return sha
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("resolve tested issue review sha failed", "issue_id", util.UUIDToString(issueID), "error", err)
+		return ""
+	}
+	sha, err = s.Queries.GetIssueReviewHeadSha(ctx, issueID)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && sha == "") {
 		sha, err = s.Queries.GetIssueDeliveryReviewSHA(ctx, issueID)
 	}

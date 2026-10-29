@@ -8,9 +8,13 @@ spec=importlib.util.spec_from_file_location('worker',Path(__file__).with_name('i
 w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w);r=w.r
 
 class PoolFlowTests(unittest.TestCase):
-    def run_flow(self, *, failed=False, resume=False,busy=False):
+    def run_flow(self, *, failed=False, resume=False,busy=False,project=False):
         identity='00000000-0000-0000-0000-000000000001'
         d=dict(id=identity,phase='testing',source_commit='a'*40,worker_token='token',candidate_id='candidate' if resume else '',acceptance_submitted=False,evidence=[dict(name='flow',status='passed',evidence='fixture')])
+        if project:
+            d['project_id']='project-a'
+            d['source_work_dir']='/fixture/task-worktree'
+            d['final_review']=dict(state='passed',head_sha=d['source_commit'])
         lease=dict(name='verify-1',generation=1,delivery_id=identity,worker_token='token',source_commit=d['source_commit'],candidate_id='candidate' if resume else '',state='verifying' if resume else 'preparing')
         candidate=dict(id='candidate',status='verifying',environment='verify-1',delivery_id=identity)
         events=[]
@@ -35,10 +39,11 @@ class PoolFlowTests(unittest.TestCase):
             current.update(d)
             return current
         with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)):
+            if project:r.write(Path(tmp)/'delivery-batch.json',dict(enabled=True,controller_environment='prod',project_id='project-a'))
             artifact=Path(tmp)/'artifact';artifact.mkdir()
             source=Path(tmp)/'source';source.mkdir()
             if resume:r.write(worker.pool_job_path(identity),dict(stage='verifying',delivery_id=identity,lease=lease,candidate_id='candidate'))
-            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source),patch.object(r,'build_verification',side_effect=lambda *a:events.append('build') or artifact) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'):
+            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source) as checkout,patch.object(r,'build_verification',side_effect=lambda *a,**k:events.append('build') or artifact) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'),patch.object(worker,'require_sql_seed'),patch.object(w.seed,'clear_slot',side_effect=lambda *a:events.append('clear')),patch.object(worker,'ensure_seed'),patch.object(worker,'seed_matches',return_value=True):
                 r.write(r.meta_path('verify-1'),dict(frontend_url='http://fixture'))
                 if busy:
                     with patch.object(worker,'ensure_seed',side_effect=w.Busy('三个槽位均在验收')):
@@ -56,6 +61,10 @@ class PoolFlowTests(unittest.TestCase):
                     self.assertEqual(prepare.call_args.args[0],source,'D续接丢失固定源码')
                 self.assertEqual(r.read(worker.pool_job_path(identity))['stage'],'released')
                 if resume:build.assert_not_called();prepare.assert_not_called()
+                elif not busy:
+                    self.assertEqual(checkout.call_count,1)
+                    self.assertEqual(checkout.call_args.args[0]['source_commit'],d['source_commit'])
+                    self.assertEqual(checkout.call_args.kwargs['integrate'],not project)
         self.assertLess(events.index('stop'),events.index('release'))
         self.assertNotIn('quarantine',events)
         return d,events
@@ -65,6 +74,9 @@ class PoolFlowTests(unittest.TestCase):
         self.assertLess(events.index('build'),events.index('claim'))
         self.assertLess(events.index('delivery:accepted'),events.index('release'))
         self.assertEqual(d['phase'],'awaiting_review')
+
+    def test_project_verifies_pinned_task_commit_without_merging_main(self):
+        self.run_flow(project=True)
 
     def test_model_failure_releases_slot_without_acceptance(self):
         d,events=self.run_flow(failed=True)
@@ -82,12 +94,46 @@ class PoolFlowTests(unittest.TestCase):
         self.assertIn('resume',events)
         self.assertEqual(d['phase'],'awaiting_review')
 
+    def test_restart_after_cleanup_does_not_drain_stopped_daemon(self):
+        identity='00000000-0000-0000-0000-000000000001'
+        worker=object.__new__(w.Worker);worker.env='prod'
+        delivery=dict(id=identity,phase='awaiting_review',project_id='project-a',source_commit='a'*40,worker_token='token')
+        lease=dict(name='verify-1',generation=1,delivery_id=identity,worker_token='token',source_commit='a'*40,candidate_id='candidate',state='draining')
+        candidate=dict(id='candidate',status='accepted',delivery_id=identity)
+        actions=[]
+        def api(path,body=None,method=None):
+            if path.startswith('delivery-queue?'):return [dict(delivery)]
+            if path.startswith('delivery-queue/slots?'):return dict(lease)
+            if path=='delivery-queue/slots/advance':
+                actions.append(body['action'])
+                if body['action']=='resume':lease['generation']+=1
+                return dict(lease)
+            raise AssertionError(path)
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'RUN',Path(tmp)):
+            r.write(Path(tmp)/'delivery-batch.json',dict(enabled=True,controller_environment='prod',project_id='project-a'))
+            r.write(worker.pool_job_path(identity),dict(stage='draining',lease=dict(lease),candidate_id='candidate'))
+            r.write(Path(tmp)/'verification-install/verify-1.json',dict(stage='cleaned',cleanup_delivery=identity,cleanup_generation=1,cleanup_candidate='candidate'))
+            r.write(r.meta_path('verify-1'),dict(pids={}))
+            with patch.object(worker,'api',side_effect=api),patch.object(worker,'require_sql_seed'),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'save_candidate'),patch.object(r,'release_candidate'),patch.object(r,'drain') as drain,patch.object(w.dev,'stop') as stop,patch.object(w.seed,'clear_slot') as clear:
+                worker.pool_delivery(identity)
+            drain.assert_not_called();stop.assert_not_called();clear.assert_called_once()
+            self.assertEqual(actions,['resume','drain','release'])
+            self.assertEqual(r.read(Path(tmp)/'verification-install/verify-1.json')['cleanup_generation'],2)
+            self.assertEqual(r.read(worker.pool_job_path(identity))['stage'],'released')
+
 
 
 class SeedGateTests(unittest.TestCase):
     def worker(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         return worker
+
+    def test_project_requires_matching_verified_sql_seed(self):
+        worker=self.worker()
+        with patch.object(worker,'current_seed',return_value={'seed_id':'a','dump_sha256':'digest'}),patch.object(w.seed,'read_seed',return_value=(Path('/seed'),{}, {'sha256':'digest'})),patch.object(w.seed,'verified_sql_seed',return_value=None):
+            with self.assertRaises(r.RecoveryRequired):worker.require_sql_seed()
+        with patch.object(worker,'current_seed',return_value={'seed_id':'a','dump_sha256':'digest'}),patch.object(w.seed,'read_seed',return_value=(Path('/seed'),{}, {'sha256':'other'})),patch.object(w.seed,'verified_sql_seed',return_value=Path('/seed/seed.sql')):
+            with self.assertRaises(r.RecoveryRequired):worker.require_sql_seed()
 
     def test_without_current_seed_keeps_previous_behaviour(self):
         worker=self.worker()

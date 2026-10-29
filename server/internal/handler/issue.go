@@ -58,7 +58,7 @@ type IssueResponse struct {
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
 	Status      string  `json:"status"`
-	// StatusCategory 表示该 issue 实际遵循哪种「平台行为类别」：7 个内置状态时与 Status
+	// StatusCategory 表示该 issue 实际遵循哪种「平台行为类别」：8 个内置状态时与 Status
 	// 相同，自定义状态时等于它继承的那个类别。端点若没有解析状态目录则该字段缺省，客户端
 	// 应回退到 Status 判断，不能把空字符串当成「无类别」。 (MUL-6243)
 	StatusCategory string `json:"status_category,omitempty"`
@@ -111,7 +111,7 @@ type IssueResponse struct {
 // 让调用方拿到带合法取值列表的 400，而不是让数据库 CHECK 违约以 500 的形式冒上来。
 var validIssuePriorities = []string{"important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"}
 
-// validIssueStatuses is the 7 BUILT-IN status keys. Since MUL-6243 it is no
+// validIssueStatuses is the 8 BUILT-IN status keys. Since MUL-6243 it is no
 // longer the set of writable statuses — write paths validate against the
 // workspace's catalog via validateIssueStatusKey — and it survives only for the
 // issue-table grouping/filtering paths, which key their group descriptors and
@@ -755,9 +755,10 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		WHEN 'todo' THEN 2
 		WHEN 'blocked' THEN 3
 		WHEN 'backlog' THEN 4
-		WHEN 'done' THEN 5
-		WHEN 'cancelled' THEN 6
-		ELSE 7
+		WHEN 'pending_release' THEN 5
+		WHEN 'done' THEN 6
+		WHEN 'cancelled' THEN 7
+		ELSE 8
 	END`
 
 	// cancelled 是被放弃的工作。仅靠 statusRank 压不住它——那只是同一相关性档内的并列
@@ -1240,7 +1241,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		case "last_activity":
 			sortCol = "last_activity_at"
 		case "status":
-			sortCol = "CASE i.status WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'done' THEN 4 WHEN 'blocked' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END"
+			sortCol = "CASE i.status WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'pending_release' THEN 4 WHEN 'done' THEN 5 WHEN 'blocked' THEN 6 WHEN 'cancelled' THEN 7 ELSE 8 END"
 			sortIsExpr = true
 		case "priority":
 			sortCol = "CASE i.priority WHEN 'important_urgent' THEN 0 WHEN 'important_not_urgent' THEN 1 WHEN 'not_important_urgent' THEN 2 WHEN 'not_important_not_urgent' THEN 3 ELSE 4 END"
@@ -2027,7 +2028,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		case "last_activity":
 			sortCol = "last_activity_at"
 		case "status":
-			sortCol = "CASE i.status WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'done' THEN 4 WHEN 'blocked' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END"
+			sortCol = "CASE i.status WHEN 'backlog' THEN 0 WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'in_review' THEN 3 WHEN 'pending_release' THEN 4 WHEN 'done' THEN 5 WHEN 'blocked' THEN 6 WHEN 'cancelled' THEN 7 ELSE 8 END"
 			sortIsExpr = true
 		case "priority":
 			sortCol = "CASE i.priority WHEN 'important_urgent' THEN 0 WHEN 'important_not_urgent' THEN 1 WHEN 'not_important_urgent' THEN 2 WHEN 'not_important_not_urgent' THEN 3 ELSE 4 END"
@@ -3408,6 +3409,21 @@ func (h *Handler) updateIssueAtomicallyWithEvent(ctx context.Context, workspaceI
 	issue, err := qtx.UpdateIssue(ctx, params)
 	if err != nil {
 		return db.Issue{}, current, false, nil, fmt.Errorf("update locked issue: %w", err)
+	}
+	if current.Status == "pending_release" && (issue.Status != current.Status || issue.ProjectID != current.ProjectID) {
+		tag, updateErr := tx.Exec(ctx, `UPDATE issue_delivery SET auto_release=false,approved_at=NULL,phase=CASE WHEN phase='approved' THEN 'needs_changes' ELSE phase END,error='任务已退出待发布，需要重新验证',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND issue_id=$2 AND auto_release AND phase NOT IN ('published','cancelled')`, issue.WorkspaceID, issue.ID)
+		if updateErr != nil {
+			return db.Issue{}, current, false, nil, fmt.Errorf("invalidate pending release: %w", updateErr)
+		}
+		if tag.RowsAffected() > 0 {
+			_, updateErr = tx.Exec(ctx, `UPDATE issue SET metadata=metadata||'{"verification_passed":false,"verification_commit":"","integration_passed":false,"integration_commit":""}'::jsonb WHERE id=$1 AND workspace_id=$2`, issue.ID, issue.WorkspaceID)
+			if updateErr == nil {
+				issue, updateErr = qtx.GetIssue(ctx, issue.ID)
+			}
+			if updateErr != nil {
+				return db.Issue{}, current, false, nil, fmt.Errorf("invalidate release checks: %w", updateErr)
+			}
+		}
 	}
 
 	attachmentsChanged := false

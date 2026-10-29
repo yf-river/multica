@@ -5,11 +5,70 @@ from pathlib import Path
 
 spec=importlib.util.spec_from_file_location('releases',Path(__file__).with_name('release-environments.py'))
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+spec=importlib.util.spec_from_file_location('verification_dev',Path(__file__).with_name('verification-dev.py'))
+dev=importlib.util.module_from_spec(spec);spec.loader.exec_module(dev)
+spec=importlib.util.spec_from_file_location('verification_seed',Path(__file__).with_name('verification-seed.py'))
+seed=importlib.util.module_from_spec(spec);spec.loader.exec_module(seed)
+seed.r=r
+spec=importlib.util.spec_from_file_location('integration_data',Path(__file__).with_name('integration-data.py'))
+integration=importlib.util.module_from_spec(spec);spec.loader.exec_module(integration)
 
 # 修改 1. 接口用 Go 的 time.Time 序列化时间（RFC3339Nano，带 Z 或时区和最多 9 位小数），
 # 旧批次配置里可能还是秒级数字；两种都按同一时刻处理，避免直接与 time.time() 比较时报 TypeError。
 # 在 int 等待验收的最长时间；超过即自动释放发布车道，避免别的发布被无限阻塞。
 TESTING_STALE_SECONDS=int(os.environ.get('MULTICA_TESTING_STALE_SECONDS','900'))
+ENVIRONMENT_BRANCHES=tuple('refs/heads/multica-env/'+name for name in ('prod','int','verify-1','verify-2','verify-3'))
+
+
+def sync_environment_refs(repo, commit, fence):
+    """将已发布提交快进到环境基线，不修改任何已检出工作树。"""
+    import uuid
+    if not re.fullmatch(r'[0-9a-f]{40}', commit or ''):
+        raise r.RecoveryRequired('环境同步缺少完整生产提交')
+    main='refs/heads/personal-studio-upstream'
+    def git(args, timeout=60):
+        try:
+            result=subprocess.run(['git',*args],cwd=repo,capture_output=True,text=True,timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            raise r.RecoveryRequired('环境分支 Git 操作超时：'+args[0]) from error
+        if result.returncode:
+            raise r.RecoveryRequired('环境分支 Git 操作失败：'+args[0]+'；'+r.redact_failure(result.stderr.strip())[:600])
+        return result.stdout.strip()
+    def remote():
+        raw=git(['ls-remote','--heads','origin',main,*ENVIRONMENT_BRANCHES])
+        refs={}
+        for line in raw.splitlines():
+            fields=line.split()
+            if len(fields)!=2 or not re.fullmatch(r'[0-9a-f]{40}',fields[0]) or fields[1] not in (main,*ENVIRONMENT_BRANCHES) or fields[1] in refs:
+                raise r.RecoveryRequired('远端环境分支响应无效')
+            refs[fields[1]]=fields[0]
+        return refs
+    fence();git(['cat-file','-e',commit+'^{commit}']);before=remote()
+    if before.get(main)!=commit:
+        raise r.RecoveryRequired('主分支与已发布提交不同，不能同步环境基线')
+    temporary=[]
+    try:
+        for branch in ENVIRONMENT_BRANCHES:
+            old=before.get(branch)
+            if not old or old==commit:continue
+            local='refs/multica-release-sync/'+uuid.uuid4().hex
+            temporary.append(local)
+            git(['fetch','--no-tags','origin',branch+':'+local],timeout=120)
+            actual=git(['rev-parse',local])
+            if actual!=old:
+                raise r.RecoveryRequired('环境分支在同步前发生变化，请重新核对')
+            if subprocess.run(['git','merge-base','--is-ancestor',old,commit],cwd=repo,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+                raise r.RecoveryRequired('环境分支包含未发布的独立提交：'+branch)
+        fence()
+        updates=[commit+':'+branch for branch in ENVIRONMENT_BRANCHES if before.get(branch)!=commit]
+        if updates:git(['push','--atomic','origin',*updates],timeout=120)
+        fence();after=remote()
+        if after.get(main)!=commit or any(after.get(branch)!=commit for branch in ENVIRONMENT_BRANCHES):
+            raise r.RecoveryRequired('环境分支同步后与生产提交不一致')
+        return {branch:after[branch] for branch in ENVIRONMENT_BRANCHES}
+    finally:
+        for ref in temporary:
+            git(['update-ref','-d',ref])
 
 def timestamp(value):
     if isinstance(value,(int,float)):return float(value)
@@ -110,8 +169,20 @@ class Worker:
                 if subprocess.run(['git','-C',r.ROOT,'var',identity],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
                     raise RuntimeError('发布预检失败：实际执行器缺少 Git 合并身份')
         self.pin(d)
+        if not integrate and d.get('source_work_dir') and self.batch_project() and d.get('project_id')==self.batch_project():
+            path=Path(d['source_work_dir']).resolve(strict=True)
+            workspaces=Path(r.read(r.meta_path(self.env))['daemon_workspaces_root']).resolve(strict=True)
+            if not path.is_relative_to(workspaces) or path==workspaces:
+                raise r.RecoveryRequired('任务目录不属于当前运行环境')
+            common=Path(r.output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=path)).resolve()
+            expected=Path(r.output(['git','-C',r.ROOT,'rev-parse','--path-format=absolute','--git-common-dir'])).resolve()
+            if common!=expected or r.output(['git','symbolic-ref','--short','HEAD'],cwd=path)!=d['source_branch'] or r.output(['git','rev-parse','HEAD'],cwd=path)!=d['source_commit']:
+                raise r.RecoveryRequired('任务目录的仓库、分支或提交不匹配')
+            if r.output(['git','status','--porcelain','--untracked-files=all'],cwd=path):
+                raise r.RecoveryRequired('任务目录存在未保存内容，无法绑定验收提交')
+            return path
         # 2. A repaired source gets its own pinned checkout; never reuse the failed attempt's old HEAD.
-        identity=d['id']+('-'+d['source_commit'] if (d.get('plan_snapshot') or {}).get('verification_repair') else '')
+        identity=d['id']+('-'+d['source_commit'] if any(k in (d.get('plan_snapshot') or {}) for k in ('verification_repair','batch_repair')) else '')
         path=r.RUN/'delivery-sources'/identity; branch='feature/delivery/'+identity
         if not path.exists():
             args=['git','-C',r.ROOT,'worktree','add','-B',branch,path,d['source_commit']]
@@ -251,6 +322,7 @@ class Worker:
                     c['status']='failed';r.write(r.candidate_path(),c,True)
         if not c or c['status'] in ('released','succeeded','failed'):
             fence()
+            self.ensure_int_data(d['id'],fence,mandatory=False)
             path=self.source(d,integrate=True)
             snapshot=dict(source_commit=d['source_commit'],base_commit=r.output(['git','rev-parse','origin/personal-studio-upstream'],cwd=path),production_commit=r.read(r.meta_path('prod'))['commit'])
             self.api('delivery-queue/publication',dict(lease,action='freeze',snapshot=snapshot))
@@ -326,6 +398,28 @@ class Worker:
 
     def current_seed(self):
         return r.current_seed()
+
+    def ensure_int_data(self, batch, fence, *, mandatory):
+        journal=r.RUN/'integration-data.json'
+        if not mandatory and not journal.exists():return
+        pointer=self.require_sql_seed()
+        state=r.read(journal) if journal.exists() else {}
+        if not state or (state.get('stage')=='ready' and state.get('batch')!=batch):
+            integration.clear_environment(r,batch,fence)
+        elif state.get('stage') in ('draining','stopping','cleaning'):
+            if state.get('batch')!=batch:
+                raise r.RecoveryRequired('上一个批次的联调清理尚未完成')
+            integration.clear_environment(r,batch,fence)
+        integration.restore_environment(r,seed,batch,pointer,fence)
+
+    def require_sql_seed(self):
+        current=self.current_seed()
+        if not current or not current.get('seed_id'):
+            raise r.RecoveryRequired('未配置已验证的 SQL 种子')
+        path,manifest,artifact=seed.read_seed(current['seed_id'])
+        if artifact['sha256']!=current.get('dump_sha256') or not seed.verified_sql_seed(path,manifest):
+            raise r.RecoveryRequired('当前 SQL 种子身份不符或尚未验收')
+        return current
 
     def seed_matches(self,name):
         current=self.current_seed()
@@ -465,10 +559,11 @@ class Worker:
             r.run(['systemctl','start',unit]);return
         home=pwd.getpwuid(os.getuid()).pw_dir
         command=[sys.executable,str(Path(__file__).resolve()),'--env',self.env,'--pool-delivery',delivery]
+        mode=['--setenv=MULTICA_RELEASE_REDESIGN=1'] if os.environ.get('MULTICA_RELEASE_REDESIGN')=='1' else []
         # 旧单元里的槽位服务继续由 canonical PID/profile 管理，新控制器独立接续原作业。
         r.run(['systemd-run','--quiet','--collect','--unit',unit,'--property=Type=exec',
                '--property=KillMode=process','--working-directory',r.ROOT,
-               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*command])
+               '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*mode,*command])
 
     def pool_dispatch(self,rows,current_id,allow_new=True):
         if not allow_new and not (r.RUN/'verification-jobs').exists():return set()
@@ -486,6 +581,9 @@ class Worker:
                 records.update({d['id']:d for d in found if d['id']==identity})
         for d in sorted(records.values(),key=lambda d:d.get('created_at','')):
             if d['id']==current_id:continue
+            if d['phase']=='waiting_int' and self.batch_project() and d.get('project_id')==self.batch_project():
+                review=d.get('final_review') or {}
+                if not d.get('source_ready') or d.get('issue_status')!='in_progress' or review.get('state')!='passed' or review.get('head_sha')!=d.get('source_commit'):continue
             job_path=self.pool_job_path(d['id'])
             existing=job_path.exists()
             if existing and r.read(job_path).get('stage')=='quarantined' and not (d.get('plan_snapshot') or {}).get('verification_repair'):continue
@@ -541,6 +639,7 @@ class Worker:
         return source,artifact,lease
 
     def pool_delivery(self,delivery):
+        self.refresh_release_settings()
         path=self.pool_job_path(delivery)
         def refresh():
             return next((d for d in self.api('delivery-queue?current='+delivery) if d['id']==delivery),None)
@@ -553,11 +652,60 @@ class Worker:
         def release(lease,c):
             save('draining',lease=lease,candidate_id=c['id'])
             slot(lease,'drain')
-            r.drain(lease['name'],r.read(r.meta_path(lease['name'])))
+            managed=bool(self.batch_project() and d.get('project_id')==self.batch_project())
+            install=r.RUN/'verification-install'/(lease['name']+'.json')
+            cleanup=r.read(install) if managed and install.exists() else {}
+            recovering=cleanup.get('stage') in ('cleaning','cleaned')
+            if recovering and (cleanup.get('cleanup_delivery')!=lease['delivery_id'] or cleanup.get('cleanup_generation')!=lease['generation'] or cleanup.get('cleanup_candidate')!=lease['candidate_id']):
+                raise r.RecoveryRequired('清理记录与当前槽位不符')
+            if not recovering:
+                r.drain(lease['name'],r.read(r.meta_path(lease['name'])))
+                dev.stop(r,lease['name'],lease)
+            if managed:
+                self.require_sql_seed()
+                def fence():
+                    actual=self.api('delivery-queue/slots?delivery_id='+delivery)
+                    if any(actual.get(k)!=lease.get(k) for k in ('name','generation','delivery_id','worker_token','source_commit','candidate_id')) or actual.get('state')!='draining':
+                        raise r.RecoveryRequired('清理前验收槽位占用已变化')
+                seed.clear_slot(lease['name'],lease,r.RUN/'verification-postgres.json',fence)
             r.release_candidate(c['id'],env=lease['name'])
             slot(lease,'release')
             save('released',candidate_id=c['id'])
-        lease=None; c=None; stopped=threading.Event(); heartbeat_errors=[]
+        def deploy_update(lease,c,source,artifact):
+            manifest=r.read(Path(artifact)/'release.json')
+            if manifest['source_commit']!=lease['source_commit'] or manifest.get('verification_frontend')!='dev' or r.checksums(artifact)!=manifest['files']:
+                raise r.RecoveryRequired('测试更新产物身份不符')
+            live=r.read(r.meta_path(lease['name']))
+            ready_new=c and c.get('commit')==lease['source_commit'] and c.get('status')=='verifying' and live.get('release_id')==manifest['id']
+            if c and c.get('commit')==lease['source_commit'] and c.get('status') in ('building','recovery_required'):
+                if live.get('release_id')==manifest['id'] and dev.marker(r,lease['name']).exists() and r.read(dev.marker(r,lease['name'])).get('state')=='running':
+                    r.check_process_ownership(lease['name'],live);r.verify_browser(lease['name'])
+                    c.update(status='verifying',release_id=manifest['id'],source_digest=manifest['source_digest'],validation_identity=r.validation_identity(source,lease['name']),deployed_at=live['deployed_at'])
+                    with r.lock(r.candidate_lock(lease['name'])):r.save_candidate(c)
+                    ready_new=True
+                elif live.get('release_id')==c.get('previous_release'):
+                    c.update(status='failed',error='测试更新中断，基线仍在运行')
+                    with r.lock(r.candidate_lock(lease['name'])):r.save_candidate(c)
+                else:raise r.RecoveryRequired('测试更新中断后的环境身份不明确')
+            if not ready_new:
+                dev.stop(r,lease['name'],lease)
+                if c and c.get('status') not in ('released','failed','succeeded'):
+                    r.release_candidate(c['id'],env=lease['name'])
+                c=r.prepare_verification(source,artifact,lease,dev_web=True)
+            elif c.get('generation')!=lease['generation']:
+                c['generation']=lease['generation']
+                with r.lock(r.candidate_lock(lease['name'])):r.save_candidate(c)
+            already_prepared=lease.get('state')=='verifying' and lease.get('candidate_id')==c['id']
+            lease['candidate_id']=c['id']
+            if not already_prepared:slot(lease,'prepared')
+            lease['state']='verifying'
+            save('verifying',lease=lease,candidate_id=c['id'])
+            current=refresh()
+            if not current or current['source_commit']!=lease['source_commit']:raise r.RecoveryRequired('测试更新后的交付身份不符')
+            if current['candidate_id']!=c['id']:
+                self.advance(current,'prepared',candidate_id=c['id'],candidate_url=r.read(r.meta_path(lease['name']))['frontend_url'],candidate_identity=c.get('validation_identity',{}),candidate_commit=c.get('commit',''))
+            return c
+        lease=None; c=None; hot=False; stopped=threading.Event(); heartbeat_errors=[]
         with r.lock('verification-job-'+delivery):
             try:
                 d=refresh()
@@ -576,33 +724,47 @@ class Worker:
                     except urllib.error.HTTPError as e:
                         if e.code!=404:raise
                         save('released',candidate_id=job.get('candidate_id',''));return
-                    if lease['source_commit']!=job['lease']['source_commit'] or lease['worker_token']!=job['lease']['worker_token']:
+                    previous=job['lease']
+                    updating=job.get('stage')=='updating'
+                    if lease['worker_token']!=previous['worker_token'] or (lease['source_commit']!=previous['source_commit'] and not (updating and lease['source_commit']==job.get('source_commit') and (d.get('plan_snapshot') or {}).get('verification_update',{}).get('state')=='applying')):
                         raise r.RecoveryRequired('恢复占用与原交付身份不一致')
                     c=r.candidate(env=lease['name'])
-                    if c['delivery_id']!=delivery or c['id']!=lease['candidate_id']:
+                    if c['delivery_id']!=delivery or (not updating and c['id']!=lease['candidate_id']):
                         raise r.RecoveryRequired('部署中断，候选尚未完成登记，需要核对现场')
-                    r.check_process_ownership(lease['name'],r.read(r.meta_path(lease['name'])))
-                    if d['phase']=='testing':r.validate_candidate(c)
+                    r.check_process_ownership(lease['name'],r.read(r.meta_path(lease['name'])),allow_unhealthy=job.get('stage')=='draining')
+                    if d['phase']=='testing' and not updating:r.validate_candidate(c)
+                    resume_lease=dict(lease)
                     lease=slot(lease,'resume')
-                    c['generation']=lease['generation']
-                    with r.lock(r.candidate_lock(lease['name'])):r.save_candidate(c)
-                    save('verifying',lease=lease,candidate_id=c['id'])
+                    marker=dev.marker(r,lease['name'])
+                    marker_generation=r.read(marker).get('generation') if marker.exists() else None
+                    old_lease=resume_lease if marker_generation in (None,resume_lease['generation']) else (job.get('previous_lease') or previous)
+                    dev.adopt(r,lease['name'],old_lease,lease)
+                    seed.adopt_cleaning(lease['name'],resume_lease,lease)
+                    if not updating:
+                        c['generation']=lease['generation']
+                        with r.lock(r.candidate_lock(lease['name'])):r.save_candidate(c)
+                        save('draining' if job.get('stage')=='draining' else 'verifying',lease=lease,candidate_id=c['id'])
                     if d['phase']!='testing':
                         release(lease,c);return
                 else:
                     if d['phase'] not in ('waiting_int','testing'):return
                     if d['phase']=='waiting_int':self.advance(d,'claim')
+                    project=self.batch_project()
+                    hot=bool(project and d.get('project_id')==project and d.get('source_work_dir'))
+                    if project and d.get('project_id')==project:
+                        self.require_sql_seed()
+                        if not hot:raise r.RecoveryRequired('任务工作目录尚未就绪，不能启动项目验收')
                     # 1. 等槽位超时退出后，下一轮直接复用已构建产物，避免每次空等都重新构建。
-                    reuse=job.get('stage')=='waiting_slot' and job.get('source_commit')==d['source_commit'] and bool(job.get('artifact')) and Path(job['artifact']).exists()
+                    reuse=job.get('stage')=='waiting_slot' and job.get('source_commit')==d['source_commit'] and bool(job.get('artifact')) and Path(job['artifact']).exists() and bool(job.get('dev_web'))==hot
                     if reuse:
                         artifact=Path(job['artifact'])
                         source=Path(job.get('source') or r.read(artifact/'release.json')['source_directory'])
-                        save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
+                        save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'],dev_web=hot)
                     else:
-                        source=self.source(d,integrate=True)
+                        source=self.source(d,integrate=not (project and d.get('project_id')==project))
                         save('building',source_commit=d['source_commit'])
-                        artifact=r.build_verification(source,delivery)
-                        save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
+                        artifact=r.build_verification(source,delivery,dev_web=True) if hot else r.build_verification(source,delivery)
+                        save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'],dev_web=hot)
                     # 等槽位有上限；种子维护和全忙均正常排队，下一轮复用现有构建。
                     deadline=time.monotonic()+600
                     while lease is None:
@@ -618,7 +780,7 @@ class Worker:
                             if detail.get('error')!='没有可用验收槽位':raise
                             if time.monotonic()>=deadline:
                                 # 超时只记录现场，进度回执失败不能把交付判成故障。
-                                try:save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'],timeout=True)
+                                try:save('waiting_slot',artifact=str(artifact),source=str(source),source_commit=d['source_commit'],dev_web=hot,timeout=True)
                                 except Exception:pass
                                 raise SlotWaitTimeout('等待验收槽位超过 10 分钟，交给下一轮续接')
                             time.sleep(5)
@@ -626,15 +788,19 @@ class Worker:
                     if not self.seed_matches(lease['name']):
                         slot(lease,'quarantine','槽位数据版本不是当前种子')
                         raise r.RecoveryRequired('槽位种子与当前版本不一致，已隔离并等待外部恢复')
-                    save('preparing',lease=lease,artifact=str(artifact))
+                    save('preparing',lease=lease,artifact=str(artifact),dev_web=hot)
                 def heartbeat():
                     while not stopped.wait(20):
                         try:slot(lease,'heartbeat')
                         except Exception as e:
                             heartbeat_errors.append(e);return
                 heartbeat_thread=threading.Thread(target=heartbeat,daemon=True);heartbeat_thread.start()
+                if job.get('stage')=='updating' and (d.get('plan_snapshot') or {}).get('verification_update',{}).get('state')=='applying':
+                    source=Path(job['source']);artifact=Path(job['artifact'])
+                    save('updating',lease=lease,previous_lease=old_lease,candidate_id=c['id'],source=str(source),source_commit=lease['source_commit'],artifact=str(artifact))
+                    c=deploy_update(lease,c,source,artifact)
                 if c is None:
-                    c=r.prepare_verification(source,artifact,lease)
+                    c=r.prepare_verification(source,artifact,lease,dev_web=True) if hot else r.prepare_verification(source,artifact,lease)
                     lease['candidate_id']=c['id'];slot(lease,'prepared')
                     save('verifying',lease=lease,candidate_id=c['id'])
                 if heartbeat_errors:raise heartbeat_errors[0]
@@ -649,7 +815,39 @@ class Worker:
                     d=refresh()
                     if not d or d['phase']!='testing':break
                     if heartbeat_errors:raise heartbeat_errors[0]
-                    if not d['acceptance_submitted'] and time.time()-testing_entered>TESTING_STALE_SECONDS:
+                    if d.get('pending_update_notice'):
+                        try:self.advance(d,'notify-pending-verification',stage=d['pending_update_notice'])
+                        except urllib.error.HTTPError as error:
+                            if error.code!=409:raise
+                    update=(d.get('plan_snapshot') or {}).get('verification_update') or {}
+                    if update.get('state')=='pending':
+                        request=update['request']
+                        changed=dict(d,source_commit=request['source_commit'],source_branch=request['source_branch'])
+                        try:
+                            source=self.source(changed,integrate=False)
+                            save('updating',lease=lease,candidate_id=c['id'],source=str(source),source_commit=request['source_commit'])
+                            artifact=r.build_verification(source,delivery,dev_web=True)
+                        except Exception as error:
+                            self.advance(d,'verification-update-failed',error=r.redact_failure(str(error))[:1500] or '测试更新构建失败')
+                            save('verifying',lease=lease,candidate_id=c['id'])
+                            time.sleep(5);continue
+                        save('updating',lease=lease,candidate_id=c['id'],source=str(source),source_commit=request['source_commit'],artifact=str(artifact))
+                        stopped.set();heartbeat_thread.join(timeout=25)
+                        if heartbeat_errors:raise heartbeat_errors[0]
+                        old_lease=lease
+                        result=self.advance(d,'begin-verification-update',slot_generation=lease['generation'],candidate_commit=request['source_commit'])
+                        lease=self.api('delivery-queue/slots?delivery_id='+delivery)
+                        if lease['generation']!=result['slot_generation'] or lease['source_commit']!=request['source_commit'] or lease['state']!='preparing':
+                            raise r.RecoveryRequired('测试更新后的槽位身份不符')
+                        dev.adopt(r,lease['name'],old_lease,lease)
+                        save('updating',lease=lease,previous_lease=old_lease,candidate_id=c['id'],source=str(source),source_commit=request['source_commit'],artifact=str(artifact))
+                        stopped.clear();heartbeat_thread=threading.Thread(target=heartbeat,daemon=True);heartbeat_thread.start()
+                        c=deploy_update(lease,c,source,artifact)
+                        testing_entered=time.time();notified=False
+                        continue
+                    project=self.batch_project()
+                    managed=bool(project and d.get('project_id')==project)
+                    if not managed and not d['acceptance_submitted'] and time.time()-testing_entered>TESTING_STALE_SECONDS:
                         self.advance(d,'needs_changes',error='候选在 int 等待验收超过 %d 分钟且没有提交证据，已自动释放发布车道' % (TESTING_STALE_SECONDS//60))
                         break
                     try:
@@ -659,7 +857,13 @@ class Worker:
                             if not notified and not d.get('verification_run') and not (d.get('verification_owner') or {}).get('external'):
                                 result=self.advance(d,'notify')
                                 notified=result.get('verification_deferred') is not True
-                            pending=self.verification_pending(d,notify=False)
+                            attempt=d.get('verification_run') or {}
+                            if managed and attempt.get('settled') and attempt.get('status') in ('failed','cancelled','blocked','completed'):
+                                if attempt.get('failure_notice') or d.get('verification_failure_count',0)<3:
+                                    self.advance(d,'notify-verification-failure',verification_run_id=attempt['id'],error=attempt.get('error') or '测试运行结束但没有提交通过证据')
+                                pending=True
+                            else:
+                                pending=self.verification_pending(d,notify=False)
                     except urllib.error.HTTPError as e:
                         if e.code!=409:raise
                         # 服务端围栏：该执行不是当前触发评论的最新运行，或阶段已经变化。
@@ -669,6 +873,13 @@ class Worker:
                         time.sleep(5);continue
                     if not d['acceptance_submitted'] and not pending:break
                     if d['acceptance_submitted']:
+                        project=self.batch_project()
+                        review=d.get('final_review') or {}
+                        if project and d.get('project_id')==project and (review.get('state')!='passed' or review.get('head_sha')!=d['source_commit']):
+                            waiting_fix=review.get('state') in ('rejected','stopped') and review.get('head_sha')==d['source_commit']
+                            if not waiting_fix and d.get('issue_status')!='in_review':
+                                self.advance(d,'request-final-review')
+                            time.sleep(5);continue
                         evidence=r.RUN/'delivery-evidence'/(delivery+'.json')
                         r.write(evidence,dict(candidate=c['id'],summary='任务验收',checks=d['evidence']),True)
                         if c['status']!='accepted':r.accept(c['id'],evidence,env=lease['name'])
@@ -697,6 +908,10 @@ class Worker:
     # 1. 选择性组合发布：发布器空闲时开一个收集窗口，把已验收且仍有授权的交付固定成一批，
     # 一个批次只构建、验收和发布一次，成员各自回填结果。
     def batch_config(self):
+        settings=getattr(self,'release_settings',None)
+        if settings and settings.get('configured'):
+            if settings.get('enabled') is not True:return None
+            return dict(enabled=True,controller_environment=self.env,window_seconds=600,project_id=settings['project_id'])
         path=r.RUN/'delivery-batch.json'
         if not path.exists():return None
         config=r.read(path)
@@ -705,6 +920,20 @@ class Worker:
 
     def batch_window(self):
         return int((self.batch_config() or {}).get('window_seconds') or 60)
+
+    def batch_project(self):
+        settings=getattr(self,'release_settings',None)
+        if settings and settings.get('configured'):return settings.get('project_id') or ''
+        return (self.batch_config() or {}).get('project_id') or ''
+
+    def refresh_release_settings(self):
+        if os.environ.get('MULTICA_RELEASE_REDESIGN')!='1':return
+        settings=self.api('release-agent/settings')
+        if not isinstance(settings,dict) or not isinstance(settings.get('configured'),bool):
+            raise RuntimeError('发布 Agent 设置响应无效')
+        if settings['configured'] and not settings.get('project_id'):
+            raise RuntimeError('发布 Agent 缺少项目身份')
+        self.release_settings=settings
 
     def batch_call(self,body=None):
         return self.api('delivery-queue/batches',body)
@@ -739,9 +968,12 @@ class Worker:
         if not self.batch_config():return False
         state=self.batch_call();batch=state.get('batch');members=self.pending_members(state)
         if not batch:
-            if not any(d['phase']=='approved' for d in rows):return False
+            project=self.batch_project()
+            if not any(d['phase']=='approved' and (not project or d.get('project_id')==project) for d in rows):return False
             if self.publication_owner():return True
-            self.batch_call(dict(action='open',window_seconds=self.batch_window()))
+            body=dict(action='open',window_seconds=self.batch_window())
+            if project:body['project_id']=project
+            self.batch_call(body)
             return True
         token=batch.get('worker_token') or ''
         if batch['status']=='collecting':
@@ -749,10 +981,23 @@ class Worker:
             state=self.batch_call(dict(action='freeze',batch_id=batch['id']))
             batch=state['batch'];members=self.pending_members(state)
             if batch['status'] in ('cancelled','needs_changes'):return True
-        if batch['status']=='frozen':return self.batch_prepare(batch,members,rows)
+            token=batch.get('worker_token') or ''
+        if batch['status']=='frozen':
+            if batch.get('project_id'):
+                stage='conflict' if batch.get('error') else 'batch'
+                self.batch_call(dict(action='dispatch-agent',batch_id=batch['id'],worker_token=token,stage=stage))
+                if batch.get('error'):
+                    try:self.batch_call(dict(action='retry',batch_id=batch['id'],worker_token=token,automatic=True))
+                    except urllib.error.HTTPError as error:
+                        if error.code!=409:raise
+                    return True
+            return self.batch_prepare(batch,members,rows)
         # 修改 4. 进程在准备阶段退出会留下 preparing；这里接续原批次，不新建批次也不让状态永久卡住。
         if batch['status']=='preparing':return self.batch_resume(batch,members,rows)
-        if batch['status']=='validating':return self.batch_validate(batch,members,rows)
+        if batch['status']=='validating':
+            if batch.get('project_id'):
+                self.batch_call(dict(action='dispatch-agent',batch_id=batch['id'],worker_token=token,stage='integration'))
+            return self.batch_validate(batch,members,rows)
         if batch['status']=='publishing':return self.batch_check_release(batch,rows)
         return True
 
@@ -769,7 +1014,8 @@ class Worker:
                 return True
             if conflict:
                 detail='提交 %s 无法合并到最新主分支，请在原任务分支解决后重新交付'%conflict['source_commit']
-                self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=detail,conflict_delivery_id=conflict['delivery_id']))
+                action='hold' if batch.get('project_id') else 'fail'
+                self.batch_call(dict(action=action,batch_id=batch['id'],worker_token=batch['worker_token'],error=detail,conflict_delivery_id=conflict['delivery_id']))
                 self.finish_publication(delivery)
                 return True
             # 修改 5. 构建名单以准备阶段返回的 pending 成员为准：名单一变说明代表可能已被撤权，
@@ -784,6 +1030,7 @@ class Worker:
                 return True
             fence()
             try:
+                self.ensure_int_data(batch['id'],fence,mandatory=bool(batch.get('project_id')))
                 record=r.prepare_int(path,delivery=dict(delivery_id=delivery['id'],delivery_env=self.env,
                     approved_source=delivery['source_commit'],publication_lease=lease,batch_id=batch['id'],
                     batch_members=[dict(delivery_id=m['delivery_id'],source_commit=m['source_commit']) for m in members]),fence=fence)
@@ -808,6 +1055,9 @@ class Worker:
         for member in members:
             row=self.batch_row(rows,member['delivery_id'])
             if not row:continue
+            snapshot=row.get('plan_snapshot') or {}
+            if self.batch_project() and row.get('project_id')==self.batch_project() and snapshot.get('integration_skip_reason') and not any(c.get('stage')=='integration' for c in snapshot.get('required_checks') or []):
+                continue
             try:self.advance(row,'notify-result',stage='batch_ready')
             except urllib.error.HTTPError as error:
                 if error.code!=409:raise
@@ -844,12 +1094,36 @@ class Worker:
         if not members:return True
         return self.batch_prepare(batch,members,rows)
 
-    def batch_acceptance(self,candidate,members,rows):
+    def batch_acceptance(self,candidate,members,rows,project=False):
         row=self.batch_row(rows,candidate.get('delivery_id',''))
         if (row and row.get('candidate_id')==candidate['id'] and row.get('acceptance_submitted')
+                and (not project or row.get('integration_accepted'))
                 and row.get('plan_snapshot',{}).get('candidate_commit')==candidate['commit']):
             return row.get('evidence') or None
         return None
+
+    def sync_environment_baselines(self,candidate,fence):
+        """仅在生产实际运行固定候选后推进环境分支，并保存核对结果。"""
+        fence()
+        published=r.read(r.RUN/'published.json')
+        meta=r.read(r.meta_path('prod'))
+        commit=candidate.get('commit','');digest=candidate.get('source_digest','')
+        if not digest or published.get('candidate')!=candidate.get('id') or published.get('commit')!=commit or published.get('source_digest')!=digest or meta.get('commit')!=commit or meta.get('source_digest')!=digest:
+            raise r.RecoveryRequired('生产发布记录与候选身份不一致，不能同步环境分支')
+        r.check_process_ownership('prod',meta)
+        r.check_live_environment('prod',meta,r.read(r.config_path('prod')))
+        if r.http(meta['backend_url']+'/health').get('commit')!=commit:
+            raise r.RecoveryRequired('生产运行程序与候选提交不一致')
+        manifest=r.read(Path(meta['release_dir'])/'release.json')
+        if manifest.get('source_commit')!=commit or manifest.get('source_digest')!=digest or not isinstance(manifest.get('files'),dict) or not manifest['files']:
+            raise r.RecoveryRequired('生产产物清单与候选不一致')
+        if not all(name in manifest['files'] for name in ('server/bin/server','server/bin/multica')) or not any(name.startswith('apps/web/') for name in manifest['files']):
+            raise r.RecoveryRequired('生产产物清单缺少 Web、Server 或 Daemon')
+        actual=r.checksums(Path(meta['release_dir']))
+        if any(actual.get(name)!=value for name,value in manifest.get('files',{}).items()):
+            raise r.RecoveryRequired('生产产物校验失败，不能同步环境分支')
+        refs=sync_environment_refs(r.ROOT,commit,fence)
+        r.write(r.RUN/'environment-baselines.json',dict(candidate_id=candidate['id'],commit=commit,source_digest=digest,refs=refs,updated_at=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())),True)
 
     def reusable_batch_checks(self,candidate,member_rows):
         """把成员已提交的验收证据复用到组合候选上，避免再等一次人工 accept。"""
@@ -883,12 +1157,19 @@ class Worker:
         self.notify_batch_ready(members)
         if candidate['status']=='verifying':
             # 修改 13. 组合验收由批次成员在同一个固定候选上提交，证据与候选一起归档后才进入发布。
-            checks=self.batch_acceptance(candidate,members,rows)
+            if batch.get('project_id'):
+                if len(member_rows)!=len(members):return True
+                required=[row for row in member_rows if any(c.get('stage')=='integration' for c in (row.get('plan_snapshot',{}).get('required_checks') or []))]
+                if any(not row.get('integration_accepted') for row in required):return True
+            checks=self.batch_acceptance(candidate,members,rows,project=bool(batch.get('project_id')))
+            if batch.get('project_id') and checks and required:
+                checks=[check for row in member_rows if row.get('integration_accepted') for check in (row.get('evidence') or [])]
             reused=checks is None
             if reused:
                 # 成员在 testing 阶段提交过的业务验收证据对同一提交仍然有效：组合候选只是把它
                 # 合并进新基线。若服务端仍要求针对组合候选的确认，就退回等待人工补交。
-                checks=self.reusable_batch_checks(candidate,member_rows)
+                # 项目批次始终需要当前组合候选上的实际检查。
+                checks=None if batch.get('project_id') else self.reusable_batch_checks(candidate,member_rows)
             if not checks:return True
             evidence=r.RUN/'delivery-evidence'/(candidate['id']+'.json')
             r.write(evidence,dict(candidate=candidate['id'],summary='组合候选实际功能验收',checks=checks),True)
@@ -941,7 +1222,18 @@ class Worker:
             return self.batch_release(batch,candidate,representative,state['members'])
         result=r.read(target)
         if result['status'] in ('queued','publishing'):return True
+        if result['status']=='recovery_required':
+            raise r.RecoveryRequired('生产更新后的恢复尚未确认：'+(result.get('error') or '请核对实际环境')[:1200])
+        if result['status'] not in ('succeeded','failed'):
+            raise r.RecoveryRequired('生产发布请求处于未知状态，保留发布占用')
         if result['status']=='succeeded':
+            if batch.get('project_id'):
+                if not representative:
+                    representative=self.batch_row(self.api('delivery-queue?current='+candidate['delivery_id']),candidate['delivery_id'])
+                if not representative:raise r.RecoveryRequired('生产已更新但发布占用对应的交付缺失')
+                with self.publication_guard(representative) as (_,fence):
+                    self.sync_environment_baselines(candidate,fence)
+                    integration.clear_environment(r,batch['id'],fence)
             self.batch_call(dict(action='published',batch_id=batch['id'],worker_token=batch['worker_token'],candidate_commit=candidate['commit']))
         else:
             self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],error=result.get('error','生产更新失败')[:1200]))
@@ -952,6 +1244,7 @@ class Worker:
     def tick(self):
         # 固定 int/prod 只由生产控制队列调度，int 数据库不能另建同名占用抢写环境。
         if self.env!='prod':return
+        self.refresh_release_settings()
         r.recover_release_windows()
         try:
             spec=importlib.util.spec_from_file_location('test_agent_control',Path(__file__).with_name('test-agent-control.py'))
@@ -968,12 +1261,16 @@ class Worker:
             else:
                 managed=self.pool_dispatch(rows,current_id,allow_new=False)
             rows=[d for d in rows if d['id'] not in managed]
+            settings=getattr(self,'release_settings',None)
+            if settings and settings.get('configured') and settings.get('enabled') is not True:
+                rows=[d for d in rows if not (d['phase']=='approved' and d.get('project_id')==settings['project_id'])]
             # 2. 启用组批后，已批准交付统一由批次发布；单项流程不再单独领取，避免同一任务被发布两次。
             if self.batch_config():
                 try:
                     if self.tick_batches(rows):return
                 except Busy:return
-                rows=[d for d in rows if d['phase']!='approved']
+                project=self.batch_project()
+                rows=[d for d in rows if d['phase']!='approved' or (project and d.get('project_id')!=project)]
             owner=next((d for d in rows if d['id']==current_id),None)
             if current and owner and (owner['phase'] in ('cancelled','needs_changes') or (owner['phase']=='awaiting_review' and not owner.get('plan_snapshot',{}).get('authorization_pending'))) and current['status'] in ('verifying','accepted'):
                 r.release_candidate(current['id'])

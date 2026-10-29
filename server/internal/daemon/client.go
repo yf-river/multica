@@ -693,6 +693,18 @@ func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, erro
 	return resp.Status, nil
 }
 
+type deliveryWorktreeRetention struct {
+	Retain       bool   `json:"retain"`
+	SourceCommit string `json:"source_commit"`
+	SourceBranch string `json:"source_branch"`
+}
+
+func (c *Client) getDeliveryWorktreeRetention(ctx context.Context, taskID string) (deliveryWorktreeRetention, error) {
+	var result deliveryWorktreeRetention
+	err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/delivery-worktree", taskID), &result)
+	return result, err
+}
+
 // HeartbeatResponse、PendingUpdate 等别名指向线类型，让 HTTP 与 WS 心跳路径共享
 // 单一类型与单一解码形态。用别名（而非包装）让调用点无需改动。
 type (

@@ -18,6 +18,62 @@ import (
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
+func TestVerificationUpdateKeepsSlotAndRejectsOldAcceptance(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	dbfx.Cleanup(t, `DELETE FROM release_agent_config WHERE workspace_id=$1`, testWorkspaceID)
+	dbfx.Cleanup(t, `DELETE FROM agent WHERE workspace_id=$1 AND system_key='issue_release'`, testWorkspaceID)
+	project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "发布项目"})
+	configureReleaseAgent(t, project)
+	issue, plan := coordinationFixture(t)
+	dbfx.Exec(t, `UPDATE issue SET project_id=$2,metadata='{"review_passed":true,"verification_passed":true}' WHERE id=$1`, issue, project)
+	delivery, token := coordinationDelivery(t, issue, plan, "testing")
+	slotFixture(t, "verify-1", true)
+	dbfx.Exec(t, `UPDATE issue_delivery SET candidate_id='old-candidate',source_branch='feature/task',acceptance_submitted=true,plan_snapshot='{"required_checks":[{"name":"功能","stage":"verification"},{"name":"联调","stage":"integration"}]}' WHERE id=$1`, delivery)
+	dbfx.Exec(t, `UPDATE verification_slot SET state='verifying',workspace_id=$1,delivery_id=$2,worker_token=$3,source_commit=$4,candidate_id='old-candidate',generation=19,lease_expires_at=now()+interval '2 minutes' WHERE name='verify-1'`, testWorkspaceID, delivery, token, strings.Repeat("a", 40))
+	dbfx.Exec(t, `INSERT INTO verification_slot_seed(name,seed_id,seed_sha256,verified) VALUES('verify-1','seed','hash',true)`)
+	ownerToken, generation := claimReviewOwner(t, issue)
+	revision := deliveryRevision(t, delivery)
+	repair := deliveryRepairRequest{OperationID: dbid.NewV7().String(), Source: strings.Repeat("c", 40), Branch: "feature/task", Base: strings.Repeat("b", 40), Environment: "verify-1", Generation: 19, SeedID: "seed", SeedSHA: "hash"}
+	checks := []deliveryCheck{{Name: "本地检查", Status: "passed", Evidence: "已构建"}}
+	request := func(b deliveryRepairRequest) *http.Request {
+		q := withURLParams(newRequest("POST", "/deliveries/action", map[string]any{"action": "retest", "revision": revision, "repair": b, "evidence": checks}), "id", issue, "deliveryId", delivery)
+		q.Header.Set("X-Delivery-Token", ownerToken)
+		q.Header.Set("X-Delivery-Generation", strconv.FormatInt(generation, 10))
+		return q
+	}
+	wrong := repair
+	wrong.SeedSHA = "other"
+	testutil.Call(t, testHandler.ActIssueDelivery, request(wrong)).Want(409)
+	testutil.Call(t, testHandler.ActIssueDelivery, request(repair)).Want(200)
+	testutil.Call(t, testHandler.ActIssueDelivery, request(repair)).Want(200)
+	var phase, source, pending, state string
+	var accepted bool
+	dbfx.QueryRow(t, `SELECT d.phase,d.source_commit,d.plan_snapshot->'verification_update'->>'state',d.acceptance_submitted,s.state FROM issue_delivery d JOIN verification_slot s ON s.delivery_id=d.id WHERE d.id=$1`, delivery).Scan(&phase, &source, &pending, &accepted, &state)
+	if phase != "testing" || source != strings.Repeat("a", 40) || pending != "pending" || accepted || state != "verifying" {
+		t.Fatalf("更新请求改变了原占用：%s %s %s %v %s", phase, source, pending, accepted, state)
+	}
+	q := withURLParams(newRequest("POST", "/deliveries/action", map[string]any{"action": "accept", "revision": revision + 1, "candidate_id": "old-candidate", "evidence": []deliveryCheck{{Name: "功能", Status: "passed", Evidence: "旧结果"}}}), "id", issue, "deliveryId", delivery)
+	q.Header.Set("X-Delivery-Token", ownerToken)
+	q.Header.Set("X-Delivery-Generation", strconv.FormatInt(generation, 10))
+	testutil.Call(t, testHandler.ActIssueDelivery, q).Want(409)
+	update := map[string]any{"id": delivery, "revision": revision + 1, "action": "begin-verification-update", "worker_token": token, "source_commit": strings.Repeat("a", 40), "slot_generation": 18, "candidate_commit": repair.Source}
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", update)).Want(409)
+	update["slot_generation"] = 19
+	testutil.Call(t, testHandler.AdvanceDelivery, newRequest("POST", "/advance", update)).Want(200)
+	var slotGeneration int64
+	var slotCommit, slotCandidate string
+	dbfx.QueryRow(t, `SELECT generation,source_commit,candidate_id FROM verification_slot WHERE delivery_id=$1`, delivery).Scan(&slotGeneration, &slotCommit, &slotCandidate)
+	if slotGeneration != 20 || slotCommit != repair.Source || slotCandidate != "" {
+		t.Fatalf("新版本与槽位不一致: %d %s %s", slotGeneration, slotCommit, slotCandidate)
+	}
+	old := verification.Lease{Name: "verify-1", Workspace: testWorkspaceID, Delivery: delivery, Token: token, Source: strings.Repeat("a", 40), Candidate: "old-candidate", Generation: 19}
+	if err := (verification.Store{DB: testHandler.TxStarter}).Advance(context.Background(), old, "heartbeat", ""); err == nil {
+		t.Fatal("旧版本仍可操作槽位")
+	}
+}
+
 // 1. Exercise the original failed delivery through the owner-fenced API and persisted slot recovery.
 func TestFailedDeliveryRepairWithoutProductionApproval(t *testing.T) {
 	issue, plan := coordinationFixture(t)

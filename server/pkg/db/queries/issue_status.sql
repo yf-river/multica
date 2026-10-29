@@ -1,10 +1,10 @@
--- Issue status catalog (MUL-6243). Each workspace holds the 7 built-in
+-- Issue status catalog (MUL-6243). Each workspace holds the 8 built-in
 -- statuses plus any custom ones. A category's value IS its canonical built-in
 -- key, so resolving a custom status to its platform behavior is a plain column
 -- read — no mapping table, no second concept.
 
 -- name: SeedIssueStatusEntries :exec
--- Idempotent seed of the 7 built-ins. Safe to call concurrently from multiple
+-- Idempotent seed of the 8 built-ins. Safe to call concurrently from multiple
 -- pods during a rolling deploy: the unique (workspace_id, key) index makes a
 -- losing racer a no-op rather than an error. Positions are intra-category, and
 -- each built-in is the only member of its category at seed time, so all 0.
@@ -14,6 +14,7 @@ VALUES
     (sqlc.arg('workspace_id')::uuid, 'todo', 'Todo', 'Queued for work. Moving an issue here starts the assigned agent.', 'todo', '#6b7280', TRUE, 0),
     (sqlc.arg('workspace_id')::uuid, 'in_progress', 'In Progress', 'Actively being worked on.', 'in_progress', '#f59e0b', TRUE, 0),
     (sqlc.arg('workspace_id')::uuid, 'in_review', 'In Review', 'Work delivered, waiting on human review. Finalizes the autopilot run.', 'in_review', '#22c55e', TRUE, 0),
+    (sqlc.arg('workspace_id')::uuid, 'pending_release', 'Pending Release', 'Verified work waiting for release.', 'pending_release', '#8b5cf6', TRUE, 0),
     (sqlc.arg('workspace_id')::uuid, 'done', 'Done', 'Completed.', 'done', '#3b82f6', TRUE, 0),
     (sqlc.arg('workspace_id')::uuid, 'blocked', 'Blocked', 'Stalled on an external dependency.', 'blocked', '#ef4444', TRUE, 0),
     (sqlc.arg('workspace_id')::uuid, 'cancelled', 'Cancelled', 'Decided not to do.', 'cancelled', '#6b7280', TRUE, 0)
@@ -32,10 +33,11 @@ ORDER BY
         WHEN 'todo' THEN 1
         WHEN 'in_progress' THEN 2
         WHEN 'in_review' THEN 3
-        WHEN 'done' THEN 4
-        WHEN 'blocked' THEN 5
-        WHEN 'cancelled' THEN 6
-        ELSE 7
+        WHEN 'pending_release' THEN 4
+        WHEN 'done' THEN 5
+        WHEN 'blocked' THEN 6
+        WHEN 'cancelled' THEN 7
+        ELSE 8
     END,
     position,
     key;

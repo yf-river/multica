@@ -7524,6 +7524,38 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		env.LocalWorktree = savedInteraction.Worktree
 		envReused = true
 	}
+	if env == nil {
+		savedDelivery, deliveryErr := deliveryWorktreeForTask(task, d.cfg.WorkspacesRoot)
+		if deliveryErr != nil {
+			return TaskResult{}, fmt.Errorf("恢复任务验收目录失败: %w", deliveryErr)
+		}
+		if savedDelivery != nil {
+			wsRoot, openErr := os.OpenRoot(d.cfg.WorkspacesRoot)
+			if openErr != nil {
+				return TaskResult{}, openErr
+			}
+			defer wsRoot.Close()
+			rel, relErr := filepath.Rel(d.cfg.WorkspacesRoot, savedDelivery.Root)
+			if relErr != nil {
+				return TaskResult{}, relErr
+			}
+			claim, _, lockErr := execenv.LockEnvRootForReuse(wsRoot, rel, savedDelivery.Root)
+			if lockErr != nil {
+				return TaskResult{}, lockErr
+			}
+			defer claim.Release()
+			rechecked, recheckErr := deliveryWorktreeForTask(task, d.cfg.WorkspacesRoot)
+			if recheckErr != nil || rechecked == nil || rechecked.Root != savedDelivery.Root {
+				return TaskResult{}, errors.New("验收工作目录在等待期间发生变化")
+			}
+			env, err = d.reuseExecutionEnvironment(prepareCtx, execenv.ReuseParams{WorkspacesRoot: d.cfg.WorkspacesRoot, Profile: d.cfg.Profile, WorkDir: rechecked.WorkDir, RootDir: rechecked.Root, LocalDirectory: rechecked.LocalDirectory, Provider: provider, CodexVersion: codexVersion, ResumeSessionID: task.PriorSessionID, McpConfig: effectiveMcpConfig, CursorMcpAuthSource: cursorMcpAuthSource, HermesSourceHome: hermesSourceHome, HermesSourceMustExist: hermesSourceMustExist, HermesEnv: hermesEnv, HermesMemoryStore: hermesMemoryStore, ReasonixEnv: reasonixEnv, CodexCustomArgs: codexSandboxArgs, Task: taskCtx})
+			if err != nil || env == nil {
+				return TaskResult{}, fmt.Errorf("恢复任务验收目录失败: %v", err)
+			}
+			env.LocalWorktree = rechecked.Worktree
+			envReused = true
+		}
+	}
 	normalReuseTask := task
 	if savedPause != nil || savedInteraction != nil {
 		normalReuseTask.PriorWorkDir = ""
@@ -7717,14 +7749,38 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			if releasePaused(ctx) {
 				return
 			}
-			outcome, finalizeErr := env.LocalWorktree.Finalize(taskLog)
+			var retention deliveryWorktreeRetention
+			if task.IssueID != "" {
+				check, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				var retentionErr error
+				retention, retentionErr = d.client.getDeliveryWorktreeRetention(check, task.ID)
+				cancel()
+				var requestErr *requestError
+				if retentionErr != nil && !(errors.As(retentionErr, &requestErr) && requestErr.StatusCode == http.StatusNotFound) {
+					returnErr = errors.Join(returnErr, fmt.Errorf("确认交付工作目录归属失败，已保留 %s: %w", env.WorkDir, retentionErr))
+					return
+				}
+			}
+			var outcome execenv.LocalWorktreeOutcome
+			var finalizeErr error
+			if retention.Retain {
+				outcome, finalizeErr = env.LocalWorktree.FinalizeRetained(taskLog, retention.SourceBranch, retention.SourceCommit)
+			} else {
+				outcome, finalizeErr = env.LocalWorktree.Finalize(taskLog)
+			}
 			if outcome.Branch != "" {
 				taskResult.BranchName = outcome.Branch
 			}
 			if finalizeErr == nil {
 				// 只有 Finalize 确认一次性任务 worktree 真的没了，配置的
 				// local_directory 才成为权威。
-				if localAssignment != nil {
+				if retention.Retain {
+					if err := saveDeliveryWorktree(task, env); err != nil {
+						returnErr = errors.Join(returnErr, fmt.Errorf("记录验收工作目录失败，已保留 %s: %w", env.WorkDir, err))
+						return
+					}
+					taskResult.DurableWorkDir = env.WorkDir
+				} else if localAssignment != nil {
 					taskResult.DurableWorkDir = localAssignment.AbsPath
 				}
 				return

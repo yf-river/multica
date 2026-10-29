@@ -47,7 +47,11 @@ func TestVerificationSlotMaintenanceStopsOnlyItself(t *testing.T) {
 	}
 	slotFixture(t, "verify-1", true)
 	slotFixture(t, "verify-2", true)
-	callSlot(t, testHandler.ConfigureVerificationSlot, map[string]any{"name": "verify-1", "action": "maintain", "reason": "按种子恢复测试数据"}).Want(200)
+	var maintained map[string]any
+	callSlot(t, testHandler.ConfigureVerificationSlot, map[string]any{"name": "verify-1", "action": "maintain", "reason": "按种子恢复测试数据"}).Want(200).JSON(&maintained)
+	if maintained["previous_enabled"] != true {
+		t.Fatalf("未返回原启用状态: %v", maintained)
+	}
 	if enabled, _ := slotState(t, "verify-1"); enabled {
 		t.Fatal("维护期间槽位仍在接单")
 	}
@@ -67,6 +71,18 @@ func TestVerificationSlotMaintenanceStopsOnlyItself(t *testing.T) {
 	dbfx.QueryRow(t, `SELECT count(*) FROM verification_slot_maintenance WHERE name='verify-1' AND action='resume'`).Scan(&resumes)
 	if resumes == 0 {
 		t.Fatal("缺少恢复审计")
+	}
+}
+
+func TestVerificationMaintenanceReportsPreviouslyDisabledSlot(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	slotFixture(t, "verify-1", false)
+	var state map[string]any
+	callSlot(t, testHandler.ConfigureVerificationSlot, map[string]any{"name": "verify-1", "action": "maintain", "reason": "测试种子"}).Want(200).JSON(&state)
+	if state["previous_enabled"] != false || state["enabled"] != false {
+		t.Fatalf("禁用槽位的维护状态错误: %v", state)
 	}
 }
 

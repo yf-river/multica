@@ -176,21 +176,41 @@ func buildDeliveryContextBlock(d DeliveryContextData) string {
 		}
 		b.WriteString(".\n")
 	}
-	switch d.Phase {
-	case "waiting_int":
-		b.WriteString("It is waiting for a fixed int candidate. Do not build, deploy or pick an environment yourself.\n")
-	case "testing":
-		b.WriteString("It is being verified on its assigned acceptance environment. Run the real functional checks there; a passing call is not enough.\n")
-	case "awaiting_review":
-		b.WriteString("Its acceptance evidence is recorded and the user has not decided yet. Report and wait; do not release or close it on your own.\n")
-	case "approved":
-		b.WriteString("The user authorized release for this delivery. The publisher merges the approved deliveries into one candidate; do not publish a build of your own.\n")
-	case "preparing_release", "publishing":
-		b.WriteString("Its candidate is being built and switched. Keep the source fixed and answer questions; do not change the commit under release.\n")
-	case "published":
-		b.WriteString("It is already released. Only handle follow-up findings on the released version.\n")
-	case "needs_changes":
-		b.WriteString("It was returned for changes. Fix the reported points, verify locally, then resubmit through the delivery record.\n")
+	if d.Workflow == "project" {
+		switch d.Phase {
+		case "waiting_int":
+			b.WriteString("The submitted commit must pass code review before the platform assigns a verify environment.\n")
+		case "testing":
+			b.WriteString("Run this task's real functional checks on the assigned verify environment and submit evidence for the exact candidate.\n")
+		case "approved":
+			b.WriteString("Task verification passed; the platform queues it for the managed release batch. Do not publish a separate build.\n")
+		case "preparing_release", "publishing":
+			b.WriteString("The release batch is being integrated or published. Keep its source fixed.\n")
+		case "published":
+			b.WriteString("Check the actual production version and business result before marking the task complete.\n")
+		case "needs_changes":
+			b.WriteString("Fix the reported issue and submit the new commit for review and testing.\n")
+		}
+	} else {
+		switch d.Phase {
+		case "waiting_int":
+			b.WriteString("It is waiting for a fixed int candidate. Do not build, deploy or pick an environment yourself.\n")
+		case "testing":
+			b.WriteString("It is being verified on its assigned acceptance environment. Run the real functional checks there; a passing call is not enough.\n")
+		case "awaiting_review":
+			b.WriteString("Its acceptance evidence is recorded and the user has not decided yet. Report and wait; do not release or close it on your own.\n")
+		case "approved":
+			b.WriteString("The user authorized release for this delivery. The publisher merges the approved deliveries into one candidate; do not publish a build of your own.\n")
+		case "preparing_release", "publishing":
+			b.WriteString("Its candidate is being built and switched. Keep the source fixed and answer questions; do not change the commit under release.\n")
+		case "published":
+			b.WriteString("It is already released. Only handle follow-up findings on the released version.\n")
+		case "needs_changes":
+			b.WriteString("It was returned for changes. Fix the reported points, verify locally, then resubmit through the delivery record.\n")
+		}
+	}
+	if d.CandidateURL != "" {
+		fmt.Fprintf(&b, "- Candidate URL: %s\n", d.CandidateURL)
 	}
 	if d.CandidateID != "" || d.CandidateCommit != "" {
 		b.WriteString("- Candidate")

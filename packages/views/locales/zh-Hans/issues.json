@@ -87,6 +87,7 @@
     "todo": "待办",
     "in_progress": "进行中",
     "in_review": "审核中",
+    "pending_release": "待发布",
     "done": "已完成",
     "blocked": "已阻塞",
     "cancelled": "已取消"
@@ -960,6 +961,15 @@
       "unread": "尚未读取"
     }
   },
+  "release_agent": {
+    "settings": "发布 Agent 设置",
+    "description": "设置负责协调待发布任务、联调和生产发布的 Agent。",
+    "enable": "启用发布 Agent",
+    "enable_hint": "任务进入待发布后收集 10 分钟，再按批次发布。",
+    "project": "适用项目",
+    "project_placeholder": "选择项目",
+    "saved": "发布 Agent 设置已保存"
+  },
   "review": {
     "settings": "审查设置",
     "settings_description": "任务进入审核中后，先由审查员核对需求、代码与证据；通过才交给你确认。",
@@ -984,6 +994,11 @@
     "saving": "保存中…",
     "cancel": "取消",
     "review_passed": "审查通过",
-    "review_passed_hint": "审查员已通过；任务仍在审核中，等你确认。"
+    "review_passed_hint": "代码审查已通过。",
+    "review_waiting": "等待代码审查",
+    "verification_passed": "单任务测试已通过",
+    "verification_waiting": "等待单任务测试",
+    "integration_passed": "联调测试已通过",
+    "integration_waiting": "等待联调测试"
   }
 }

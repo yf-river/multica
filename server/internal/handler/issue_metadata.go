@@ -36,6 +36,15 @@ const (
 
 var issueMetadataKeyRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`)
 
+func systemIssueMetadataKey(key string) bool {
+	switch key {
+	case "review_passed", "release_workflow", "verification_passed", "verification_commit", "integration_passed", "integration_commit":
+		return true
+	default:
+		return false
+	}
+}
+
 // SetIssueMetadataKeyRequest 携带要写到 URL 里 key 名下的 JSON 值。Value 用 RawMessage 保留
 // 数字与字符串的区分直通 PostgreSQL——一旦解进 `any`，JSON 数字都会塌缩成 float64，整数精度
 // 就丢了。
@@ -139,6 +148,10 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if systemIssueMetadataKey(key) {
+		writeError(w, http.StatusForbidden, "该状态由系统根据验收结果维护")
+		return
+	}
 
 	var req SetIssueMetadataKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -225,6 +238,10 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 	key := chi.URLParam(r, "key")
 	if err := validateIssueMetadataKey(key); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if systemIssueMetadataKey(key) {
+		writeError(w, http.StatusForbidden, "该状态由系统根据验收结果维护")
 		return
 	}
 
