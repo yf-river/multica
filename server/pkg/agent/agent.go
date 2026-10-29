@@ -35,6 +35,8 @@ type Backend interface {
 
 // ExecOptions 配置单次执行（execute）的参数。
 type ExecOptions struct {
+	// ArchiveEvent 在原生事件进入展示过滤前同步持久化；错误会终止本次执行。
+	ArchiveEvent             func(json.RawMessage) error
 	RuntimeInputClaim        *protocol.RuntimeInputClaim
 	RuntimeInputCapabilities []string
 	EnableTaskSupplement     bool   // 已协商的运行内追加输入能力

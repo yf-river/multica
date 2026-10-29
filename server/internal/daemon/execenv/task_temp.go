@@ -7,6 +7,7 @@ package execenv
 import (
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/openviking"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -95,6 +96,12 @@ func ReleaseTaskTempLock(f *os.File) {
 // 调用方必须先释放自己的锁再调用本函数——标记在这里被删除，而 Windows 上
 // 删除一个本进程仍打开的文件只会"标记待删"，那会反过来阻塞目录本身的删除。
 func RemoveTaskTempDir(dir string) error {
+	if _, err := os.Stat(filepath.Join(dir, openviking.TempArchiveMarker)); err == nil {
+		return fmt.Errorf("task temp originals await archive")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -178,6 +185,9 @@ func PruneTaskTempDirs(base string, legacyTTL time.Duration, now time.Time, logg
 			continue
 		}
 		dir := filepath.Join(base, e.Name())
+		if _, err := os.Stat(filepath.Join(dir, openviking.TempArchiveMarker)); err == nil {
+			continue
+		}
 
 		switch classifyTaskTempDir(dir, logger) {
 		case taskTempInUse:

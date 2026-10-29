@@ -1299,6 +1299,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	}
 
 	c = &codexClient{
+		archiveEvent:             opts.ArchiveEvent,
 		mcpToolsOnly:             opts.MCPToolsOnly,
 		cfg:                      b.cfg,
 		approvalPolicy:           opts.ApprovalPolicy,
@@ -2558,6 +2559,7 @@ func describeCodexSemanticActivity(msg Message) string {
 // ── codexClient: JSON-RPC 2.0 transport ──
 
 type codexClient struct {
+	archiveEvent           func(json.RawMessage) error
 	mcpToolsOnly           bool
 	threadConfig           map[string]any
 	threadClosed           chan struct{}
@@ -2933,6 +2935,18 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (r
 		return nil, err
 	}
 	data = append(data, '\n')
+	if c.archiveEvent != nil {
+		raw, err := json.Marshal(map[string]any{"method": "multica/codex-request", "params": msg})
+		if err == nil {
+			err = c.archiveEvent(raw)
+		}
+		if err != nil {
+			c.mu.Lock()
+			delete(c.pending, id)
+			c.mu.Unlock()
+			return nil, err
+		}
+	}
 	if pr.goalConfirmation != nil {
 		c.goalMutationSequence.Add(1)
 		c.goalControlUncertain.Store(true)
@@ -3107,6 +3121,12 @@ func isCodexTransportError(err error) bool {
 }
 
 func (c *codexClient) handleLine(line string) {
+	if c.archiveEvent != nil && json.Valid([]byte(line)) {
+		if err := c.archiveEvent(json.RawMessage(line)); err != nil {
+			c.markProcessExited(fmt.Errorf("archive original Codex event: %w", err))
+			return
+		}
+	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
 		return

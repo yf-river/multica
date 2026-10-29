@@ -27,10 +27,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/openviking"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"os"
 )
 
 // extContentTypes 覆盖 http.DetectContentType 对部分扩展名判断错误的情况——
@@ -562,6 +564,12 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			params.ChatSessionID = task.ChatSessionID
 		}
 
+		if openviking.Enabled() {
+			if err := openviking.SaveObject(os.Getenv("MULTICA_OPENVIKING_ARCHIVE_ROOT"), id.String(), data); err != nil {
+				writeError(w, http.StatusServiceUnavailable, "could not preserve original attachment")
+				return
+			}
+		}
 		link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
 		if err != nil {
 			slog.Error("file upload failed", "error", err)

@@ -68,6 +68,7 @@ type dshMCPServer struct {
 
 // dshExecuteCommand 是下发"执行"的入站命令帧。
 type dshExecuteCommand struct {
+	Archive           bool               `json:"archive,omitempty"`
 	Version           int                `json:"v"`
 	Type              string             `json:"type"`              // 固定 "execute"
 	RequestID         string             `json:"request_id"`        // 本次请求 id，用于把结果对回任务
@@ -99,6 +100,7 @@ type dshWireError struct {
 // dshFrame 是 DSH 出站协议帧的通用载体，按 Type 区分语义、只取相关字段。
 type dshFrame struct {
 	Capabilities *struct {
+		Archive       bool `json:"archive"`
 		PlanReview    bool `json:"plan_review"`
 		UserQuestions bool `json:"user_questions"`
 	} `json:"capabilities,omitempty"`
@@ -348,6 +350,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		requestID = "multica-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 	command := dshExecuteCommand{
+		Archive: opts.ArchiveEvent != nil,
 		Version: DshProtocolVersion, Type: "execute", RequestID: requestID,
 		HumanInteractions: opts.HumanInteractions, PlanDecision: opts.PlanDecision,
 		Cwd: opts.Cwd, Prompt: prompt, Command: opts.Command, ApprovalPolicy: opts.ApprovalPolicy, ResumeSessionID: opts.ResumeSessionID,
@@ -362,6 +365,15 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		defer writeMu.Unlock()
 		if _, execute := value.(dshExecuteCommand); execute && runCtx.Err() != nil {
 			return runCtx.Err()
+		}
+		if opts.ArchiveEvent != nil {
+			raw, err := json.Marshal(map[string]any{"method": "multica/dsh-request", "params": value})
+			if err != nil {
+				return err
+			}
+			if err = opts.ArchiveEvent(raw); err != nil {
+				return err
+			}
 		}
 		return encoder.Encode(value)
 	}
@@ -433,6 +445,13 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				state.invalidFrames++
 				continue
 			}
+			if opts.ArchiveEvent != nil && executeSent {
+				if err := opts.ArchiveEvent(json.RawMessage(line)); err != nil {
+					state.protocolError = "archive original DSH event: " + err.Error()
+					cancel()
+					continue
+				}
+			}
 			state.frameCount++
 			if !executeSent {
 				if runCtx.Err() != nil {
@@ -451,6 +470,9 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				handleDshFrame(frame, requestID, msgCh, &state)
 				if state.protocolError == "" && !state.ready {
 					state.protocolError = "dsh returned an invalid ready frame"
+				}
+				if state.protocolError == "" && opts.ArchiveEvent != nil && (frame.Capabilities == nil || !frame.Capabilities.Archive) {
+					state.protocolError = "dsh raw archive capability unavailable; execution was not sent"
 				}
 				if state.protocolError == "" && opts.HumanInteractions && (!state.planReview || !state.userQuestions) {
 					state.protocolError = "dsh human interaction capabilities are unavailable; execution was not sent"

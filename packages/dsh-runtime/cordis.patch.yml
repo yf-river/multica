@@ -34,20 +34,3 @@
       disabled: !!js process.env.MULTICA_DSH_INTERACTIONS !== '1'
     - id: headless-runner
       name: '@multica-ai/dsh-runtime'
-
-# Keep the working set bounded for Multica tasks. DSH ships compaction defaults
-# (0.8 of the window, 64k headroom); 0.7 plus an explicit retention budget makes
-# long tasks compact earlier, which keeps DeepSeek prefix-cache reads and
-# per-call latency lower. The bridge still reports each compaction as an event.
-- id: compaction-basic
-  config:
-    thresholdRatio: 0.7
-    retainTokens: 32768
-    maxTokens: 16384
-
-# 受管 profile 的默认模型走 CodeBuddy 额度：canary 与未显式选模型的 DSH agent 不需要
-# 官方 DeepSeek 凭据；显式设置模型的 agent 不受影响。
-- id: agent-default-model
-  config:
-    provider: codebuddy
-    model: deepseek-v4.1-flash

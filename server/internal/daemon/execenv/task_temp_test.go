@@ -1,6 +1,7 @@
 package execenv
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -383,5 +384,43 @@ func TestPruneTaskTempDirsRechecksLockBeforeRemoving(t *testing.T) {
 	}
 	if got := classifyTaskTempDir(dir, testLogger()); got != taskTempInUse {
 		t.Fatalf("classify = %v, want taskTempInUse", got)
+	}
+}
+
+func TestTaskTempArchiveGuardPreservesOriginalsUntilCopied(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, TaskTempDirPrefix+"archive-test")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := LockTaskTempDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ReleaseTaskTempLock(lock)
+	original := filepath.Join(dir, "stdout.log")
+	if err = os.WriteFile(original, []byte("unarchived original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, ".multica-openviking-pending.json")
+	if err = os.WriteFile(marker, []byte(`{"journal":"pending"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = RemoveTaskTempDir(dir); err == nil {
+		t.Fatal("pending originals deleted by direct cleanup")
+	}
+	removed, _ := PruneTaskTempDirs(base, time.Nanosecond, time.Now().Add(time.Hour), slog.Default())
+	if removed != 0 {
+		t.Fatal("pending originals deleted by GC")
+	}
+	if data, err := os.ReadFile(original); err != nil || string(data) != "unarchived original" {
+		t.Fatal("pending original changed")
+	}
+	if err = os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	removed, _ = PruneTaskTempDirs(base, time.Nanosecond, time.Now().Add(time.Hour), slog.Default())
+	if removed != 1 {
+		t.Fatal("copied originals could not be cleaned up")
 	}
 }

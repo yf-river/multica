@@ -1,14 +1,16 @@
 ---
 name: multica-knowledge
-description: "Use when a task may depend on workspace documentation, decisions, or prior knowledge: search the workspace knowledge base before answering from memory, then cite the viking:// URI you used."
+description: "Use when a task may depend on shared documentation, decisions, or prior knowledge: search the knowledge base before answering from memory, then cite the viking:// URI you used."
 user-invocable: false
 allowed-tools: Bash(multica knowledge *)
 ---
 
-# Using the workspace knowledge base
+# Using OpenViking knowledge
 
-The workspace knowledge base is an OpenViking namespace scoped to this
-workspace. Multica proxies it, so the CLI never needs an OpenViking URL or key.
+Shared resources live in `viking://resources` in the default OpenViking account.
+Multica automatically recalls the current Agent user's memories before execution.
+The CLI can read shared resources, shared Skills, and this Agent user's own space.
+Credentials remain with the platform.
 
 ## Search before assuming
 
@@ -46,6 +48,6 @@ multica knowledge read <viking://.../file.md> --offset 0 --limit 200
 
 ## Scope
 
-`multica knowledge` always searches this workspace's namespace
-(`viking://resources/workspaces/<workspace-id>`). Do not pass URIs from another
-workspace; the server rejects them.
+Default searches cover `viking://resources`. Use `--path` with a directory URI
+when a narrower search is useful. Shared Skills live in `viking://agent/skills`.
+Use the OpenViking Studio entry in Multica for resource curation.

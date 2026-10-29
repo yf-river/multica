@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { RuntimeHost } from './host.js'
 import type { PendingInteraction } from './interactions.js'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 export const PROTOCOL_VERSION = 1 as const
 export const MAX_COMMAND_BYTES = 8 * 1024 * 1024
@@ -34,6 +35,7 @@ export interface StreamableHttpMcpServer extends McpServerBase {
 export type McpServerInput = StdioMcpServer | StreamableHttpMcpServer
 
 export interface ExecuteCommand {
+	archive?: boolean
   v: typeof PROTOCOL_VERSION
   type: 'execute'
   request_id: string
@@ -71,12 +73,14 @@ export interface RuntimeModelFrame {
 }
 
 export type OutboundFrame =
+  | { v: typeof PROTOCOL_VERSION; type: 'archive'; request_id: string; session_id: string; event: SessionEvent }
   | {
     v: typeof PROTOCOL_VERSION
     type: 'ready'
     runtime: 'dsh'
     plugin_version: string
     capabilities: {
+      archive?: true
       resume: true
       cancel: true
       models: true
@@ -299,12 +303,13 @@ export function parseInboundCommand(line: string): InboundCommand {
   if (type === 'execute') {
     assertOnlyKeys(
       command,
-      ['v', 'type', 'request_id', 'cwd', 'prompt', 'command', 'approval_policy', 'human_interactions', 'plan_decision', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers'],
+      ['v', 'type', 'request_id', 'cwd', 'prompt', 'command', 'approval_policy', 'archive', 'human_interactions', 'plan_decision', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers'],
       'execute command',
     )
     const prompt = optionalString(command.prompt, 'execute.prompt')
     const slashCommand = optionalString(command.command, 'execute.command')
     if (prompt === undefined && slashCommand === undefined) throw new Error('execute requires prompt or command')
+    if (command.archive !== undefined && typeof command.archive !== 'boolean') throw new Error('execute.archive must be boolean')
     if (command.human_interactions !== undefined && typeof command.human_interactions !== 'boolean') throw new Error('execute.human_interactions must be boolean')
     const planDecision = optionalString(command.plan_decision, 'execute.plan_decision')
     if (planDecision !== undefined && planDecision !== 'approved' && planDecision !== 'keep_planning') throw new Error('execute.plan_decision must be approved or keep_planning')
@@ -324,6 +329,7 @@ export function parseInboundCommand(line: string): InboundCommand {
       ...slashCommand === undefined ? {} : { command: slashCommand },
       ...approvalPolicy === undefined ? {} : { approval_policy: approvalPolicy },
       ...(command.human_interactions === undefined ? {} : { human_interactions: command.human_interactions }),
+      ...(command.archive === undefined ? {} : { archive: command.archive }),
       ...(planDecision === undefined ? {} : { plan_decision: planDecision }),
       ...optionalString(command.resume_session_id, 'execute.resume_session_id') === undefined
         ? {}

@@ -97,6 +97,7 @@ export function proxy(req: NextRequest) {
 /** 该 proxy 匹配哪些路径（与运行时改写/重定向目标一致，其余路径直接放行）。 */
 export const config = {
   matcher: [
+    "/studio/:path*",
     "/v1/:path*",
     "/api/:path*",
     "/auth/:path*",

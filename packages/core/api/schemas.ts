@@ -3461,6 +3461,8 @@ export const KnowledgeStatusSchema = z.object({
   base_url: z.string().optional(),
   error: z.string().optional(),
   health: z.unknown().optional(),
+  studio_url: z.string().optional(),
+  sync: z.object({ pending: z.number(), failed: z.number(), complete: z.number() }).optional(),
 }).loose();
 
 export const KnowledgeResourcesResponseSchema = z.object({

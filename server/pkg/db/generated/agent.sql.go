@@ -4212,9 +4212,9 @@ ORDER BY d.created_at DESC,d.id DESC LIMIT 1
 
 func (q *Queries) GetIssueTestingReviewSHA(ctx context.Context, issueID pgtype.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, getIssueTestingReviewSHA, issueID)
-	var sha string
-	err := row.Scan(&sha)
-	return sha, err
+	var source_commit string
+	err := row.Scan(&source_commit)
+	return source_commit, err
 }
 
 const getLastTaskSession = `-- name: GetLastTaskSession :one

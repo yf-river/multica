@@ -218,3 +218,27 @@ func TestDshCompactionFrameBecomesRuntimeMessage(t *testing.T) {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }
+
+func TestDshArchiveRequiresCapabilityBeforeExecution(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	bin := writeDshFixture(t, `
+printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","capabilities":{}}'
+if IFS= read -r command; then exit 77; fi
+`)
+	backend, err := New("dsh", Config{ExecutablePath: bin, TaskID: "archive-test", Logger: slog.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(context.Background(), "must not execute", ExecOptions{Cwd: t.TempDir(), Timeout: 5 * time.Second, ArchiveEvent: func(json.RawMessage) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if !strings.Contains(result.Error, "raw archive capability unavailable") {
+		t.Fatalf("missing capability did not reject execution: %+v", result)
+	}
+}

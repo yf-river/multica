@@ -234,6 +234,10 @@ function projectionValue<T>(active: ActiveRun, session: Agent['session'], key: s
 }
 
 function observeSessionEvent(active: ActiveRun, session: Agent['session'], event: SessionEvent): void {
+  if (active.agent?.session === session && event.seq < active.firstSeq) return
+  if (active.command.archive && active.agent) {
+    writeFrame({ v: PROTOCOL_VERSION, type: 'archive', request_id: active.command.request_id, session_id: String(session.id), event })
+  }
   if (active.agent?.session !== session || event.seq < active.firstSeq) return
   const requestId = active.command.request_id
   if (event.type === 'request/header') {
@@ -789,6 +793,7 @@ async function stdio(ctx: Context): Promise<number> {
     runtime: 'dsh',
     plugin_version: PLUGIN_VERSION,
     capabilities: {
+      archive: true,
       resume: true,
       cancel: true,
       models: true,

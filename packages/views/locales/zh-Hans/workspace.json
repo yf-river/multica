@@ -33,7 +33,7 @@
   },
   "knowledge": {
     "title": "知识库",
-    "subtitle": "工作区共享的 OpenViking 知识空间。",
+    "subtitle": "资料、Skill、会话、记忆与经验。",
     "search_placeholder": "搜索知识库…",
     "search": "搜索",
     "searching": "搜索中…",
@@ -46,6 +46,10 @@
     "upload": "上传",
     "uploading": "上传中…",
     "upload_done": "已提交，索引完成前搜索结果可能延迟。",
-    "upload_failed": "上传失败。"
+    "upload_failed": "上传失败。",
+    "refresh": "刷新",
+    "unavailable": "OpenViking 暂时不可用，新任务将等待恢复。",
+    "sync_pending": "{{count}} 条会话正在同步或提取记忆",
+    "sync_failed": "{{count}} 条同步需要重试"
   }
 }

@@ -1,8 +1,9 @@
 {
-  "bridgeVersion": "0.3.3",
+  "bridgeVersion": "0.3.4",
   "protocolVersion": 1,
   "dshRange": ">=0.2.1-rc.3 <0.3.0",
   "capabilities": [
+    "archive-v1",
     "commands-v1",
     "context-v1",
     "plan-review-v1",
@@ -15,7 +16,7 @@
     "context-frame",
     "plan-review"
   ],
-  "filename": "dsh-runtime-0.3.3.tgz",
-  "sha256": "2e614391d6d79b9f0bd1b4b1a2a6474c6f47f183b9d5a1bc048e3a982a13ef2b",
-  "bytes": 41447
+  "filename": "dsh-runtime-0.3.4.tgz",
+  "sha256": "92296c991d28b5663528cdf908f8f3da271a3f288141c8cbaf785ce33899f645",
+  "bytes": 41349
 }

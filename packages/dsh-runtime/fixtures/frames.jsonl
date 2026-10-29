@@ -1,4 +1,4 @@
-{"v":1,"type":"ready","runtime":"dsh","plugin_version":"0.3.2","capabilities":{"resume":true,"cancel":true,"models":true,"thinking":true,"usage":true,"tools":true,"context":true,"compaction":true,"mcp":["stdio","streamable-http"]}}
+{"v":1,"type":"ready","runtime":"dsh","plugin_version":"0.3.4","capabilities":{"resume":true,"cancel":true,"models":true,"thinking":true,"usage":true,"tools":true,"context":true,"compaction":true,"mcp":["stdio","streamable-http"]}}
 {"v":1,"type":"session","request_id":"contract-task","session_id":"contract-session","resumed":true}
 {"v":1,"type":"thinking","request_id":"contract-task","content":"inspect"}
 {"v":1,"type":"tool_call","request_id":"contract-task","call_id":"tool-1","name":"bash","arguments":"{\"command\":\"pwd\"}"}

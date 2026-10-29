@@ -281,6 +281,9 @@ func (c *wsRPCClient) deliver(resp protocol.RPCResponsePayload) {
 // 不确定，只在短暂的安全窗口过后才经 HTTP 重试。请求/响应体与 HTTP 端点完全一致，
 // 两种传输可互换。作为轮询切换的一部分接入 claim 轮询器。
 func (d *Daemon) ClaimTasksWSFirst(ctx context.Context, daemonID string, runtimeIDs []string, maxTasks int) ([]*Task, error) {
+	if err := d.openVikingReady(ctx); err != nil {
+		return nil, fmt.Errorf("new tasks paused until OpenViking recovers: %w", err)
+	}
 	// 没升级、没有 batch 路由的服务器：之前的某次轮询已经学到这一点（通过 404），
 	// 因此直接走旧版按 runtime 的 claim，每轮都跳过 WS + batch 尝试。
 	if d.batchClaimUnsupported.Load() {

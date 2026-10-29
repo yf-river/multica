@@ -6,6 +6,8 @@ export interface KnowledgeStatus {
   base_url?: string;
   error?: string;
   health?: unknown;
+  studio_url?: string;
+  sync?: { pending: number; failed: number; complete: number };
 }
 
 export interface KnowledgeResourcesResponse {

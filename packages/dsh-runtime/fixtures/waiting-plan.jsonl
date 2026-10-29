@@ -1,4 +1,4 @@
-{"v":1,"type":"ready","runtime":"dsh","plugin_version":"0.3.2","capabilities":{"resume":true,"cancel":true,"models":true,"thinking":true,"usage":true,"tools":true,"context":true,"compaction":true,"mcp":["stdio","streamable-http"],"plan_review":true,"user_questions":true}}
+{"v":1,"type":"ready","runtime":"dsh","plugin_version":"0.3.4","capabilities":{"resume":true,"cancel":true,"models":true,"thinking":true,"usage":true,"tools":true,"context":true,"compaction":true,"mcp":["stdio","streamable-http"],"plan_review":true,"user_questions":true}}
 {"v":1,"type":"session","request_id":"contract-task","session_id":"contract-session","resumed":false}
 {"v":1,"type":"plan_review","request_id":"contract-task","session_id":"contract-session","interaction":{"kind":"plan","call_id":"call-human","title":"A plan","questions":[],"plan_markdown":"# A plan\n\nRead, then write after approval.\n"}}
 {"v":1,"type":"result","request_id":"contract-task","session_id":"contract-session","status":"waiting_plan","output":"A plan","stop_reason":"waiting_human"}

@@ -50,6 +50,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "pricing",
   "changelog",
   "docs",
+  "studio",
   "support",
   "status",
   "legal",

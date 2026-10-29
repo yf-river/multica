@@ -44,6 +44,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/codediff"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/openviking"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -1990,6 +1991,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// 从 CLI 配置里加载鉴权 token。
 	if err := d.resolveAuth(); err != nil {
 		return err
+	}
+	if openviking.Enabled() {
+		if err := openviking.Recover(d.openVikingRoot()); err != nil {
+			return fmt.Errorf("recover OpenViking archive: %w", err)
+		}
+		go d.openVikingLoop(ctx)
 	}
 
 	// 在（可能较慢的）preflight 之前先绑定并服务健康端口，这样 `daemon start` 与
@@ -6424,6 +6431,75 @@ func waitCodexRolloutPresent(ctx context.Context, codexHome, sessionID string) b
 // task.Agent.Skills。先在缓存里查，miss 的包逐个单独下载并立即落缓存，使一次
 // 不完整的派发也会给下一个任务留下已缓存的技能。
 func (d *Daemon) ensureTaskSkillBundles(ctx context.Context, task *Task) error {
+	if !openviking.Enabled() {
+		return d.ensureServerSkillBundles(ctx, task)
+	}
+	if task == nil || task.Agent == nil {
+		return nil
+	}
+	refs := task.Agent.SkillRefs
+	task.Agent.SkillRefs = nil
+	for _, ref := range refs {
+		if ref.Source == "builtin" {
+			task.Agent.SkillRefs = append(task.Agent.SkillRefs, ref)
+		}
+	}
+	if err := d.ensureServerSkillBundles(ctx, task); err != nil {
+		return err
+	}
+	user, err := openviking.User(task.AgentID, task.Agent.CustomEnv["MULTICA_OPENVIKING_USER"])
+	if err != nil {
+		return err
+	}
+	selected := make(map[string]bool)
+	for _, ref := range refs {
+		selected[ref.Name] = true
+		selected[strings.ReplaceAll(ref.Name, ".", "-")] = true
+	}
+	protected := make(map[string]bool)
+	for _, skill := range task.Agent.Skills {
+		if skill.Source == "builtin" {
+			protected[skill.Name] = true
+		}
+	}
+	native, err := openviking.FromEnv().Skills(ctx, user, func(name string) bool { return !protected[name] && (task.SupervisionPrompt == "" || selected[name]) })
+	if err != nil {
+		return fmt.Errorf("load canonical OpenViking Skills: %w", err)
+	}
+	byName := make(map[string]openviking.Skill)
+	for _, skill := range native {
+		byName[skill.Name] = skill
+	}
+	for _, ref := range refs {
+		if ref.Source != "builtin" {
+			if _, ok := byName[ref.Name]; !ok {
+				return fmt.Errorf("assigned Skill %s is missing from OpenViking", ref.Name)
+			}
+		}
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if protected[name] {
+			continue
+		}
+		if task.SupervisionPrompt != "" && !selected[name] {
+			continue
+		}
+		skill := byName[name]
+		bundle := SkillData{ID: skill.URI, Source: "openviking", Name: skill.Name, Content: skill.Content, Hash: skill.Hash}
+		for _, file := range skill.Files {
+			bundle.Files = append(bundle.Files, SkillFileData{Path: file.Path, Data: file.Data, Mode: file.Mode, SHA256: openviking.SHA(file.Data), SizeBytes: int64(len(file.Data))})
+		}
+		task.Agent.Skills = append(task.Agent.Skills, bundle)
+	}
+	return nil
+}
+
+func (d *Daemon) ensureServerSkillBundles(ctx context.Context, task *Task) error {
 	if task == nil || task.Agent == nil || len(task.Agent.SkillRefs) == 0 {
 		return nil
 	}
@@ -7149,6 +7225,28 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	stopPrepareLease := d.startTaskPrepareLeaseExtender(prepareCtx, task, taskLog)
 	defer stopPrepareLease()
+	archive, archiveErr := d.beginOpenViking(prepareCtx, &task, provider)
+	if archiveErr != nil {
+		return TaskResult{}, fmt.Errorf("prepare original archive: %w", archiveErr)
+	}
+	if archive != nil {
+		defer func() {
+			archiveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+			defer cancel()
+			if err := d.collectOpenVikingAttachments(archiveCtx, archive, task); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("archive attachments: %w", err))
+			}
+			if err := archive.Finish(map[string]any{"result": taskResult, "error": fmt.Sprint(returnErr)}); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("persist original archive: %w", err))
+			}
+		}()
+		if err := d.collectOpenVikingAttachments(prepareCtx, archive, task); err != nil {
+			return TaskResult{}, err
+		}
+		if err := d.recallOpenViking(prepareCtx, &task, archive.Meta.User); err != nil {
+			return TaskResult{}, fmt.Errorf("recall OpenViking memory: %w", err)
+		}
+	}
 
 	if err := d.ensureTaskSkillBundles(prepareCtx, &task); err != nil {
 		return TaskResult{}, err
@@ -7900,6 +7998,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("prepare task temp dir: %w", err)
 	}
+	if archive != nil {
+		if err := archive.ProtectTempRoot(taskTempDir); err != nil {
+			execenv.ReleaseTaskTempLock(taskTempLock)
+			return TaskResult{}, err
+		}
+	}
 	defer func() {
 		// 先放执行锁、再删目录：锁被持有时 GC 清扫正确地拒绝碰这个目录，所以若删
 		// 除在这里失败（内部还有文件开着——#7364 里的 Windows 情形），目录会一直
@@ -7915,6 +8019,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		if releasePaused(ctx) {
 			return
+		}
+		if archive != nil {
+			if archive.PendingNativeOutputs() {
+				taskLog.Warn("task temp originals retained for archive", "path", taskTempDir)
+				return
+			}
+			if err := archive.ClearTempProtection(); err != nil {
+				returnErr = errors.Join(returnErr, err)
+				return
+			}
 		}
 		if cerr := execenv.RemoveTaskTempDir(taskTempDir); cerr != nil {
 			taskLog.Warn("task temp dir cleanup failed", "path", taskTempDir, "error", cerr)
@@ -8370,6 +8484,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	// 供下面的 resume 重试共享，让重试的 transcript 行给同一任务持续用递增的 seq。
 	var msgSeq atomic.Int32
+	if archive != nil {
+		var archiveMu sync.Mutex
+		execOpts.ArchiveEvent = func(raw json.RawMessage) error {
+			archiveMu.Lock()
+			defer archiveMu.Unlock()
+			appendErr := archive.Append(provider, raw)
+			captureErr := collectRuntimeAttachmentRefs(archive, raw)
+			return errors.Join(appendErr, captureErr)
+		}
+	}
 	// 1. Bind local evidence to this process interval, including failure and fresh-session retries.
 	evidenceStarted := time.Now()
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
@@ -8848,6 +8972,27 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// drain, leaving the subprocess running.
 	agentCtx, agentCancel := context.WithCancel(ctx)
 	defer agentCancel()
+	if archiveEvent := opts.ArchiveEvent; archiveEvent != nil {
+		opts.ArchiveEvent = func(raw json.RawMessage) error {
+			err := archiveEvent(raw)
+			if err != nil {
+				agentCancel()
+			}
+			return err
+		}
+		if request := opts.RequestInteraction; request != nil {
+			opts.RequestInteraction = func(callCtx context.Context, prompt protocol.InteractionPrompt) (protocol.InteractionAnswer, error) {
+				if err := recordOpenVikingInput(opts.ArchiveEvent, "multica/interaction-request", prompt); err != nil {
+					return protocol.InteractionAnswer{}, err
+				}
+				answer, err := request(callCtx, prompt)
+				if archiveErr := recordOpenVikingInput(opts.ArchiveEvent, "multica/interaction-answer", map[string]any{"answer": answer, "error": fmt.Sprint(err)}); archiveErr != nil {
+					return protocol.InteractionAnswer{}, errors.Join(err, archiveErr)
+				}
+				return answer, err
+			}
+		}
+	}
 
 	session, err := backend.Execute(agentCtx, prompt, opts)
 	if err != nil {
@@ -8857,6 +9002,26 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		err = agent.ExplainExecError(err)
 		taskLog.Debug("backend execute returned error", "error", err)
 		return agent.Result{}, 0, err
+	}
+	if opts.ArchiveEvent != nil {
+		if supplement := session.Supplement; supplement != nil {
+			session.Supplement = func(callCtx context.Context, content string) error {
+				if err := recordOpenVikingInput(opts.ArchiveEvent, "multica/supplement", map[string]any{"content": content}); err != nil {
+					return err
+				}
+				err := supplement(callCtx, content)
+				return errors.Join(err, recordOpenVikingInput(opts.ArchiveEvent, "multica/input-receipt", map[string]any{"kind": "supplement", "error": fmt.Sprint(err)}))
+			}
+		}
+		if command := session.RunCommand; command != nil {
+			session.RunCommand = func(callCtx context.Context, content string) (string, error) {
+				if err := recordOpenVikingInput(opts.ArchiveEvent, "multica/command", map[string]any{"content": content}); err != nil {
+					return "", err
+				}
+				output, err := command(callCtx, content)
+				return output, errors.Join(err, recordOpenVikingInput(opts.ArchiveEvent, "multica/input-receipt", map[string]any{"kind": "command", "output": output, "error": fmt.Sprint(err)}))
+			}
+		}
 	}
 	// 该计数刻意从更窄的"provider 会话"边界开始，而不是更早的服务器侧 StartTask
 	// 转换处。

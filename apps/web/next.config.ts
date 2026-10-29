@@ -79,6 +79,7 @@ const nextConfig: NextConfig = {
         : [],
       afterFiles: remoteApiUrl
         ? [
+            { source: "/studio/:path*", destination: `${remoteApiUrl}/studio/:path*` },
             {
               source: "/v1/:path*",
               destination: `${remoteApiUrl}/v1/:path*`,

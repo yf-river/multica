@@ -1456,6 +1456,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// 再对它校验。正因如此它落在用户作用域组里：路径上没有可用于把关的工作区。
 		// --- 用户作用域路由（无需工作区上下文） ---
 		r.Get("/api/me", h.GetMe)
+		r.With(handler.RequireHumanActor).Handle("/studio", http.HandlerFunc(h.OpenVikingStudio))
+		r.With(handler.RequireHumanActor).Handle("/studio/*", http.HandlerFunc(h.OpenVikingStudio))
+		r.With(handler.RequireHumanActor).Handle("/api/openviking/*", http.HandlerFunc(h.OpenVikingStudio))
+		r.With(handler.RequireHumanActor).Get("/api/openviking/events", h.ListOpenVikingEvents)
+		r.With(handler.RequireHumanActor).Post("/api/openviking/events/{eventId}/ack", h.AckOpenVikingEvent)
+		r.With(handler.RequireHumanActor).Get("/api/openviking/events/{eventId}/ready", h.OpenVikingEventReady)
+		r.With(handler.RequireHumanActor).Get("/api/openviking/objects/{objectId}", h.GetOpenVikingObject)
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
