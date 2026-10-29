@@ -963,7 +963,14 @@ def isolation_check(config_only=False):
         checks[e+'_environment']=all(x.get('MULTICA_ENV_ID')==e for x in c.values())
         checks[e+'_upstream']=c['web']['REMOTE_API_URL'].rstrip('/')=='http://127.0.0.1:'+c['server']['PORT']
         if not config_only:
-            m=read(meta_path(e)); check_process_ownership(e,m); checks[e+'_api']=http(m['frontend_url']+'/api/config').get('environment_id')==e
+            m=read(meta_path(e))
+            journal=RUN/'integration-data.json'
+            if e=='int' and journal.exists() and read(journal).get('stage')=='cleaned':
+                spec=importlib.util.spec_from_file_location('integration_data',Path(__file__).with_name('integration-data.py'))
+                integration=importlib.util.module_from_spec(spec);spec.loader.exec_module(integration)
+                checks[e+'_cleaned_idle']=integration.check_cleaned_idle(types.SimpleNamespace(**globals()),read(journal),m)
+                continue
+            check_process_ownership(e,m); checks[e+'_api']=http(m['frontend_url']+'/api/config').get('environment_id')==e
             for role,keys in {'server':['MULTICA_ENV_ID','JWT_SECRET','DATABASE_URL','LOCAL_UPLOAD_DIR','PORT','PPROF_PORT'],'web':['MULTICA_ENV_ID','REMOTE_API_URL','PORT'],'daemon':['MULTICA_ENV_ID','CODEBUDDY_CONFIG_DIR','MULTICA_ENV_WRITABLE_ROOT','TMPDIR']}.items():
                 actual=process_env(m['pids'][role]);checks[e+'_'+role+'_live_config']=all(actual.get(k)==c[role].get(k) for k in keys)
             h=http(health_url(e)+'/health'); p=read(m['daemon_profile_path'])

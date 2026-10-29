@@ -5568,7 +5568,7 @@ func (h *Handler) GetTaskDeliveryWorktree(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var commit, branch string
-	err := h.DB.QueryRow(r.Context(), `SELECT d.source_commit,d.source_branch FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND d.issue_id=$2 AND d.plan_snapshot->>'workflow'='project' AND (d.plan_snapshot->>'source_execution_id'=$3 OR (i.assignee_type='agent' AND i.assignee_id=$4)) AND d.phase NOT IN ('published','cancelled') ORDER BY d.created_at DESC LIMIT 1`, workspaceID, task.IssueID, uuidToString(task.ID), task.AgentID).Scan(&commit, &branch)
+	err := h.DB.QueryRow(r.Context(), `SELECT d.source_commit,d.source_branch FROM issue_delivery d JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id WHERE d.workspace_id=$1 AND d.issue_id=$2 AND d.plan_snapshot->>'workflow'='project' AND d.plan_snapshot->>'source_execution_id'=$3 AND d.phase NOT IN ('published','cancelled') ORDER BY d.created_at DESC LIMIT 1`, workspaceID, task.IssueID, uuidToString(task.ID)).Scan(&commit, &branch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, map[string]any{"retain": false})
 		return

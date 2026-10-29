@@ -169,7 +169,7 @@ class Worker:
                 if subprocess.run(['git','-C',r.ROOT,'var',identity],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
                     raise RuntimeError('发布预检失败：实际执行器缺少 Git 合并身份')
         self.pin(d)
-        if not integrate and d.get('source_work_dir') and self.batch_project() and d.get('project_id')==self.batch_project():
+        if not integrate and 'verification_repair' not in (d.get('plan_snapshot') or {}) and d.get('source_work_dir') and self.batch_project() and d.get('project_id')==self.batch_project():
             path=Path(d['source_work_dir']).resolve(strict=True)
             workspaces=Path(r.read(r.meta_path(self.env))['daemon_workspaces_root']).resolve(strict=True)
             if not path.is_relative_to(workspaces) or path==workspaces:
@@ -439,12 +439,13 @@ class Worker:
             raise r.RecoveryRequired('验收槽位缺少已验证的种子身份')
         return record
 
-    def ensure_seed(self):
-        if not self.current_seed():return
+    def ensure_seed(self,claim=None):
+        if claim is None and not self.current_seed():return
         try:
-            # 恢复、登记和恢复接单共用外部维护锁；另一交付等待下一轮，不能重置同一槽位。
+            # 种子核对与领取共用维护锁，基线完成判定期间不能插入新的槽位领取。
             with r.lock('verification-seed-maintenance'):
-                return self.ensure_seed_locked()
+                self.ensure_seed_locked()
+                if claim is not None:return claim()
         except BlockingIOError:
             raise Busy('其他交付正在恢复验收种子，等待下一轮') from None
 
@@ -572,7 +573,11 @@ class Worker:
                '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*command])
 
     def pool_dispatch(self,rows,current_id,allow_new=True):
-        if not allow_new and not (r.RUN/'verification-jobs').exists():return set()
+        project=self.batch_project()
+        # 项目交付始终由 verify 路由占有，隔离及暂停新入场时也不能落入旧 int 路径。
+        project_deliveries={d['id'] for d in rows if project and d.get('project_id')==project and d['phase'] in ('waiting_int','testing')}
+        if not allow_new and not (r.RUN/'verification-jobs').exists():
+            return project_deliveries
         managed=[]; active=set(); blocked=set()
         records={d['id']:d for d in rows}
         recovering=set()
@@ -610,7 +615,7 @@ class Worker:
                 active.add(d['id'])
             except Exception as error:
                 print('验收接力恢复受阻 '+d['id']+'：'+str(error),file=sys.stderr)
-        return {d['id'] for d in managed}
+        return project_deliveries | {d['id'] for d in managed}
 
     def prepare_repair(self,d,job,save):
         # 1. Retain the original quarantine until the pinned replacement and unchanged running baseline pass all gates.
@@ -625,7 +630,8 @@ class Worker:
         source=self.source(d,integrate=False)
         self.failure_stage='repair_building'
         save('repair_building',lease=old,repair_lease=old,source_commit=d['source_commit'])
-        artifact=r.build_verification(source,d['id'])
+        hot=bool(self.batch_project() and d.get('project_id')==self.batch_project())
+        artifact=r.build_verification(source,d['id'],dev_web=hot)
         manifest=r.read(artifact/'release.json')
         if manifest['source_commit']!=d['source_commit'] or manifest['files']!=r.checksums(artifact):raise r.RecoveryRequired('修复制品指纹不符')
         r.validate_pending_migrations(artifact,metadata['release_dir'])
@@ -641,7 +647,7 @@ class Worker:
         self.failure_stage='repair_slot_advance'
         lease=self.api('delivery-queue/slots/advance',dict(old,action='repair',replacement_worker_token=d['worker_token'],
                        replacement_source_commit=d['source_commit'],detail=detail))
-        save('preparing',lease=lease,repair_lease=old,artifact=str(artifact),source=str(source),source_commit=d['source_commit'])
+        save('preparing',lease=lease,repair_lease=old,artifact=str(artifact),source=str(source),source_commit=d['source_commit'],dev_web=hot)
         return source,artifact,lease
 
     def pool_delivery(self,delivery):
@@ -720,6 +726,7 @@ class Worker:
                 c=None
                 repairing=bool((d.get('plan_snapshot') or {}).get('verification_repair')) and not d.get('candidate_id')
                 if repairing:
+                    hot=bool(self.batch_project() and d.get('project_id')==self.batch_project())
                     if d['phase']=='waiting_int':
                         self.advance(d,'claim');d=refresh()
                     if d['phase']!='testing':return
@@ -776,11 +783,10 @@ class Worker:
                     while lease is None:
                         d=refresh()
                         if not d or d['phase']!='testing':return
-                        try:self.ensure_seed()
+                        try:
+                            lease=self.ensure_seed(lambda:slot(dict(delivery_id=delivery,worker_token=d['worker_token'],source_commit=d['source_commit']),'claim'))
                         except Busy:
                             stopped.set();return
-                        try:
-                            lease=slot(dict(delivery_id=delivery,worker_token=d['worker_token'],source_commit=d['source_commit']),'claim')
                         except urllib.error.HTTPError as e:
                             detail=json.loads(e.read().decode()) if e.code==409 else {}
                             if detail.get('error')!='没有可用验收槽位':raise
@@ -1008,6 +1014,19 @@ class Worker:
         return True
 
     def batch_prepare(self,batch,members,rows):
+        # 固定成员可能已从队列消失；必须精确查询，不能将暂时缺行当作撤回。
+        for member in members:
+            identity=member['delivery_id']
+            delivery=self.batch_row(rows,identity)
+            if not delivery:
+                delivery=self.batch_row(self.api('delivery-queue?current='+identity),identity)
+            if not delivery:return True
+            # 有 hold 的同交付修复由 tick_batches 的 hold/retry 分支处理；此处仅处理无 hold 的冻结批次。
+            if delivery.get('phase') in ('needs_changes','cancelled','published'):
+                self.batch_call(dict(action='fail',batch_id=batch['id'],worker_token=batch['worker_token'],
+                                     error='固定交付已退出/替换',conflict_delivery_id=identity))
+                return True
+        if not members:return True
         representative=members[0]
         delivery=self.batch_row(rows,representative['delivery_id'])
         if not delivery:return True
@@ -1132,6 +1151,17 @@ class Worker:
         r.write(r.RUN/'environment-baselines.json',dict(candidate_id=candidate['id'],commit=commit,source_digest=digest,refs=refs,updated_at=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())),True)
         r.write(r.RUN/'environment-baseline-maintenance.json',dict(candidate_id=candidate['id'],commit=commit,source_digest=digest),True)
 
+    def baseline_slot_stale(self,name,seed_id,commit):
+        """已维护槽位是否还停在本次生产基线。
+
+        同步期间该槽位仍会被下一个任务领取：释放只清空数据并留下候选程序，历史
+        completed 记录不能证明现在的部署提交。按槽位实际元数据和安装记录判断。
+        """
+        if r.read(r.meta_path(name)).get('commit')!=commit:return True
+        install=r.RUN/'verification-install'/(name+'.json')
+        state=r.read(install) if install.exists() else {}
+        return state.get('stage')!='cleaned' or state.get('baseline_cleanup_seed')!=seed_id
+
     def reconcile_environment_baseline(self):
         """以已发布归档生成种子，并逐个更新空闲槽位。"""
         import uuid
@@ -1175,9 +1205,21 @@ class Worker:
                     if not chosen or chosen.get('state')!='idle' or chosen.get('delivery_id'):
                         return
                 else:
+                    # 修改 1. 同步期间已维护的槽位仍会被下一个任务领取：释放只清空数据并留下候选
+                    # 程序，历史 completed 不能证明当前部署提交。空闲时重新核对实际程序，不是基线
+                    # 就重新维护，避免槽位最终停留在任务版本。
+                    stale=[x['name'] for x in sorted(slots,key=lambda x:x['name'])
+                           if x['name'] in completed and x['state']=='idle' and not x.get('delivery_id')
+                           and self.baseline_slot_stale(x['name'],seed_id,commit)]
+                    if stale:
+                        completed.difference_update(stale);job['completed_slots']=sorted(completed)
+                        r.write(journal,job,True)
                     chosen=next((x for x in sorted(slots,key=lambda x:x['name']) if x['state']=='idle' and not x.get('delivery_id') and x['name'] not in completed),None)
                     if not chosen:
-                        if current.get('seed_id')==seed_id and completed==set(r.VERIFICATION_ENVS):
+                        # 修改 2. 被占用的槽位无法核对：只有三个槽位都空闲且都停在基线程序上，
+                        # 才能判定整次同步完成，不能在仍有槽位跑任务版本时提前收尾。
+                        occupied=[x for x in slots if x['state']!='idle' or x.get('delivery_id')]
+                        if current.get('seed_id')==seed_id and completed==set(r.VERIFICATION_ENVS) and not stale and not occupied:
                             job['complete']=True;r.write(journal,job,True)
                         return
                     job.update(slot=chosen['name'],previous_enabled=chosen['enabled']);r.write(journal,job,True)

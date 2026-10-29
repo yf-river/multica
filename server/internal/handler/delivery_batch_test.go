@@ -610,6 +610,37 @@ func TestDeliveryBatchConflictStaysOnItsMemberAndPublishesOthers(t *testing.T) {
 	batchCleanup(t)
 }
 
+func TestProjectBatchFailedTerminalMemberPreservesOthers(t *testing.T) {
+	if testHandler == nil {
+		t.Fatal("isolated PostgreSQL required")
+	}
+	for _, phase := range []string{"needs_changes", "cancelled", "published"} {
+		t.Run(phase, func(t *testing.T) {
+			batchCleanup(t)
+			project := dbfx.Insert(t, "project", testutil.Cols{"workspace_id": testWorkspaceID, "title": "失效成员"})
+			old, _ := batchFixture(t)
+			valid, _ := batchFixture(t)
+			for _, id := range []string{old, valid} {
+				dbfx.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=(SELECT issue_id FROM issue_delivery WHERE id=$1)`, id, project)
+			}
+			batch, _ := batchResponse(t, batchAction(t, map[string]any{"action": "open", "window_seconds": 1, "project_id": project}))
+			dbfx.Exec(t, `UPDATE delivery_batch SET collect_until=now()-interval '1 second' WHERE id=$1`, batch.ID)
+			batch, members := freezeBatch(t, batch.ID)
+			if len(members) != 2 {
+				t.Fatalf("members: %+v", members)
+			}
+			dbfx.Exec(t, `UPDATE issue_delivery SET phase=$2 WHERE id=$1`, old, phase)
+			batchAction(t, map[string]any{"action": "fail", "batch_id": batch.ID, "worker_token": batch.WorkerToken, "error": "固定交付已退出/替换", "conflict_delivery_id": old}).Want(200)
+			if got := deliveryPhase(t, valid); got != "approved" {
+				t.Fatalf("valid member changed: %s", got)
+			}
+			if got := deliveryPhase(t, old); phase != "needs_changes" && got != phase {
+				t.Fatalf("terminal phase: %s", got)
+			}
+		})
+	}
+}
+
 func TestDeliveryBatchPublishesMembersOnceWithOneCandidate(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

@@ -44,7 +44,7 @@ class PoolFlowTests(unittest.TestCase):
             artifact=Path(tmp)/'artifact';artifact.mkdir()
             source=Path(tmp)/'source';source.mkdir()
             if resume:r.write(worker.pool_job_path(identity),dict(stage='verifying',delivery_id=identity,lease=lease,candidate_id='candidate'))
-            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source) as checkout,patch.object(r,'build_verification',side_effect=lambda *a,**k:events.append('build') or artifact) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'),patch.object(worker,'require_sql_seed'),patch.object(w.seed,'clear_slot',side_effect=lambda *a:events.append('clear')),patch.object(worker,'ensure_seed'),patch.object(worker,'seed_matches',return_value=True):
+            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source) as checkout,patch.object(r,'build_verification',side_effect=lambda *a,**k:events.append('build') or artifact) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'),patch.object(worker,'require_sql_seed'),patch.object(w.seed,'clear_slot',side_effect=lambda *a:events.append('clear')),patch.object(worker,'ensure_seed',side_effect=lambda claim:claim()),patch.object(worker,'seed_matches',return_value=True):
                 r.write(r.meta_path('verify-1'),dict(frontend_url='http://fixture'))
                 if busy:
                     with patch.object(worker,'ensure_seed',side_effect=w.Busy('三个槽位均在验收')):
@@ -126,9 +126,50 @@ class PoolFlowTests(unittest.TestCase):
 
 
 class SeedGateTests(unittest.TestCase):
+    def setUp(self):
+        directory=tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        run_patch=patch.object(r,'RUN',Path(directory.name))
+        run_patch.start()
+        self.addCleanup(run_patch.stop)
+
     def worker(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         return worker
+
+    def test_baseline_completion_snapshot_excludes_a_new_claim(self):
+        worker=self.worker()
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(worker,'ensure_seed_locked'):
+            state=dict(slot='idle',complete=False)
+            def claim():
+                state['slot']='preparing'
+                return dict(name='verify-1')
+            # 真实文件锁模拟维护器已读空闲快照、尚未写完成标记的交错。
+            with r.lock('verification-seed-maintenance'):
+                snapshot=dict(state)
+                with self.assertRaises(w.Busy):worker.ensure_seed(claim)
+                self.assertEqual(snapshot['slot'],'idle')
+                self.assertEqual(state['slot'],'idle')
+                state['complete']=True
+            self.assertEqual(worker.ensure_seed(claim),dict(name='verify-1'))
+            self.assertTrue(state['complete'])
+            self.assertEqual(state['slot'],'preparing')
+
+    def test_seed_check_and_claim_hold_the_same_real_maintenance_lock(self):
+        worker=self.worker()
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)):
+            stages=[]
+            def check_locked(stage):
+                with self.assertRaises(BlockingIOError):
+                    with r.lock('verification-seed-maintenance'):pass
+                stages.append(stage)
+            def claim():
+                check_locked('claim')
+                return dict(name='verify-1')
+            with patch.object(worker,'ensure_seed_locked',side_effect=lambda:check_locked('seed')):
+                self.assertEqual(worker.ensure_seed(claim),dict(name='verify-1'))
+            self.assertEqual(stages,['seed','claim'])
+            with r.lock('verification-seed-maintenance'):pass
 
     def test_project_requires_matching_verified_sql_seed(self):
         worker=self.worker()
@@ -324,6 +365,36 @@ class PoolServiceLifetimeTests(unittest.TestCase):
             launch.assert_called_once_with(next_delivery['id'])
             self.assertIn(bad['id'],errors.getvalue())
             self.assertIn('identity mismatch',errors.getvalue())
+
+    def test_project_waiting_for_source_or_review_is_reserved_without_dispatch(self):
+        base=dict(id=self.identity,phase='waiting_int',project_id='project-a',source_commit='a'*40,
+                  source_ready=True,issue_status='in_progress',final_review=dict(state='passed',head_sha='a'*40))
+        for changes in (dict(source_ready=False),dict(issue_status='in_review'),
+                        dict(final_review=dict(state='pending',head_sha='a'*40)),
+                        dict(final_review=dict(state='passed',head_sha='b'*40))):
+            with self.subTest(changes=changes),patch.object(self.worker,'batch_project',return_value='project-a'), \
+                    patch.object(self.worker,'start_pool_unit') as launch:
+                self.assertEqual(self.worker.pool_dispatch([dict(base,**changes)],None),{self.identity})
+                launch.assert_not_called()
+        with patch.object(self.worker,'batch_project',return_value='project-a'), patch.object(self.worker,'start_pool_unit') as launch:
+            self.assertEqual(self.worker.pool_dispatch([base],None,allow_new=False),{self.identity})
+            launch.assert_not_called()
+
+    def test_project_quarantined_testing_remains_managed_without_launch(self):
+        d=dict(id=self.identity,phase='testing',project_id='project-a')
+        r.write(self.worker.pool_job_path(self.identity),dict(delivery_id=self.identity,stage='quarantined',lease={}))
+        with patch.object(self.worker,'batch_project',return_value='project-a'), patch.object(self.worker,'start_pool_unit') as launch:
+            self.assertEqual(self.worker.pool_dispatch([d],None),{self.identity})
+            launch.assert_not_called()
+
+    def test_disabled_admission_reserves_project_testing_including_current(self):
+        d=dict(id=self.identity,phase='testing',project_id='project-a')
+        other=dict(id='00000000-0000-0000-0000-000000000004',phase='testing',project_id='other-project')
+        with patch.object(self.worker,'batch_project',return_value='project-a'), patch.object(self.worker,'start_pool_unit') as launch:
+            self.assertEqual(self.worker.pool_dispatch([d,other],self.identity,allow_new=False),{self.identity})
+            (r.RUN/'verification-jobs').mkdir(parents=True,exist_ok=True)
+            self.assertEqual(self.worker.pool_dispatch([d,other],self.identity,allow_new=False),{self.identity})
+            launch.assert_not_called()
 
     def test_start_failure_is_reported_without_stopping_other_deliveries(self):
         import io

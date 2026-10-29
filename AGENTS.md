@@ -12,11 +12,11 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ### Default Development Delivery
 
-Ordinary feature requests proceed through confirmed plan, isolated task branch, focused checks, fixed **int** acceptance and **in_review**. Production deployment requires separate user confirmation for the delivery; once the production release passes browser acceptance, the task is marked **done** directly, without a further user confirmation. Test-environment acceptance, a successful build, or a deployment that merely starts never close a task, and a failed release or acceptance leaves it open. Tasks without release authorization, and analysis or configuration work, keep their own completion conditions. Unapproved changes remain on task branches. Read `CLAUDE.md` and `docs/operations/environment-releases.md` for the authoritative workflow.
+Projects with an enabled release Agent follow the project workflow: isolated task branch → code review → leased **verify-1/2/3** acceptance → ready for release → 10-minute batch → fixed **int** integration → production with the same accepted artifact. The three checkmarks bind review, task verification and integration to their exact commits or candidate. The configured project workflow supplies the release path; explicit user limits still apply. Projects without an enabled release Agent use the documented single-delivery authorization workflow. Read `CLAUDE.md` and `docs/operations/environment-releases.md` before choosing an entry.
 
-Use persisted delivery records and the existing external publisher for queueing, recovery, integration and production updates. Build from pinned commits rather than ephemeral task directories. Only explicit user requests allow independent environments with `MULTICA_LOCAL_DEV=1`. Explicit local-only or no-deployment boundaries take precedence.
+Use persisted delivery records and the existing external publisher for queueing, recovery, integration and production updates. Pin source commits; verify frontend development mode may use the leased task directory, while int and production share an immutable build. Only explicit user requests allow independent environments with `MULTICA_LOCAL_DEV=1`.
 
-并行验收使用固定 `verify-1/2/3`，最终集成仍使用固定 `int`，生产发布另行授权；验收数据来自当前已验证种子，换任务按种子恢复、证据绑定种子版本，入口以 `docs/operations/environment-releases.md` 为准，禁止把验收副本或种子凭据用于生产。发布授权按任务逐个给出；组批机制启用后把窗口内已批准的多项交付合成一个候选发布一次，未启用时仍走单项交付，启用条件见同一文档。
+验收数据来自当前已验证的 SQL 种子，领取任务时执行对应迁移和初始化；释放后清理专属业务数据和上传目录，下一次领取再初始化。生产发布后同步环境基线，忙碌槽位等任务释放后维护。生产业务数据和凭据不属于测试清理范围。只有真实生产业务验收通过才完成发布任务；构建成功、测试通过或服务启动都不能代替生产验收。
 
 ### Architecture
 

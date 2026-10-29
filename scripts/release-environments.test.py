@@ -265,6 +265,20 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(config.stat().st_mode&0o777,0o600)
             finally:r.RUN=original
 
+    def test_cleaned_int_keeps_production_online_checks(self):
+        import types
+        with tempfile.TemporaryDirectory() as d, patch.object(r,'RUN',Path(d)):
+            for env,base in (('int',1000),('prod',2000)):
+                r.write(r.config_path(env),{'server':{'MULTICA_ENV_ID':env,'PORT':str(base),'PPROF_PORT':str(base+1)},'web':{'MULTICA_ENV_ID':env,'PORT':str(base+2),'REMOTE_API_URL':'http://127.0.0.1:'+str(base)},'daemon':{'MULTICA_ENV_ID':env}})
+                r.write(r.meta_path(env),{'pids':{'server':99999991,'web':99999992,'daemon':99999993},'frontend_url':'http://fixture','backend_url':'http://backend','daemon_profile':'profile','daemon_profile_path':str(Path(d)/'profile'),'daemon_workspaces_root':'/work','release_dir':'/proc'})
+            r.write(Path(d)/'profile',{'workspaces_root':'/work'})
+            r.write(Path(d)/'integration-data.json',{'stage':'cleaned'})
+            helper=types.SimpleNamespace(check_cleaned_idle=lambda *args:True)
+            with patch.object(r.importlib.util,'spec_from_file_location') as spec,patch.object(r.importlib.util,'module_from_spec',return_value=helper),patch.object(r,'check_process_ownership') as ownership,patch.object(r,'http',side_effect=[{'environment_id':'prod'},{'profile':'profile','server_url':'http://backend'}]),patch.object(r,'health_url',return_value='http://health'),patch.object(r,'process_env',side_effect=lambda pid: {'MULTICA_ENV_ID':'prod','PORT':'2000' if pid==99999991 else '2002','PPROF_PORT':'2001','REMOTE_API_URL':'http://127.0.0.1:2000'}):
+                spec.return_value.loader.exec_module.return_value=None
+                r.isolation_check()
+                self.assertEqual(ownership.call_args.args[0],'prod')
+
     def test_checksum_detects_changed_files_and_symlink_targets(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'app').write_text('first');(root/'link').symlink_to('app')

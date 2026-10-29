@@ -123,6 +123,41 @@ func TestFinalizeRetainedPreservesOnlyExactSubmittedCommit(t *testing.T) {
 	}
 }
 
+// Runtime cleanup must retain a user edit made to the injected file and the exact delivery commit.
+func TestRetainedDeliveryRuntimeCleanupPreservesTrackedGuidance(t *testing.T) {
+	repo := newTestRepo(t)
+	writeFile(t, filepath.Join(repo, "AGENTS.md"), "old guidance\n")
+	gitRun(t, repo, "add", "AGENTS.md")
+	gitRun(t, repo, "commit", "-m", "guidance")
+	wt := prepareForTest(t, repo)
+	t.Cleanup(func() { _ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", wt.Path).Run() })
+	path := filepath.Join(wt.Path, "AGENTS.md")
+	if err := writeRuntimeConfigFile(path, "brief"); err != nil {
+		t.Fatal(err)
+	}
+	content := readFile(t, path)
+	writeFile(t, path, strings.Replace(content, "old guidance", "new guidance", 1))
+	// Commit only the user's content, while the live worktree retains the injected block.
+	blob := exec.Command("git", "-C", wt.Path, "hash-object", "-w", "--stdin")
+	blob.Stdin = strings.NewReader("new guidance\n")
+	out, err := blob.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, wt.Path, "update-index", "--cacheinfo", "100644,"+strings.TrimSpace(string(out))+",AGENTS.md")
+	gitRun(t, wt.Path, "commit", "-m", "updated guidance")
+	commit := gitRun(t, wt.Path, "rev-parse", "HEAD")
+	if err := CleanupRuntimeConfig(wt.Path, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, path); got != "new guidance\n" {
+		t.Fatalf("cleanup lost user edit: %q", got)
+	}
+	if _, err := wt.FinalizeRetained(worktreeTestLogger(), wt.Branch, commit); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The agent must see the user's uncommitted work, not a clean HEAD checkout.
 // This is the property that makes worktree mode usable rather than confusing:
 // otherwise the agent silently reviews code the user hasn't got open.
