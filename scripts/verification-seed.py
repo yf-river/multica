@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import time
 import urllib.error
@@ -298,6 +299,57 @@ def clear_slot(env, lease, pgconfig, fence):
         clear_verification_uploads(env,cfg,record)
         clear_verification_database(env,cfg,pgconfig)
         record['stage']='cleaned';r.write(record_path,record,True)
+
+
+def clear_idle_baseline(env, seed_id, seed_sha256, pgconfig):
+    """生产基线同步后清空空闲槽位，下一次领取时再导入种子。"""
+    if env not in r.VERIFICATION_ENVS or os.environ.get('MULTICA_TASK_ID'):
+        raise RuntimeError('仅外部维护身份可清理固定验收环境')
+    begin_maintenance(env,'生产基线同步后清理验收数据')
+    with r.lock(r.candidate_lock(env),wait=True):
+        cfg=r.read(r.config_path(env));meta=r.read(r.meta_path(env));r.validate_verification_config(env,cfg)
+        path=r.RUN/'verification-install'/(env+'.json');record=r.read(path)
+        if record.get('environment')!=env:
+            raise RuntimeError('验收槽位安装身份不符')
+        if record.get('stage')=='cleaned' and record.get('baseline_cleanup_seed')==seed_id:
+            r.check_process_ownership(env,meta,allow_unhealthy=True)
+            if any(r.exists(pid) for pid in meta.get('pids',{}).values()):raise RuntimeError('清理后的槽位仍有运行进程')
+        else:
+            if record.get('stage')=='baseline_cleaning':
+                if record.get('baseline_cleanup_seed')!=seed_id:raise RuntimeError('未完成的清理属于其他种子')
+                r.check_process_ownership(env,meta,allow_unhealthy=True)
+            else:
+                container,port,_=postgres(pgconfig)
+                target=urllib.parse.urlparse(cfg['server']['DATABASE_URL'])
+                database='multica_'+env.replace('-','_')
+                if target.hostname!='127.0.0.1' or str(target.port)!=port or target.path!='/'+database or target.username!=env.replace('-','_'):
+                    raise RuntimeError('槽位实际连接与专属实例不一致')
+                if not any(r.exists(pid) for pid in meta.get('pids',{}).values()):
+                    check_stopped_slot(env,meta,container,database)
+                else:
+                    r.check_process_ownership(env,meta);r.check_live_environment(env,meta,cfg)
+                    r.drain(env,meta)
+                if counter(container,database,"SELECT count(*) FROM agent_task_queue WHERE status NOT IN ('completed','failed','cancelled')"):
+                    raise RuntimeError('验收环境仍有未完成任务，保留现场')
+                r.assert_unused(meta['daemon_workspaces_root'])
+                record.update(stage='baseline_cleaning',baseline_cleanup_seed=seed_id)
+                r.write(path,record,True)
+            daemon=meta.get('pids',{}).get('daemon')
+            if daemon and r.exists(daemon):
+                r.http(r.health_url(env)+'/shutdown','POST')
+                deadline=time.monotonic()+30
+                while r.exists(daemon) and time.monotonic()<deadline:time.sleep(.2)
+                if r.exists(daemon):raise RuntimeError('验收 Daemon 未退出')
+            for role in ('web','server'):
+                pid=meta.get('pids',{}).get(role)
+                if pid and r.exists(pid):
+                    release=Path(meta.get('role_release_dirs',{}).get(role,meta['release_dir']))
+                    r.owned_stop(pid,role,release/'apps/web' if role=='web' else release)
+            meta['pids']={};r.write(r.meta_path(env),meta,True)
+            clear_verification_uploads(env,cfg,record)
+            clear_verification_database(env,cfg,pgconfig)
+            record['stage']='cleaned';r.write(path,record,True)
+        record_slot_seed(env,seed_id,seed_sha256,False)
 
 
 def adopt_cleaning(env, previous, current):
@@ -621,6 +673,26 @@ def retire_failed_candidate(env, meta):
     r.save_candidate(record)
 
 
+def check_stopped_slot(env, meta, container, database):
+    """槽位整体停机时确认没有残留消费者，才允许从种子重新启动。"""
+    if any(r.exists(pid) for pid in meta.get('pids',{}).values()):
+        raise RuntimeError('验收槽位部分进程仍在运行，不能自动恢复')
+    r.check_process_ownership(env,meta,allow_unhealthy=True)
+    r.assert_unused(meta['release_dir'])
+    r.assert_unused(meta['daemon_workspaces_root'])
+    if counter(container,'postgres',"SELECT count(*) FROM pg_stat_activity WHERE datname='%s'" % database):
+        raise RuntimeError('验收数据库仍有消费者，拒绝重置')
+    ports=(meta['backend_port'],meta['frontend_port'],urllib.parse.urlparse(r.health_url(env)).port)
+    probes=[]
+    try:
+        for port in ports:
+            probe=socket.socket();probes.append(probe);probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);probe.bind(('0.0.0.0',int(port)))
+    except OSError as error:
+        raise RuntimeError('验收槽位监听端口已被占用') from error
+    finally:
+        for probe in probes:probe.close()
+
+
 def restore(env, seed, pgconfig):
     """把种子装进专属槽位；调用方必须先让槽位进入维护态。"""
     if env not in r.VERIFICATION_ENVS or os.environ.get('MULTICA_TASK_ID'):
@@ -662,6 +734,8 @@ def restore(env, seed, pgconfig):
                 r.check_process_ownership(env, meta, allow_unhealthy=True)
                 if any(r.exists(pid) for pid in meta.get('pids',{}).values()):
                     raise RuntimeError('清理后的槽位仍有运行进程')
+            elif not any(r.exists(pid) for pid in meta.get('pids',{}).values()):
+                check_stopped_slot(env,meta,container,dbname)
             else:
                 r.check_process_ownership(env, meta)
                 r.check_live_environment(env, meta, cfg)

@@ -38,9 +38,10 @@ class BaselineMaintenanceTests(unittest.TestCase):
             def verify(name,*args,**kwargs):
                 saved=r.read(journal)
                 self.assertEqual((name,saved['slot'],saved['previous_enabled']),('verify-2','verify-2',True))
-            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value={}),patch.object(w.seed,'read_seed',return_value=(destination,manifest,artifact)),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'verify_seed',side_effect=verify) as run:
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value={}),patch.object(w.seed,'read_seed',return_value=(destination,manifest,artifact)),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'clear_idle_baseline') as clean,patch.object(w.seed,'verify_seed',side_effect=verify) as run:
                 worker.reconcile_environment_baseline()
                 run.assert_called_once()
+                clean.assert_called_once_with('verify-2',seed_id,'seed-hash',root/'verification-postgres.json')
                 self.assertNotIn('slot',r.read(journal))
 
     def test_retry_restores_previous_enabled_state(self):
@@ -55,11 +56,26 @@ class BaselineMaintenanceTests(unittest.TestCase):
             slots=[dict(name=name,state='idle',enabled=False,delivery_id=None) for name in r.VERIFICATION_ENVS]
             worker.api=lambda path:slots
             manifest=dict(build=dict(baseline_commit=commit));artifact=dict(sha256='seed-hash')
-            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value=dict(seed_id=seed_id,dump_sha256='seed-hash')),patch.object(w.seed,'read_seed',return_value=(destination,manifest,artifact)),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'ensure') as ensure,patch.object(w.seed,'resume') as resume:
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value=dict(seed_id=seed_id,dump_sha256='seed-hash')),patch.object(w.seed,'read_seed',return_value=(destination,manifest,artifact)),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'clear_idle_baseline'),patch.object(w.seed,'ensure') as ensure,patch.object(w.seed,'resume') as resume:
                 worker.reconcile_environment_baseline()
                 ensure.assert_called_once_with('verify-2',root/'verification-postgres.json')
                 resume.assert_called_once()
                 self.assertNotIn('slot',r.read(journal))
+
+    def test_interrupted_cleanup_resumes_before_any_seed_restore(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);commit='a'*40;candidate='candidate-1';seed_id='prod-'+commit
+            archive=root/'accepted-artifacts'/candidate/commit;archive.mkdir(parents=True)
+            (archive/'release.json').write_text(json.dumps(dict(source_commit=commit,source_digest='digest',files={'fixture':'hash'})))
+            seeds=root/'seeds';destination=seeds/seed_id;destination.mkdir(parents=True)
+            r.write(root/'published.json',dict(candidate=candidate,commit=commit,source_digest='digest'))
+            journal=root/'environment-baseline-maintenance.json';r.write(journal,dict(candidate_id=candidate,commit=commit,source_digest='digest',slot='verify-2',previous_enabled=False))
+            r.write(root/'verification-install/verify-2.json',dict(stage='baseline_cleaning',baseline_cleanup_seed=seed_id))
+            worker=object.__new__(w.Worker);worker.api=lambda path:[dict(name=name,state='idle',enabled=False,delivery_id=None) for name in r.VERIFICATION_ENVS]
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value=dict(seed_id=seed_id,dump_sha256='seed-hash')),patch.object(w.seed,'read_seed',return_value=(destination,dict(build=dict(baseline_commit=commit)),dict(sha256='seed-hash'))),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'clear_idle_baseline') as clean,patch.object(w.seed,'ensure') as ensure:
+                worker.reconcile_environment_baseline()
+                ensure.assert_not_called();clean.assert_called_once()
+                self.assertEqual(r.read(journal)['completed_slots'],['verify-2'])
 
 
 class BatchFlowTests(unittest.TestCase):

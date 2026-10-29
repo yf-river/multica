@@ -1168,25 +1168,32 @@ class Worker:
                 slots=self.api('delivery-queue/slots')
                 if {x.get('name') for x in slots}!=set(r.VERIFICATION_ENVS):
                     raise r.RecoveryRequired('验收槽位清单不完整')
+                completed=set(job.get('completed_slots') or [])
                 pending=job.get('slot')
                 if pending:
                     chosen=next((x for x in slots if x.get('name')==pending),None)
                     if not chosen or chosen.get('state')!='idle' or chosen.get('delivery_id'):
                         return
                 else:
-                    chosen=next((x for x in sorted(slots,key=lambda x:x['name']) if x['state']=='idle' and not x.get('delivery_id') and (x.get('seed_id')!=seed_id or x.get('seed_sha256')!=artifact['sha256'] or x.get('seed_verified') is not True)),None)
+                    chosen=next((x for x in sorted(slots,key=lambda x:x['name']) if x['state']=='idle' and not x.get('delivery_id') and x['name'] not in completed),None)
                     if not chosen:
-                        if current.get('seed_id')==seed_id and all(x.get('seed_id')==seed_id and x.get('seed_sha256')==artifact['sha256'] and x.get('seed_verified') is True for x in slots):
+                        if current.get('seed_id')==seed_id and completed==set(r.VERIFICATION_ENVS):
                             job['complete']=True;r.write(journal,job,True)
                         return
                     job.update(slot=chosen['name'],previous_enabled=chosen['enabled']);r.write(journal,job,True)
-                if current.get('seed_id')!=seed_id or current.get('dump_sha256')!=artifact['sha256']:
-                    seed.verify_seed(chosen['name'],path,pgconfig,accept=True)
-                else:
-                    seed.ensure(chosen['name'],pgconfig)
+                install=r.RUN/'verification-install'/(chosen['name']+'.json')
+                state=r.read(install) if install.exists() else {}
+                cleaning=state.get('stage') in ('baseline_cleaning','cleaned') and state.get('baseline_cleanup_seed')==seed_id
+                if not cleaning:
+                    if current.get('seed_id')!=seed_id or current.get('dump_sha256')!=artifact['sha256']:
+                        seed.verify_seed(chosen['name'],path,pgconfig,accept=True)
+                    else:
+                        seed.ensure(chosen['name'],pgconfig)
+                seed.clear_idle_baseline(chosen['name'],seed_id,artifact['sha256'],pgconfig)
                 after=next(x for x in self.api('delivery-queue/slots') if x['name']==chosen['name'])
                 if job.get('previous_enabled') and not after.get('enabled'):
                     seed.resume(chosen['name'],'生产基线维护完成')
+                completed.add(chosen['name']);job['completed_slots']=sorted(completed)
                 job.pop('slot',None);job.pop('previous_enabled',None);r.write(journal,job,True)
         except BlockingIOError:
             return
