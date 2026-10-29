@@ -23,6 +23,44 @@ def delivery(identity, phase='approved'):
 
 
 class BaselineMaintenanceTests(unittest.TestCase):
+    def test_completed_slot_used_by_another_task_is_restored_before_completion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);commit='a'*40;task_commit='b'*40;candidate='candidate-1';seed_id='prod-'+commit
+            archive=root/'accepted-artifacts'/candidate/commit;archive.mkdir(parents=True)
+            r.write(archive/'release.json',dict(source_commit=commit,source_digest='digest',files={'fixture':'hash'}))
+            seeds=root/'seeds';destination=seeds/seed_id;destination.mkdir(parents=True)
+            r.write(root/'published.json',dict(candidate=candidate,commit=commit,source_digest='digest'))
+            journal=root/'environment-baseline-maintenance.json'
+            r.write(journal,dict(candidate_id=candidate,commit=commit,source_digest='digest',completed_slots=['verify-1','verify-3']))
+            slots=[dict(name='verify-1',state='verifying',enabled=True,delivery_id='task-a'),dict(name='verify-2',state='verifying',enabled=True,delivery_id='task-b'),dict(name='verify-3',state='idle',enabled=True,delivery_id=None)]
+            for item in slots:
+                name=item['name']
+                r.write(root/'deployments'/('goal-test-'+name+'.json'),dict(commit=commit))
+                r.write(root/'verification-install'/(name+'.json'),dict(stage='cleaned',baseline_cleanup_seed=seed_id))
+            worker=object.__new__(w.Worker);worker.api=lambda path:slots
+            restored=[]
+            def ensure(name,*args):
+                restored.append(name)
+                r.write(root/'deployments'/('goal-test-'+name+'.json'),dict(commit=commit))
+            def clear(name,*args):
+                r.write(root/'verification-install'/(name+'.json'),dict(stage='cleaned',baseline_cleanup_seed=seed_id))
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value=dict(seed_id=seed_id,dump_sha256='seed-hash')),patch.object(w.seed,'read_seed',return_value=(destination,dict(build=dict(baseline_commit=commit)),dict(sha256='seed-hash'))),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'ensure',side_effect=ensure),patch.object(w.seed,'clear_idle_baseline',side_effect=clear):
+                worker.reconcile_environment_baseline()
+                self.assertEqual(r.read(journal)['completed_slots'],['verify-3'])
+                self.assertFalse(r.read(journal).get('complete',False))
+                # 已维护槽位完成另一个任务，保留了任务程序和旧清理标记。
+                slots[0].update(state='idle',delivery_id=None)
+                r.write(root/'deployments/goal-test-verify-1.json',dict(commit=task_commit))
+                worker.reconcile_environment_baseline()
+                self.assertEqual(restored,['verify-1'])
+                self.assertEqual(r.read(root/'deployments/goal-test-verify-1.json')['commit'],commit)
+                self.assertFalse(r.read(journal).get('complete',False))
+                slots[1].update(state='idle',delivery_id=None)
+                worker.reconcile_environment_baseline()
+                worker.reconcile_environment_baseline()
+                self.assertTrue(r.read(journal)['complete'])
+                self.assertEqual(r.read(journal)['completed_slots'],list(r.VERIFICATION_ENVS))
+
     def test_only_idle_slot_is_maintained_and_interrupted_enable_state_is_saved(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);commit='a'*40;candidate='candidate-1';digest='digest';seed_id='prod-'+commit

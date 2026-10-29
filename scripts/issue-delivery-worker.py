@@ -1169,6 +1169,23 @@ class Worker:
                 if {x.get('name') for x in slots}!=set(r.VERIFICATION_ENVS):
                     raise r.RecoveryRequired('验收槽位清单不完整')
                 completed=set(job.get('completed_slots') or [])
+                # 槽位恢复接单后可能再次被使用；历史完成记录必须仍与空闲现场一致。
+                valid_completed=set()
+                for item in slots:
+                    name=item['name']
+                    if name not in completed or item['state']!='idle' or item.get('delivery_id'):
+                        continue
+                    installed=r.RUN/'verification-install'/(name+'.json')
+                    metadata=r.meta_path(name)
+                    if not installed.exists() or not metadata.exists():
+                        continue
+                    state=r.read(installed)
+                    if state.get('stage')=='cleaned' and state.get('baseline_cleanup_seed')==seed_id and r.read(metadata).get('commit')==commit:
+                        valid_completed.add(name)
+                if valid_completed!=completed:
+                    completed=valid_completed
+                    job['completed_slots']=sorted(completed)
+                    r.write(journal,job,True)
                 pending=job.get('slot')
                 if pending:
                     chosen=next((x for x in slots if x.get('name')==pending),None)
