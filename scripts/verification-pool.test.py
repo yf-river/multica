@@ -44,7 +44,7 @@ class PoolFlowTests(unittest.TestCase):
             artifact=Path(tmp)/'artifact';artifact.mkdir()
             source=Path(tmp)/'source';source.mkdir()
             if resume:r.write(worker.pool_job_path(identity),dict(stage='verifying',delivery_id=identity,lease=lease,candidate_id='candidate'))
-            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source) as checkout,patch.object(r,'build_verification',side_effect=lambda *a,**k:events.append('build') or artifact) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'),patch.object(worker,'require_sql_seed'),patch.object(w.seed,'clear_slot',side_effect=lambda *a:events.append('clear')),patch.object(worker,'ensure_seed'),patch.object(worker,'seed_matches',return_value=True):
+            with patch.object(worker,'api',side_effect=api),patch.object(worker,'advance',side_effect=advance),patch.object(worker,'source',return_value=source) as checkout,patch.object(r,'build_verification',side_effect=lambda *a,**k:events.append('build') or artifact) as build,patch.object(r,'prepare_verification',return_value=candidate) as prepare,patch.object(r,'read',wraps=r.read) as read,patch.object(r,'accept',side_effect=lambda *a,**k:events.append('accept')),patch.object(r,'drain',side_effect=lambda *a:events.append('stop')),patch.object(r,'release_candidate',side_effect=lambda *a,**k:events.append('release_candidate')),patch.object(r,'candidate',return_value=candidate),patch.object(r,'check_process_ownership'),patch.object(r,'validate_candidate'),patch.object(r,'save_candidate'),patch.object(worker,'require_sql_seed'),patch.object(w.seed,'clear_slot',side_effect=lambda *a:events.append('clear')),patch.object(worker,'ensure_seed',side_effect=lambda claim:claim()),patch.object(worker,'seed_matches',return_value=True):
                 r.write(r.meta_path('verify-1'),dict(frontend_url='http://fixture'))
                 if busy:
                     with patch.object(worker,'ensure_seed',side_effect=w.Busy('三个槽位均在验收')):
@@ -129,6 +129,40 @@ class SeedGateTests(unittest.TestCase):
     def worker(self):
         worker=object.__new__(w.Worker);worker.env='prod'
         return worker
+
+    def test_baseline_completion_snapshot_excludes_a_new_claim(self):
+        worker=self.worker()
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(worker,'ensure_seed_locked'):
+            state=dict(slot='idle',complete=False)
+            def claim():
+                state['slot']='preparing'
+                return dict(name='verify-1')
+            # 真实文件锁模拟维护器已读空闲快照、尚未写完成标记的交错。
+            with r.lock('verification-seed-maintenance'):
+                snapshot=dict(state)
+                with self.assertRaises(w.Busy):worker.ensure_seed(claim)
+                self.assertEqual(snapshot['slot'],'idle')
+                self.assertEqual(state['slot'],'idle')
+                state['complete']=True
+            self.assertEqual(worker.ensure_seed(claim),dict(name='verify-1'))
+            self.assertTrue(state['complete'])
+            self.assertEqual(state['slot'],'preparing')
+
+    def test_seed_check_and_claim_hold_the_same_real_maintenance_lock(self):
+        worker=self.worker()
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)):
+            stages=[]
+            def check_locked(stage):
+                with self.assertRaises(BlockingIOError):
+                    with r.lock('verification-seed-maintenance'):pass
+                stages.append(stage)
+            def claim():
+                check_locked('claim')
+                return dict(name='verify-1')
+            with patch.object(worker,'ensure_seed_locked',side_effect=lambda:check_locked('seed')):
+                self.assertEqual(worker.ensure_seed(claim),dict(name='verify-1'))
+            self.assertEqual(stages,['seed','claim'])
+            with r.lock('verification-seed-maintenance'):pass
 
     def test_project_requires_matching_verified_sql_seed(self):
         worker=self.worker()

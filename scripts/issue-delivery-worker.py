@@ -439,12 +439,13 @@ class Worker:
             raise r.RecoveryRequired('验收槽位缺少已验证的种子身份')
         return record
 
-    def ensure_seed(self):
-        if not self.current_seed():return
+    def ensure_seed(self,claim=None):
+        if claim is None and not self.current_seed():return
         try:
-            # 恢复、登记和恢复接单共用外部维护锁；另一交付等待下一轮，不能重置同一槽位。
+            # 种子核对与领取共用维护锁，基线完成判定期间不能插入新的槽位领取。
             with r.lock('verification-seed-maintenance'):
-                return self.ensure_seed_locked()
+                self.ensure_seed_locked()
+                if claim is not None:return claim()
         except BlockingIOError:
             raise Busy('其他交付正在恢复验收种子，等待下一轮') from None
 
@@ -776,11 +777,10 @@ class Worker:
                     while lease is None:
                         d=refresh()
                         if not d or d['phase']!='testing':return
-                        try:self.ensure_seed()
+                        try:
+                            lease=self.ensure_seed(lambda:slot(dict(delivery_id=delivery,worker_token=d['worker_token'],source_commit=d['source_commit']),'claim'))
                         except Busy:
                             stopped.set();return
-                        try:
-                            lease=slot(dict(delivery_id=delivery,worker_token=d['worker_token'],source_commit=d['source_commit']),'claim')
                         except urllib.error.HTTPError as e:
                             detail=json.loads(e.read().decode()) if e.code==409 else {}
                             if detail.get('error')!='没有可用验收槽位':raise
