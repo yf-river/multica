@@ -187,7 +187,7 @@ def clear_environment(r, batch, fence):
                 if len(users)>1:
                     raise r.RecoveryRequired('联调环境存在多个密码账号，无法自动确定恢复身份')
                 login=users[0] if users else dict(account=accounts[0],password_hash='')
-                if not re.fullmatch(r'[a-zA-Z0-9_.@-]+',login.get('account') or ''):
+                if not re.fullmatch(r'[a-z0-9._-]{3,64}',login.get('account') or ''):
                     raise r.RecoveryRequired('联调登录账号无法安全恢复')
                 state['login'] = login
                 r.write(journal,state,True)
@@ -312,7 +312,7 @@ def restore_environment(r, seed, batch, pointer, fence):
             if len(accounts) != 1 or not re.fullmatch(r'[a-zA-Z0-9_.@-]+', accounts[0]):
                 raise r.RecoveryRequired('联调环境需要明确唯一的测试账号')
             account=(state.get('login') or {}).get('account') or accounts[0]
-            if not re.fullmatch(r'[a-zA-Z0-9_.@-]+',account):
+            if not re.fullmatch(r'[a-z0-9._-]{3,64}',account):
                 raise r.RecoveryRequired('联调登录账号无法安全恢复')
             running = Path(meta['release_dir']).resolve()
             selected = seed.restore_release(manifest, running)
@@ -326,10 +326,13 @@ def restore_environment(r, seed, batch, pointer, fence):
                     raise r.RecoveryRequired('联调种子基线复制校验失败')
                 selected = destination
             state.update(stage='initializing', batch=batch, seed=pointer, restore_release=str(Path(selected).resolve()),
-                         restore_release_id=package['id'], account=account, password=secrets.token_urlsafe(32))
+                         restore_release_id=package['id'], account=account, password=secrets.token_urlsafe(24))
             r.write(journal, state, True)
         elif state.get('seed') != pointer:
             raise r.RecoveryRequired('联调恢复中不能更换 SQL 种子')
+        # 修复中断记录里超出登录接口 32 字符上限的临时口令；数据库会按同一目标重新初始化。
+        if not isinstance(state.get('password'),str) or not 1 <= len(state['password']) <= 32:
+            state['password']=secrets.token_urlsafe(24);r.write(journal,state,True)
         release = Path(state['restore_release']).resolve()
         package = r.read(release/'release.json')
         if package.get('id') != state.get('restore_release_id') or r.checksums(release) != package.get('files'):
