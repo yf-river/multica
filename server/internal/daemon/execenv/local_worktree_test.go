@@ -2572,6 +2572,49 @@ func TestIsolatedPrepareKeepsTheReadOnlyBranchDrop(t *testing.T) {
 	}
 }
 
+func TestReviewWorktreeChecksOutExactRemoteCommit(t *testing.T) {
+	remote := newTestRepo(t)
+	root := t.TempDir()
+	gitRun(t, root, "clone", remote, "repo")
+	repo := filepath.Join(root, "repo")
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "private unfinished work\n")
+	writeFile(t, filepath.Join(remote, "review.txt"), "review candidate\n")
+	gitRun(t, remote, "add", "review.txt")
+	gitRun(t, remote, "commit", "-m", "review candidate")
+	candidate := gitRun(t, remote, "rev-parse", "HEAD")
+	wt, err := PrepareLocalWorktree(LocalWorktreeParams{LocalPath: repo, BaseRef: candidate, RepositoryURL: remote, ExactCommit: true, EnvRoot: t.TempDir(), AgentName: "review", TaskID: "exact-review"}, worktreeTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gitRun(t, wt.Path, "rev-parse", "HEAD"); got != candidate {
+		t.Fatalf("review HEAD=%s, want %s", got, candidate)
+	}
+	if got := readFile(t, filepath.Join(wt.Path, "tracked.txt")); got != "original\n" {
+		t.Fatalf("dirty checkout leaked into review: %q", got)
+	}
+	if got := readFile(t, filepath.Join(wt.Path, "review.txt")); got != "review candidate\n" {
+		t.Fatalf("missing candidate content: %q", got)
+	}
+	if got := readFile(t, filepath.Join(repo, "tracked.txt")); got != "private unfinished work\n" {
+		t.Fatalf("source checkout changed: %q", got)
+	}
+}
+
+func TestReviewWorktreeRejectsMissingRemoteCommit(t *testing.T) {
+	remote := newTestRepo(t)
+	root := t.TempDir()
+	gitRun(t, root, "clone", remote, "repo")
+	repo := filepath.Join(root, "repo")
+	before := gitRun(t, repo, "rev-parse", "HEAD")
+	_, err := PrepareLocalWorktree(LocalWorktreeParams{LocalPath: repo, BaseRef: strings.Repeat("0", 40), RepositoryURL: remote, ExactCommit: true, EnvRoot: t.TempDir(), AgentName: "review", TaskID: "missing-review"}, worktreeTestLogger())
+	if err == nil {
+		t.Fatal("missing review commit was accepted")
+	}
+	if after := gitRun(t, repo, "rev-parse", "HEAD"); after != before {
+		t.Fatalf("source checkout changed: %s -> %s", before, after)
+	}
+}
+
 func TestConfiguredBaseExcludesDirtyCheckoutAndFollowsCommittedBranch(t *testing.T) {
 	remote := newTestRepo(t)
 	root := t.TempDir()

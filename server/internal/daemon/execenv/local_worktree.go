@@ -78,6 +78,8 @@ type LocalWorktreeParams struct {
 	// BaseRef 指定提交基线；配置后不捕获用户目录的未提交修改。
 	BaseRef       string
 	RepositoryURL string
+	// ExactCommit 用于只读审查：从远端固定提交检出，不生成额外 baseline。
+	ExactCommit bool
 	// EnvRoot 是 daemon 自有的任务 env root。worktree 建在它里面，普通 env-root
 	// GC 就会顺带回收它。
 	EnvRoot string
@@ -323,7 +325,30 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 
 	var userState string
 	var plan taskBranchPlan
-	if params.BaseRef != "" || params.RepositoryURL != "" {
+	if params.ExactCommit {
+		if len(params.BaseRef) != 40 {
+			return nil, fmt.Errorf("invalid review commit")
+		}
+		if _, err = hex.DecodeString(params.BaseRef); err != nil || strings.ToLower(params.BaseRef) != params.BaseRef {
+			return nil, fmt.Errorf("invalid review commit")
+		}
+		remote, remoteErr := matchingRemote(gitRoot, params.RepositoryURL)
+		if remoteErr != nil {
+			return nil, remoteErr
+		}
+		if _, err = runGitEnv(gitRoot, []string{"GIT_TERMINAL_PROMPT=0"}, "fetch", "--no-tags", remote, params.BaseRef); err != nil {
+			return nil, fmt.Errorf("fetch review commit %s: %w", params.BaseRef, err)
+		}
+		headSHA, err = runGitTrimmed(gitRoot, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+		if err != nil || headSHA != params.BaseRef {
+			return nil, fmt.Errorf("review commit does not match fetched commit")
+		}
+		// 审查使用独立任务分支，不能续接旧审查或开发分支。
+		isolated := params
+		isolated.ConversationKey = ""
+		plan = resolveTaskBranch(gitRoot, isolated, headSHA, logger)
+		userState = headSHA
+	} else if params.BaseRef != "" || params.RepositoryURL != "" {
 		if _, err = runGit(gitRoot, "check-ref-format", "--branch", params.BaseRef); params.BaseRef != "" && err != nil {
 			return nil, fmt.Errorf("invalid development branch: %w", err)
 		}
@@ -418,7 +443,7 @@ func PrepareLocalWorktree(params LocalWorktreeParams, logger *slog.Logger) (*Loc
 	//
 	// 重放未解决时整个跳过：带着未合并条目的索引提交会把冲突标记一并提交进去，
 	// 而 agent 还没轮到处理它们。
-	if len(replay.conflicts) == 0 {
+	if len(replay.conflicts) == 0 && !params.ExactCommit {
 		dirty, dirtyErr := worktreeIsDirty(worktreePath)
 		if dirtyErr != nil {
 			rollback()

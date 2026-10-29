@@ -7640,7 +7640,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Task:                  taskCtx,
 		}
 		if localAssignment.UsesWorktree() {
-			prepParams.LocalWorktree = &execenv.LocalWorktreeParams{LocalPath: localAssignment.AbsPath, BaseRef: localAssignment.Ref.BaseRef, RepositoryURL: localAssignment.Ref.RepositoryURL}
+			prepParams.LocalWorktree = &execenv.LocalWorktreeParams{LocalPath: localAssignment.AbsPath, BaseRef: localAssignment.Ref.BaseRef, RepositoryURL: localAssignment.Ref.RepositoryURL, ExactCommit: task.ReviewCommit != ""}
 			// 仅为快照而取 per-path 互斥锁，随即交还——够读到一棵一致树，又够短
 			// 到 worktree 任务在运行期间仍然重叠。
 			//
