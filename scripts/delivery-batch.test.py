@@ -22,6 +22,46 @@ def delivery(identity, phase='approved'):
     return dict(id=identity, phase=phase, source_commit='a' * 40, worker_token='t-' + identity, revision=1, created_at='2026-10-23')
 
 
+class BaselineMaintenanceTests(unittest.TestCase):
+    def test_only_idle_slot_is_maintained_and_interrupted_enable_state_is_saved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);commit='a'*40;candidate='candidate-1';digest='digest';seed_id='prod-'+commit
+            archive=root/'accepted-artifacts'/candidate/commit;archive.mkdir(parents=True)
+            (archive/'release.json').write_text(json.dumps(dict(source_commit=commit,source_digest=digest,files={'fixture':'hash'})))
+            seeds=root/'seeds';destination=seeds/seed_id;destination.mkdir(parents=True)
+            r.write(root/'published.json',dict(candidate=candidate,commit=commit,source_digest=digest))
+            journal=root/'environment-baseline-maintenance.json';r.write(journal,dict(candidate_id=candidate,commit=commit,source_digest=digest))
+            worker=object.__new__(w.Worker)
+            slots=[dict(name='verify-1',state='verifying',enabled=True,delivery_id='other'),dict(name='verify-2',state='idle',enabled=True,delivery_id=None),dict(name='verify-3',state='verifying',enabled=True,delivery_id='other-2')]
+            worker.api=lambda path:slots
+            manifest=dict(build=dict(baseline_commit=commit));artifact=dict(sha256='seed-hash')
+            def verify(name,*args,**kwargs):
+                saved=r.read(journal)
+                self.assertEqual((name,saved['slot'],saved['previous_enabled']),('verify-2','verify-2',True))
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value={}),patch.object(w.seed,'read_seed',return_value=(destination,manifest,artifact)),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'verify_seed',side_effect=verify) as run:
+                worker.reconcile_environment_baseline()
+                run.assert_called_once()
+                self.assertNotIn('slot',r.read(journal))
+
+    def test_retry_restores_previous_enabled_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);commit='a'*40;candidate='candidate-1';seed_id='prod-'+commit
+            archive=root/'accepted-artifacts'/candidate/commit;archive.mkdir(parents=True)
+            (archive/'release.json').write_text(json.dumps(dict(source_commit=commit,source_digest='digest',files={'fixture':'hash'})))
+            seeds=root/'seeds';destination=seeds/seed_id;destination.mkdir(parents=True)
+            r.write(root/'published.json',dict(candidate=candidate,commit=commit,source_digest='digest'))
+            journal=root/'environment-baseline-maintenance.json';r.write(journal,dict(candidate_id=candidate,commit=commit,source_digest='digest',slot='verify-2',previous_enabled=True))
+            worker=object.__new__(w.Worker)
+            slots=[dict(name=name,state='idle',enabled=False,delivery_id=None) for name in r.VERIFICATION_ENVS]
+            worker.api=lambda path:slots
+            manifest=dict(build=dict(baseline_commit=commit));artifact=dict(sha256='seed-hash')
+            with patch.object(r,'RUN',root),patch.object(w.seed,'SEEDS',seeds),patch.object(r,'lock',return_value=contextlib.nullcontext()),patch.object(r,'checksums',return_value={'fixture':'hash'}),patch.object(worker,'current_seed',return_value=dict(seed_id=seed_id,dump_sha256='seed-hash')),patch.object(w.seed,'read_seed',return_value=(destination,manifest,artifact)),patch.object(w.seed,'verified_sql_seed',return_value=destination/'seed.sql'),patch.object(w.seed,'ensure') as ensure,patch.object(w.seed,'resume') as resume:
+                worker.reconcile_environment_baseline()
+                ensure.assert_called_once_with('verify-2',root/'verification-postgres.json')
+                resume.assert_called_once()
+                self.assertNotIn('slot',r.read(journal))
+
+
 class BatchFlowTests(unittest.TestCase):
     """组批只在发布器空闲、窗口到期后冻结；一个批次只构建和发布一次。"""
 

@@ -321,6 +321,13 @@ class CompatibilityTests(unittest.TestCase):
         write_release(other)
         s.validate_seed_release(self.manifest, other)
 
+    def test_explicit_baseline_updates_program_even_when_schema_is_unchanged(self):
+        other = self.root/'other';write_release(other)
+        package=json.loads((other/'release.json').read_text());package['source_commit']='e'*40
+        (other/'release.json').write_text(json.dumps(package))
+        manifest=dict(self.manifest,build={'release':str(self.release),'baseline_commit':'c'*40})
+        self.assertEqual(s.restore_release(manifest,other),self.release)
+
     def test_new_task_migrations_select_verified_full_seed_baseline(self):
         other=self.root/'task-a';write_release(other,b'CREATE TABLE task_a(id int);')
         manifest=dict(self.manifest,build={'release':str(self.release)})

@@ -1132,6 +1132,66 @@ class Worker:
             raise r.RecoveryRequired('生产产物校验失败，不能同步环境分支')
         refs=sync_environment_refs(r.ROOT,commit,fence)
         r.write(r.RUN/'environment-baselines.json',dict(candidate_id=candidate['id'],commit=commit,source_digest=digest,refs=refs,updated_at=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())),True)
+        r.write(r.RUN/'environment-baseline-maintenance.json',dict(candidate_id=candidate['id'],commit=commit,source_digest=digest),True)
+
+    def reconcile_environment_baseline(self):
+        """以已发布归档生成种子，并逐个更新空闲槽位。"""
+        import uuid
+        journal=r.RUN/'environment-baseline-maintenance.json'
+        if not journal.exists():return
+        if r.read(journal).get('complete') is True:return
+        try:
+            with r.lock('verification-seed-maintenance'), r.lock('publisher'):
+                job=r.read(journal);published=r.read(r.RUN/'published.json')
+                if any(published.get(k)!=job.get(j) for k,j in (('candidate','candidate_id'),('commit','commit'),('source_digest','source_digest'))):
+                    raise r.RecoveryRequired('环境基线任务与当前生产记录不符')
+                commit=job['commit'];candidate=job['candidate_id']
+                if not re.fullmatch(r'[0-9a-f]{40}',commit) or not re.fullmatch(r'[a-zA-Z0-9_.-]+',candidate):
+                    raise r.RecoveryRequired('环境基线任务身份无效')
+                archive=r.RUN/'accepted-artifacts'/candidate/commit
+                package=r.read(archive/'release.json')
+                if package.get('source_commit')!=commit or package.get('source_digest')!=job['source_digest'] or r.checksums(archive)!=package.get('files'):
+                    raise r.RecoveryRequired('生产验收归档身份不符')
+                seed_id='prod-'+commit
+                destination=seed.SEEDS/seed_id
+                pgconfig=r.RUN/'verification-postgres.json'
+                if not destination.exists():
+                    temporary='stage-'+commit+'-'+uuid.uuid4().hex[:8]
+                    staged=seed.build_seed(temporary,None,archive,pgconfig)
+                    manifest=r.read(staged/'seed.json')
+                    manifest['seed_id']=seed_id;manifest['build']['baseline_commit']=commit
+                    seed.write_manifest(staged,manifest)
+                    seed.verify_sql_seed(staged,archive,pgconfig)
+                    os.rename(staged,destination)
+                path,manifest,artifact=seed.read_seed(destination)
+                if (manifest.get('build') or {}).get('baseline_commit')!=commit or not seed.verified_sql_seed(path,manifest):
+                    raise r.RecoveryRequired('生产基线种子身份不符')
+                current=self.current_seed() or {}
+                slots=self.api('delivery-queue/slots')
+                if {x.get('name') for x in slots}!=set(r.VERIFICATION_ENVS):
+                    raise r.RecoveryRequired('验收槽位清单不完整')
+                pending=job.get('slot')
+                if pending:
+                    chosen=next((x for x in slots if x.get('name')==pending),None)
+                    if not chosen or chosen.get('state')!='idle' or chosen.get('delivery_id'):
+                        return
+                else:
+                    chosen=next((x for x in sorted(slots,key=lambda x:x['name']) if x['state']=='idle' and not x.get('delivery_id') and (x.get('seed_id')!=seed_id or x.get('seed_sha256')!=artifact['sha256'] or x.get('seed_verified') is not True)),None)
+                    if not chosen:
+                        if current.get('seed_id')==seed_id and all(x.get('seed_id')==seed_id and x.get('seed_sha256')==artifact['sha256'] and x.get('seed_verified') is True for x in slots):
+                            job['complete']=True;r.write(journal,job,True)
+                        return
+                    job.update(slot=chosen['name'],previous_enabled=chosen['enabled']);r.write(journal,job,True)
+                if current.get('seed_id')!=seed_id or current.get('dump_sha256')!=artifact['sha256']:
+                    seed.verify_seed(chosen['name'],path,pgconfig,accept=True)
+                else:
+                    seed.ensure(chosen['name'],pgconfig)
+                after=next(x for x in self.api('delivery-queue/slots') if x['name']==chosen['name'])
+                if job.get('previous_enabled') and not after.get('enabled'):
+                    seed.resume(chosen['name'],'生产基线维护完成')
+                job.pop('slot',None);job.pop('previous_enabled',None);r.write(journal,job,True)
+        except BlockingIOError:
+            return
 
     def reusable_batch_checks(self,candidate,member_rows):
         """把成员已提交的验收证据复用到组合候选上，避免再等一次人工 accept。"""
@@ -1268,6 +1328,8 @@ class Worker:
                 managed=self.pool_dispatch(rows,current_id)
             else:
                 managed=self.pool_dispatch(rows,current_id,allow_new=False)
+            if not current_id:
+                self.reconcile_environment_baseline()
             rows=[d for d in rows if d['id'] not in managed]
             settings=getattr(self,'release_settings',None)
             if settings and settings.get('configured') and settings.get('enabled') is not True:

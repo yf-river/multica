@@ -534,6 +534,9 @@ def restore_release(manifest, current):
     release_schema_identity(current)
     try:
         validate_seed_release(manifest,current)
+        baseline_commit=(manifest.get('build') or {}).get('baseline_commit')
+        if baseline_commit and r.read(Path(current)/'release.json').get('source_commit') != baseline_commit:
+            raise RuntimeError('槽位程序尚未更新到种子基线')
         return Path(current)
     except RuntimeError as mismatch:
         baseline=(manifest.get('build') or {}).get('release')
@@ -557,6 +560,9 @@ def restore_release(manifest, current):
             raise RuntimeError('种子基线完整制品校验失败，拒绝恢复')
         for key in ('id','source_commit','source_digest'):
             if not package.get(key):raise RuntimeError('种子基线制品身份不完整')
+        expected_commit=(manifest.get('build') or {}).get('baseline_commit')
+        if expected_commit and package['source_commit']!=expected_commit:
+            raise RuntimeError('种子基线提交不一致')
         validate_seed_release(manifest,baseline)
         return baseline
 
@@ -875,11 +881,11 @@ def verify_seed(env, seed, pgconfig, accept=False):
         raise RuntimeError('种子恢复验收失败，槽位保持维护：' + str(error)) from error
     if failed:
         raise RuntimeError('种子恢复验收未通过，槽位保持维护：' + ', '.join(c['name'] for c in failed))
-    if previously_enabled:
-        resume(env, '种子恢复验收完成')
     if accept:
         r.write(current_path(), dict(seed_id=seed_id, dump_sha256=artifact['sha256'], schema=(manifest.get('schema') or {}).get('fingerprint', ''),
                               accepted_at=now(), verified_by=env), True)
+    if previously_enabled:
+        resume(env, '种子恢复验收完成')
     print(json.dumps(dict(status='verified', seed=seed_id, environment=env, current=bool(accept), checks=checks), ensure_ascii=False))
 
 
