@@ -573,7 +573,10 @@ class Worker:
                '--setenv=MULTICA_RELEASE_ROOT='+str(r.ROOT),'--setenv=HOME='+home,*command])
 
     def pool_dispatch(self,rows,current_id,allow_new=True):
-        if not allow_new and not (r.RUN/'verification-jobs').exists():return set()
+        project=self.batch_project()
+        # 项目交付等待审查、工作区或槽位期间仍属于 verify，不能落入旧单项 int 路径。
+        project_deliveries={d['id'] for d in rows if project and d.get('project_id')==project and d['phase'] in ('waiting_int','testing')}
+        if not allow_new and not (r.RUN/'verification-jobs').exists():return project_deliveries
         managed=[]; active=set(); blocked=set()
         records={d['id']:d for d in rows}
         recovering=set()
@@ -611,7 +614,7 @@ class Worker:
                 active.add(d['id'])
             except Exception as error:
                 print('验收接力恢复受阻 '+d['id']+'：'+str(error),file=sys.stderr)
-        return {d['id'] for d in managed}
+        return {d['id'] for d in managed}|project_deliveries
 
     def prepare_repair(self,d,job,save):
         # 1. Retain the original quarantine until the pinned replacement and unchanged running baseline pass all gates.

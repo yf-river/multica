@@ -125,6 +125,23 @@ class PoolFlowTests(unittest.TestCase):
 
 
 
+class ProjectRoutingTests(unittest.TestCase):
+    def test_unready_project_delivery_stays_out_of_legacy_int_route(self):
+        worker=object.__new__(w.Worker)
+        identity='00000000-0000-0000-0000-000000000099'
+        ready=dict(id=identity,phase='waiting_int',project_id='project-a',source_commit='a'*40,source_ready=True,issue_status='in_progress',final_review=dict(state='passed',head_sha='a'*40))
+        cases=[dict(source_ready=False),dict(final_review=dict(state='pending',head_sha='a'*40)),dict(final_review=dict(state='passed',head_sha='b'*40)),dict(issue_status='in_review')]
+        with tempfile.TemporaryDirectory() as folder,patch.object(r,'RUN',Path(folder)),patch.object(worker,'batch_project',return_value='project-a'),patch.object(worker,'pool_units') as units,patch.object(worker,'start_pool_unit') as launch:
+            for changed in cases:
+                with self.subTest(changed=changed):
+                    row=dict(ready,**changed)
+                    managed=worker.pool_dispatch([row],None)
+                    self.assertEqual(managed,{identity},'项目等待就绪时仍须从旧int路由中剔除')
+                    self.assertEqual([d for d in [row] if d['id'] not in managed],[])
+                    self.assertEqual(worker.pool_dispatch([row],None,allow_new=False),{identity})
+            units.assert_not_called();launch.assert_not_called()
+
+
 class SeedGateTests(unittest.TestCase):
     def worker(self):
         worker=object.__new__(w.Worker);worker.env='prod'
