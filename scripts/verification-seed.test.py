@@ -25,6 +25,16 @@ def write_seed(directory, manifest, payload=b'dump'):
 
 
 class SeedManifestTests(unittest.TestCase):
+    def test_bound_runtime_does_not_reapply_seed_placeholder_model_rule(self):
+        def count(_container, _database, statement):
+            return int("COALESCE(model,'')='deepseek-v4.1-flash'" in statement or 'workspace_mcp_check' in statement)
+        with patch.object(s, 'table_exists', return_value=True), patch.object(s, 'counter', side_effect=count):
+            before = s.scrub_checks('fixture', 'fixture')
+            after = s.scrub_checks('fixture', 'fixture', model_bound=True)
+        self.assertEqual(next(x for x in before if x['name'] == '测试 Agent 显式使用受支持模型')['status'], 'failed')
+        self.assertFalse(any(x['name'] == '测试 Agent 显式使用受支持模型' for x in after))
+        self.assertEqual(next(x for x in after if x['name'] == 'MCP 检查已清空')['status'], 'failed')
+
     def test_sql_seed_checks_file_identity_and_checksum(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)

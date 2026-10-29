@@ -443,7 +443,7 @@ def data_checks(container, database, manifest):
     return checks
 
 
-def scrub_checks(container, database):
+def scrub_checks(container, database, *, model_bound=False):
     """清理结果检查：任何残留都说明规则没有覆盖新功能。"""
     checks = []
     rules = [
@@ -474,6 +474,9 @@ def scrub_checks(container, database):
         ('发布批次未带入', 'delivery_batch', 'SELECT count(*) FROM public.delivery_batch', 0),
     ]
     for name, table, statement, expected in rules:
+        # 导入阶段检查占位模型；启动后 apply 已校验运行时模型目录并绑定统一设置。
+        if model_bound and name == '测试 Agent 显式使用受支持模型':
+            continue
         if not table_exists(container, database, table):
             checks.append(dict(name=name, status='passed', evidence='表不存在，无需清理'))
             continue
@@ -847,7 +850,7 @@ def verify_seed(env, seed, pgconfig, accept=False):
         container, database = result['container'], result['database']
         checks = api_checks(env)
         checks += data_checks(container, database, manifest)
-        checks += scrub_checks(container, database)
+        checks += scrub_checks(container, database, model_bound=True)
         failed = [c for c in checks if c['status'] != 'passed']
         record = dict(manifest, seed_id=seed_id, version=2, artifact=artifact, source=source_identity(manifest))
         record['restore_verification'] = dict(environment=env, at=now(), passed=not failed, checks=checks)
