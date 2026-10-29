@@ -169,7 +169,7 @@ class Worker:
                 if subprocess.run(['git','-C',r.ROOT,'var',identity],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
                     raise RuntimeError('发布预检失败：实际执行器缺少 Git 合并身份')
         self.pin(d)
-        if not integrate and d.get('source_work_dir') and self.batch_project() and d.get('project_id')==self.batch_project():
+        if not integrate and 'verification_repair' not in (d.get('plan_snapshot') or {}) and d.get('source_work_dir') and self.batch_project() and d.get('project_id')==self.batch_project():
             path=Path(d['source_work_dir']).resolve(strict=True)
             workspaces=Path(r.read(r.meta_path(self.env))['daemon_workspaces_root']).resolve(strict=True)
             if not path.is_relative_to(workspaces) or path==workspaces:
@@ -724,6 +724,7 @@ class Worker:
                 c=None
                 repairing=bool((d.get('plan_snapshot') or {}).get('verification_repair')) and not d.get('candidate_id')
                 if repairing:
+                    hot=False  # Repair builds a separate pinned artifact, not the previous task directory.
                     if d['phase']=='waiting_int':
                         self.advance(d,'claim');d=refresh()
                     if d['phase']!='testing':return

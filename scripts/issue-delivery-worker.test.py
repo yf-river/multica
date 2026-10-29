@@ -80,6 +80,17 @@ class DeliveryTests(unittest.TestCase):
             worker.prepare_repair(d,dict(lease=dict(old,generation=30),repair_lease=old),Mock())
             self.assertEqual(api.call_args.args[1]['generation'],29)
 
+    def test_repair_uses_pinned_checkout_not_stale_task_worktree(self):
+        worker=object.__new__(w.Worker); worker.env='prod'
+        delivery=dict(id='delivery',source_commit='a'*40,source_branch='feature/new',project_id='project-a',
+                      source_work_dir='/nonexistent/stale',plan_snapshot=dict(verification_repair={}))
+        with tempfile.TemporaryDirectory() as folder, patch.object(r,'RUN',Path(folder)), \
+             patch.object(worker,'pin'), patch.object(worker,'batch_project',return_value='project-a'), \
+             patch.object(r,'run') as run, patch.object(r,'output',return_value=''):
+            source=worker.source(delivery,integrate=False)
+            self.assertEqual(source,Path(folder)/'delivery-sources'/('delivery-'+'a'*40))
+            self.assertEqual(run.call_args.args[0][-1],delivery['source_commit'])
+
     def test_external_verification_owner_defers_native_terminal_and_notification(self):
         worker=object.__new__(w.Worker)
         for attempt in ({},dict(id='native',settled=True,status='completed')):
