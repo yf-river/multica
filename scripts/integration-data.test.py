@@ -286,4 +286,31 @@ class IntegrationIdentityTests(unittest.TestCase):
                 identity.assert_not_called()
 
 
+class CleanedIdleIsolationTests(unittest.TestCase):
+    def test_cleaned_identity_and_residual_guards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r=Mock(unsafe=True); r.RUN=Path(tmp); r.RecoveryRequired=RuntimeError
+            r.health_url.return_value='http://127.0.0.1:19000'; r.output.return_value=''
+            target={'environment':'int','database':'multica_goal_test_int','release_id':'r1'}
+            state={'stage':'cleaned','environment':'int','target':target}
+            meta={'pids':{},'release_dir':str(Path(tmp)/'runtime/int/a'),'release_id':'r1','commit':'commit','daemon_workspaces_root':'/fixture/work','backend_port':1234,'frontend_port':1235}
+            r.read.return_value={'id':'r1','source_commit':'commit','files':{'x':'hash'}};r.checksums.return_value={'x':'hash'}
+            with patch.object(data,'identity',return_value=target),patch.object(data,'sql',return_value='0'):
+                self.assertTrue(data.check_cleaned_idle(r,state,meta))
+                self.assertEqual(r.assert_unused.call_count,2)
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,dict(state,stage='stopping'),meta)
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,state,dict(meta,pids={'server':42}))
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,dict(state,target={}),meta)
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,state,dict(meta,release_dir='/unexpected'))
+                r.read.return_value={'id':'wrong','source_commit':'commit','files':{'x':'hash'}}
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,state,meta)
+                r.read.return_value={'id':'r1','source_commit':'commit','files':{'x':'hash'}}
+                r.assert_unused.side_effect=RuntimeError('residual cwd')
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,state,meta)
+                r.assert_unused.side_effect=None
+                r.output.return_value='LISTEN 0 32 127.0.0.1:1234'
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,state,meta)
+            with patch.object(data,'identity',return_value=target),patch.object(data,'sql',return_value='1'):
+                with self.assertRaises(RuntimeError):data.check_cleaned_idle(r,state,meta)
+
 if __name__ == '__main__': unittest.main()

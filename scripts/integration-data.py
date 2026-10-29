@@ -61,6 +61,44 @@ def sql(target, database, statement):
     return result.stdout.strip()
 
 
+def check_cleaned_idle(r, state, meta):
+    """只接受完成清理且身份、进程和数据库均可证明空闲的固定 int。"""
+    if state.get('stage') != 'cleaned' or state.get('environment') != 'int' or meta.get('pids') != {}:
+        raise r.RecoveryRequired('联调待命记录或进程状态不完整')
+    target = identity(r, check_process=False)
+    if target != state.get('target'):
+        raise r.RecoveryRequired('联调待命身份已变化')
+    release = Path(meta.get('release_dir', '')).resolve()
+    if release not in ((r.RUN/'runtime/int/a').resolve(), (r.RUN/'runtime/int/b').resolve()):
+        raise r.RecoveryRequired('联调待命程序目录身份不符')
+    manifest = r.read(release/'release.json')
+    if (manifest.get('id') != meta.get('release_id') or manifest.get('source_commit') != meta.get('commit')
+            or r.checksums(release) != manifest.get('files')):
+        raise r.RecoveryRequired('联调待命程序身份或完整性不符')
+    for key in ('release_dir', 'daemon_workspaces_root'):
+        if not meta.get(key) or not Path(meta[key]).is_absolute():
+            raise r.RecoveryRequired('联调待命目录身份不完整')
+        r.assert_unused(meta[key])
+    if sql(target, 'postgres', "SELECT count(*) FROM pg_stat_activity WHERE datname='multica_goal_test_int'") != '0':
+        raise r.RecoveryRequired('联调数据库仍有消费者')
+    health_port = urllib.parse.urlparse(r.health_url('int')).port
+    for port in (meta['backend_port'], health_port):
+        if re.search(r'LISTEN', r.output(['ss', '-ltnp', f'( sport = :{port} )'])):
+            raise r.RecoveryRequired('联调业务监听端口仍被占用')
+    listener = r.output(['ss', '-ltnp', f"( sport = :{meta['frontend_port']} )"])
+    if re.search(r'LISTEN', listener):
+        marker = r.RUN/'int-maintenance.json'
+        if not marker.is_file(): raise r.RecoveryRequired('联调前端监听没有维护身份')
+        pid = r.read(marker).get('pid')
+        listener_pids = {int(value) for value in re.findall(r'pid=(\d+),', listener)}
+        if not isinstance(pid, int) or not r.exists(pid) or listener_pids != {pid}:
+            raise r.RecoveryRequired('联调维护监听身份不匹配')
+        args = Path('/proc', str(pid), 'cmdline').read_bytes().split(b'\0')
+        if not any(Path(os.fsdecode(a)).name == 'release-maintenance.py' for a in args if a):
+            raise r.RecoveryRequired('联调维护进程身份不匹配')
+    return True
+
+
 def clear_database(target):
     """只清理 int 的业务数据，迁移记录由下一次结构初始化维护。"""
     if target.get('environment') != 'int' or target.get('database') != 'multica_goal_test_int':
