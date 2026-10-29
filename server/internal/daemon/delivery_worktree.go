@@ -65,7 +65,7 @@ func deliveryWorktreeForTask(task Task, workspacesRoot string) (*releaseCheckpoi
 	if err = json.Unmarshal(data, &saved); err != nil {
 		return nil, err
 	}
-	if saved.Task.WorkspaceID != task.WorkspaceID || saved.Task.AgentID != task.AgentID || saved.Task.IssueID != task.IssueID || saved.Root != rootPath || saved.WorkDir != workdir || saved.Worktree == nil || saved.Worktree.Path != workdir {
+	if saved.Task.ID == "" || saved.Task.WorkspaceID != task.WorkspaceID || saved.Task.AgentID != task.AgentID || saved.Task.IssueID != task.IssueID || saved.Root != rootPath || saved.WorkDir != workdir || saved.Worktree == nil || saved.Worktree.Path != workdir {
 		return nil, fmt.Errorf("验收目录归属与任务不一致")
 	}
 	return &saved, nil

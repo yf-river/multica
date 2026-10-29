@@ -7283,6 +7283,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	// 尝试复用同一（agent, issue）对先前任务留下的 workdir。
 	var env *execenv.Environment
+	var deliverySourceTask *Task
 	// 对内置 codex 任务，用"与已解析路径配对的版本"，就地升级才不会让沙箱策略
 	// 停在旧版本上（MUL-4486）。自定义 codex runtime 跳过自愈，所以 resolvedVersion
 	// 为空、沿用既有的缓存版本兜底——它的二进制是 profile 自己的命令，daemon 从不
@@ -7553,6 +7554,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				return TaskResult{}, fmt.Errorf("恢复任务验收目录失败: %v", err)
 			}
 			env.LocalWorktree = rechecked.Worktree
+			deliverySourceTask = &rechecked.Task
 			envReused = true
 		}
 	}
@@ -7750,12 +7752,23 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				return
 			}
 			var retention deliveryWorktreeRetention
+			markerTask := task
 			if task.IssueID != "" {
 				check, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				var retentionErr error
 				retention, retentionErr = d.client.getDeliveryWorktreeRetention(check, task.ID)
 				cancel()
 				var requestErr *requestError
+				missing := errors.As(retentionErr, &requestErr) && requestErr.StatusCode == http.StatusNotFound
+				if (retentionErr == nil || missing) && !retention.Retain && deliverySourceTask != nil && deliverySourceTask.ID != "" && deliverySourceTask.ID != task.ID {
+					check, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+					retention, retentionErr = d.client.getDeliveryWorktreeRetention(check, deliverySourceTask.ID)
+					cancel()
+					if retention.Retain {
+						// Keep the original source identity in the marker for the next continuation.
+						markerTask = *deliverySourceTask
+					}
+				}
 				if retentionErr != nil && !(errors.As(retentionErr, &requestErr) && requestErr.StatusCode == http.StatusNotFound) {
 					returnErr = errors.Join(returnErr, fmt.Errorf("确认交付工作目录归属失败，已保留 %s: %w", env.WorkDir, retentionErr))
 					return
@@ -7775,7 +7788,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				// 只有 Finalize 确认一次性任务 worktree 真的没了，配置的
 				// local_directory 才成为权威。
 				if retention.Retain {
-					if err := saveDeliveryWorktree(task, env); err != nil {
+					if err := saveDeliveryWorktree(markerTask, env); err != nil {
 						returnErr = errors.Join(returnErr, fmt.Errorf("记录验收工作目录失败，已保留 %s: %w", env.WorkDir, err))
 						return
 					}
