@@ -893,6 +893,7 @@ def launch(env, release, cfg, m,prior_readiness=None):
     server_env=dict(cfg['server'])
     if env=='prod':
         server_env['MULTICA_TEST_AGENT_CONTROL_WORKSPACE_ID']=read(m['daemon_profile_path'])['workspace_id']
+        server_env['MULTICA_RELEASE_ROOT']=str(ROOT)
     result['server']=start([release/'server/bin/server'],release,server_env,m['log_paths']['server'])
     ready(m['backend_url']+'/health',pid=result['server'])
     check_readiness(m,prior_readiness=prior_readiness)

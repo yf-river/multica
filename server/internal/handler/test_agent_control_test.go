@@ -20,6 +20,17 @@ func TestTestAgentControlRevisionAndScope(t *testing.T) {
 	call := func(body map[string]any) *testutil.Response {
 		return testutil.Call(t, testHandler.TestAgentControl, newRequest("POST", "/api/test-agent-control", body))
 	}
+	previousRefresh := testHandler.RefreshTestAgents
+	t.Cleanup(func() { testHandler.RefreshTestAgents = previousRefresh })
+	testHandler.RefreshTestAgents = nil
+	call(map[string]any{"action": "refresh", "name": "default"}).Want(503)
+	refreshes := 0
+	testHandler.RefreshTestAgents = func() { refreshes++ }
+	call(map[string]any{"action": "refresh", "name": "default"}).Want(202)
+	if refreshes != 1 {
+		t.Fatal("refresh did not wake control")
+	}
+
 	flash := testAgentPolicy{Provider: "codebuddy", Model: "deepseek-v4.1-flash"}
 	codex := testAgentPolicy{Provider: "codex", Model: "gpt-6.1-sol", Thinking: "low", Tier: "default"}
 	call(map[string]any{"action": "report", "name": "prod", "observed": map[string]any{}}).Want(400)

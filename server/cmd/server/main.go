@@ -705,6 +705,7 @@ func main() {
 
 	// 启动后台 worker。
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
+	h.StartTestAgentControl(sweepCtx)
 	autopilotCtx, autopilotCancel := context.WithCancel(context.Background())
 	// 这里复用 router 里的服务。特别是 router 把 EmptyClaim 缓存注进了
 	// TaskService；若为定时 autopilot 派发另造一个 TaskService，发送 daemon

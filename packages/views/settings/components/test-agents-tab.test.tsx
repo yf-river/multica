@@ -12,7 +12,7 @@ import { api } from "@multica/core/api";
 import { TestAgentsTab } from "./test-agents-tab";
 vi.mock("@multica/core", () => ({ useWorkspaceId: () => "test" }));
 vi.mock("@multica/core/api", () => ({
-  api: { getTestAgentControl: vi.fn(), configureTestAgents: vi.fn() },
+  api: { getTestAgentControl: vi.fn(), configureTestAgents: vi.fn(), refreshTestAgents: vi.fn().mockResolvedValue({ok: true}) },
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const policy = {
@@ -162,7 +162,7 @@ describe("test environment controls", () => {
     ] as never);
     render();
     fireEvent.click(await screen.findByRole("button", { name: "Set runtime" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    expect(screen.getByRole("status")).toHaveTextContent(
       "model catalog is unavailable",
     );
     expect(
@@ -178,7 +178,7 @@ describe("test environment controls", () => {
     ] as never);
     render();
     fireEvent.click(await screen.findByRole("button", { name: "Set runtime" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    expect(screen.getByRole("status")).toHaveTextContent(
       "model catalog is unavailable",
     );
     expect(
@@ -186,6 +186,26 @@ describe("test environment controls", () => {
     ).toBeDisabled();
   });
 
+  it("refreshes the target catalog and preserves capability values while unavailable", async () => {
+    const initial = {...policy, provider: "codex", model: "gpt-6.1-terra", thinking_level: "low", service_tier: "default"};
+    vi.spyOn(api, "getTestAgentControl").mockResolvedValue([{...rows[0], desired: {policy: initial, overrides: {}}}] as never);
+    render();
+    fireEvent.click(await screen.findByRole("button", {name: "Set runtime"}));
+    await waitFor(() => expect(api.refreshTestAgents).toHaveBeenCalledTimes(1));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.queryByText(/low.*Not supported/)).not.toBeInTheDocument();
+    expect(dialog.queryByText(/default.*Not supported/)).not.toBeInTheDocument();
+    expect(dialog.getByRole("combobox", {name: "Thinking"})).toHaveValue("low");
+    expect(dialog.getByRole("combobox", {name: "Thinking"})).toBeDisabled();
+    fireEvent.click(dialog.getByRole("button", {name: "Refresh"}));
+    await waitFor(() => expect(api.refreshTestAgents).toHaveBeenCalledTimes(2));
+  });
+  it("keeps a fresh catalog editable when applying the previous policy failed", async () => {
+    vi.spyOn(api, "getTestAgentControl").mockResolvedValue([rows[0], {...rows[1], observed: {...rows[1]!.observed, status: "error", available: true}}] as never);
+    render();
+    fireEvent.click(await screen.findByRole("button", {name: "Set runtime"}));
+    expect(screen.getByRole("button", {name: "Apply to all environments"})).toBeEnabled();
+  });
   it("shows access errors without a mutation control", async () => {
     vi.spyOn(api, "getTestAgentControl").mockRejectedValue(
       new Error("forbidden"),

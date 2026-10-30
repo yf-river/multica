@@ -62,6 +62,15 @@ func (h *Handler) TestAgentControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "未知测试环境")
 		return
 	}
+	if body.Action == "refresh" {
+		if h.RefreshTestAgents == nil {
+			writeError(w, 503, "测试环境控制未启动，请检查服务配置")
+			return
+		}
+		h.RefreshTestAgents()
+		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+		return
+	}
 	if body.Action == "report" {
 		if body.Name == "default" || !json.Valid(body.Observed) {
 			writeError(w, 400, "环境报告无效")
@@ -143,6 +152,9 @@ func (h *Handler) TestAgentControl(w http.ResponseWriter, r *http.Request) {
 	if err != nil || tx.Commit(r.Context()) != nil {
 		writeError(w, 500, "保存配置失败")
 		return
+	}
+	if h.RefreshTestAgents != nil {
+		h.RefreshTestAgents()
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }

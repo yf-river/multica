@@ -120,6 +120,8 @@ function RuntimeDialog({
   revision,
   runtimes,
   pending,
+  refreshing,
+  onRefresh,
   onClose,
   onSave,
 }: {
@@ -127,6 +129,8 @@ function RuntimeDialog({
   revision: number;
   runtimes: Runtime[];
   pending: boolean;
+  refreshing: boolean;
+  onRefresh: () => void;
   onClose: () => void;
   onSave: (policy: TestAgentPolicy, revision: number) => void;
 }) {
@@ -202,7 +206,7 @@ function RuntimeDialog({
           <SettingsRow label={t(($) => $.test_agents.model)} size="select-wide">
             {/*
               与 Agent 设置运行时同一个模型选择器：可搜索、显示 provider/model 两行；
-              目录来自控制行回写的真实目录，所以注入 catalog 而不发实时请求。
+              控制端使用目标环境的运行时 API 刷新目录，选择器消费同一模型能力结构。
             */}
             <ModelPicker
               variant="field"
@@ -229,17 +233,17 @@ function RuntimeDialog({
               aria-label={t(($) => $.test_agents.thinking)}
               className={selectClass}
               value={thinking}
-              disabled={pending || (!levels.length && !thinking)}
+              disabled={pending || !selected || (!levels.length && !thinking)}
               onChange={(event) => setThinking(event.target.value)}
             >
               <option value="">
-                {levels.length
+                {!selected || levels.length
                   ? t(($) => $.test_agents.follow_runtime)
                   : t(($) => $.test_agents.unsupported)}
               </option>
               {thinking && !validThinking && (
                 <option value={thinking}>
-                  {thinking} · {t(($) => $.test_agents.unsupported)}
+                  {thinking}{selected ? ` · ${t(($) => $.test_agents.unsupported)}` : ""}
                 </option>
               )}
               {levels.map((level) => (
@@ -254,17 +258,17 @@ function RuntimeDialog({
               aria-label={t(($) => $.test_agents.speed)}
               className={selectClass}
               value={tier}
-              disabled={pending || (!tiers.length && !standard && !tier)}
+              disabled={pending || !selected || (!tiers.length && !standard && !tier)}
               onChange={(event) => setTier(event.target.value)}
             >
               <option value="">
-                {tiers.length || standard
+                {!selected || tiers.length || standard
                   ? t(($) => $.test_agents.follow_runtime)
                   : t(($) => $.test_agents.unsupported)}
               </option>
               {tier && !validTier && (
                 <option value={tier}>
-                  {tier} · {t(($) => $.test_agents.unsupported)}
+                  {tier}{selected ? ` · ${t(($) => $.test_agents.unsupported)}` : ""}
                 </option>
               )}
               {standard && (
@@ -283,9 +287,14 @@ function RuntimeDialog({
           </SettingsRow>
         </SettingsCard>
         {!models.size && (
-          <p role="alert" className="text-caption text-destructive">
+          <div className="flex items-center justify-between gap-3">
+          <p role="status" className="text-caption text-muted-foreground">
             {t(($) => $.test_agents.catalog_unavailable)}
           </p>
+          <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>
+            {t(($) => $.test_agents.refresh)}
+          </Button>
+          </div>
         )}
         {!!models.size && !ready && (
           <p role="alert" className="text-caption text-destructive">
@@ -325,9 +334,14 @@ function RuntimeDialog({
 export function TestAgentsTab() {
   const { t } = useT("settings");
   const ws = useWorkspaceId();
-  const query = useQuery(testAgentControlOptions(ws));
-  const client = useQueryClient();
   const [open, setOpen] = useState(false);
+  const query = useQuery({...testAgentControlOptions(ws), refetchInterval: open ? 2000 : 30_000});
+  const client = useQueryClient();
+  const refresh = useMutation({
+    mutationFn: () => api.refreshTestAgents(),
+    onSuccess: () => client.invalidateQueries({queryKey: testAgentControlKey(ws)}),
+    onError: (error: Error) => toast.error(error.message),
+  });
   const mutation = useMutation({
     mutationFn: (body: Parameters<typeof api.configureTestAgents>[0]) =>
       api.configureTestAgents(body),
@@ -350,7 +364,6 @@ export function TestAgentsTab() {
     .filter(
       (row) =>
         row.name !== "default" &&
-        row.observed.status !== "error" &&
         row.observed.available !== false &&
         row.observed_at &&
         Date.now() - Date.parse(row.observed_at) <= 180_000,
@@ -365,8 +378,8 @@ export function TestAgentsTab() {
         <Button
           variant="outline"
           size="sm"
-          disabled={query.isFetching}
-          onClick={() => void query.refetch()}
+          disabled={refresh.isPending}
+          onClick={() => refresh.mutate()}
         >
           {t(($) => $.test_agents.refresh)}
         </Button>
@@ -391,7 +404,7 @@ export function TestAgentsTab() {
                     "—"}{" "}
                   · {defaultRow?.desired.policy.model || "—"}
                 </p>
-                <Button onClick={() => setOpen(true)}>
+                <Button onClick={() => {setOpen(true); refresh.mutate();}}>
                   {t(($) => $.test_agents.runtime_title)}
                 </Button>
               </div>
@@ -504,6 +517,8 @@ export function TestAgentsTab() {
               revision={defaultRow?.revision ?? 1}
               runtimes={runtimes}
               pending={mutation.isPending}
+              refreshing={refresh.isPending}
+              onRefresh={() => refresh.mutate()}
               onClose={() => setOpen(false)}
               onSave={(policy, revision) =>
                 mutation.mutate({

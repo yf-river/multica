@@ -195,6 +195,7 @@ type RuntimeGoneNotifier interface {
 }
 
 type Handler struct {
+	RefreshTestAgents      func()
 	Supervision            *supervision.Service
 	Upstream               *upstream.Service
 	Queries                *db.Queries

@@ -1363,11 +1363,6 @@ class Worker:
         if self.env!='prod':return
         self.refresh_release_settings()
         r.recover_release_windows()
-        try:
-            spec=importlib.util.spec_from_file_location('test_agent_control',Path(__file__).with_name('test-agent-control.py'))
-            control=importlib.util.module_from_spec(spec);spec.loader.exec_module(control);control.tick(self)
-        except Exception as error:
-            print('测试 Agent 控制暂不可用：'+str(type(error).__name__),flush=True)
         with r.lock('delivery-worker-'+self.env):
             current=r.candidate() if r.candidate_path().exists() else None
             current_id=current.get('delivery_id') if current and current.get('status') not in ('released','succeeded','failed') else None

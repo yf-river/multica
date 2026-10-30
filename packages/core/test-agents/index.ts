@@ -34,7 +34,7 @@ export interface TestEnvironmentControl {
       id: string;
       provider: string;
       catalog_observed_at?: string | null;
-      /** 发布器回写的真实模型目录；缺失时前端回退到运行时接口或内置预设。 */
+      /** 控制端通过目标环境的运行时 API 获取的真实模型目录。 */
       models?: {
         id: string;
         label: string;

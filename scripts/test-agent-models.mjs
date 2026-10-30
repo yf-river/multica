@@ -40,6 +40,11 @@ if (mode === 'target') {
  process.exit(0);
 }
 let wasDraining = true;
+// 控制端退出时释放本次维护开启的排空；连接断开由 PostgreSQL 回滚未提交事务。
+process.once('SIGTERM', async () => {
+ try { if (!wasDraining) await request(daemon,'/drain','DELETE'); }
+ finally { process.exit(143); }
+});
 const client = new pg.Client({connectionString:cfg.server.DATABASE_URL});
 await client.connect();
 try {

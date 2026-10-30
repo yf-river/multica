@@ -918,6 +918,9 @@ export class ApiClient {
   async getTestAgentControl(): Promise<TestEnvironmentControl[]> {
     return parseWithFallback(await this.fetch<unknown>("/api/test-agent-control"),TestEnvironmentControlSchema.array(),[],{endpoint:"GET /api/test-agent-control"});
   }
+  async refreshTestAgents() {
+    return this.fetch<{ok: boolean}>("/api/test-agent-control", {method:"POST",body:JSON.stringify({action:"refresh",name:"default"})});
+  }
   async configureTestAgents(body: {action: "configure"; name: string; revision: number; policy: TestAgentPolicy; agent_id?: string}) {
     return this.fetch<{ok: boolean}>("/api/test-agent-control", {method:"POST",body:JSON.stringify(body)});
   }
