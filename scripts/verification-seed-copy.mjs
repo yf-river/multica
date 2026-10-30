@@ -41,6 +41,7 @@ await target.connect();
 try {
   if (source) await source.query('BEGIN READ ONLY');
   await target.query('BEGIN');
+  await target.query("SET LOCAL multica.openviking_enabled='false'");
   // 只有基表可以 TRUNCATE/INSERT；视图同样出现在 information_schema.columns 里，
   // 按列直接取会把视图也算进搬运清单，TRUNCATE 时报 "is not a table"。
   const columns = async client => (await client.query("SELECT c.table_name,c.column_name,c.data_type FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema=c.table_schema AND t.table_name=c.table_name WHERE c.table_schema='public' AND c.is_generated='NEVER' AND t.table_type='BASE TABLE' ORDER BY c.table_name,c.ordinal_position")).rows;

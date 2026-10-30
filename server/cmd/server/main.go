@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/openviking"
 	"github.com/multica-ai/multica/server/internal/profiling"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/scheduler"
@@ -352,6 +353,10 @@ func newMainHTTPServer(addr string, handler http.Handler) *http.Server {
 
 func main() {
 	logger.Init()
+	if err := openviking.ValidateEnvironment(); err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
 	// 提醒缺配置：生产环境空/默认 JWT 密钥直接拒绝启动。
 	if err := auth.ValidateEnvironmentID(); err != nil {
 		slog.Error(err.Error())

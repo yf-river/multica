@@ -91,6 +91,7 @@ func ParsePoolConfig(databaseURL string, connectTimeout time.Duration) (*pgxpool
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+	cfg.ConnConfig.RuntimeParams["multica.openviking_enabled"] = "false"
 	if os.Getenv("MULTICA_OPENVIKING_ENABLED") == "true" {
 		cfg.ConnConfig.RuntimeParams["multica.openviking_enabled"] = "true"
 	}

@@ -492,7 +492,44 @@ def service_credentials(env):
     return dict(user=account.pw_uid, group=account.pw_gid, extra_groups=[])
 
 
+def openviking_identity(cfg):
+    """生产部署记录保存可公开的原生存储身份，不复制凭据。"""
+    native=cfg['server']
+    if native.get('MULTICA_OPENVIKING_ENABLED')!='true': return dict(enabled=False)
+    file=native.get('MULTICA_OPENVIKING_CONFIG_FILE','')
+    if not Path(file).is_absolute(): raise RuntimeError('OpenViking 缺少原生实例配置路径')
+    endpoint=urllib.parse.urlsplit(native.get('MULTICA_OPENVIKING_URL',''))
+    if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment: raise RuntimeError('OpenViking 地址不能含凭据或查询参数')
+    config=read(file);storage=config.get('storage',{})
+    local=all(storage.get(k)=={'backend':'local'} for k in ('agfs','vectordb'))
+    return dict(enabled=True,url=native.get('MULTICA_OPENVIKING_URL',''),data_root=storage.get('workspace',''),archive_root=native.get('MULTICA_OPENVIKING_ARCHIVE_ROOT',''),local_storage=local)
+
+
+def validate_openviking_config(env, cfg, release=None):
+    switches=[cfg.get(role,{}).get('MULTICA_OPENVIKING_ENABLED','false') for role in ('server','daemon')]
+    if any(value not in ('true','false') for value in switches) or len(set(switches))!=1:
+        raise RuntimeError('OpenViking Server/Daemon 开关必须一致且为 true/false')
+    if switches[0]!='true': return
+    if env=='prod': return
+    for role in ('server','daemon'):
+        if cfg[role].get('MULTICA_ENV_ID')!=env or cfg[role].get('MULTICA_OPENVIKING_ACCEPTANCE')!='true':
+            raise RuntimeError('非生产 OpenViking 必须明确声明专项验收')
+    keys=('MULTICA_OPENVIKING_URL','MULTICA_OPENVIKING_CONFIG_FILE','MULTICA_OPENVIKING_ARCHIVE_ROOT','MULTICA_OPENVIKING_PRODUCTION_DEPLOYMENT')
+    if any(cfg['server'].get(key)!=cfg['daemon'].get(key) for key in keys):
+        raise RuntimeError('专项 OpenViking 的 Server/Daemon 实例配置不一致')
+    production=read(config_path('prod'));meta=read(meta_path('prod'))
+    check_live_environment('prod',meta,production)
+    observed=openviking_identity(production)
+    if meta.get('openviking')!=observed:raise RuntimeError('生产部署记录的 OpenViking 存储身份待核对更新')
+    if Path(cfg['server'].get('MULTICA_OPENVIKING_PRODUCTION_DEPLOYMENT','')).resolve()!=meta_path('prod').resolve():
+        raise RuntimeError('专项验收必须引用实际生产部署记录')
+    if release is not None:
+        # 与服务启动使用同一校验器，拒绝在校验前连接原生实例。
+        run([Path(release)/'server/bin/multica','config','check-openviking'],env={**os.environ,**cfg['server']},**service_credentials(cfg['server']))
+
+
 def validate_verification_config(env, cfg):
+    validate_openviking_config(env,cfg)
     if env not in VERIFICATION_ENVS:
         return
     for role in ('server','web','daemon'):
@@ -522,7 +559,16 @@ def validate_verification_config(env, cfg):
                 raise RuntimeError('验收环境目录重叠')
 
 
+def disabled_openviking_environment(env):
+    if env.get('MULTICA_ENV_ID')=='prod' or env.get('MULTICA_OPENVIKING_ENABLED')=='true': return dict(env)
+    # 关闭时移除凭据与真实目标；零端口也阻断旧知识库客户端回退到本机生产默认端口。
+    clean={key:value for key,value in env.items() if not key.startswith('MULTICA_OPENVIKING_')}
+    clean.update(MULTICA_OPENVIKING_ENABLED='false',MULTICA_OPENVIKING_URL='http://127.0.0.1:0')
+    return clean
+
+
 def start(cmd,cwd,env,log):
+    env=disabled_openviking_environment(env)
     # 服务已停止后才整理日志，避免移动仍被写入的文件。
     logfile=Path(log)
     if logfile.exists() and logfile.stat().st_size > 64*1024*1024:
@@ -840,6 +886,8 @@ def dsh_runtime_environment(release, configured, metadata):
 
 
 def launch(env, release, cfg, m,prior_readiness=None):
+    validate_openviking_config(env,cfg,release)
+    if env=="prod": m["openviking"]=openviking_identity(cfg)
     result={}
     m['pids']=result
     server_env=dict(cfg['server'])
@@ -855,7 +903,7 @@ def launch(env, release, cfg, m,prior_readiness=None):
     webcfg=http(m['frontend_url']+'/api/config')
     if webcfg.get('environment_id','')!=cfg['server'].get('MULTICA_ENV_ID',''): raise RuntimeError('Web/API 环境身份不一致')
     # 以 CLI 管理的 profile 启动；PID 来自健康端点，不猜测子进程。
-    daemon_env=dsh_runtime_environment(release,cfg['daemon'],m)
+    daemon_env=disabled_openviking_environment(dsh_runtime_environment(release,cfg['daemon'],m))
     run([release/'server/bin/multica','--profile',m['daemon_profile'],'daemon','start','--no-auto-update','--no-auto-reload'],cwd=release,env=daemon_env,stdout=subprocess.DEVNULL,**service_credentials(daemon_env))
     h=ready(health_url(env)+'/health')
     if h['profile']!=m['daemon_profile']: raise RuntimeError('Daemon profile 不匹配')
@@ -877,6 +925,12 @@ def check_live_environment(env, metadata, cfg):
         actual = process_env(metadata['pids'][role])
         if any(actual.get(key) != cfg[role].get(key) for key in keys):
             raise RuntimeError(f'{env} {role} 运行配置与目标环境不一致，拒绝停止服务')
+    for role in ('server','daemon'):
+        actual=process_env(metadata['pids'][role]);expected=cfg[role]
+        if actual.get('MULTICA_OPENVIKING_ENABLED','false')!=expected.get('MULTICA_OPENVIKING_ENABLED','false'):
+            raise RuntimeError(f'{env} {role} OpenViking 开关与配置不一致')
+        if expected.get('MULTICA_OPENVIKING_ENABLED')=='true' and any(actual.get(k)!=expected.get(k) for k in ('MULTICA_OPENVIKING_URL','MULTICA_OPENVIKING_ARCHIVE_ROOT')):
+            raise RuntimeError(f'{env} {role} OpenViking 连接与运行配置不一致')
     if http(metadata['frontend_url']+'/api/config').get('environment_id') != env:
         raise RuntimeError('Web/API 环境身份不一致，拒绝停止服务')
 

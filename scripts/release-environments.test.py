@@ -675,4 +675,34 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(statements),1)
         self.assertTrue(re.match(r'^CREATE\s+UNIQUE\s+INDEX\s+CONCURRENTLY\b',statements[0],re.I))
 
-if __name__=='__main__':unittest.main()
+
+class OpenVikingEnvironmentTests(unittest.TestCase):
+    def test_ordinary_test_is_disabled_without_native_dependencies(self):
+        cfg={role:{'MULTICA_OPENVIKING_ENABLED':'false','MULTICA_OPENVIKING_URL':'http://production.invalid'} for role in ('server','daemon')}
+        with patch.object(r,'run') as run,patch.object(r,'read',side_effect=AssertionError('disabled test read production config')):
+            r.validate_openviking_config('int',cfg,Path('/unused-release'))
+            run.assert_not_called()
+
+    def test_copied_production_switch_requires_explicit_acceptance(self):
+        cfg={role:{'MULTICA_ENV_ID':'int','MULTICA_OPENVIKING_ENABLED':'true','MULTICA_OPENVIKING_URL':'http://127.0.0.1:1933'} for role in ('server','daemon')}
+        with self.assertRaisesRegex(RuntimeError,'专项'):
+            r.validate_openviking_config('int',cfg)
+        cfg['server']['MULTICA_OPENVIKING_ENABLED']='false'
+        with self.assertRaisesRegex(RuntimeError,'一致'):
+            r.validate_openviking_config('int',cfg)
+
+    def test_disabled_process_discards_production_credentials_and_fallback(self):
+        source={'MULTICA_ENV_ID':'int','MULTICA_OPENVIKING_ENABLED':'false','MULTICA_OPENVIKING_URL':'http://127.0.0.1:1933','MULTICA_OPENVIKING_API_KEY':'private','OTHER':'preserved'}
+        clean=r.disabled_openviking_environment(source)
+        self.assertEqual(clean['MULTICA_OPENVIKING_URL'],'http://127.0.0.1:0')
+        self.assertNotIn('MULTICA_OPENVIKING_API_KEY',clean)
+        self.assertEqual(clean['OTHER'],'preserved')
+        self.assertEqual(source['MULTICA_OPENVIKING_URL'],'http://127.0.0.1:1933')
+
+    def test_verification_base_disables_openviking(self):
+        import ast
+        source=Path(__file__).with_name('verification-environments.py');tree=ast.parse(source.read_text());install=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='install');base=next(n for n in install.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='base' for t in n.targets));scope={'env':'verify-1'};exec(compile(ast.Module(body=[base],type_ignores=[]),str(source),'exec'),scope)
+        self.assertEqual(scope['base']['MULTICA_OPENVIKING_ENABLED'],'false')
+
+
+if __name__=="__main__": unittest.main()

@@ -4,6 +4,12 @@ MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
 ENV_FILE ?= $(if $(wildcard $(MAIN_ENV_FILE)),$(MAIN_ENV_FILE),$(if $(wildcard $(WORKTREE_ENV_FILE)),$(WORKTREE_ENV_FILE),$(MAIN_ENV_FILE)))
 
+# 本地入口只接受环境文件或命令行显式声明的专项接入，不继承宿主生产配置。
+ifeq ($(MULTICA_LOCAL_DEV),1)
+$(foreach key,$(filter MULTICA_OPENVIKING_%,$(.VARIABLES)),$(if $(findstring environment,$(origin $(key))),$(eval undefine $(key))))
+MULTICA_OPENVIKING_ENABLED := false
+endif
+
 ifneq ($(wildcard $(ENV_FILE)),)
 include $(ENV_FILE)
 endif

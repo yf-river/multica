@@ -44,6 +44,14 @@ func run() error {
 	planPath := flag.String("plan", "", "显式来源、归属和目标清单")
 	apply := flag.Bool("apply", false, "写入目标 OpenViking；默认仅校验清单和全部源哈希")
 	flag.Parse()
+	if *apply {
+		if !openviking.Enabled() {
+			return fmt.Errorf("OpenViking migration requires an explicitly enabled environment")
+		}
+		if err := openviking.ValidateEnvironment(); err != nil {
+			return err
+		}
+	}
 	raw, err := os.ReadFile(*planPath)
 	if err != nil {
 		return err

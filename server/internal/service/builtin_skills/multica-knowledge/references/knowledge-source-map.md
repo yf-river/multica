@@ -9,3 +9,5 @@
   - `POST /api/v1/search/find`
   - `GET /api/v1/content/read`
 - Browser surface: `packages/views/knowledge/components/knowledge-page.tsx`
+
+- `server/internal/openviking/environment.go`: startup isolation checks for explicitly enabled non-production acceptance.

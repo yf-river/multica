@@ -37,6 +37,7 @@ fi
 
 echo "==> Using $ENV_FILE"
 
+while IFS= read -r ov_key; do unset "$ov_key"; done < <(compgen -v MULTICA_OPENVIKING_ || true)
 set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"

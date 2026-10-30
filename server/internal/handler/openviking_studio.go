@@ -19,6 +19,10 @@ import (
 // OpenVikingStudio 使用现有 Multica 会话，直接代理原生 Studio 和 API。
 // 这是平台管理入口；Agent 的任务 token 不允许访问此入口。
 func (h *Handler) OpenVikingStudio(w http.ResponseWriter, r *http.Request) {
+	if !openviking.Enabled() {
+		writeError(w, 503, "OpenViking is disabled in this environment")
+		return
+	}
 	c := openviking.FromEnv()
 	target, err := url.Parse(c.URL)
 	if err != nil || target.Host == "" {

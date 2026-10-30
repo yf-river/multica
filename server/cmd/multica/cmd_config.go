@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/openviking"
 )
 
 // configCmd 是 `multica config` 父命令，直接执行时等价于 `config show`。
@@ -83,6 +84,7 @@ var configSetCmd = &cobra.Command{
 }
 
 func init() {
+	configCmd.AddCommand(&cobra.Command{Use: "check-openviking", Short: "Validate OpenViking environment isolation without sending requests", RunE: func(cmd *cobra.Command, args []string) error { return openviking.ValidateEnvironment() }})
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
 }

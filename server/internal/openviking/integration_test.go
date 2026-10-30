@@ -22,6 +22,7 @@ func TestNativeArchive(t *testing.T) {
 	if !strings.HasPrefix(base, "http://127.0.0.1:19446") {
 		t.Fatal("test is restricted to the isolated int dependency")
 	}
+	requireIsolatedNativeAcceptance(t)
 	c := FromEnv()
 	c.URL = base
 	c.Key = "isolated-test-key"
@@ -147,6 +148,7 @@ func TestNativeFailedExtractionRecovery(t *testing.T) {
 	if os.Getenv("MULTICA_OPENVIKING_RECOVERY_FIXTURE") != "true" {
 		t.Skip("requires the recorded isolated failed extraction")
 	}
+	requireIsolatedNativeAcceptance(t)
 	c := FromEnv()
 	c.URL = "http://127.0.0.1:19446"
 	c.Key = "isolated-test-key"
@@ -188,6 +190,7 @@ func TestNativeOriginalsAndSkill(t *testing.T) {
 	if os.Getenv("MULTICA_OPENVIKING_TEST_URL") != "http://127.0.0.1:19446" {
 		t.Skip("requires isolated native fixture")
 	}
+	requireIsolatedNativeAcceptance(t)
 	c := FromEnv()
 	c.URL = "http://127.0.0.1:19446"
 	c.Key = "isolated-test-key"
@@ -258,4 +261,14 @@ func TestNativeOriginalsAndSkill(t *testing.T) {
 		t.Fatalf("actual native skill script failed: %q %v", output, err)
 	}
 	t.Log("native deferred raw storage, idempotent original binary copy, native skill directory and executable script verified")
+}
+
+func requireIsolatedNativeAcceptance(t *testing.T) {
+	t.Helper()
+	if !Enabled() || os.Getenv("MULTICA_OPENVIKING_URL") != "http://127.0.0.1:19446" {
+		t.Fatal("native tests require explicit isolated OpenViking acceptance configuration")
+	}
+	if err := ValidateEnvironment(); err != nil {
+		t.Fatal(err)
+	}
 }

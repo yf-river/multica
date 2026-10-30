@@ -1932,6 +1932,9 @@ func (d *Daemon) clearWSHeartbeatAcks() {
 // （先续期 PAT 再做首次 workspace 同步），再启动各个后台循环，最后进入
 // pollLoop 直到 ctx 被取消（例如收到重启信号）。
 func (d *Daemon) Run(ctx context.Context) error {
+	if err := openviking.ValidateEnvironment(); err != nil {
+		return err
+	}
 	if err := configureEmbeddedDsh(d.cfg.Profile); err != nil {
 		return fmt.Errorf("prepare embedded DSH bridge: %w", err)
 	}

@@ -1321,3 +1321,14 @@ func TestBuildClaudeArgsManagedSkillSettingsWins(t *testing.T) {
 		t.Fatalf("unrelated custom arg was dropped: %v", args)
 	}
 }
+
+func TestChildEnvironmentDoesNotInheritPlatformOpenVikingConnection(t *testing.T) {
+	t.Setenv("MULTICA_OPENVIKING_ENABLED", "true")
+	t.Setenv("MULTICA_OPENVIKING_URL", "http://production.invalid")
+	t.Setenv("MULTICA_OPENVIKING_API_KEY", "private-platform-key")
+	for _, entry := range buildEnv(nil) {
+		if strings.HasPrefix(entry, "MULTICA_OPENVIKING_") {
+			t.Fatalf("platform memory connection inherited by runtime: %s", strings.SplitN(entry, "=", 2)[0])
+		}
+	}
+}

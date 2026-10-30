@@ -75,7 +75,7 @@ def install(env,artifact,postgres_config,root,host,codex_auth=None,codex_model=N
         if port not in ports:ports.append(port)
     backend,frontend,pprof=map(str,ports)
     front=f'http://{host}:{frontend}';back=f'http://127.0.0.1:{backend}'
-    base={'PATH':'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin','LANG':'C.UTF-8','MULTICA_ENV_ID':env}
+    base={'PATH':'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin','LANG':'C.UTF-8','MULTICA_ENV_ID':env,'MULTICA_OPENVIKING_ENABLED':'false'}
     appbase={**base,'HOME':str(slotroot/'app'),'USER':app.pw_name,'MULTICA_SERVICE_USER':app.pw_name,'TMPDIR':str(slotroot/'app'/'tmp')}
     agentbase={**base,'HOME':str(slotroot/'agent'),'USER':agent.pw_name,'MULTICA_SERVICE_USER':agent.pw_name,'TMPDIR':str(slotroot/'agent'/'tmp')}
     for owner,folders in [(app,['tmp','uploads']),(agent,['tmp','workspaces','codebuddy','codex'])]:

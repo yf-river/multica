@@ -4,13 +4,15 @@ Multica 统一采集与召回；OpenViking 保存资料、会话、附件、记�
 
 ## 环境配置
 
-Server 与 Daemon 使用同一组配置：
+生产 Server 与 Daemon 使用同一组配置；int、verify 和本地开发默认关闭。临时启用与隔离校验统一见 [环境发布说明](environment-releases.md#openviking-专项验收)，不把生产配置复制到测试环境：
 
 ```dotenv
+MULTICA_ENV_ID=prod
 MULTICA_OPENVIKING_ENABLED=true
 MULTICA_OPENVIKING_URL=http://127.0.0.1:19446
 MULTICA_OPENVIKING_API_KEY=<服务需要凭据时配置>
 MULTICA_OPENVIKING_ARCHIVE_ROOT=<私有绝对路径>
+MULTICA_OPENVIKING_CONFIG_FILE=<本机原生实例配置的绝对路径>
 ```
 
 归档目录独立于可公开访问的 uploads，纳入备份。Server 保存附件原件和事务内事件；Daemon 在 `runs` 下落盘原始事件、关联附件和同步回执。同一环境使用一个归档写入 Daemon；不同环境使用不同数据库、OpenViking 数据目录、归档目录和运行时 profile。
@@ -60,7 +62,7 @@ python3 scripts/prepare-openviking-migration.py --inventory "$INVENTORY_DIR" --o
 go -C server run ./cmd/openviking-migrate --plan "$PREPARED_DIR/skills-plan.json"
 ```
 
-`DATABASE_URL` 决定盘点源；原生迁移目标来自 `MULTICA_OPENVIKING_URL` 和服务端凭据。`--out` 必须是新目录。盘点包括全部工作区、项目、Agent、事项、任务、聊天、评论、附件、Skill 文件及原生文件哈希。`changed_during_read` 非空时复核源文件。
+`DATABASE_URL` 决定盘点源；原生迁移目标来自 `MULTICA_OPENVIKING_URL` 和服务端凭据。`--apply` 使用目标环境的完整配置：生产显式设置 `MULTICA_ENV_ID=prod` 与启用开关；测试目标必须通过专项验收隔离检查。`--out` 必须是新目录。盘点包括全部工作区、项目、Agent、事项、任务、聊天、评论、附件、Skill 文件及原生文件哈希。`changed_during_read` 非空时复核源文件。
 
 归属文件明确指定原 Agent 与项目到 user 的映射：
 
@@ -85,7 +87,7 @@ Agent 目标文件为 `{"ida":"已有 Agent ID","multica":"另一个已有 Agent
 
 ## 验收与更新
 
-使用独立 PostgreSQL 实例运行数据库 fixture 测试。固定 int 使用独立 OpenViking 数据、归档目录和 profile，生产连接不用于 fixture。
+使用独立 PostgreSQL 实例运行数据库 fixture 测试。固定 int 普通验收关闭 OpenViking；只有专项验收临时使用独立实例、数据、归档和本地存储，结束后恢复关闭，生产连接不用于 fixture。
 
 验收覆盖：DSH／Codex 实际任务、原会话续跑与取消、计划／目标原生交互、长工具输出、子 Agent、图片与普通附件、消息编辑／删除／排队取消、附件删除后的原件、进程中断与重放、响应丢失、提取失败恢复、断服务暂停新任务及恢复后只执行一次、两个 Agent 和系统角色的记忆范围、完整 Skill 附件与脚本执行。
 

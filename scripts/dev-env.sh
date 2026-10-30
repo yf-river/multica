@@ -318,6 +318,8 @@ detect_env_file() {
 }
 
 load_env_file() {
+  local ov_key
+  while IFS= read -r ov_key; do unset "$ov_key"; done < <(compgen -v MULTICA_OPENVIKING_ || true)
   local root="${2:-$REPO_ROOT}"
   set -a
   # shellcheck disable=SC1090

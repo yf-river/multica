@@ -443,3 +443,42 @@ HTTP 失败在 `.run/publisher/http-failure-<env>-<PID>.json` 保存状态码、
 升级后须同时准备生产、N-1 与候选查询，证据见 `dsh-plan-review-20261026.md`。
 SQL 内容变化仍要求重新审查。回退先通过当前接口取消尚未开始的续跑，确认没有
 活动或排队续跑，再停用交互开关并切换 N-1；保留表结构和审批记录。
+
+
+## OpenViking 专项验收
+
+生产长期启用，int、verify 和本地开发默认关闭；长期边界见 CLAUDE.md。本节只说明现有环境配置和启动检查的操作方式，不改变环境发布流程。
+
+### 普通测试与种子恢复
+
+`.run/env/<环境>-services.json` 是固定环境配置真源，Server 和 Daemon 的 `MULTICA_OPENVIKING_ENABLED` 均为 `false`。普通测试不需要 OpenViking 服务、资料索引或记忆提取完成；保留的历史待同步记录不重放。关闭状态下知识库原生代理拒绝请求，不能凭残留 URL 访问生产。现有进程启动器同时移除 OpenViking 凭据和真实目标，并为关闭进程注入不可连接的回环零端口，阻断旧知识库客户端回退到本机生产默认端口；配置真源仍只保存关闭开关。
+
+验收槽位初始化显式写入关闭值。本地 `.env.example`、工作树环境生成和开发入口默认关闭，并清除宿主继承的 OpenViking 配置。构建不携带运行连接；发布从目标环境配置启动，不从生产复制测试接入。种子清理 `openviking_event`，连接中显式关闭采集；不复制原生数据、归档目录或专项开关。此规则用于后续种子恢复，不授权清理当前留存数据。
+
+### 临时启用
+
+1. 确认是 OpenViking 专项验收并核对当前环境空闲。保留原配置及部署记录，选定本机独立端口和已存在的独立数据、归档目录；不得重用、嵌套或绑定挂载生产目录。
+2. 原生配置的 `storage.workspace` 指向专项数据目录，`storage.agfs` 和 `storage.vectordb` 均为 `{ "backend": "local" }`；原生进程只绑定本机，并以 `openviking-server --config <配置绝对路径>` 启动。模型服务可复用；模型服务不等于 OpenViking 的数据或向量存储。
+3. 生产环境配置中的 `MULTICA_OPENVIKING_CONFIG_FILE` 指向实际原生配置。现有环境控制器从生产真源生成部署记录的 `openviking` 非敏感身份，包含实例地址、数据目录和归档目录；核对运行进程后登记。记录不含模型或认证凭据。登记时复用现有控制器：先执行 `r.check_live_environment("prod", metadata, config)`，再将 `r.openviking_identity(config)` 写入该生产部署记录的 `openviking` 字段；字段待核对或缺失时专项启动会拒绝。
+4. 在目标环境 Server 与 Daemon 的现有配置中同时设置下列变量，地址和目录改成该环境的实际值：
+
+```dotenv
+MULTICA_OPENVIKING_ENABLED=true
+MULTICA_OPENVIKING_ACCEPTANCE=true
+MULTICA_OPENVIKING_URL=http://127.0.0.1:19446
+MULTICA_OPENVIKING_CONFIG_FILE=/absolute/isolated/ov.conf
+MULTICA_OPENVIKING_ARCHIVE_ROOT=/absolute/isolated/archive
+MULTICA_OPENVIKING_PRODUCTION_DEPLOYMENT=/data/ida/multica/.run/deployments/goal-test-prod.json
+```
+
+5. 用候选 `server/bin/multica config check-openviking` 在目标 Server 配置环境执行只读检查，再通过现有启动入口重启目标 Server/Daemon。控制器和两个进程共用同一校验器；校验前不向 OpenViking 发请求。它核对显式专项声明、实际生产部署记录、本机端口、原生进程的 `--config`、本地存储及真实目录，拒绝生产端口别名、目录重叠、符号链接/绑定挂载共享和无法核对的配置。当前只支持可核对的本机 Linux 原生进程与本地存储；未知远端、容器或外部存储会拒绝，不能只声明“已隔离”。
+6. 专项请求只能进入该独立实例。以实际原始日志、附件哈希、记忆提取和后续召回验证功能；保留实例、路径、源码与证据的对应关系。
+
+### 结束并关闭
+
+1. 记录专项验收证据，等待正在执行的任务结束，使用现有 Daemon 排空入口停止新认领；不清理数据库或归档。
+2. 在该环境 Server、Daemon 配置中移除全部 `MULTICA_OPENVIKING_*` 接入参数，再写入 `MULTICA_OPENVIKING_ENABLED=false`。本地开发同样恢复环境文件关闭值。通过现有入口重启目标进程，核对进程环境与配置一致，并恢复认领。
+3. 验证普通聊天和任务、DSH/Codex、系统角色及原有 Skill 链路可运行；数据库采集计数、保留归档目录不因普通任务增长，原生 API 代理关闭。生产仍启用并在不可用时暂停新任务。
+4. 保留专项实例的数据和验收证据。关闭平台接入不要求停止原生实例，也不停止 Ollama、向量模型或其他共享模型服务。任何清理均需另行授权。
+
+生产上线验收直接在生产产生的记录须与上述专项测试记录分开列明。它们可能使用 `agent-<ID>` 用户，是生产验收样本，不构成 int 数据串入；未经授权不得删除其会话、附件或派生记忆。

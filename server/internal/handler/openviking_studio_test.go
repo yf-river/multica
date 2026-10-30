@@ -24,6 +24,7 @@ func TestOpenVikingStudioIframePolicyAndPrivateCredentials(t *testing.T) {
 		io.WriteString(w, "<html><head></head><body>Studio</body></html>")
 	}))
 	defer upstream.Close()
+	t.Setenv("MULTICA_OPENVIKING_ENABLED", "true")
 	t.Setenv("MULTICA_OPENVIKING_URL", upstream.URL)
 	t.Setenv("MULTICA_OPENVIKING_API_KEY", key)
 	recorder := httptest.NewRecorder()
@@ -51,10 +52,29 @@ func TestOpenVikingOriginalHTMLDownloadIsNotBootstrapped(t *testing.T) {
 		io.WriteString(w, original)
 	}))
 	defer upstream.Close()
+	t.Setenv("MULTICA_OPENVIKING_ENABLED", "true")
 	t.Setenv("MULTICA_OPENVIKING_URL", upstream.URL)
 	w := httptest.NewRecorder()
 	testHandler.OpenVikingStudio(w, httptest.NewRequest("GET", "/api/openviking/api/v1/content/download?uri=viking%3A%2F%2Fresources%2Fdocument.html", nil))
 	if w.Code != 200 || w.Body.String() != original {
 		t.Fatal("proxy modified an original HTML attachment")
+	}
+}
+
+func TestDisabledOpenVikingProxyNeverContactsConfiguredInstance(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))
+	defer upstream.Close()
+	t.Setenv("MULTICA_OPENVIKING_ENABLED", "false")
+	t.Setenv("MULTICA_OPENVIKING_URL", upstream.URL)
+	for _, path := range []string{"/studio/", "/api/openviking/api/v1/sessions"} {
+		response := httptest.NewRecorder()
+		testHandler.OpenVikingStudio(response, httptest.NewRequest("GET", path, nil))
+		if response.Code != 503 {
+			t.Fatalf("disabled proxy status %d", response.Code)
+		}
+	}
+	if calls != 0 {
+		t.Fatal("disabled proxy contacted OpenViking")
 	}
 }

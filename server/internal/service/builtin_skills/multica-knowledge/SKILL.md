@@ -12,6 +12,10 @@ Multica automatically recalls the current Agent user's memories before execution
 The CLI can read shared resources, shared Skills, and this Agent user's own space.
 Credentials remain with the platform.
 
+This capability is enabled in production and disabled in ordinary test/local environments.
+If the platform reports that OpenViking is disabled, continue the task using the current
+repository and platform data; do not retry knowledge calls or wait for memory synchronization.
+
 ## Search before assuming
 
 ```bash

@@ -143,3 +143,21 @@ func TestOpenVikingCapturesNativeSpillBeforeTaskCleanup(t *testing.T) {
 		t.Fatal("full stdout not captured")
 	}
 }
+
+func TestDisabledOpenVikingIgnoresUnreachableNativeAndUsesPlatformSkills(t *testing.T) {
+	t.Setenv("MULTICA_OPENVIKING_ENABLED", "false")
+	t.Setenv("MULTICA_OPENVIKING_URL", "http://127.0.0.1:1")
+	d := New(Config{WorkspacesRoot: t.TempDir()}, slog.New(slog.NewTextHandler(noopWriter{}, nil)))
+	if err := d.openVikingReady(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if journal, err := d.beginOpenViking(context.Background(), nil, "any-system-runtime"); err != nil || journal != nil {
+		t.Fatalf("disabled archive created: %v %v", journal, err)
+	}
+	if err := d.ensureTaskSkillBundles(context.Background(), &Task{Agent: &AgentData{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(d.openVikingRoot()); !os.IsNotExist(err) {
+		t.Fatalf("disabled task touched archive directory: %v", err)
+	}
+}

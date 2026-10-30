@@ -16,6 +16,10 @@ func (h *Handler) knowledgeUser(w http.ResponseWriter, r *http.Request) (string,
 	if _, ok := h.workspaceMember(w, r, h.resolveWorkspaceID(r)); !ok {
 		return "", false
 	}
+	if !openviking.Enabled() {
+		writeError(w, 503, "OpenViking is disabled in this environment")
+		return "", false
+	}
 	id := r.Header.Get("X-Agent-ID")
 	if id == "" {
 		return "default", true
@@ -53,6 +57,13 @@ func knowledgePathAllowed(r *http.Request, user, uri string) bool {
 }
 
 func (h *Handler) GetKnowledgeStatus(w http.ResponseWriter, r *http.Request) {
+	if !openviking.Enabled() {
+		if _, ok := h.workspaceMember(w, r, h.resolveWorkspaceID(r)); !ok {
+			return
+		}
+		writeJSON(w, 200, map[string]any{"enabled": false, "healthy": false, "error": "OpenViking is disabled in this environment"})
+		return
+	}
 	if _, ok := h.knowledgeUser(w, r); !ok {
 		return
 	}
