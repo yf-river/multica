@@ -15,6 +15,22 @@ class Worker:
    return self.rows
   self.reports.append(body)
 class TestControl(unittest.TestCase):
+ def test_validates_applied_runtime_not_previous_runtime(self):
+  with tempfile.TemporaryDirectory() as directory,patch.dict(c.os.environ,{'MULTICA_RELEASE_ROOT':directory}):
+   (Path(directory)/'.run').mkdir();worker=Worker([dict(name='int',revision=3,desired=dict(policy=c.FLASH,overrides={}),observed={})])
+   catalog=[dict(id='new',provider='codebuddy',catalog_observed_at=datetime.now(timezone.utc).isoformat(),models=[dict(id=c.FLASH['model'])])]
+   audit=dict(after=[dict(id='a',runtime_id='old',model='old')],runtimes=catalog)
+   applied=dict(after=[dict(id='a',runtime_id='new',model=c.FLASH['model'])],runtimes=catalog)
+   with patch.object(c.subprocess,'run',side_effect=[c.subprocess.CompletedProcess([],0,json.dumps(audit),''),c.subprocess.CompletedProcess([],0,json.dumps(applied),'')]):c.tick(worker)
+   self.assertEqual(worker.reports[-1]['observed']['status'],'applied')
+   self.assertEqual(worker.reports[-1]['observed']['error'],'')
+ def test_stopped_environment_remains_pending_without_starting_it(self):
+  with tempfile.TemporaryDirectory() as directory,patch.dict(c.os.environ,{'MULTICA_RELEASE_ROOT':directory}):
+   root=Path(directory);(root/'.run/deployments').mkdir(parents=True);(root/'.run/deployments/goal-test-int.json').write_text(json.dumps(dict(pids={})))
+   worker=Worker([])
+   with patch.object(c.subprocess,'run') as run:c.tick(worker,'int')
+   run.assert_not_called();self.assertFalse(worker.reports[-1]['observed']['available'])
+   self.assertEqual(worker.reports[-1]['observed']['error'],'环境未启动，启动后自动应用')
  def test_busy_reports_pending_and_does_not_claim_success(self):
   with tempfile.TemporaryDirectory() as directory,patch.dict(c.os.environ,{'MULTICA_RELEASE_ROOT':directory}):
    root=Path(directory);(root/'.run').mkdir()

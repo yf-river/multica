@@ -67,6 +67,13 @@ def tick(worker, environment=None):
     desired=(row or {}).get('desired',default)
     report=dict(status='pending',revision=(row or {}).get('revision',1),agents=[],error='',available=False)
     try:
+        deployment=root/'.run/deployments'/('goal-test-'+env+'.json')
+        if deployment.exists() and not json.loads(deployment.read_text()).get('pids'):
+            report.update(error='环境未启动，启动后自动应用')
+            if row:report['agents']=row.get('observed',{}).get('agents',[])
+            worker.api('test-agent-control',dict(action='report',name=env,observed=report))
+            stamp.write_text(json.dumps(dict(at=time.time(),index=index)))
+            return
         if env != 'int':
             slots=worker.api('delivery-queue/slots')
             slot=next((item for item in slots if item.get('name')==env),None)
@@ -103,7 +110,7 @@ def tick(worker, environment=None):
             if not all(matches(a) for a in audit['after']) or (row or {}).get('observed',{}).get('revision')!=report['revision']:
                 applied=run(True);report['agents']=[{k:a.get(k) for k in ('id','name','runtime_id','model','thinking_level','service_tier','status','archived_at')} for a in applied['after']]
             by_id={runtime['id']:runtime for runtime in audit['runtimes']}
-            for agent in audit['after']:
+            for agent in report['agents']:
                 policy=desired.get('overrides',{}).get(agent['id'],desired['policy'])
                 problem=catalog_error(by_id.get(agent['runtime_id']),policy)
                 if problem:
