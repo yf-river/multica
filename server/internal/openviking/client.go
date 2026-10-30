@@ -205,11 +205,17 @@ func (c *Client) List(ctx context.Context, user, uri string) ([]Entry, error) {
 	}
 }
 
+// Recall 为个人记忆与共享资料分别保留预算，避免资料正文挤掉个人记忆。
 func (c *Client) Recall(ctx context.Context, user, query string) (string, error) {
+	const scopeBudget = 12000
 	var out strings.Builder
 	// dev 模式的身份头不会限制 ROOT；检索范围必须显式指定。
-	for _, uri := range []string{"viking://resources", "viking://user/" + user + "/memories"} {
-		var result json.RawMessage
+	for _, uri := range []string{"viking://user/" + user + "/memories", "viking://resources"} {
+		var result struct {
+			Memories  []recallMatch `json:"memories"`
+			Resources []recallMatch `json:"resources"`
+			Skills    []recallMatch `json:"skills"`
+		}
 		err := c.JSON(ctx, user, "POST", "/api/v1/search/find", map[string]any{"query": query, "target_uri": uri, "limit": 8, "read_content": true, "filter": map[string]any{"op": "must_not", "field": "uri", "conds": []string{"viking://resources/migration"}, "para": "-d=-1"}}, &result)
 		if e, ok := err.(*HTTPError); ok && e.Code == 404 {
 			continue
@@ -217,18 +223,42 @@ func (c *Client) Recall(ctx context.Context, user, query string) (string, error)
 		if err != nil {
 			return "", err
 		}
-		if out.Len() != 0 {
-			out.WriteByte('\n')
-		}
-		out.Write(result)
+		matches := append(append(result.Memories, result.Resources...), result.Skills...)
+		out.WriteString(recallSection(uri, matches, scopeBudget))
 	}
-	text := out.String()
-	// 仅限制传给模型的召回上下文；原始归档没有此裁剪。
-	if len(text) > 24000 {
-		text = text[:24000]
-		for !utf8.ValidString(text) {
-			text = text[:len(text)-1]
-		}
+	return out.String(), nil
+}
+
+type recallMatch struct {
+	URI      string `json:"uri"`
+	Content  string `json:"content"`
+	Abstract string `json:"abstract"`
+}
+
+func recallSection(uri string, matches []recallMatch, budget int) string {
+	if len(matches) == 0 {
+		return ""
 	}
-	return text, nil
+	header := "检索范围：" + uri + "\n"
+	var out strings.Builder
+	out.WriteString(header)
+	// 每条命中保留来源和正文节选，较长的首条资料不会遮住后续命中。
+	perMatch := (budget - len(header)) / len(matches)
+	for _, match := range matches {
+		content := match.Content
+		if content == "" {
+			content = match.Abstract
+		}
+		text := "来源：" + match.URI + "\n" + content + "\n\n"
+		if len(text) > perMatch {
+			suffix := "\n[正文节选，可按来源读取全文]\n\n"
+			text = text[:max(0, perMatch-len(suffix))]
+			for !utf8.ValidString(text) {
+				text = text[:len(text)-1]
+			}
+			text += suffix
+		}
+		out.WriteString(text)
+	}
+	return out.String()
 }
