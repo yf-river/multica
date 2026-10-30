@@ -31,6 +31,7 @@ function PrefRow(props: PrefRowProps): ReactElement {
         onSelect={(id) => { setOpen(false); props.onPick(id) }}
         align="end"
         portal
+        listClassName="multica-insights-menu"
         anchor={(
           <button
             type="button"

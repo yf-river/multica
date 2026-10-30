@@ -70,10 +70,16 @@ function NativeInsights({
     refetchInterval: 2000,
   });
   const updatePrefs = useMutation({
-    mutationFn: (value: Record<string, string>) =>
-      api.saveInsightPreferences(value),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["insights-preferences"] }),
+    scope: { id: "insights-preferences" },
+    mutationFn: async (changes: Record<string, string>) => {
+      const current = qc.getQueryData<Record<string, string>>(["insights-preferences"])
+        ?? await api.getInsightPreferences();
+      return api.saveInsightPreferences({ ...current, ...changes });
+    },
+    onSuccess: (value) => {
+      qc.setQueryData(["insights-preferences"], value);
+      return qc.invalidateQueries({ queryKey: ["insights-preferences"] });
+    },
   });
   const [showPrefs, setShowPrefs] = useState(false);
   const preferencesRef = useRef<HTMLDivElement>(null);
@@ -299,10 +305,7 @@ function NativeInsights({
           params.set("range", String(value));
           nav.replace(`${nav.pathname}?${params}${nav.hash}`);
         }
-        await bridge.current.save({
-          ...bridge.current.fields,
-          [field]: String(value),
-        });
+        await bridge.current.save({ [field]: String(value) });
       },
     });
   }, [host]);
@@ -356,7 +359,7 @@ function NativeInsights({
           <div className="multica-insights" ref={preferencesRef}>
             <label className="lc-settings-row">
               <span className="lc-settings-label">{locale === "zh" ? "显示语言" : "Display language"}</span>
-              <select value={prefs.data?.language ?? "auto"} onChange={(event) => updatePrefs.mutate({ ...prefs.data, language: event.target.value })}>
+              <select value={prefs.data?.language ?? "auto"} onChange={(event) => updatePrefs.mutate({ language: event.target.value })}>
                 <option value="auto">{locale === "zh" ? "跟随 Multica" : "Follow Multica"}</option>
                 <option value="zh">{"简体中文"}</option>
                 <option value="en">{"English"}</option>

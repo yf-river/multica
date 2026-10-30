@@ -48,7 +48,7 @@ Daemon 在其工作目录下 `.insights` 持久化 JSONL 队列。Server 事务�
 
 聊天与任务复用完整 Context 页面；任务在右侧属性栏切换，聊天通过现有视图入口切换。实际 DSH 会话由当前关联及 `run` / `insight` 链接定位，子 Agent 跳转同步链接。总览中的会话卡片负责完整累计口径，Context 展示一个实际会话。
 
-统计偏好由原版 Overview 的设置入口打开，复用固定基线的 SettingsCard 展示字段、选项和默认值，仅保留统计视图分组与 Multica 语言适配。原版页面样式只对真实 body 选择器隔离作用域，其他选择器及规则与基线一致。
+统计偏好由原版 Overview 的设置入口打开，复用固定基线的 SettingsCard 展示字段、选项和默认值，仅保留统计视图分组与 Multica 语言适配。原版页面样式只对真实 body 选择器隔离作用域，其他选择器及规则与基线一致。挂载到页面根节点的日期、提示和偏好菜单单独应用洞察主题变量。偏好按字段串行合并保存，连续修改不会覆盖前一个字段。
 
 底栏复用官方 chat 的 ActivityPill、UsagePill，以及 conversation 的 ContextMeter。三项分别打开原版明细；无统计或容量时遵循官方隐藏规则。源码片段、原版 CSS、字典、来源散列及许可证位于 `packages/views/insights/official`，运行不读取本机 DSH 安装目录。适配层将持久化会话统计与分离计费桶提供给官方组件。
 

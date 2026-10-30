@@ -13,7 +13,7 @@
 @import "./native/client/styles/stackedBar.css";
 @import "./native/client/styles/stats.css";
 @import "./native/client/styles/trendChart.css";
-.multica-insights, .bRhRbq_panel, .JObwrW_panel {
+.multica-insights, .bRhRbq_panel, .JObwrW_panel, .multica-insights-menu, .lc-tip {
  --dsw-alias-label-primary:var(--foreground);--dsw-alias-label-secondary:var(--muted-foreground);--dsw-alias-label-tertiary:var(--muted-foreground);
  --dsw-alias-bg-layer-1:var(--background);--dsw-alias-bg-layer-2:var(--muted);--dsw-alias-bg-layer-3:var(--muted);
  --dsw-alias-border-l1:var(--border);--dsw-alias-border-l2:var(--border);--dsw-alias-border-l3:var(--border);--dsw-alias-border-l4:var(--border);
@@ -21,7 +21,7 @@
  --dsw-static-neutral-bluish-75:var(--muted);--ds-font-family-code:var(--font-mono);
 }
 
-.multica-insights, .bRhRbq_panel, .JObwrW_panel {
+.multica-insights, .bRhRbq_panel, .JObwrW_panel, .multica-insights-menu, .lc-tip {
  --dsw-alias-bg-base:var(--background);--dsw-alias-bg-mask-1:rgb(0 0 0 / .3);
  --dsw-alias-button-info-fill:var(--secondary);--dsw-alias-button-primary-fill:var(--primary);
  --dsw-alias-interactive-bg-active:var(--accent);--dsw-alias-label-dimmed:var(--muted-foreground);
@@ -32,8 +32,10 @@
  --dsw-static-neutral-1000:var(--foreground);--ds-transition-duration:150ms;--ds-ease-in-out:ease-in-out;--dsh-frame-top-clearance:0px;--dsh-scrollbar-width:8px;
 }
 
-.multica-insights, .bRhRbq_panel, .JObwrW_panel {
- --dsw-specific-menu:var(--popover);--dsw-radius-sm:8px;--dsw-radius-lg:16px;
+.multica-insights, .bRhRbq_panel, .JObwrW_panel, .multica-insights-menu, .lc-tip {
+ --dsw-specific-menu:var(--popover);--dsw-menu-surface-fill:var(--popover);--dsw-menu-backdrop-filter:blur(40px) saturate(150%);
+ --dsw-alias-menu-icon:var(--muted-foreground);--dsw-alias-label-caption:var(--muted-foreground);
+ --dsw-alias-tooltip-bg:var(--foreground);--dsw-static-neutral-bluish-00:var(--background);--dsw-radius-sm:8px;--dsw-radius-md:12px;--dsw-radius-lg:16px;
  --dsw-alias-bg-module-platform:var(--muted);--dsw-elevation-prominent:0 8px 32px rgb(0 0 0 / .2);
  --dsw-static-neutral-bluish-400:#adb2b8;--dsw-static-blue-450:#4d93f8;
 }

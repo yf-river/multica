@@ -23,7 +23,9 @@
         "--dsw-radius-sm",
         "--dsw-radius-lg",
         "--dsw-static-neutral-bluish-400",
-        "--dsw-static-blue-450"
+        "--dsw-static-blue-450",
+        "--dsw-radius-md",
+        "--dsw-menu-backdrop-filter"
       ]
     }
   },

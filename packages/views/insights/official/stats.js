@@ -218,7 +218,7 @@ function formatTokensPerSecond(tps) {
 			] });
 		}
 		function useSessionStats(useChat, useProjection) {
-			
+
 			const projected = useProjection("sessionStats");
 			return projected;
 		}
