@@ -1,6 +1,7 @@
 // 聊天页：以“双栏”形式展示会话列表（左）与对话内容（右），是本项目聊天功能的主要入口页面。
 "use client";
 
+import {InsightsSurface} from "../insights/insights-surface";
 import { useEffect, useRef, useState } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import { ArrowLeft, MessageSquare } from "lucide-react";
@@ -235,7 +236,7 @@ export function ChatPage() {
   // `@container`：对话栏的留白（CHAT_GUTTER）会随“这个”面板一起变宽，
   // 而该面板是用户独立于浏览器窗口来调整大小的。
   const queuedTasks = c.pendingTask?.queued_tasks ?? [];
-  const conversation = (
+  const conversationBody = (
     <div className="flex flex-1 flex-col min-h-0 @container">
       {c.currentSession && (
         <ChatSessionHeader
@@ -341,6 +342,8 @@ export function ChatPage() {
       />
     </div>
   );
+  const conversation = c.activeSessionId ? <InsightsSurface chatSessionId={c.activeSessionId} title={c.currentSession?.title}>{conversationBody}</InsightsSurface> : conversationBody;
+
 
   // -- 窄屏：列表 / 对话 切换 -------------------------------------------------
   if (isCompact) {

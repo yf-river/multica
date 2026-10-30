@@ -35,6 +35,8 @@ export interface StreamableHttpMcpServer extends McpServerBase {
 export type McpServerInput = StdioMcpServer | StreamableHttpMcpServer
 
 export interface ExecuteCommand {
+  insights_since?: number
+
 	archive?: boolean
   v: typeof PROTOCOL_VERSION
   type: 'execute'
@@ -73,7 +75,8 @@ export interface RuntimeModelFrame {
 }
 
 export type OutboundFrame =
-  | { v: typeof PROTOCOL_VERSION; type: 'archive'; request_id: string; session_id: string; event: SessionEvent }
+  | { v: typeof PROTOCOL_VERSION; type: 'insights'; request_id: string; session_id: string; cwd?:string; parent_session_id?: string; seq: number; projections: Record<string,unknown> }
+  | { v: typeof PROTOCOL_VERSION; type: 'archive'|'insight_context'; request_id: string; session_id: string; event: SessionEvent }
   | {
     v: typeof PROTOCOL_VERSION
     type: 'ready'
@@ -81,6 +84,7 @@ export type OutboundFrame =
     plugin_version: string
     capabilities: {
       archive?: true
+      insights?: true
       resume: true
       cancel: true
       models: true
@@ -303,12 +307,13 @@ export function parseInboundCommand(line: string): InboundCommand {
   if (type === 'execute') {
     assertOnlyKeys(
       command,
-      ['v', 'type', 'request_id', 'cwd', 'prompt', 'command', 'approval_policy', 'archive', 'human_interactions', 'plan_decision', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers'],
+      ['v', 'type', 'request_id', 'cwd', 'prompt', 'command', 'approval_policy', 'archive', 'insights_since', 'human_interactions', 'plan_decision', 'resume_session_id', 'model', 'reasoning_effort', 'mcp_servers'],
       'execute command',
     )
     const prompt = optionalString(command.prompt, 'execute.prompt')
     const slashCommand = optionalString(command.command, 'execute.command')
     if (prompt === undefined && slashCommand === undefined) throw new Error('execute requires prompt or command')
+    if(command.insights_since!==undefined && (typeof command.insights_since!=='number'||!Number.isSafeInteger(command.insights_since)||command.insights_since<1))throw new Error('execute.insights_since must be a positive timestamp')
     if (command.archive !== undefined && typeof command.archive !== 'boolean') throw new Error('execute.archive must be boolean')
     if (command.human_interactions !== undefined && typeof command.human_interactions !== 'boolean') throw new Error('execute.human_interactions must be boolean')
     const planDecision = optionalString(command.plan_decision, 'execute.plan_decision')
@@ -329,6 +334,7 @@ export function parseInboundCommand(line: string): InboundCommand {
       ...slashCommand === undefined ? {} : { command: slashCommand },
       ...approvalPolicy === undefined ? {} : { approval_policy: approvalPolicy },
       ...(command.human_interactions === undefined ? {} : { human_interactions: command.human_interactions }),
+      ...(command.insights_since === undefined ? {} : {insights_since:command.insights_since as number}),
       ...(command.archive === undefined ? {} : { archive: command.archive }),
       ...(planDecision === undefined ? {} : { plan_decision: planDecision }),
       ...optionalString(command.resume_session_id, 'execute.resume_session_id') === undefined

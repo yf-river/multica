@@ -1,0 +1,32 @@
+@import "./native/client/styles/agentGraph.css";
+@import "./native/client/styles/attachments.css";
+@import "./native/client/styles/base.css";
+@import "./native/client/styles/browser.css";
+@import "./native/client/styles/commandPanel.css";
+@import "./native/client/styles/dateRange.css";
+@import "./native/client/styles/detailSections.css";
+@import "./native/client/styles/events.css";
+@import "./native/client/styles/fileCard.css";
+@import "./native/client/styles/overview.css";
+@import "./native/client/styles/requestDetail.css";
+@import "./native/client/styles/stackedBar.css";
+@import "./native/client/styles/stats.css";
+@import "./native/client/styles/trendChart.css";
+.multica-insights {
+ --dsw-alias-label-primary:var(--foreground);--dsw-alias-label-secondary:var(--muted-foreground);--dsw-alias-label-tertiary:var(--muted-foreground);
+ --dsw-alias-bg-layer-1:var(--background);--dsw-alias-bg-layer-2:var(--muted);--dsw-alias-bg-layer-3:var(--muted);
+ --dsw-alias-border-l1:var(--border);--dsw-alias-border-l2:var(--border);--dsw-alias-border-l3:var(--border);--dsw-alias-border-l4:var(--border);
+ --dsw-alias-interactive-bg-hover:var(--accent);--dsw-alias-brand-primary:var(--primary);--dsw-alias-state-business-primary:var(--primary);--dsw-alias-state-error-primary:var(--destructive);
+ --dsw-static-neutral-bluish-75:var(--muted);--ds-font-family-code:var(--font-mono);position:relative;
+}
+
+.multica-insights {
+ --dsw-alias-bg-base:var(--background);--dsw-alias-bg-mask-1:rgb(0 0 0 / .3);
+ --dsw-alias-button-info-fill:var(--secondary);--dsw-alias-button-primary-fill:var(--primary);
+ --dsw-alias-interactive-bg-active:var(--accent);--dsw-alias-label-dimmed:var(--muted-foreground);
+ --dsw-alias-label-primary-foreground:var(--primary-foreground);--dsw-alias-mono-font-family:var(--font-mono);
+ --dsw-alias-state-success-primary:#16875d;--dsw-alias-state-warn-primary:#ad7014;
+ --dsw-focus-ring-color:var(--ring);--dsw-focus-ring-width:2px;
+ --dsw-shadow-lv1:0 1px 4px rgb(0 0 0 / .12);--dsw-shadow-lv1-blur:4px;--dsw-shadow-lv2:0 4px 16px rgb(0 0 0 / .16);--dsw-shadow-lv3:0 8px 32px rgb(0 0 0 / .2);
+ --dsw-static-neutral-1000:var(--foreground);--ds-transition-duration:150ms;--ds-ease-in-out:ease-in-out;--dsh-frame-top-clearance:0px;--dsh-scrollbar-width:8px;
+}

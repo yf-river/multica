@@ -24,7 +24,8 @@ var (
 )
 
 type Service struct {
-	Pool *pgxpool.Pool
+	Pool      *pgxpool.Pool
+	ProjectID string
 	// LeaseTTL 是批次租约的有效时长，零值用 DefaultLease。只有测试注入短 TTL，
 	// 生产不提供配置项：续租节奏由平台心跳决定，不需要运维调参。
 	LeaseTTL time.Duration
@@ -43,7 +44,7 @@ func (s *Service) leaseTTL() time.Duration {
 //
 // 修改 1. 第二个条件补齐了用任务生命周期约束租约的缺口：任务被取消或失败后，
 // 即使租约还没到期，旧批次也立刻拒绝回写，不再等 10 分钟自然过期。
-const runAlive = `lease_expires_at>now() AND task_id IS NOT NULL
+const runAlive = `project_id=@project AND lease_expires_at>now() AND task_id IS NOT NULL
  AND EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.id=upstream_sync_run.task_id AND t.status='running')`
 
 // rowQuerier 让同一段判定既能跑在连接池上，也能跑在已开启的事务里。
@@ -60,7 +61,7 @@ func unwritableRunError(ctx context.Context, q rowQuerier, runID string) error {
 	var expired, taskRunning bool
 	if err := q.QueryRow(ctx, `SELECT COALESCE(r.lease_expires_at<now(),true),
  COALESCE((SELECT t.status='running' FROM agent_task_queue t WHERE t.id=r.task_id),false)
- FROM upstream_sync_run r WHERE r.id=$1`, runID).Scan(&expired, &taskRunning); err != nil {
+ FROM upstream_sync_run r WHERE r.id=$1 AND r.project_id=@project`, runID).Scan(&expired, &taskRunning); err != nil {
 		return ErrRunGone
 	}
 	if taskRunning && expired {
@@ -81,17 +82,18 @@ func newID() string { return util.UUIDToString(dbid.NewV7()) }
 
 // Start 在配置行锁下领取批次，返回原配置和已完成提交，不以游标推断覆盖。
 func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource string) (*StartResult, error) {
-	tx, err := s.Pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_config(singleton) VALUES(1) ON CONFLICT(singleton) DO NOTHING`); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_config(project_id) VALUES(@project) ON CONFLICT(project_id) DO NOTHING`); err != nil {
 		return nil, err
 	}
 	var c Config
+	c.ProjectID = s.Project()
 	var enabled bool
-	err = tx.QueryRow(ctx, `SELECT upstream_url,upstream_branch,local_ref,batch_size,bootstrap_base_sha,head_sha,cursor_sha,sync_state,COALESCE(agent_id::text,'') FROM upstream_sync_config WHERE singleton=1 FOR UPDATE`).Scan(&c.UpstreamURL, &c.UpstreamBranch, &c.LocalRef, &c.BatchSize, &c.BootstrapBaseSHA, &c.HeadSHA, &c.CursorSHA, &c.SyncState, &c.AgentID)
+	err = tx.QueryRow(ctx, `SELECT upstream_url,upstream_branch,local_ref,batch_size,bootstrap_base_sha,head_sha,cursor_sha,sync_state,COALESCE(agent_id::text,'') FROM upstream_sync_config WHERE project_id=@project FOR UPDATE`).Scan(&c.UpstreamURL, &c.UpstreamBranch, &c.LocalRef, &c.BatchSize, &c.BootstrapBaseSHA, &c.HeadSHA, &c.CursorSHA, &c.SyncState, &c.AgentID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +104,7 @@ func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource stri
 	var id, status string
 	var frozen []byte
 	var alive bool
-	err = tx.QueryRow(ctx, `SELECT id::text,status,result,COALESCE(lease_expires_at>now(),false) FROM upstream_sync_run WHERE task_id=$1`, taskID).Scan(&id, &status, &frozen, &alive)
+	err = tx.QueryRow(ctx, `SELECT id::text,status,result,COALESCE(lease_expires_at>now(),false) FROM upstream_sync_run WHERE project_id=@project AND task_id=$1`, taskID).Scan(&id, &status, &frozen, &alive)
 	if err == nil {
 		// 1. 本任务已有批次但租约过期时单独报 ErrRunExpired：返回 ErrRunGone 会让调用方
 		// 把"需要换任务重跑"当成"今天没有新提交"而正常结束。
@@ -137,12 +139,12 @@ func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource stri
 		if c.SyncState != "incremental" {
 			mode = "bootstrap"
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_run(id,mode,trigger_source,task_id,status,limit_commits,lease_expires_at,started_at) VALUES($1,$2,$3,$4,'preparing',$5,now()+make_interval(secs => $6::double precision),now())`, id, mode, triggerSource, taskID, c.BatchSize, s.leaseTTL().Seconds()); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_run(project_id,id,mode,trigger_source,task_id,status,limit_commits,lease_expires_at,started_at) VALUES(@project,$1,$2,$3,$4,'preparing',$5,now()+make_interval(secs => $6::double precision),now())`, id, mode, triggerSource, taskID, c.BatchSize, s.leaseTTL().Seconds()); err != nil {
 			return nil, err
 		}
 	}
 	processed := []string{}
-	rows, err := tx.Query(ctx, `SELECT c.commit_sha FROM upstream_sync_commit c JOIN upstream_sync_run r ON r.id=c.run_id WHERE r.status='completed' ORDER BY c.commit_sha`)
+	rows, err := tx.Query(ctx, `SELECT c.commit_sha FROM upstream_sync_commit c JOIN upstream_sync_run r ON r.id=c.run_id WHERE r.project_id=@project AND r.status='completed' ORDER BY c.commit_sha`)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +161,7 @@ func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource stri
 		return nil, rows.Err()
 	}
 	assignments := map[string]string{}
-	assignedRows, err := tx.Query(ctx, `SELECT c.commit_sha,i.cluster_key FROM upstream_sync_commit c JOIN upstream_sync_item i ON i.id=c.item_id JOIN upstream_sync_run r ON r.id=c.run_id WHERE r.status IN ('failed','interrupted')`)
+	assignedRows, err := tx.Query(ctx, `SELECT c.commit_sha,i.cluster_key FROM upstream_sync_commit c JOIN upstream_sync_item i ON i.id=c.item_id JOIN upstream_sync_run r ON r.id=c.run_id WHERE r.project_id=@project AND r.status IN ('failed','interrupted')`)
 	if err != nil {
 		return nil, err
 	}
@@ -190,13 +192,13 @@ func (s *Service) Start(ctx context.Context, taskID, agentID, triggerSource stri
 }
 
 func (s *Service) Prepare(ctx context.Context, runID string, m BatchManifest) error {
-	tx, err := s.Pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	var base string
-	if err = tx.QueryRow(ctx, `SELECT bootstrap_base_sha FROM upstream_sync_config WHERE singleton=1 FOR UPDATE`).Scan(&base); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT bootstrap_base_sha FROM upstream_sync_config WHERE project_id=@project FOR UPDATE`).Scan(&base); err != nil {
 		return err
 	}
 	if base != "" && base != m.BaseSHA {
@@ -227,10 +229,10 @@ func (s *Service) Prepare(ctx context.Context, runID string, m BatchManifest) er
 	if status != "preparing" {
 		return ErrRunGone
 	}
-	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET base_sha=$2,observed_head_sha=$3,result=$4,has_more=$5,status='running',lease_expires_at=now()+make_interval(secs => $6::double precision) WHERE id=$1`, runID, m.BaseSHA, m.HeadSHA, raw, m.HasMore, s.leaseTTL().Seconds()); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET base_sha=$2,observed_head_sha=$3,result=$4,has_more=$5,status='running',lease_expires_at=now()+make_interval(secs => $6::double precision) WHERE project_id=@project AND id=$1`, runID, m.BaseSHA, m.HeadSHA, raw, m.HasMore, s.leaseTTL().Seconds()); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET bootstrap_base_sha=CASE WHEN bootstrap_base_sha='' THEN $1 ELSE bootstrap_base_sha END,head_sha=$2,updated_at=now() WHERE singleton=1`, m.BaseSHA, m.HeadSHA); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET bootstrap_base_sha=CASE WHEN bootstrap_base_sha='' THEN $1 ELSE bootstrap_base_sha END,head_sha=$2,baseline_committed_at=COALESCE($3,baseline_committed_at),head_committed_at=COALESCE($4,head_committed_at),pending_commits=COALESCE($5,pending_commits),updated_at=now() WHERE project_id=@project`, m.BaseSHA, m.HeadSHA, m.BaseCommittedAt, m.HeadCommittedAt, m.PendingCommits); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -239,7 +241,7 @@ func (s *Service) Prepare(ctx context.Context, runID string, m BatchManifest) er
 // Heartbeat 由 Agent 主动续租，保留为可选的自检手段：租约的可靠性由任务自己的生命周期
 // 轮询保证（见 RenewLeaseForPolledTask），这里不再是长批次唯一的续租来源。
 func (s *Service) Heartbeat(ctx context.Context, runID string) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at=now()+make_interval(secs => $2::double precision) WHERE id=$1 AND status IN ('preparing','running') AND `+runAlive, runID, s.leaseTTL().Seconds())
+	tag, err := s.exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at=now()+make_interval(secs => $2::double precision) WHERE project_id=@project AND id=$1 AND status IN ('preparing','running') AND `+runAlive, runID, s.leaseTTL().Seconds())
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrRunGone
 	}
@@ -257,7 +259,7 @@ func (s *Service) RenewLeaseForPolledTask(ctx context.Context, taskID, daemonID 
 	if daemonID == "" {
 		return false, nil
 	}
-	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_run r
+	tag, err := s.exec(ctx, `UPDATE upstream_sync_run r
  SET lease_expires_at=now()+make_interval(secs => $2::double precision),updated_at=now()
  WHERE r.task_id=$1::uuid AND r.status IN ('preparing','running') AND r.lease_expires_at>now()
    AND EXISTS(SELECT 1 FROM agent_task_queue t
@@ -273,7 +275,7 @@ func (s *Service) RenewLeaseForPolledTask(ctx context.Context, taskID, daemonID 
 // AppendReport 落一批回传。commit 台账是幂等的支点：同一 sha 重复提交只更新，
 // 条目数一律从台账重算，不信 Agent 自报。
 func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (int, error) {
-	tx, err := s.Pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -308,15 +310,15 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET lease_expires_at = now() + make_interval(secs => $2::double precision), updated_at = now()
- WHERE id=$1`, runID, s.leaseTTL().Seconds()); err != nil {
+ WHERE project_id=@project AND id=$1`, runID, s.leaseTTL().Seconds()); err != nil {
 		return 0, err
 	}
 
 	for _, c := range rep.Commits {
 		if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_commit
- (commit_sha, patch_id, run_id, absorbed, absorbed_method, subject, committed_at)
- VALUES($1,$2,$3,$4,$5,$6,$7)
- ON CONFLICT (commit_sha) DO UPDATE SET
+ (project_id, commit_sha, patch_id, run_id, absorbed, absorbed_method, subject, committed_at)
+ VALUES(@project,$1,$2,$3,$4,$5,$6,$7)
+ ON CONFLICT (project_id,commit_sha) DO UPDATE SET
    patch_id=EXCLUDED.patch_id, absorbed=EXCLUDED.absorbed,
    absorbed_method=EXCLUDED.absorbed_method, subject=EXCLUDED.subject,
    committed_at=EXCLUDED.committed_at,run_id=EXCLUDED.run_id
@@ -329,9 +331,9 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 	for _, it := range rep.Items {
 		var itemID string
 		if err = tx.QueryRow(ctx, `INSERT INTO upstream_sync_item
- (id, run_id, cluster_key, title, summary, rationale, verdict, confidence, presence, paths)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::text[],'{}'))
- ON CONFLICT (cluster_key) DO UPDATE SET
+ (project_id, id, run_id, cluster_key, title, summary, rationale, verdict, confidence, presence, paths)
+ VALUES(@project,$1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::text[],'{}'))
+ ON CONFLICT (project_id,cluster_key) DO UPDATE SET
    title=EXCLUDED.title, summary=EXCLUDED.summary, rationale=EXCLUDED.rationale,
    verdict=EXCLUDED.verdict, confidence=EXCLUDED.confidence, presence=EXCLUDED.presence,
    paths=(SELECT COALESCE(array_agg(DISTINCT p), '{}') FROM unnest(upstream_sync_item.paths || EXCLUDED.paths) AS p),
@@ -342,7 +344,7 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 			return 0, err
 		}
 		for _, sha := range it.CommitSHAs {
-			if tag, updateErr := tx.Exec(ctx, `UPDATE upstream_sync_commit SET item_id=$2 WHERE commit_sha=$1 AND run_id=$3 AND (item_id IS NULL OR item_id=$2)`, strings.TrimSpace(sha), itemID, runID); updateErr != nil {
+			if tag, updateErr := tx.Exec(ctx, `UPDATE upstream_sync_commit SET item_id=$2 WHERE project_id=@project AND commit_sha=$1 AND run_id=$3 AND (item_id IS NULL OR item_id=$2)`, strings.TrimSpace(sha), itemID, runID); updateErr != nil {
 				return 0, updateErr
 			} else if tag.RowsAffected() != 1 {
 				return 0, ValidationError{Field: "commit_shas", Message: "提交不属于本批或已归入其他条目"}
@@ -369,7 +371,7 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 	}
 	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET scanned_commits=$2, absorbed_commits=$3,
  item_count=$4, has_more=(($2 >= limit_commits) OR has_more), updated_at=now()
- WHERE id=$1`, runID, scanned, absorbedCount, itemCount); err != nil {
+ WHERE project_id=@project AND id=$1`, runID, scanned, absorbedCount, itemCount); err != nil {
 		return 0, err
 	}
 
@@ -381,13 +383,13 @@ func (s *Service) AppendReport(ctx context.Context, runID string, rep Report) (i
 
 // Finish 关闭批次并推进游标。游标只存 sha：上游 force-push 后 offset 会失效。
 func (s *Service) Finish(ctx context.Context, runID, cursorSHA string, hasMore bool) error {
-	tx, err := s.Pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	var singleton int
-	if err = tx.QueryRow(ctx, `SELECT singleton FROM upstream_sync_config WHERE singleton=1 FOR UPDATE`).Scan(&singleton); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT singleton FROM upstream_sync_config WHERE project_id=@project FOR UPDATE`).Scan(&singleton); err != nil {
 		return err
 	}
 
@@ -417,38 +419,43 @@ func (s *Service) Finish(ctx context.Context, runID, cursorSHA string, hasMore b
 	if count != len(m.Commits) || unassigned > 0 {
 		return ValidationError{Field: "commits", Message: "本批尚有未回传或未归组的提交"}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET status='completed',cursor_sha=$2,has_more=$3,completed_at=now(),lease_expires_at=NULL,updated_at=now() WHERE id=$1`, runID, expectedCursor, m.HasMore); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_run SET status='completed',cursor_sha=$2,has_more=$3,completed_at=now(),lease_expires_at=NULL,updated_at=now() WHERE project_id=@project AND id=$1`, runID, expectedCursor, m.HasMore); err != nil {
 		return err
 	}
 	state := "incremental"
 	if m.HasMore {
 		state = "bootstrap"
 	}
-	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET bootstrap_base_sha=CASE WHEN bootstrap_base_sha='' THEN $4 ELSE bootstrap_base_sha END,cursor_sha=$1,head_sha=$2,sync_state=$3,last_run_at=now(),error='',updated_at=now() WHERE singleton=1`, expectedCursor, m.HeadSHA, state, m.BaseSHA); err != nil {
+	var remaining *int
+	if m.PendingCommits != nil {
+		value := max(0, *m.PendingCommits-len(m.Commits))
+		remaining = &value
+	}
+	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET bootstrap_base_sha=CASE WHEN bootstrap_base_sha='' THEN $4 ELSE bootstrap_base_sha END,cursor_sha=$1,head_sha=$2,sync_state=$3,last_run_at=now(),error='',pending_commits=COALESCE($5,pending_commits),updated_at=now() WHERE project_id=@project`, expectedCursor, m.HeadSHA, state, m.BaseSHA, remaining); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
 func (s *Service) Fail(ctx context.Context, runID, message string) error {
-	tx, err := s.Pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	var singleton int
-	if err = tx.QueryRow(ctx, `SELECT singleton FROM upstream_sync_config WHERE singleton=1 FOR UPDATE`).Scan(&singleton); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT singleton FROM upstream_sync_config WHERE project_id=@project FOR UPDATE`).Scan(&singleton); err != nil {
 		return err
 	}
 
-	tag, err := tx.Exec(ctx, `UPDATE upstream_sync_run SET status='failed',error=$2,completed_at=now(),lease_expires_at=NULL,updated_at=now() WHERE id=$1 AND status IN ('preparing','running')`, runID, message)
+	tag, err := tx.Exec(ctx, `UPDATE upstream_sync_run SET status='failed',error=$2,completed_at=now(),lease_expires_at=NULL,updated_at=now() WHERE project_id=@project AND id=$1 AND status IN ('preparing','running')`, runID, message)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrRunGone
 	}
-	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET error=$1,updated_at=now() WHERE singleton=1`, message); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET error=$1,updated_at=now() WHERE project_id=@project`, message); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -463,22 +470,24 @@ func (s *Service) CloseTaskRuns(ctx context.Context, taskID, status, message str
 	if status != "failed" && status != "interrupted" {
 		return 0, ValidationError{Field: "status", Message: "只允许 failed 或 interrupted"}
 	}
-	// 绝大多数任务与上游同步无关：先按 task_id 判断有没有活动批次，避免每次任务终态都去锁配置行。
-	var active bool
-	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM upstream_sync_run WHERE task_id=$1::uuid AND status IN ('preparing','running'))`, taskID).Scan(&active); err != nil {
-		return 0, err
-	}
-	if !active {
+	var project string
+	err := s.Pool.QueryRow(ctx, `SELECT project_id FROM upstream_sync_run WHERE task_id=$1::uuid AND status IN ('preparing','running') LIMIT 1`, taskID).Scan(&project)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
-	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	s = s.ForProject(project)
+
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
 	// 与 Start/Fail 相同的加锁顺序（先配置行、后批次行），避免任务终态和领取批次互相等待。
 	var singleton int
-	if err = tx.QueryRow(ctx, `SELECT singleton FROM upstream_sync_config WHERE singleton=1 FOR UPDATE`).Scan(&singleton); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT singleton FROM upstream_sync_config WHERE project_id=@project FOR UPDATE`).Scan(&singleton); err != nil {
 		return 0, err
 	}
 	tag, err := tx.Exec(ctx, `UPDATE upstream_sync_run SET status=$2,error=$3,completed_at=now(),lease_expires_at=NULL,updated_at=now()
@@ -488,7 +497,7 @@ func (s *Service) CloseTaskRuns(ctx context.Context, taskID, status, message str
 	}
 	n := int(tag.RowsAffected())
 	if n > 0 && status == "failed" {
-		if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET error=$1,updated_at=now() WHERE singleton=1`, message); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET error=$1,updated_at=now() WHERE project_id=@project`, message); err != nil {
 			return 0, err
 		}
 	}

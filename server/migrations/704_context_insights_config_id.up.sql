@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY context_insights_config_id ON context_insights_config(singleton);

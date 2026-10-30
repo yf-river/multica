@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY upstream_commit_project_sha ON upstream_sync_commit(project_id,commit_sha);

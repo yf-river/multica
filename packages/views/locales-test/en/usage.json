@@ -110,5 +110,8 @@
   },
   "duration": {
     "less_than_minute": "<1m"
+  },
+  "insights": {
+    "token_total": "{{count}} tokens"
   }
 }

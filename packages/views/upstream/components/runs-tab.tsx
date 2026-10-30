@@ -34,15 +34,17 @@ function duration(startedAt: string | null, completedAt: string | null): string 
 
 export function RunsTab({
   wsId,
+  projectId = "multica",
   snapshot,
   onOpenSettings,
 }: {
   wsId: string;
+  projectId?: string;
   snapshot?: UpstreamSnapshot;
   onOpenSettings: () => void;
 }) {
   const { t } = useT("upstream");
-  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery(upstreamRunsOptions(wsId));
+  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery(upstreamRunsOptions(wsId, projectId));
   const runs = data?.pages.flatMap((page) => page.runs) ?? [];
   const boundAgent = !!snapshot?.config.agent_id;
   const canWrite = snapshot?.can_write ?? false;

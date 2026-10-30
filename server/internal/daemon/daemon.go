@@ -1995,6 +1995,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.resolveAuth(); err != nil {
 		return err
 	}
+	go d.contextInsightsLoop(ctx)
 	if openviking.Enabled() {
 		if err := openviking.Recover(d.openVikingRoot()); err != nil {
 			return fmt.Errorf("recover OpenViking archive: %w", err)
@@ -8495,6 +8496,32 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			appendErr := archive.Append(provider, raw)
 			captureErr := collectRuntimeAttachmentRefs(archive, raw)
 			return errors.Join(appendErr, captureErr)
+		}
+	}
+	if provider == "dsh" {
+		since, configErr := d.insightsActivation(ctx)
+		if configErr != nil {
+			return TaskResult{Status: "failed"}, fmt.Errorf("load Context Insights activation: %w", configErr)
+		}
+		if since > 0 {
+			spool, spoolErr := d.newInsightsSpool(task.ID)
+			if spoolErr != nil {
+				return TaskResult{Status: "failed"}, spoolErr
+			}
+			defer spool.file.Close()
+			execOpts.InsightsSince = since
+			nativeHome := task.Agent.CustomEnv["DSH_HOME"]
+			if nativeHome == "" {
+				nativeHome = os.Getenv("DSH_HOME")
+			}
+			if nativeHome == "" {
+				home, _ := os.UserHomeDir()
+				nativeHome = filepath.Join(home, ".dsh")
+			}
+			seen := map[string]bool{}
+			execOpts.InsightsEvent = func(raw json.RawMessage) error {
+				return spool.capture(raw, filepath.Join(nativeHome, "attachments", "v1", "objects"), seen)
+			}
 		}
 	}
 	// 1. Bind local evidence to this process interval, including failure and fresh-session retries.

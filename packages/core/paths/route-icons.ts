@@ -43,6 +43,7 @@ export type RouteIconName =
 
 /** 页面的 i18n 文案 key（在 `layout.nav` 命名空间下）。 */
 export type NavLabelKey =
+ | "platform_insights"
   | "inbox"
   | "chat"
   | "my_issues"
@@ -117,7 +118,7 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   autopilots: { segment: "autopilots", icon: "Zap", navKey: "autopilots" },
   agents: { segment: "agents", icon: "Bot", navKey: "agents" },
   squads: { segment: "squads", icon: "Users", navKey: "squads" },
-  usage: { segment: "usage", icon: "BarChart3", navKey: "usage" },
+  usage: { segment: "insights", icon: "BarChart3", navKey: "usage" },
   runReviews: { segment: "run-reviews", icon: "BarChart3", navKey: "run_reviews" },
   knowledge: { segment: "knowledge", icon: "BookOpenText", navKey: "knowledge" },
   runtimes: { segment: "runtimes", icon: "Monitor", navKey: "runtimes" },
@@ -143,7 +144,7 @@ const PAGE_BY_SEGMENT: Record<string, WorkspacePageKey> = Object.fromEntries(
 
 /** 返回路由段对应的页面 key；没有匹配返回 null。 */
 export function pageForSegment(segment: string): WorkspacePageKey | null {
-  return PAGE_BY_SEGMENT[segment] ?? null;
+  return segment==="usage"?"usage":PAGE_BY_SEGMENT[segment] ?? null;
 }
 
 /** 路径的路由段没有显式页面时用的兜底图标名。 */
@@ -163,6 +164,7 @@ export const DEFAULT_ROUTE_ICON_NAME: RouteIconName = "ListTodo";
  */
 export function resolveRouteIconName(path: string): RouteIconName {
   const pathname = path.split(/[?#]/)[0] ?? "";
+  if(pathname==="/insights")return "BarChart3";
   const segment = pathname.split("/").filter(Boolean)[1] ?? "";
   const page = pageForSegment(segment);
   return page ? WORKSPACE_PAGES[page].icon : DEFAULT_ROUTE_ICON_NAME;

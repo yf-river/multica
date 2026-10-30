@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """在独立、无凭据的 profile 中运行真实 DSH 和确定性模型夹具。"""
 import argparse
+import hashlib
+import struct
+import zlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 
 
 def main():
@@ -17,6 +21,7 @@ def main():
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     args = parser.parse_args()
+    args.artifacts = args.artifacts.resolve()
     args.artifacts.mkdir(parents=True, exist_ok=True, mode=0o700)
     root = Path(tempfile.mkdtemp(prefix="native-interactions-", dir=args.artifacts))
     home = root / "home"
@@ -39,6 +44,7 @@ def main():
         "- insert:\n    - id: native-interaction-fixture\n      name: " + fixture.as_uri() +
         "\n- id: agent-default-model\n  config:\n    provider: multica-fixture\n    model: native-interaction\n")
     reports = []
+    enabled_since = int(time.time()*1000)
 
     def calls():
         return [json.loads(line) for line in requests_file.read_text().splitlines()] if requests_file.exists() else []
@@ -46,7 +52,7 @@ def main():
     def run(phase, folder, prompt, command=None, session=None, decision=None):
         folder.mkdir(exist_ok=True, mode=0o700)
         request = {"v": 1, "type": "execute", "request_id": "fixture-" + phase, "cwd": str(folder),
-                   "prompt": prompt, "human_interactions": True,
+                   "prompt": prompt, "human_interactions": True, "insights_since": enabled_since,
                    "model": {"provider": "multica-fixture", "id": "native-interaction"}, "mcp_servers": []}
         if command:
             request["command"] = command
@@ -65,6 +71,10 @@ def main():
         if result is None:
             raise AssertionError(f"{phase} has no result; see {root}")
         current_calls = calls()[start:]
+        if current_calls:
+            insights = [frame for frame in frames if frame.get("type")=="insights"]
+            assert insights and any("contextTimeline" in f["projections"] for f in insights), f"missing insight projections: {phase}"
+            assert any(frame.get("type")=="archive" for frame in frames), f"missing original events: {phase}"
         # 不允许标题生成等隐式调用藏在主任务计量之外。
         assert all(call.get("tools") for call in current_calls), f"unexpected auxiliary model call in {phase}"
         reports.append({"phase": phase, "exit": process.returncode, "status": result["status"],
@@ -92,6 +102,22 @@ def main():
     answer, _, captured = run("answer", question_work, "对上一轮问题的回答：\ndestination: docs", session=question["session_id"])
     assert answer["status"] == "completed" and answer["session_id"] == question["session_id"] and len(captured) == 1
     assert "destination: docs" in json.dumps(captured[0]["messages"], ensure_ascii=False)
+    image_work = root / "image-work"
+    image_work.mkdir()
+    def png_chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    image_bytes = b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0)) + png_chunk(b"IDAT", zlib.compress((b"\x00" + b"\xff\x00\x00" * 16) * 16)) + png_chunk(b"IEND", b"")
+    (image_work / "image.png").write_bytes(image_bytes)
+    image, image_frames, captured = run("image", image_work, "Read image.png with the native image tool.")
+    assert image["status"] == "completed" and len(captured) == 2
+    attachment_id = "sha256:" + hashlib.sha256(image_bytes).hexdigest()
+    assert attachment_id in json.dumps(image_frames), "native image attachment reference was lost"
+    original = home / "attachments/v1/objects" / attachment_id[7:9] / attachment_id[7:]
+    assert original.read_bytes() == image_bytes, "native image original changed"
+    large, large_frames, captured = run("large-answer", work, "Return the complete large fixture answer.")
+    assert large["status"] == "completed" and len(captured) == 1
+    original_text = "INSIGHTS-LARGE-START\n" + "完整原文" * 30000 + "\nINSIGHTS-LARGE-END"
+    assert any(frame.get("event", {}).get("type") == "assistant/message" and original_text in json.dumps(frame, ensure_ascii=False).replace("\\n", "\n") for frame in large_frames), "large native context body was truncated"
     failed, _, captured = run("provider-error", work, "Execute the approved work.", "/plan off", approved["session_id"], "approved")
     assert failed["status"] == "failed" and len(captured) == 1
     assert "Deterministic fixture provider failure" in failed["error"]["message"]

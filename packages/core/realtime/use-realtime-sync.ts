@@ -620,6 +620,7 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   qc.invalidateQueries({ queryKey: issueKeys.timelineAll() });
   qc.invalidateQueries({ queryKey: issueKeys.reactionsAll() });
   qc.invalidateQueries({ queryKey: issueKeys.subscribersAll() });
+  qc.invalidateQueries({queryKey:["insights"]});
   qc.invalidateQueries({ queryKey: issueKeys.usageAll() });
   qc.invalidateQueries({ queryKey: issueKeys.attachmentsAll() });
   qc.invalidateQueries({ queryKey: issueKeys.tasksAll() });
@@ -1583,6 +1584,7 @@ export function useRealtimeSync(
     // chat:session_updated 在创建者于任一标签页/设备改名、钉住或归档会话后发出。
     // 就地修补缓存行，让下拉与徽标不用整次会话列表重取就反映变化——
     // 为何归档还须清零未读见 applyChatSessionUpdatedToCache。
+    const unsubInsights=ws.on("insights:updated",()=>{void qc.invalidateQueries({queryKey:["insights"]})});
     const unsubChatSessionUpdated = ws.on("chat:session_updated", (p) => {
       const payload = p as ChatSessionUpdatedPayload;
       chatWsLogger.info("chat:session_updated (global)", payload);
@@ -1662,6 +1664,7 @@ export function useRealtimeSync(
       unsubChatSessionCreated();
       unsubChatSessionDeleted();
       unsubChatSessionUpdated();
+      unsubInsights();
       if (taskMessageFlushTimer) clearTimeout(taskMessageFlushTimer);
       if (aggregateRefreshTimer) clearTimeout(aggregateRefreshTimer);
       timers.forEach(clearTimeout);

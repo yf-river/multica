@@ -9,7 +9,7 @@
     "autopilots": "自动化",
     "agents": "智能体",
     "squads": "小队",
-    "usage": "统计",
+    "usage": "上下文洞察",
     "run_reviews": "运行复盘",
     "runtimes": "运行时",
     "skills": "技能",
@@ -27,7 +27,8 @@
     "mcp": "MCP",
     "quick_actions": "快捷操作",
     "upstream": "上游同步",
-    "knowledge": "知识库"
+    "knowledge": "知识库",
+    "platform_insights": "平台上下文洞察"
   },
   "living_pages": {
     "health": {

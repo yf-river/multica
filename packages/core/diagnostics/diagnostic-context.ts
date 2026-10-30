@@ -55,6 +55,7 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["chat"],
   ["my-issues"],
   ["usage"],
+  ["insights"],
   ["run-reviews"],
   ["runtimes"],
   ["runtimes", ":id"],
@@ -80,6 +81,7 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
 
 // 全局（工作区之外）的路由模板清单。
 const GLOBAL_ROUTES: readonly RoutePattern[] = [
+ ["insights"],
   ["login"],
   ["signup"],
   ["logout"],

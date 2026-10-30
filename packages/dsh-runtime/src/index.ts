@@ -1,3 +1,4 @@
+import {captureDefinitions} from '@multica/context-insights'
 import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
@@ -46,6 +47,9 @@ interface ActiveRun {
   command: ExecuteCommand
   agent?: Agent
   firstSeq: number
+  insightsStartedAt: number
+  insightReads?:Promise<void>[]
+  insightSeeded?:WeakSet<object>
   cancelRequested: boolean
   /** Aborted on cancel so a pending subagent wait cannot hold the result frame. */
   cancel: AbortController
@@ -233,10 +237,45 @@ function projectionValue<T>(active: ActiveRun, session: Agent['session'], key: s
   }
 }
 
+// 只补足当前保留窗口的正文，不重建历史请求或历史账本。
+function captureInsightSurface(active:ActiveRun,session:Agent['session'],projections:Record<string,unknown>):void{
+ const seeded=active.insightSeeded??=new WeakSet<object>();if(seeded.has(session))return;seeded.add(session)
+ const read=async()=>{
+  const query=active.ctx?.get('sessionQuery') as {observeSession(id:Agent['session']['id']):Promise<{events:readonly SessionEvent[];[Symbol.dispose]():void}>}|undefined
+  if(!query)throw new Error('Context Insights requires the DSH session query service')
+  const observed=await query.observeSession(session.id)
+  try{
+   const timeline=projections.contextTimeline as {nodes?:{seq:number}[];archive?:{seq:number}[];systems?:{seq:number}[]}|undefined
+   const headers=projections.contextHeaders as {headers?:{seq:number}[]}|undefined
+   const retained=new Set([...(timeline?.nodes??[]),...(timeline?.archive??[]),...(timeline?.systems??[]),...(headers?.headers??[])].map(node=>node.seq))
+   const before=active.agent?.session===session?active.firstSeq:Number(session.firstLifecycleSeq)
+   for(const event of observed.events)if(event.seq<before&&(retained.has(event.seq)||event.type==='tool/call'))writeFrame({v:PROTOCOL_VERSION,type:'insight_context',request_id:active.command.request_id,session_id:String(session.id),event})
+  }finally{observed[Symbol.dispose]()}
+ }
+ // 立即登记失败处理；主回合结束前仍会等待并传播正文读取错误。
+ const pending=read();void pending.catch(()=>{});(active.insightReads??=[]).push(pending)
+}
+
+const insightsPending=new WeakSet<object>()
+
 function observeSessionEvent(active: ActiveRun, session: Agent['session'], event: SessionEvent): void {
   if (active.agent?.session === session && event.seq < active.firstSeq) return
-  if (active.command.archive && active.agent) {
+  if ((active.command.archive || active.command.insights_since) && active.agent) {
     writeFrame({ v: PROTOCOL_VERSION, type: 'archive', request_id: active.command.request_id, session_id: String(session.id), event })
+  }
+  if(active.command.insights_since && !insightsPending.has(session)){
+    insightsPending.add(session)
+    queueMicrotask(()=>{
+      insightsPending.delete(session)
+      const keys=['contextTimeline','contextActivity','contextHeaders','contextPressure','contextBreakdown','tokenUsage','multicaSessionStats','multicaRunTimeline']
+      const registry=active.ctx?.get('sessionProjections') as {snapshot(session:Agent['session'],keys:string[]):{values:Record<string,unknown>}}|undefined
+      const projections=registry?.snapshot(session,keys).values??{}
+      const runTimeline=projections.multicaRunTimeline as {cost?:unknown}|undefined
+      projections.multicaRunCost=runTimeline?.cost??{}
+      delete projections.multicaRunTimeline
+      captureInsightSurface(active,session,projections)
+      writeFrame({v:PROTOCOL_VERSION,type:'insights',request_id:active.command.request_id,session_id:String(session.id),cwd:session.header.cwd,...(session.header.parentSession?{parent_session_id:String(session.header.parentSession)}:{}),seq:Number(session.seq)-1,projections})
+    })
   }
   if (active.agent?.session !== session || event.seq < active.firstSeq) return
   const requestId = active.command.request_id
@@ -467,6 +506,13 @@ async function createOrResumeAgent(
     // Session projections live on the agent scope, not the launcher root; read
     // context telemetry through the same scope the agent runs in.
     active.ctx = agentCtx
+    if(active.command.insights_since){
+     const registry=agentCtx.get('sessionProjections') as {register(definition:unknown):()=>void}|undefined
+     if(!registry)throw new Error('Context Insights requires DSH session projections')
+     for(const definition of captureDefinitions(active.command.insights_since))agentCtx.effect(()=>registry.register(definition),'Multica Context Insights')
+     const runTimeline=captureDefinitions(Math.max(active.command.insights_since,active.insightsStartedAt))[0]
+     agentCtx.effect(()=>registry.register({...runTimeline,key:'multicaRunTimeline'}),'Multica Run Accounting')
+    }
     installModelSelection(agentCtx, selected)
     agentCtx.on('approval/request', (_request, next) => {
       if (active.cancelRequested) return Promise.resolve<ApprovalOutcome>('cancelled')
@@ -594,6 +640,7 @@ async function executeSlashCommand(ctx: Context, active: ActiveRun): Promise<num
     }
     // 命令只负责切换模式；后续模型回合的真实终态决定任务结果。
     const pendingResult = followup || active.pendingInteraction !== undefined ? resultFromReason(active) : undefined
+    await Promise.all(active.insightReads??[])
     const sessionId = String(handle.agent.session.id)
     if (pendingResult !== undefined) {
       await handle.dispose()
@@ -675,6 +722,7 @@ async function execute(ctx: Context, active: ActiveRun): Promise<number> {
     if (outcome === 'cancelled' || active.cancelRequested) await settleCancelled(ctx, handle.agent)
     else await drainDescendants(ctx, handle.agent)
     await sessions.flush(handle.agent.session)
+    await Promise.all(active.insightReads??[])
     const sessionId = String(handle.agent.session.id)
     const result = resultFromReason(active)
     await handle.dispose()
@@ -748,6 +796,7 @@ async function stdio(ctx: Context): Promise<number> {
         const active: ActiveRun = {
           command,
           firstSeq: Number.MAX_SAFE_INTEGER,
+          insightsStartedAt: Date.now(),
           cancelRequested: false,
           cancel: new AbortController(),
           lastText: '',
@@ -794,6 +843,7 @@ async function stdio(ctx: Context): Promise<number> {
     plugin_version: PLUGIN_VERSION,
     capabilities: {
       archive: true,
+      insights: true,
       resume: true,
       cancel: true,
       models: true,

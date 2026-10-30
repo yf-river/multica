@@ -1,0 +1,13 @@
+{
+  "package": "@deepseek-ai/dsh-session-stats",
+  "version": "0.2.1-rc.3",
+  "source": "lib/types/projection.js",
+  "license": "LICENSE",
+  "notes": "Official projection; sourceMappingURL removed because the upstream package omits its map.",
+  "footer_format": {
+    "package": "@deepseek-ai/dsh-client-ui-chat",
+    "version": "0.2.1-rc.3",
+    "source": "lib/client.js token-format",
+    "license": "LICENSE"
+  }
+}

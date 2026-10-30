@@ -6340,6 +6340,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 // down with it, so the error is swallowed and every row keeps its nil Usage,
 // which the UI already renders as "no usage recorded".
 func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, resp []AgentTaskResponse) {
+	defer h.hydrateInsightCosts(ctx, resp)
 	if len(resp) == 0 {
 		return
 	}
@@ -6363,6 +6364,7 @@ func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, res
 // query covers exactly the returned task IDs, avoiding unrelated history and an
 // N+1 query per task.
 func (h *Handler) hydrateAgentTaskUsage(ctx context.Context, agentID pgtype.UUID, taskIDs []pgtype.UUID, resp []AgentTaskResponse) error {
+	defer h.hydrateInsightCosts(ctx, resp)
 	if len(resp) == 0 {
 		return nil
 	}

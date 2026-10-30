@@ -78,6 +78,7 @@ export const WORKSPACE_MENU_GROUPS: readonly WorkspaceMenuGroup[] = [
     id: "configure",
     label: { section: "sidebar", key: "configure_group" },
     entries: [
+      { key: "platformInsights",navKey:"platform_insights",href:()=>"/insights" },
       { key: "runtimes", navKey: "runtimes", href: (paths) => paths.runtimes() },
       { key: "skills", navKey: "skills", href: (paths) => paths.skills() },
       { key: "mcp", navKey: "mcp", href: (paths) => paths.mcp() },

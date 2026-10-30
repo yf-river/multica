@@ -25,12 +25,3 @@ func TestNormalizeInstructionsDropsTextEqualToDefault(t *testing.T) {
 		}
 	}
 }
-
-func TestDailyCronUsesGivenHour(t *testing.T) {
-	if got := DailyCron(9); got != "0 9 * * *" {
-		t.Fatalf("got %q", got)
-	}
-	if got := DailyCron(0); got != "0 0 * * *" {
-		t.Fatalf("got %q", got)
-	}
-}

@@ -135,6 +135,9 @@ function collectSourceFiles(dir: string, found: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (skipDirs.has(entry)) continue;
     const path = join(dir, entry);
+    // 固定版本原生移植按上游视觉基线验收，外层适配继续遵循 Multica 的设计规则。
+    const nativePath=relative(repoRoot,path).replaceAll("\\","/");
+    if (["packages/views/insights/native","packages/views/insights/native-dist"].includes(nativePath)) continue;
     if (statSync(path).isDirectory()) {
       collectSourceFiles(path, found);
       continue;

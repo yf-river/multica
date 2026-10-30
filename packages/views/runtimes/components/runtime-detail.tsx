@@ -1,20 +1,7 @@
 // ============================================================================
 // Runtime 详情页（RuntimeDetail）
 //
-// 角色定位：单台 runtime 的详情视图。顶部面包屑（可含机器层级）；主体左侧
-// 是 Hero 卡（标识行 + 归属/设备/运行时事实 + 可折叠的技术 ID）与用量区块
-// （UsageSection）；右侧栏是「服务中的 agent」列表与诊断卡（可见性
-// public/private 切换 + 删除入口）。
-//
-// 数据流：父组件传入 runtime 快照；本组件再拉取工作区成员/agent/profile 与
-// 在线状态，本地算出健康、归属、可编辑/删除/读取权限后渲染。删除分为两种：
-// 自定义 profile runtime 删「配置」，其余删 runtime 本体。
-//
-// 权限约定：归属者或工作区 owner/admin 可改名/删除；只有 runtime 归属者可
-// 编辑可见性（MUL-6126，工作区 admin 也看不到编辑开关）。
-//
-// 关键 UI 决定：Hero 卡放在滚动容器内而非钉在顶栏下，让滚动条从页面边界
-// 开始而不是从内容中部开始；顶栏因属于「导航」而独立吸顶。
+// 主体展示运行时身份、设备事实、访问权限、服务中的 Agent 与诊断信息。
 // ============================================================================
 "use client";
 
@@ -40,7 +27,6 @@ import { memberListOptions, agentListOptions } from "@multica/core/workspace/que
 import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
 import {
   deriveRuntimeHealth,
-  isRuntimeUsableForUser,
   runtimeDisplayName,
   runtimeProfileListOptions,
 } from "@multica/core/runtimes";
@@ -61,7 +47,6 @@ import { AppLink, useNavigation } from "../../navigation";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { HealthBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
-import { UsageSection } from "./usage-section";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import {
   RevokeRuntimeAccessDialog,
@@ -153,7 +138,7 @@ export function RuntimeDetail({
     : false;
   const isRuntimeOwner = user && runtime.owner_id === user.id;
   const canEditRuntime = isAdmin || isRuntimeOwner;
-  const canReadRuntime = isRuntimeUsableForUser(runtime, user?.id ?? null);
+
   const runtimeProfile: RuntimeProfile | null = runtime.profile_id
     ? profiles.find((p) => p.id === runtime.profile_id) ?? null
     : null;
@@ -226,7 +211,6 @@ export function RuntimeDetail({
               cliVersion={cliVersion}
               daemonShort={daemonShort}
             />
-            {canReadRuntime && <UsageSection runtime={runtime} />}
           </div>
 
           {/* 右侧栏：服务中的 agent + 诊断 */}

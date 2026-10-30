@@ -17,7 +17,7 @@ pnpm --filter @multica-ai/dsh-runtime bundle:daemon
 包名和 profile 入口为 `@multica-ai/dsh-runtime` 与 `multica`：
 
 ```sh
-dsh plugin --profile multica add /absolute/path/to/dsh-runtime-0.3.4.tgz
+dsh plugin --profile multica add /absolute/path/to/dsh-runtime-0.3.5.tgz
 dsh --profile multica --probe
 dsh --profile multica --list-models
 dsh --profile multica --stdio
@@ -46,7 +46,7 @@ dsh --profile multica --stdio
 MULTICA_RUN_REAL_AGENT_SMOKE=1 python3 packages/dsh-runtime/scripts/test-native-interactions.py \
   --dsh /absolute/dsh \
   --host-package /absolute/dsh/package \
-  --bundle /absolute/dsh-runtime-0.3.4.tgz \
+  --bundle /absolute/dsh-runtime-0.3.5.tgz \
   --artifacts /private/evidence
 ```
 

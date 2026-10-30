@@ -37,7 +37,7 @@ function workspaceScoped(slug: string) {
   const ws = `/${encode(slug)}`;
   return {
     root: () => `${ws}/issues`,
-    usage: () => `${ws}/usage`,
+    usage: () => `${ws}/insights`,
     runReviews: () => `${ws}/run-reviews`,
     issues: () => `${ws}/issues`,
     issueDetail: (id: string) => `${ws}/issues/${encode(id)}`,
@@ -116,7 +116,7 @@ export type WorkspacePaths = ReturnType<typeof workspaceScoped>;
 // 当它等于或始于其中任一前缀。
 // 注意：`/workspaces/`（带尾斜杠）是前缀——`workspaces` 是保留名，任何以
 // `/workspaces/...` 开头的路径都是系统拥有的，不是用户拥有的。
-const GLOBAL_PREFIXES = ["/login", "/workspaces/", "/invite/", "/invitations", "/onboarding", "/auth/", "/logout", "/signup"];
+const GLOBAL_PREFIXES = ["/insights","/login", "/workspaces/", "/invite/", "/invitations", "/onboarding", "/auth/", "/logout", "/signup"];
 
 /** 判断路径是否属于全局（工作区之外）路由。 */
 export function isGlobalPath(path: string): boolean {

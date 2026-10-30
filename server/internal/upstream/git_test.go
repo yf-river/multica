@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) {
@@ -114,25 +113,6 @@ func TestManifestCoversMergedBranchesAndRecognizesEquivalentPatch(t *testing.T) 
 	}
 }
 
-func TestNextDailyRunUsesBeijingScheduleHour(t *testing.T) {
-	cases := []struct {
-		now  string
-		hour int
-		want string
-	}{
-		{"2026-10-22T00:59:59Z", 9, "2026-10-22T01:00:00Z"},
-		{"2026-10-22T01:00:00Z", 9, "2026-10-23T01:00:00Z"},
-		{"2026-10-22T08:00:00Z", 9, "2026-10-23T01:00:00Z"},
-		{"2026-10-22T08:00:00Z", 0, "2026-10-22T16:00:00Z"},
-		{"2026-10-22T08:00:00Z", 23, "2026-10-22T15:00:00Z"},
-	}
-	for _, tc := range cases {
-		now, _ := time.Parse(time.RFC3339, tc.now)
-		if got := NextDailyRun(now, tc.hour).UTC().Format(time.RFC3339); got != tc.want {
-			t.Fatalf("%s hour %d got %s want %s", tc.now, tc.hour, got, tc.want)
-		}
-	}
-}
 func TestManifestRejectsDuplicateOrPartialSHA(t *testing.T) {
 	a := strings.Repeat("a", 40)
 	m := BatchManifest{BaseSHA: a, HeadSHA: a, Commits: []CommitRef{{SHA: a}, {SHA: a}}}

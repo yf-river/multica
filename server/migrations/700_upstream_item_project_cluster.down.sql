@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY upstream_item_project_cluster;

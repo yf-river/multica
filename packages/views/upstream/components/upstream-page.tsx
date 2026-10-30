@@ -2,6 +2,8 @@
 // 页面只读展示服务端台账；所有 git 操作都在 daemon 侧 Agent 里完成。
 "use client";
 
+import {DeploymentsTab} from "./deployments-tab";
+import {useLocale} from "../../i18n";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, GitMerge, Settings } from "lucide-react";
@@ -33,12 +35,13 @@ function formatCompact(value: string | null | undefined): string {
   return date.getFullYear() === new Date().getFullYear() ? day : `${date.getFullYear()}/${day}`;
 }
 
-export function UpstreamPage() {
+export function UpstreamDetailPage({ projectId = "multica" }: { projectId?: string }) {
   const { t } = useT("upstream");
+  const zh=useLocale().startsWith("zh");
   const wsId = useWorkspaceId();
   const [tab, setTab] = useState("pending");
   const [showSettings, setShowSettings] = useState(false);
-  const { data, isLoading, error } = useQuery(upstreamSnapshotOptions(wsId));
+  const { data, isLoading, error } = useQuery(upstreamSnapshotOptions(wsId, projectId));
 
   const config = data?.config;
   const running = !!data?.active_run_id;
@@ -100,9 +103,7 @@ export function UpstreamPage() {
       tone: lastRunFailed ? "text-destructive" : undefined,
     });
   }
-  if (data?.next_run_at && !paused) {
-    meta.push({ key: "next", text: t(($) => $.page.status.next_run, { time: formatCompact(data.next_run_at) }) });
-  }
+
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -183,19 +184,23 @@ export function UpstreamPage() {
               {data?.pending ? <span className="text-faint-foreground">{t(($) => $.page.tabs.pending_count, { count: data.pending })}</span> : null}
             </TabsTrigger>
             <TabsTrigger value="runs">{t(($) => $.page.tabs.runs)}</TabsTrigger>
+            {projectId==="openviking"?<TabsTrigger value="deployments">{zh?"部署":"Deployments"}</TabsTrigger>:null}
           </TabsList>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <TabsContent value="pending" className="mt-0">
-            <PendingTab wsId={wsId} snapshot={data} onOpenSettings={() => setShowSettings(true)} />
+            <PendingTab projectId={projectId} wsId={wsId} snapshot={data} onOpenSettings={() => setShowSettings(true)} />
           </TabsContent>
+          {projectId==="openviking"?<TabsContent value="deployments"><DeploymentsTab projectId={projectId} canWrite={data?.can_write===true}/></TabsContent>:null}
           <TabsContent value="runs" className="mt-0">
-            <RunsTab wsId={wsId} snapshot={data} onOpenSettings={() => setShowSettings(true)} />
+            <RunsTab projectId={projectId} wsId={wsId} snapshot={data} onOpenSettings={() => setShowSettings(true)} />
           </TabsContent>
         </div>
       </Tabs>
 
-      <UpstreamSettingsSheet open={showSettings} onClose={() => setShowSettings(false)} snapshot={data} />
+      <UpstreamSettingsSheet projectId={projectId} open={showSettings} onClose={() => setShowSettings(false)} snapshot={data} />
     </div>
   );
 }
+
+export { UpstreamProjectsPage as UpstreamPage } from "./projects-page";

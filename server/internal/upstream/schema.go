@@ -152,10 +152,13 @@ func ValidateReport(rep Report) error {
 
 // BatchManifest 来自专用上游镜像和持久化基线的确定性 Git 枚举；完成前核对整个冻结清单。
 type BatchManifest struct {
-	BaseSHA string      `json:"base_sha"`
-	HeadSHA string      `json:"head_sha"`
-	Commits []CommitRef `json:"commits"`
-	HasMore bool        `json:"has_more"`
+	BaseCommittedAt *time.Time  `json:"base_committed_at,omitempty"`
+	HeadCommittedAt *time.Time  `json:"head_committed_at,omitempty"`
+	PendingCommits  *int        `json:"pending_commits,omitempty"`
+	BaseSHA         string      `json:"base_sha"`
+	HeadSHA         string      `json:"head_sha"`
+	Commits         []CommitRef `json:"commits"`
+	HasMore         bool        `json:"has_more"`
 }
 
 func ValidateManifest(m BatchManifest, limit int) error {

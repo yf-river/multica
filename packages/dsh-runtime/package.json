@@ -1,6 +1,6 @@
 {
   "name": "@multica-ai/dsh-runtime",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "description": "DeepSeek Harness runtime bridge for Multica",
   "repository": {
@@ -26,7 +26,7 @@
     "compat.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/bundle-insights.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm test && pnpm build",
@@ -128,7 +128,9 @@
     "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
     "@deepseek-ai/dsh-util-values": "0.2.1-rc.3",
     "@deepseek-ai/dsh-working-directory": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-user-questions": "0.2.1-rc.3"
+    "@deepseek-ai/dsh-user-questions": "0.2.1-rc.3",
+    "@multica/context-insights": "workspace:*",
+    "esbuild": "^0.27.0"
   },
   "license": "UNLICENSED"
 }

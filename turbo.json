@@ -43,7 +43,7 @@
       // `public/**` assets, nor `package.json` / `tsconfig.json`, so the task
       // hash was unchanged by edits to any of them -- harmless while nothing
       // was ever cached, a stale-build bug the moment it is.
-      "outputs": [".next/**", "!.next/cache/**", "dist/**", "out/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**", "out/**", "insights/native-dist/**"]
     },
     "dev": {
       "cache": false,
@@ -56,6 +56,8 @@
     "typecheck": {
       "dependsOn": ["^typecheck", "mdx"]
     },
+    "@multica/context-insights#typecheck": {"dependsOn":["^typecheck"],"outputs":["dist/**"]},
+    "@multica/views#typecheck": {"dependsOn":["^typecheck","mdx"],"outputs":["insights/native-dist/**"]},
     // Hash-only transit task. No package implements a `cache-inputs` script,
     // so every node resolves to <NONEXISTENT> and nothing is ever executed --
     // but the edges still pull each dependency's file hashes into whatever

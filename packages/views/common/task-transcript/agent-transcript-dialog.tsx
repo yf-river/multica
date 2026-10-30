@@ -6,7 +6,8 @@
 
 "use client";
 
-import { RunContextDialog } from "../../issues/components/run-context-dialog";
+import {useOptionalNavigation} from "../../navigation";
+import {useWorkspaceSlug,paths} from "@multica/core/paths";
 import { TaskInteractionHistory } from "../task-interaction-panel";
 import { TaskOutput } from "./task-output";
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
@@ -62,7 +63,7 @@ import {
 import type { AgentTask, Agent, AgentRuntime } from "@multica/core/types/agent";
 import { resolveWorkdirCopyTarget } from "@multica/core/issues";
 import { runtimeDisplayName, providerDisplayName } from "@multica/core/runtimes";
-import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
+import {useTaskReferenceCost} from "../../insights/task-cost";
 import { redactSecrets } from "./redact";
 import {
   createLiveEndFollow,
@@ -108,7 +109,6 @@ import { useLocale, useT } from "../../i18n";
 import {
   formatTokens,
   formatUsd,
-  summarizeTaskUsage,
 } from "../../runtimes/utils";
 import "../../editor/styles/code.css";
 import "./task-transcript.css";
@@ -337,8 +337,11 @@ export function AgentTranscriptDialog({
 }: AgentTranscriptDialogProps) {
   const { t } = useT("agents");
   const locale = useLocale();
-  const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
-  useEffect(() => { setRuntimeContextOpen(false); }, [open, task.id]);
+  const navigation=useOptionalNavigation();
+  const workspaceSlug=useWorkspaceSlug();
+  // 独立转录预览也复用此组件；聊天或任务的宿主负责提供导航身份。
+  const canOpenInsights=Boolean(navigation&&workspaceSlug&&(task.chat_session_id||task.issue_id));
+  const openInsights=()=>{if(!navigation||!workspaceSlug)return;const target=paths.workspace(workspaceSlug);onOpenChange(false);navigation.push(task.chat_session_id?`${target.chat()}?session=${task.chat_session_id}&view=insights&run=${task.id}`:`${target.issues()}/${task.issue_id}?view=insights&run=${task.id}`)};
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(() => new Set());
   const [query, setQuery] = useState("");
@@ -834,10 +837,7 @@ export function AgentTranscriptDialog({
   // 本次运行自己的花费。从 issue 执行日志打开的转录（那个端点会填充 usage）才有；
   // 别处没有时，下面的 chip 与用量行自然不渲染。
   //
-  // `summarizeTaskUsage` 通过自定义费率 store 计价，它是命令式读取的——这里订阅
-  // 一下正是为了让保存过的费率变化能传导到这个数字，跟其他用量界面一样。
-  useCustomPricingStore((s) => s.pricings);
-  const usage = summarizeTaskUsage(task.usage);
+  const usage=useTaskReferenceCost([task]);
   // 两件刻意不拼成一个字符串的事（#7411）：
   //   • `reasonLabel` —— 本地化的原因，由稳定的 `failure_reason` 枚举推导。
   //      这是面向用户的解释。
@@ -922,7 +922,7 @@ export function AgentTranscriptDialog({
                 <Coins aria-hidden="true" className="h-3 w-3 text-muted-foreground" />
                 <span className="font-medium">{formatTokens(usage.tokens)}</span>
                 <span className="text-faint-foreground">·</span>
-                <span className="text-muted-foreground">{formatUsd(usage.cost)}</span>
+                <span className="text-muted-foreground">{(usage.cost===null?"—":formatUsd(usage.cost))}</span>
               </span>
             )}
 
@@ -1051,7 +1051,7 @@ export function AgentTranscriptDialog({
                           )}
                           <RunDetailRow
                             label={t(($) => $.transcript.details_cost)}
-                            value={formatUsd(usage.cost)}
+                            value={(usage.cost===null?"—":formatUsd(usage.cost))}
                           />
                         </>
                       )}
@@ -1094,8 +1094,7 @@ export function AgentTranscriptDialog({
 
         {open && <TaskInteractionHistory taskId={task.id} active={isLive} />}
         {open && <div className="shrink-0 border-b px-4 py-2">
-          <Button variant="outline" size="sm" onClick={() => setRuntimeContextOpen(true)}>{t(($) => $.transcript.runtime_context)}</Button>
-          {runtimeContextOpen && <RunContextDialog taskId={task.id} open onOpenChange={setRuntimeContextOpen} />}
+          {canOpenInsights?<Button variant="outline" size="sm" onClick={openInsights}>{t(($) => $.transcript.runtime_context)}</Button>:null}
         </div>}
 
         {/* ── 列表工具栏：左搜索，右侧两个菜单 ── */}

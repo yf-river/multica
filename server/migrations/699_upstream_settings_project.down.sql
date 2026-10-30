@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY upstream_settings_project;

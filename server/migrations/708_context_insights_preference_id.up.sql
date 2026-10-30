@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY context_insights_preference_id ON context_insights_preference(user_id);

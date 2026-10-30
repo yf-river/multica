@@ -130,3 +130,11 @@ describe('plan decisions', () => {
     }
   })
 })
+
+describe('independent context insights capture',()=>{
+ it('preserves activation without requiring OpenViking archive',()=>{
+  const command={v:1,type:'execute',request_id:'insights-only',cwd:'/work',prompt:'inspect',insights_since:1793340000000,mcp_servers:[]};
+  expect(parseInboundCommand(JSON.stringify(command))).toEqual(command);
+  for(const insights_since of [0,-1,1.5,'1793340000000'])expect(()=>parseInboundCommand(JSON.stringify({...command,insights_since}))).toThrow('positive timestamp');
+ });
+});

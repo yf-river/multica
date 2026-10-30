@@ -139,12 +139,8 @@ vi.mock("@multica/core/runtimes/mutations", () => ({
   }),
 }));
 
-// Stubbing ProviderLogo / UsageSection avoids dragging in chart libs and
-// additional query keys we don't care about here.
+// 此处只验证运行时访问权限，图标不参与断言。
 vi.mock("./provider-logo", () => ({ ProviderLogo: () => null }));
-vi.mock("./usage-section", () => ({
-  UsageSection: () => <div data-testid="usage-section" />,
-}));
 vi.mock("./shared", () => ({ HealthBadge: () => null }));
 vi.mock("../../agents/presence", () => ({
   availabilityConfig: { offline: { dotClass: "", textClass: "" } },
@@ -338,7 +334,7 @@ describe("RuntimeDetail visibility section", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows usage to a workspace admin viewing another member's public runtime", () => {
+  it("omits usage when viewing a public runtime", () => {
     mockQueryData.members = [
       { user_id: "user-me", role: "admin" },
       { user_id: "someone-else", role: "member" },
@@ -348,7 +344,7 @@ describe("RuntimeDetail visibility section", () => {
       makeRuntime({ owner_id: "someone-else", visibility: "public" }),
     );
 
-    expect(screen.getByTestId("usage-section")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-section")).not.toBeInTheDocument();
   });
 
   // An ownerless runtime is unreadable server-side (the read gate reuses

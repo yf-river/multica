@@ -18,7 +18,7 @@ func TestEmbeddedBridgeExtractAndRejectTampering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.BridgeVersion != "0.3.4" || manifest.ProtocolVersion != 1 {
+	if manifest.BridgeVersion != "0.3.5" || manifest.ProtocolVersion != 1 {
 		t.Fatalf("wrong embedded identity: %#v", manifest)
 	}
 	if repeated, err := Extract(base); err != nil || repeated != path {

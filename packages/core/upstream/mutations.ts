@@ -8,7 +8,7 @@ export function useMarkUpstreamItems() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (body: { ids: string[]; status: "adopted" | "ignored" | "open" }) =>
+    mutationFn: (body: { ids: string[]; status: "adopted" | "ignored" | "open"; project_id?: string }) =>
       api.markUpstreamItems(body),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: upstreamKeys.all(wsId) });
@@ -16,11 +16,11 @@ export function useMarkUpstreamItems() {
   });
 }
 
-export function useCreateUpstreamAbsorptionTask() {
+export function useCreateUpstreamAbsorptionTask(projectId="multica") {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (itemId: string) => api.createUpstreamAbsorptionTask(itemId),
+    mutationFn: (itemId: string) => api.createUpstreamAbsorptionTask(itemId,projectId),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: upstreamKeys.all(wsId) });
     },
@@ -32,6 +32,8 @@ export function useUpdateUpstreamConfig() {
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: (body: {
+      project_id?: string;
+      bootstrap_base_sha?: string;
       upstream_url: string;
       upstream_branch: string;
       local_ref: string;

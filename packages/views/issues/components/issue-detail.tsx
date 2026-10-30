@@ -1,4 +1,5 @@
 "use client";
+import {InsightsSurface} from "../../insights/insights-surface";
 
 // 本文件：IssueDetail —— 单个问题（issue）的详情页核心组件。
 // 负责渲染标题、描述、子任务列表、活动/评论时间线、右侧属性边栏，
@@ -2671,7 +2672,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         ]
       : [];
 
-  const detailContent = (
+  const conversationContent = (
     // 承载本 issue 图片共用的唯一查看器——见 ImageSequenceProvider。包裹整根内容列，
     // 让描述编辑器的图片与时间线的图片共享同一条序列。
     <CurrentIssueRenderContextProvider value={currentIssueRenderContext}>
@@ -3440,6 +3441,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     </ImageSequenceProvider>
     </CurrentIssueRenderContextProvider>
   );
+  const detailContent = <InsightsSurface issueId={id} title={`${issue.identifier} ${issue.title}`}>{conversationContent}</InsightsSurface>;
+
 
   if (isMobile) {
     return (

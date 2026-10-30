@@ -55,7 +55,7 @@ describe("paths.workspace() shape", () => {
     // Check that none of the parameterless paths embed a leaked literal and
     // that each method emits its explicitly registered workspace subpath.
     const expectedSegments: Array<[string, string]> = [
-      ["usage", "usage"],
+      ["usage", "insights"],
       ["runReviews", "run-reviews"],
       ["issues", "issues"],
       ["projects", "projects"],

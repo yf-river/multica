@@ -1,0 +1,1 @@
+UPDATE context_insights_session s SET updated_at=COALESCE((SELECT max(e.occurred_at) FROM context_insights_event e WHERE e.session_key=s.id),(SELECT max(t.created_at) FROM context_insights_run r JOIN agent_task_queue t ON t.id=r.task_id WHERE r.session_key=s.id),s.created_at);

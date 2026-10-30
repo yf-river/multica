@@ -843,6 +843,10 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := deleteContextInsightData(r.Context(), tx, workspaceID, uuidToString(session.ID), true); err != nil {
+		writeError(w, 500, "清理会话洞察失败")
+		return
+	}
 	if err := qtx.DeleteChatSession(r.Context(), db.DeleteChatSessionParams{
 		ID:          session.ID,
 		WorkspaceID: session.WorkspaceID,

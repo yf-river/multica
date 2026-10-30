@@ -1,4 +1,4 @@
-// 上游同步设置：同步范围、执行体（运行时/模型/思考档/提示词）与自动同步计划。
+// 上游同步设置：同步范围、执行体（运行时/模型/思考档/提示词）与分析起点。
 // 执行体由服务端托管，这里只维护配置，不出现"新建智能体"。
 "use client";
 
@@ -18,16 +18,17 @@ import { ModelPicker } from "../../agents/components/inspector/model-picker";
 import { findModelCapabilityEntry } from "../../agents/components/inspector/model-capability";
 import { useT } from "../../i18n";
 
-const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 // 同步执行体只跑在 Codex / CodeBuddy 上，服务端绑定其它 provider 会直接拒绝。
 const SYNC_PROVIDERS = new Set(["codex", "codebuddy"]);
 const fieldClass = "h-9 w-full rounded-md border border-input bg-background px-2 text-body";
 
 export function UpstreamSettingsSheet({
+  projectId = "multica",
   open,
   onClose,
   snapshot,
 }: {
+  projectId?: string;
   open: boolean;
   onClose: () => void;
   snapshot?: UpstreamSnapshot;
@@ -44,6 +45,7 @@ export function UpstreamSettingsSheet({
   const [upstreamUrl, setUpstreamUrl] = useState("");
   const [upstreamBranch, setUpstreamBranch] = useState("");
   const [localRef, setLocalRef] = useState("");
+  const [bootstrapBase,setBootstrapBase]=useState("");
   const [batchSize, setBatchSize] = useState(200);
   const [runtimeId, setRuntimeId] = useState("");
   const [model, setModel] = useState("");
@@ -53,8 +55,6 @@ export function UpstreamSettingsSheet({
   //    没动过才跟随内置默认。不能用"值是否为空"反推，否则全选删除后立刻回填默认文本，
   //    再粘贴就接在默认后面，存成「内置默认 + 我的提示词」。
   const [instructionsTouched, setInstructionsTouched] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-  const [scheduleHour, setScheduleHour] = useState(9);
 
   // 每次打开按服务端当前值灌入一次。快照会持续轮询，不能跟着刷新覆盖正在编辑的内容。
   const [synced, setSynced] = useState(false);
@@ -67,13 +67,12 @@ export function UpstreamSettingsSheet({
     setUpstreamBranch(config.upstream_branch);
     setLocalRef(config.local_ref);
     setBatchSize(config.batch_size);
+    setBootstrapBase(config.bootstrap_base_sha);
     setRuntimeId(config.runtime_id);
     setModel(config.model);
     setThinking(config.thinking_level);
     setInstructions(config.instructions);
     setInstructionsTouched(Boolean(config.instructions.trim()));
-    setEnabled(config.sync_state !== "paused");
-    setScheduleHour(config.schedule_hour);
     setSynced(true);
   }, [open, synced, config]);
 
@@ -104,8 +103,10 @@ export function UpstreamSettingsSheet({
         upstream_branch: upstreamBranch,
         local_ref: localRef,
         batch_size: batchSize,
-        schedule_hour: scheduleHour,
-        enabled,
+        project_id: projectId,
+        bootstrap_base_sha:bootstrapBase,
+        schedule_hour: 9,
+        enabled: Boolean(runtimeId),
         runtime_id: runtimeId,
         model,
         thinking_level: thinking,
@@ -176,6 +177,7 @@ export function UpstreamSettingsSheet({
                 />
               </label>
             </div>
+            <label className="block space-y-1 text-body" htmlFor="upstream-base"><span>{t($=>$.page.setup.baseline_sha)}</span><input id="upstream-base" className={fieldClass} value={bootstrapBase} disabled={!canWrite||repositoryLocked} onChange={event=>setBootstrapBase(event.target.value)}/></label>
             <label className="block space-y-1 text-body" htmlFor="upstream-batch">
               <span>{t(($) => $.page.setup.batch_size)}</span>
               <input
@@ -276,40 +278,13 @@ export function UpstreamSettingsSheet({
             </div>
           </section>
 
-          <section className="space-y-3 border-t border-surface-border pt-4">
-            <h3 className="text-body font-medium">{t(($) => $.page.setup.section_schedule)}</h3>
-            <label className="flex items-start gap-2 text-body">
-              <input
-                type="checkbox"
-                className="mt-1 size-4 shrink-0"
-                checked={enabled}
-                disabled={!canWrite}
-                onChange={(event) => setEnabled(event.target.checked)}
-              />
-              <span>{t(($) => $.page.setup.enabled)}</span>
-            </label>
-            <label className="block space-y-1 text-body" htmlFor="upstream-hour">
-              <span>{t(($) => $.page.setup.schedule_hour)}</span>
-              <select
-                id="upstream-hour"
-                className={`${fieldClass} w-40`}
-                value={scheduleHour}
-                disabled={!canWrite}
-                onChange={(event) => setScheduleHour(Number(event.target.value))}
-              >
-                {HOURS.map((hour) => (
-                  <option key={hour} value={hour}>{`${String(hour).padStart(2, "0")}:00`}</option>
-                ))}
-              </select>
-            </label>
-            <p className="text-caption text-muted-foreground">{t(($) => $.page.setup.schedule)}</p>
-          </section>
+
 
           {save.isError ? <p role="alert" className="text-caption text-destructive">{save.error.message}</p> : null}
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>{t(($) => $.page.setup.cancel)}</Button>
-            <Button disabled={!canWrite || save.isPending || !batchValid || (enabled && !runtimeId)} onClick={submit}>
+            <Button disabled={!canWrite || save.isPending || !batchValid} onClick={submit}>
               {save.isPending ? t(($) => $.page.setup.saving) : t(($) => $.page.setup.save)}
             </Button>
           </div>

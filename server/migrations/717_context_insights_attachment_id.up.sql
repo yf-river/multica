@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY context_insights_attachment_id ON context_insights_attachment(session_key,attachment_id);

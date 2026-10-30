@@ -31,9 +31,9 @@
       "selected": "{{count}} selected",
       "adopt": "Mark adopted",
       "ignore": "Ignore",
-      "restore": "Undo"
-      ,"create_task": "Create absorption task"
-      ,"task_created": "Absorption task created"
+      "restore": "Undo",
+      "create_task": "Create absorption task",
+      "task_created": "Absorption task created"
     },
     "item": {
       "absorb": "Worth adopting",
@@ -67,7 +67,7 @@
       "scope_hint": "Run from the workspace of the selected runtime, or select a runtime in this workspace in settings."
     },
     "setup": {
-      "hint": "No sync agent bound yet. Add one to run incremental sync daily.",
+      "hint": "Select a runtime, then click Sync to analyze upstream changes.",
       "copy_prompt": "Copy agent instructions",
       "runtime": "Runtime",
       "runtime_hint": "Pick a connected machine to run the sync. Only runtimes usable for code tasks are listed.",
@@ -79,8 +79,32 @@
       "saved": "Saved",
       "no_agent": "No runtime selected yet",
       "title": "Settings",
-      "enabled": "Enable daily sync",
-      "schedule": "Runs at 09:00 Beijing time, catching up history before daily updates. No code is merged."
+      "baseline_sha": "Baseline SHA"
     }
+  },
+  "projects": {
+    "add": "Add project",
+    "name": "Project name",
+    "id": "Project ID",
+    "save": "Save",
+    "cancel": "Cancel",
+    "sync": "Sync",
+    "syncing": "Syncing",
+    "details": "View details",
+    "pending": "{{count}} suggestions to review",
+    "repo": "Repository",
+    "branch": "Branch",
+    "last": "Last sync",
+    "never": "Not synced yet",
+    "disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "manual": "Manually check and analyze upstream changes",
+    "empty": "No projects yet",
+    "edit": "Edit",
+    "baseline": "Baseline",
+    "head": "Latest upstream",
+    "to_analyze": "To analyze",
+    "commits": "{{count}} commits"
   }
 }

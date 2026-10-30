@@ -5,21 +5,21 @@ import { api } from "../api";
 
 export const upstreamKeys = {
   all: (wsId: string) => ["upstream", wsId] as const,
-  snapshot: (wsId: string) => [...upstreamKeys.all(wsId), "snapshot"] as const,
+  snapshot: (wsId: string, projectId = "multica") => [...upstreamKeys.all(wsId), "snapshot", projectId] as const,
   instructions: (wsId: string) => [...upstreamKeys.all(wsId), "instructions"] as const,
   items: (wsId: string, params: string) => [...upstreamKeys.all(wsId), "items", params] as const,
-  runs: (wsId: string) => [...upstreamKeys.all(wsId), "runs"] as const,
+  runs: (wsId: string, projectId = "multica") => [...upstreamKeys.all(wsId), "runs", projectId] as const,
 };
 
 const IDLE_POLL_MS = 30_000;
 const ACTIVE_POLL_MS = 5_000;
 
-export function upstreamSnapshotOptions(wsId: string) {
+export function upstreamSnapshotOptions(wsId: string, projectId = "multica") {
   return queryOptions({
-    queryKey: upstreamKeys.snapshot(wsId),
+    queryKey: upstreamKeys.snapshot(wsId, projectId),
     // 只有批次在跑时才需要贴近实时；空闲时把轮询放慢，别让页面常驻请求。
     refetchInterval: (query) => (query.state.data?.active_run_id ? ACTIVE_POLL_MS : IDLE_POLL_MS),
-    queryFn: () => api.getUpstreamSnapshot(),
+    queryFn: () => api.getUpstreamSnapshot(projectId),
   });
 }
 
@@ -33,7 +33,7 @@ export function upstreamInstructionsOptions(wsId: string) {
 
 export function upstreamItemsOptions(
   wsId: string,
-  params: { status?: string; verdict?: string; presence?: string; q?: string },
+  params: { status?: string; verdict?: string; presence?: string; q?: string; project_id?: string },
 ) {
   const key = JSON.stringify(params);
   return infiniteQueryOptions({
@@ -48,11 +48,11 @@ export function upstreamItemsOptions(
   });
 }
 
-export function upstreamRunsOptions(wsId: string) {
+export function upstreamRunsOptions(wsId: string, projectId = "multica") {
   return infiniteQueryOptions({
-    queryKey: upstreamKeys.runs(wsId),
+    queryKey: upstreamKeys.runs(wsId, projectId),
     initialPageParam: 0,
-    queryFn: ({ pageParam }) => api.listUpstreamRuns(30, pageParam),
+    queryFn: ({ pageParam }) => api.listUpstreamRuns(30, pageParam, projectId),
     // 和条目一样用服务端总数判断页尾，最后一页刚好满 30 条时不再多发一次空请求。
     getNextPageParam: (lastPage, pages) => {
       const loaded = pages.reduce((sum, page) => sum + page.runs.length, 0);

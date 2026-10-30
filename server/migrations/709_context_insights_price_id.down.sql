@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY context_insights_price_id;

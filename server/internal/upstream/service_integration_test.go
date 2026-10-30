@@ -31,7 +31,7 @@ func isolatedService(t *testing.T) *Service {
 	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"agent_runtime", "agent_task_queue", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_settings", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit", "upstream_sync_absorption_task"} {
+	for _, table := range []string{"upstream_project", "agent_runtime", "agent_task_queue", "agent", "autopilot", "autopilot_trigger", "upstream_sync_config", "upstream_sync_settings", "upstream_sync_run", "upstream_sync_item", "upstream_sync_commit", "upstream_sync_absorption_task"} {
 		if _, err = admin.Exec(ctx, fmt.Sprintf("CREATE TABLE %s.%s (LIKE public.%s INCLUDING ALL)", schema, table, table)); err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +155,7 @@ func TestBatchCoverageRetryAndAdoptedState(t *testing.T) {
 	}
 }
 
-func TestSettingsKeepSingleExecutorAndSchedule(t *testing.T) {
+func TestSettingsKeepSingleExecutorWithoutAutomaticSchedule(t *testing.T) {
 	s := isolatedService(t)
 	ctx := context.Background()
 	ws, creator := newID(), newID()
@@ -206,7 +206,7 @@ func TestSettingsKeepSingleExecutorAndSchedule(t *testing.T) {
 	if err = s.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM agent),(SELECT count(*) FROM autopilot),(SELECT count(*) FROM autopilot_trigger WHERE enabled)`).Scan(&agentCount, &pilotCount, &active); err != nil {
 		t.Fatal(err)
 	}
-	if agentCount != 1 || pilotCount != 1 || active != 1 {
+	if agentCount != 1 || pilotCount != 1 || active != 0 {
 		t.Fatalf("duplicated rows: agents=%d pilots=%d triggers=%d", agentCount, pilotCount, active)
 	}
 	var boundRuntime string
@@ -216,7 +216,7 @@ func TestSettingsKeepSingleExecutorAndSchedule(t *testing.T) {
 	// 执行体仍是旧程序认识的形态：kind='system' 且键按运行时派生，升级期间旧程序
 	// 按同一个键找到它，不会另建第二条 Agent 和自动化。
 	var kind, systemKey string
-	if err = s.Pool.QueryRow(ctx, `SELECT kind,system_key FROM agent WHERE id=$1`, first).Scan(&kind, &systemKey); err != nil || kind != "system" || systemKey != ExecutorSystemKeyFor(ids[1]) {
+	if err = s.Pool.QueryRow(ctx, `SELECT kind,system_key FROM agent WHERE id=$1`, first).Scan(&kind, &systemKey); err != nil || kind != "system" || systemKey != s.executorKey() {
 		t.Fatalf("executor identity kind=%s key=%s %v", kind, systemKey, err)
 	}
 	// 没有运行时也能保存：批量、时间与暂停不依赖绑定。
@@ -326,14 +326,14 @@ func TestRebindRetiresLeftoverLegacyExecutor(t *testing.T) {
 		t.Fatalf("rebind created a new executor: %s %v", rebound, err)
 	}
 	var key, leftoverKey string
-	if err := s.Pool.QueryRow(ctx, `SELECT system_key FROM agent WHERE id=$1`, bound).Scan(&key); err != nil || key != ExecutorSystemKeyFor(second) {
+	if err := s.Pool.QueryRow(ctx, `SELECT system_key FROM agent WHERE id=$1`, bound).Scan(&key); err != nil || key != s.executorKey() {
 		t.Fatalf("bound executor key %q %v", key, err)
 	}
-	if err := s.Pool.QueryRow(ctx, `SELECT system_key FROM agent WHERE id=$1`, leftover).Scan(&leftoverKey); err != nil || !strings.HasPrefix(leftoverKey, ExecutorOrphanPrefix) {
+	if err := s.Pool.QueryRow(ctx, `SELECT system_key FROM agent WHERE id=$1`, leftover).Scan(&leftoverKey); err != nil || leftoverKey != ExecutorSystemKeyFor(second) {
 		t.Fatalf("leftover executor not retired: %q %v", leftoverKey, err)
 	}
-	if IsExecutorSystemKey(leftoverKey) {
-		t.Fatalf("orphan still recognised as executor: %q", leftoverKey)
+	if !IsExecutorSystemKey(leftoverKey) {
+		t.Fatalf("legacy executor was unexpectedly changed: %q", leftoverKey)
 	}
 }
 
@@ -499,7 +499,7 @@ func TestPauseReachesAutopilotWithoutExecutor(t *testing.T) {
 	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(autopilot_id::text,'') FROM upstream_sync_config WHERE singleton=1`).Scan(&configured); err != nil || configured != pilot {
 		t.Fatalf("autopilot reference dropped: %q %v", configured, err)
 	}
-	if err := s.Pool.QueryRow(ctx, `SELECT enabled FROM autopilot_trigger WHERE autopilot_id=$1`, pilot).Scan(&enabled); err != nil || enabled {
+	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM autopilot_trigger WHERE autopilot_id=$1 AND enabled)`, pilot).Scan(&enabled); err != nil || enabled {
 		t.Fatalf("orphan trigger still enabled: %v %v", enabled, err)
 	}
 }

@@ -8,8 +8,10 @@ import { ChevronRight, Gauge, ListTree, Loader2, RotateCcw, Square } from "lucid
 import { toast } from "sonner";
 import { api, dispatchReasonCode } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
-import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
+import {useTaskReferenceCost} from "../../insights/task-cost";
 import type { AgentTask } from "@multica/core/types";
+import {useNavigation} from "../../navigation";
+import {useWorkspacePaths} from "@multica/core/paths";
 import { useTimeAgo } from "../../i18n";
 import {
   Tooltip,
@@ -26,15 +28,10 @@ import { useT } from "../../i18n";
 import {
   formatTokens,
   formatUsd,
-  hasKnownCost,
-  summarizeTaskUsage,
-  summarizeTaskUsageAcross,
 } from "../../runtimes/utils";
 import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
-import { IssueUsageDialog } from "./issue-usage-dialog";
 import { TaskSupplementButton, TaskSupplementDialogs } from "./task-supplement-dialog";
 import { TaskStatusIcon } from "./task-status-icon";
-import { RunContextDialog } from "./run-context-dialog";
 import { RunDetailDialog } from "./run-detail-dialog";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 
@@ -76,11 +73,12 @@ const PAST_STATUS_RANK: Record<string, number> = {
 /**
  * 执行日志主区段：活跃运行置顶 + 可折叠的历史运行（职责见文件头）。
  */
-export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSectionProps) {
+export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   const { t } = useT("issues");
   const [open, setOpen] = useState(true);
   const [showPast, setShowPast] = useState(false);
-  const [usageOpen, setUsageOpen] = useState(false);
+  const insightNavigation=useNavigation();
+  const insightPaths=useWorkspacePaths();
 
   // 缓存键注册在 `issueKeys.tasks`（packages/core/issues/queries.ts），
   // 全局 useRealtimeSync 的 `task:` 前缀路径通过 `["issues", "tasks"]`
@@ -166,7 +164,7 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
         <IssueUsageTotal
           tasks={tasks}
           alone={activeTasks.length === 0}
-          onOpen={() => setUsageOpen(true)}
+          onOpen={() => insightNavigation.push(`${insightPaths.issueDetail(issueId)}?view=insights`)}
         />
       </div>
       {open && (
@@ -206,12 +204,7 @@ export function ExecutionLogSection({ issueId, identifier }: ExecutionLogSection
         </div>
       )}
       <TaskSupplementDialogs tasks={tasks} issueId={issueId} />
-      <IssueUsageDialog
-        open={usageOpen}
-        onOpenChange={setUsageOpen}
-        identifier={identifier ?? ""}
-        tasks={tasks}
-      />
+
     </div>
   );
 }
@@ -243,20 +236,8 @@ export function IssueUsageTotal({
   onOpen: () => void;
 }) {
   const { t } = useT("issues");
-  // 自定义费率是在 `estimateCost` 内部命令式读取的，所以费率的保存不会
-  // 自己触发这里重渲染——订阅并把 memo 依赖在快照上，否则头部合计会
-  // 一直引用旧价格直到任务列表重新拉取。
-  const pricings = useCustomPricingStore((s) => s.pricings);
-  const total = useMemo(
-    () => summarizeTaskUsageAcross(tasks.map((task) => task.usage)),
-    [tasks, pricings],
-  );
-  // 所有运行都没有可定价来源时，合计费用是未知，不是 0。之前这里直接渲染
-  // $0.00，把"查不到价格"说成了"免费"。
-  const costKnown = useMemo(
-    () => hasKnownCost(tasks.flatMap((task) => task.usage ?? [])),
-    [tasks, pricings],
-  );
+  const total=useTaskReferenceCost(tasks);
+  const costKnown=total?.cost!==null;
   if (!total) return null;
 
   // 两个阈值是因为头部有两种形态，而分层只该在行真正挤爆的那一档让读者
@@ -281,7 +262,7 @@ export function IssueUsageTotal({
         </span>
         <span className={`text-faint-foreground ${narrowTier}`}>·</span>
         <span className="text-muted-foreground">
-          {costKnown ? formatUsd(total.cost) : "—"}
+          {costKnown ? formatUsd(total.cost??0) : "—"}
         </span>
       </TooltipTrigger>
       <TooltipContent>{t(($) => $.execution_log.usage_total_tooltip)}</TooltipContent>
@@ -450,7 +431,8 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const { t: tAgents } = useT("agents");
   const timeAgo = useTimeAgo();
   const [retrying, setRetrying] = useState(false);
-  const [contextOpen, setContextOpen] = useState(false);
+  const insightNavigation=useNavigation();
+  const insightPaths=useWorkspacePaths();
   const [detailOpen, setDetailOpen] = useState(false);
   const label = useStatusLabel(task.status, task.failure_reason);
   const trigger = useTriggerText(task);
@@ -478,7 +460,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   //
   // `null`（未记录用量）渲染成破折号，绝不渲染 0：用量上报之前的那次运行
   // 不是免费，只是我们手里没有它的数字。
-  const usage = summarizeTaskUsage(task.usage);
+  const usage = useTaskReferenceCost([task]);
   const rowTitle = [
     time,
     task.started_at && task.completed_at
@@ -539,7 +521,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
             render={
               <button
                 type="button"
-                onClick={() => setContextOpen(true)}
+                onClick={() => insightNavigation.push(`${insightPaths.issueDetail(issueId)}?view=insights&run=${encodeURIComponent(task.id)}`)}
                 aria-label={t(($) => $.execution_log.context_button)}
               />
             }
@@ -591,7 +573,6 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     </RowShell>
     <RunTiming task={task} />
     <CodeDiffCard result={task.result} />
-    <RunContextDialog issueId={issueId} taskId={task.id} open={contextOpen} onOpenChange={setContextOpen} />
     <RunDetailDialog issueId={issueId} taskId={task.id} open={detailOpen} onOpenChange={setDetailOpen} />
     </div>
   );

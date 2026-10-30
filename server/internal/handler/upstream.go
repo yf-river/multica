@@ -36,6 +36,11 @@ func (h *Handler) upstreamScope(w http.ResponseWriter, r *http.Request, write bo
 		writeError(w, 403, "需要工作区管理员权限")
 		return "", false, false
 	}
+	var enabled bool
+	if err := h.DB.QueryRow(r.Context(), `SELECT enabled FROM upstream_project WHERE id=$1`, h.upstreamService(r).Project()).Scan(&enabled); err != nil {
+		writeError(w, 404, "项目不存在")
+		return "", false, false
+	}
 	return requestUserID(r), canWrite, true
 }
 
@@ -53,14 +58,15 @@ func (h *Handler) upstreamTaskScope(w http.ResponseWriter, r *http.Request) (str
 		return "", false
 	}
 	var bound string
-	err := h.DB.QueryRow(r.Context(), `SELECT c.agent_id::text
+	err := h.DB.QueryRow(r.Context(), `SELECT c.project_id
  FROM upstream_sync_config c
  JOIN agent_task_queue t ON t.id=$1 AND t.agent_id=c.agent_id AND t.status='running'
- WHERE c.singleton=1 AND c.agent_id=$2`, taskID, agentID).Scan(&bound)
-	if err != nil || bound != agentID {
+ WHERE c.agent_id=$2`, taskID, agentID).Scan(&bound)
+	if err != nil {
 		writeError(w, 403, "同步 Agent 未绑定或任务已结束")
 		return "", false
 	}
+	*r = *r.WithContext(context.WithValue(r.Context(), upstreamProjectContextKey{}, bound))
 	if run := chi.URLParam(r, "runId"); run != "" {
 		var owner string
 		if err := h.DB.QueryRow(r.Context(), `SELECT task_id::text FROM upstream_sync_run WHERE id=$1`, run).Scan(&owner); err != nil || owner != taskID {
@@ -94,7 +100,7 @@ func (h *Handler) GetUpstream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	snap, err := h.Upstream.Snapshot(r.Context())
+	snap, err := h.upstreamService(r).Snapshot(r.Context())
 	if err != nil {
 		writeError(w, 500, "读取上游同步状态失败")
 		return
@@ -112,7 +118,7 @@ func (h *Handler) GetUpstreamInstructions(w http.ResponseWriter, r *http.Request
 	writeJSON(w, 200, map[string]any{"instructions": service.UpstreamSyncInstructions()})
 }
 
-// UpdateUpstreamConfig 保存同步范围、执行体与计划。没有运行时时也能保存暂停、
+// UpdateUpstreamConfig 保存同步范围、执行体与手动同步状态。没有运行时时也能保存暂停、
 // 批量和提示词；带 runtime_id 时才绑定或切换执行体。
 func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := h.upstreamScope(w, r, true)
@@ -120,16 +126,17 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		UpstreamURL    string  `json:"upstream_url"`
-		UpstreamBranch string  `json:"upstream_branch"`
-		LocalRef       string  `json:"local_ref"`
-		RuntimeID      string  `json:"runtime_id"`
-		Model          string  `json:"model"`
-		ThinkingLevel  string  `json:"thinking_level"`
-		Instructions   *string `json:"instructions"`
-		Enabled        *bool   `json:"enabled"`
-		BatchSize      int     `json:"batch_size"`
-		ScheduleHour   *int    `json:"schedule_hour"`
+		UpstreamURL      string  `json:"upstream_url"`
+		UpstreamBranch   string  `json:"upstream_branch"`
+		LocalRef         string  `json:"local_ref"`
+		RuntimeID        string  `json:"runtime_id"`
+		Model            string  `json:"model"`
+		ThinkingLevel    string  `json:"thinking_level"`
+		Instructions     *string `json:"instructions"`
+		BootstrapBaseSHA string  `json:"bootstrap_base_sha"`
+		Enabled          *bool   `json:"enabled"`
+		BatchSize        int     `json:"batch_size"`
+		ScheduleHour     *int    `json:"schedule_hour"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512*1024)).Decode(&body); err != nil {
 		writeError(w, 400, "请求体格式错误")
@@ -150,7 +157,7 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 	scheduleHour := upstream.DefaultScheduleHour
 	if body.ScheduleHour != nil {
 		scheduleHour = *body.ScheduleHour
-	} else if err := h.DB.QueryRow(r.Context(), `SELECT schedule_hour FROM upstream_sync_settings WHERE singleton=1`).Scan(&scheduleHour); err != nil {
+	} else if err := h.DB.QueryRow(r.Context(), `SELECT schedule_hour FROM upstream_sync_settings WHERE project_id=$1`, h.upstreamService(r).Project()).Scan(&scheduleHour); err != nil {
 		scheduleHour = upstream.DefaultScheduleHour
 	}
 
@@ -161,8 +168,9 @@ func (h *Handler) UpdateUpstreamConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	agentID, autopilotID, err := h.Upstream.SaveSettings(r.Context(), upstream.Settings{
+	agentID, autopilotID, err := h.upstreamService(r).SaveSettings(r.Context(), upstream.Settings{
 		UpstreamURL:         body.UpstreamURL,
+		BootstrapBaseSHA:    body.BootstrapBaseSHA,
 		UpstreamBranch:      body.UpstreamBranch,
 		LocalRef:            body.LocalRef,
 		BatchSize:           body.BatchSize,
@@ -197,7 +205,7 @@ func (h *Handler) ListUpstreamItems(w http.ResponseWriter, r *http.Request) {
 	if presence == "" {
 		presence = "all"
 	}
-	items, total, err := h.Upstream.ListItems(r.Context(), upstream.ItemFilter{
+	items, total, err := h.upstreamService(r).ListItems(r.Context(), upstream.ItemFilter{
 		Status: status, Verdict: q.Get("verdict"),
 		Presence: presence, Query: q.Get("q"),
 		Limit: limit, Offset: offset,
@@ -222,7 +230,7 @@ func (h *Handler) MarkUpstreamItems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "请求体格式错误")
 		return
 	}
-	n, err := h.Upstream.MarkItems(r.Context(), body.IDs, body.Status, user)
+	n, err := h.upstreamService(r).MarkItems(r.Context(), body.IDs, body.Status, user)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -250,7 +258,7 @@ func (h *Handler) CreateUpstreamAbsorptionTask(w http.ResponseWriter, r *http.Re
 	var paths, shas []string
 	var existing *string
 	err := h.DB.QueryRow(r.Context(), `SELECT i.title,i.summary,i.rationale,i.paths,i.commit_shas,COALESCE(a.issue_id::text,'')
- FROM upstream_sync_item i LEFT JOIN upstream_sync_absorption_task a ON a.item_id=i.id WHERE i.id=$1`, itemID).Scan(&title, &summary, &rationale, &paths, &shas, &existing)
+ FROM upstream_sync_item i LEFT JOIN upstream_sync_absorption_task a ON a.item_id=i.id WHERE i.id=$1 AND i.project_id=$2`, itemID, h.upstreamService(r).Project()).Scan(&title, &summary, &rationale, &paths, &shas, &existing)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "上游建议不存在")
 		return
@@ -322,7 +330,7 @@ func (h *Handler) ListUpstreamRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "分页位置不能为负数")
 		return
 	}
-	runs, total, err := h.Upstream.ListRuns(r.Context(), limit, offset)
+	runs, total, err := h.upstreamService(r).ListRuns(r.Context(), limit, offset)
 	if err != nil {
 		writeError(w, 500, "读取同步记录失败")
 		return
@@ -340,7 +348,7 @@ func (h *Handler) StartUpstreamRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "任务来源不可用")
 		return
 	}
-	res, err := h.Upstream.Start(r.Context(), taskID, r.Header.Get("X-Agent-ID"), trigger)
+	res, err := h.upstreamService(r).Start(r.Context(), taskID, r.Header.Get("X-Agent-ID"), trigger)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -361,7 +369,7 @@ func (h *Handler) AppendUpstreamItems(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, err)
 		return
 	}
-	n, err := h.Upstream.AppendReport(r.Context(), chi.URLParam(r, "runId"), rep)
+	n, err := h.upstreamService(r).AppendReport(r.Context(), chi.URLParam(r, "runId"), rep)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -381,9 +389,14 @@ func (h *Handler) FinishUpstreamRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "请求体格式错误")
 		return
 	}
-	if err := h.Upstream.Finish(r.Context(), chi.URLParam(r, "runId"), body.CursorSHA, body.HasMore); err != nil {
+	if err := h.upstreamService(r).Finish(r.Context(), chi.URLParam(r, "runId"), body.CursorSHA, body.HasMore); err != nil {
 		writeUpstreamError(w, err)
 		return
+	}
+	if h.upstreamService(r).Project() == "openviking" && deploymentConfiguration() != "" {
+		if snap, e := h.upstreamService(r).Snapshot(r.Context()); e == nil && snap.Config.CreatedBy != "" {
+			_, _ = h.startUpstreamDeployment(r.Context(), snap.Config.CreatedBy, "prepare", "")
+		}
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
@@ -399,7 +412,7 @@ func (h *Handler) FailUpstreamRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "请求体格式错误")
 		return
 	}
-	if err := h.Upstream.Fail(r.Context(), chi.URLParam(r, "runId"), body.Error); err != nil {
+	if err := h.upstreamService(r).Fail(r.Context(), chi.URLParam(r, "runId"), body.Error); err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
@@ -415,7 +428,7 @@ func (h *Handler) PrepareUpstreamRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "提交清单格式错误")
 		return
 	}
-	if err := h.Upstream.Prepare(r.Context(), chi.URLParam(r, "runId"), m); err != nil {
+	if err := h.upstreamService(r).Prepare(r.Context(), chi.URLParam(r, "runId"), m); err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
@@ -425,7 +438,7 @@ func (h *Handler) HeartbeatUpstreamRun(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.upstreamTaskScope(w, r); !ok {
 		return
 	}
-	if err := h.Upstream.Heartbeat(r.Context(), chi.URLParam(r, "runId")); err != nil {
+	if err := h.upstreamService(r).Heartbeat(r.Context(), chi.URLParam(r, "runId")); err != nil {
 		writeUpstreamError(w, err)
 		return
 	}

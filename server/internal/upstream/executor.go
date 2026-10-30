@@ -3,15 +3,13 @@ package upstream
 import "strings"
 
 // ExecutorSystemKey 是不带运行时的短键，只在查找时兼容更早版本可能写入的行；
-// 本版本的新建和改绑都写 ExecutorSystemKeyFor 生成的键，全平台仍只有一条执行体。
+// 项目执行体使用 executorKey，历史任务仍可通过旧键识别。
 const ExecutorSystemKey = "upstream_sync"
 
-// ExecutorSystemKeyPrefix 是执行体键的前缀。键仍按运行时派生：旧程序按同一个键查找
-// 执行体，改键会让升级期间仍在服务的旧版另建一条 Agent 和自动化。
+// ExecutorSystemKeyPrefix 同时标识项目执行体与旧版运行时执行体。
 const ExecutorSystemKeyPrefix = "upstream_sync:"
 
-// ExecutorSystemKeyFor 返回绑定到该运行时的执行体键。换运行时同步改键，
-// 旧程序按新键也能找到同一个执行体。
+// ExecutorSystemKeyFor 解析旧版按运行时绑定的身份键。
 func ExecutorSystemKeyFor(runtimeID string) string { return ExecutorSystemKeyPrefix + runtimeID }
 
 // ExecutorOrphanPrefix 标记被替换下来的旧执行体：行保留（历史任务仍引用），
@@ -22,3 +20,5 @@ const ExecutorOrphanPrefix = "upstream_sync_orphan:"
 func IsExecutorSystemKey(key string) bool {
 	return key == ExecutorSystemKey || strings.HasPrefix(key, ExecutorSystemKeyPrefix)
 }
+
+func (s *Service) executorKey() string { return ExecutorSystemKeyPrefix + "project:" + s.Project() }

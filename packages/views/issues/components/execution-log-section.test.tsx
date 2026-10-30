@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen,waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTask } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
@@ -10,6 +10,9 @@ const mockState = vi.hoisted(() => ({
 }));
 
 // 计划/问答卡片由独立组件套件验收；此套验证执行列表和用量布局。
+vi.mock("../../common/runtime-input-panel",()=>({RuntimeInputPanel:()=>null}));
+vi.mock("../../navigation",()=>({useNavigation:()=>({push:vi.fn()})}));
+vi.mock("@multica/core/paths",()=>({useWorkspacePaths:()=>({issues:()=>"/test/issues",chat:()=>"/test/chat"})}));
 vi.mock("../../common/task-interaction-panel", () => ({ TaskInteractionPanel: () => null }));
 
 vi.mock("@multica/core/chat/queries", () => ({
@@ -37,10 +40,10 @@ import {
   IssueUsageTotal,
 } from "./execution-log-section";
 import type { TaskUsage } from "@multica/core/types";
-import { act, within } from "@testing-library/react";
+import { within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { issueKeys } from "@multica/core/issues/queries";
-import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
+import {setModelPricesLoader,resetModelPrices} from "../../insights/native-dist/client/modelPrices";
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -403,7 +406,7 @@ describe("execution log header geometry", () => {
     // Below the tier the tokens and their separator leave together and the
     // cost stays — never a clipped "$2.0…", which would read as a different
     // figure than the issue actually spent.
-    const cost = header.getByText("$2.00");
+    const cost = header.getByText("—");
     expect(header.getByText("892K").className).toContain(
       "@max-[14rem]/execution-log:hidden",
     );
@@ -428,43 +431,13 @@ describe("execution log header geometry", () => {
   });
 });
 
-describe("IssueUsageTotal pricing", () => {
-  afterEach(() => {
-    useCustomPricingStore.setState({ pricings: {} });
-  });
-
-  it("recomputes when a custom model rate is saved", () => {
-    // `estimateCost` reads the custom-rate store imperatively, so nothing
-    // re-renders this on a rate change unless the component subscribes. Before
-    // that subscription existed the figure stayed stale until the task list
-    // happened to refetch.
-    const unpriced: TaskUsage = {
-      provider: "acme",
-      model: "totally-made-up-model",
-      input_tokens: 1_000_000,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-    };
-    const task = makeTask({ status: "completed", usage: [unpriced] });
-
-    renderWithI18n(
-      <IssueUsageTotal tasks={[task]} alone onOpen={() => {}} />,
-    );
-
-    // 未定价时不把未知费用显示为零。
-    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
-
-    act(() => {
-      useCustomPricingStore.getState().setCustomPricing("acme/totally-made-up-model", {
-        input: 7,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-      });
-    });
-
-    // 1M input tokens at $7/M, without any refetch.
-    expect(screen.getByText("$7.00")).toBeInTheDocument();
-  });
+describe("IssueUsageTotal reference pricing",()=>{
+ afterEach(()=>{setModelPricesLoader(null);resetModelPrices()});
+ it("uses reference pricing instead of provider-reported charges",async()=>{
+  vi.useRealTimers();resetModelPrices();
+  setModelPricesLoader(async()=>({acme:{models:{"known-model":{cost:{input:7,output:1}}}}}));
+  const usage:TaskUsage={provider:'acme',model:'known-model',input_tokens:1000000,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,cost_usd_ticks:123};
+  renderWithI18n(<IssueUsageTotal tasks={[makeTask({status:'completed',usage:[usage]})]} alone onOpen={()=>{}}/>);
+  await waitFor(()=>expect(screen.getByText('$7.00')).toBeInTheDocument());
+ });
 });

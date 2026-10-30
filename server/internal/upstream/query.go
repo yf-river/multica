@@ -10,21 +10,25 @@ import (
 )
 
 type Config struct {
-	UpstreamURL      string     `json:"upstream_url"`
-	UpstreamBranch   string     `json:"upstream_branch"`
-	LocalRef         string     `json:"local_ref"`
-	RuntimeID        string     `json:"runtime_id"`
-	AgentID          string     `json:"agent_id"`
-	AutopilotID      string     `json:"autopilot_id"`
-	BatchSize        int        `json:"batch_size"`
-	ScheduleHour     int        `json:"schedule_hour"`
-	SyncState        string     `json:"sync_state"`
-	BootstrapBaseSHA string     `json:"bootstrap_base_sha"`
-	CursorSHA        string     `json:"cursor_sha"`
-	HeadSHA          string     `json:"head_sha"`
-	LastRunAt        *time.Time `json:"last_run_at"`
-	Error            string     `json:"error"`
-	CreatedBy        string     `json:"created_by"`
+	ProjectID           string     `json:"project_id"`
+	UpstreamURL         string     `json:"upstream_url"`
+	UpstreamBranch      string     `json:"upstream_branch"`
+	LocalRef            string     `json:"local_ref"`
+	RuntimeID           string     `json:"runtime_id"`
+	AgentID             string     `json:"agent_id"`
+	AutopilotID         string     `json:"autopilot_id"`
+	BatchSize           int        `json:"batch_size"`
+	ScheduleHour        int        `json:"schedule_hour"`
+	SyncState           string     `json:"sync_state"`
+	BootstrapBaseSHA    string     `json:"bootstrap_base_sha"`
+	BaselineCommittedAt *time.Time `json:"baseline_committed_at"`
+	HeadCommittedAt     *time.Time `json:"head_committed_at"`
+	PendingCommits      *int       `json:"pending_commits"`
+	CursorSHA           string     `json:"cursor_sha"`
+	HeadSHA             string     `json:"head_sha"`
+	LastRunAt           *time.Time `json:"last_run_at"`
+	Error               string     `json:"error"`
+	CreatedBy           string     `json:"created_by"`
 	// Model 与 ThinkingLevel 存在执行体上，空值表示跟随运行时默认。
 	Model         string `json:"model"`
 	ThinkingLevel string `json:"thinking_level"`
@@ -38,7 +42,7 @@ type Snapshot struct {
 	Adopted     int    `json:"adopted"`
 	Ignored     int    `json:"ignored"`
 	ActiveRunID string `json:"active_run_id"`
-	// NextRunAt 是自动同步的下一次计划时间，暂停或未建调度时为空。
+	// NextRunAt 兼容历史响应，手动同步模式下为空。
 	NextRunAt *time.Time `json:"next_run_at"`
 	// RuntimeOnline 只用于提示；离线不阻止保存设置。
 	RuntimeOnline bool `json:"runtime_online"`
@@ -101,30 +105,31 @@ type Run struct {
 }
 
 func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO upstream_sync_config(singleton) VALUES(1)
- ON CONFLICT (singleton) DO NOTHING`); err != nil {
+	if _, err := s.exec(ctx, `INSERT INTO upstream_sync_config(project_id) VALUES(@project)
+ ON CONFLICT (project_id) DO NOTHING`); err != nil {
 		return nil, err
 	}
 
 	var out Snapshot
+	out.Config.ProjectID = s.Project()
 	var agentID, autopilotID, createdBy *string
 	var agentRow, boundRuntime bool
 	var runtimeStatus, savedRuntime string
 	// 设置页新增的两项存在独立的设置表里，配置表保持升级期的旧结构；
 	// 没有设置行时按默认值展示，等同于用户没有改过。
-	if err := s.Pool.QueryRow(ctx, `SELECT c.upstream_url, c.upstream_branch, c.local_ref,
+	if err := s.queryRow(ctx, `SELECT c.upstream_url, c.upstream_branch, c.local_ref,
  c.agent_id::text, c.autopilot_id::text, c.batch_size, COALESCE(ss.schedule_hour,9), c.sync_state, c.bootstrap_base_sha,
- c.cursor_sha, c.head_sha, c.last_run_at, c.error, c.created_by::text, COALESCE(ss.instructions,''),
+ c.baseline_committed_at,c.head_committed_at,c.pending_commits,c.cursor_sha, c.head_sha, c.last_run_at, c.error, c.created_by::text, COALESCE(ss.instructions,''),
  COALESCE(a.runtime_id::text,''), COALESCE(a.model,''), COALESCE(a.thinking_level,''),
  (a.id IS NOT NULL), COALESCE(r.status,''), COALESCE(c.runtime_id::text,'')
  FROM upstream_sync_config c
- LEFT JOIN upstream_sync_settings ss ON ss.singleton=1
+ LEFT JOIN upstream_sync_settings ss ON ss.project_id=@project
  LEFT JOIN agent a ON a.id=c.agent_id
  LEFT JOIN agent_runtime r ON r.id=a.runtime_id
- WHERE c.singleton=1`).
+ WHERE c.project_id=@project`).
 		Scan(&out.Config.UpstreamURL, &out.Config.UpstreamBranch, &out.Config.LocalRef,
 			&agentID, &autopilotID, &out.Config.BatchSize, &out.Config.ScheduleHour, &out.Config.SyncState,
-			&out.Config.BootstrapBaseSHA, &out.Config.CursorSHA, &out.Config.HeadSHA,
+			&out.Config.BootstrapBaseSHA, &out.Config.BaselineCommittedAt, &out.Config.HeadCommittedAt, &out.Config.PendingCommits, &out.Config.CursorSHA, &out.Config.HeadSHA,
 			&out.Config.LastRunAt, &out.Config.Error, &createdBy, &out.Config.Instructions,
 			&out.Config.RuntimeID, &out.Config.Model, &out.Config.ThinkingLevel,
 			&agentRow, &runtimeStatus, &savedRuntime); err != nil {
@@ -151,22 +156,22 @@ func (s *Service) Snapshot(ctx context.Context) (*Snapshot, error) {
 	default:
 		out.ExecutorState = "none"
 	}
-	if err := s.Pool.QueryRow(ctx, `SELECT
+	if err := s.queryRow(ctx, `SELECT
  count(*) FILTER (WHERE status='open'),
  count(*) FILTER (WHERE status='adopted'),
  count(*) FILTER (WHERE status='ignored')
- FROM upstream_sync_item`).Scan(&out.Pending, &out.Adopted, &out.Ignored); err != nil {
+ FROM upstream_sync_item WHERE project_id=@project`).Scan(&out.Pending, &out.Adopted, &out.Ignored); err != nil {
 		return nil, err
 	}
 	// 修改 1. 活动批次的口径与写入一致：租约未过期且领取它的任务仍在执行，任务结束后
 	// 页面不再显示一个已经回写不了的批次，也不会因此继续 5 秒轮询。
-	err := s.Pool.QueryRow(ctx, `SELECT id::text FROM upstream_sync_run
- WHERE status IN ('preparing','running') AND `+runAlive+` LIMIT 1`).Scan(&out.ActiveRunID)
+	err := s.queryRow(ctx, `SELECT id::text FROM upstream_sync_run
+ WHERE project_id=@project AND status IN ('preparing','running') AND `+runAlive+` LIMIT 1`).Scan(&out.ActiveRunID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	if out.Config.AutopilotID != "" {
-		err = s.Pool.QueryRow(ctx, `SELECT next_run_at FROM autopilot_trigger
+		err = s.queryRow(ctx, `SELECT next_run_at FROM autopilot_trigger
  WHERE autopilot_id=$1 AND kind='schedule' LIMIT 1`, out.Config.AutopilotID).Scan(&out.NextRunAt)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
@@ -204,14 +209,14 @@ func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, int, err
 	if f.Presence == "all" {
 		f.Presence = ""
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT i.id::text, i.run_id::text, i.cluster_key, i.title, i.summary, i.rationale,
+	rows, err := s.query(ctx, `SELECT i.id::text, i.run_id::text, i.cluster_key, i.title, i.summary, i.rationale,
  i.verdict, i.confidence, i.presence, i.paths, i.commit_count, i.commit_shas,
  i.first_commit_at, i.last_commit_at, i.status, i.adopted_at, i.created_at,
  COALESCE(a.issue_id::text,''), COALESCE(a.status,'none'), count(*) OVER(),
  EXISTS(SELECT 1 FROM upstream_sync_commit c WHERE c.item_id=i.id AND i.adopted_at IS NOT NULL AND c.created_at>i.adopted_at)
  FROM upstream_sync_item i
  LEFT JOIN upstream_sync_absorption_task a ON a.item_id=i.id
- WHERE ($1 = '' OR i.status=$1)
+ WHERE i.project_id=@project AND ($1 = '' OR i.status=$1)
    AND ($2 = '' OR i.verdict=$2)
    AND ($3 = '' OR i.presence=$3)
    AND ($4 = '' OR i.title ILIKE '%'||$4||'%' OR i.summary ILIKE '%'||$4||'%' OR i.cluster_key ILIKE '%'||$4||'%')
@@ -240,8 +245,8 @@ func (s *Service) ListItems(ctx context.Context, f ItemFilter) ([]Item, int, err
 	}
 	if len(out) == 0 && f.Offset > 0 {
 		// 空页没有窗口计数，用一次计数补齐，保证页尾判断稳定。
-		if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM upstream_sync_item i
- WHERE ($1 = '' OR i.status=$1) AND ($2 = '' OR i.verdict=$2) AND ($3 = '' OR i.presence=$3)
+		if err := s.queryRow(ctx, `SELECT count(*) FROM upstream_sync_item i
+ WHERE i.project_id=@project AND ($1 = '' OR i.status=$1) AND ($2 = '' OR i.verdict=$2) AND ($3 = '' OR i.presence=$3)
    AND ($4 = '' OR i.title ILIKE '%'||$4||'%' OR i.summary ILIKE '%'||$4||'%' OR i.cluster_key ILIKE '%'||$4||'%')`,
 			f.Status, f.Verdict, f.Presence, f.Query).Scan(&total); err != nil {
 			return nil, 0, err
@@ -266,9 +271,9 @@ func (s *Service) MarkItems(ctx context.Context, ids []string, status, actorID s
 		adoptedAt = time.Now()
 		adoptedBy = nullableUUID(actorID)
 	}
-	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_sync_item SET status=$2,
+	tag, err := s.exec(ctx, `UPDATE upstream_sync_item SET status=$2,
  adopted_at=$3, adopted_by=$4, updated_at=now()
- WHERE id = ANY($1::uuid[])`, ids, status, adoptedAt, adoptedBy)
+ WHERE project_id=@project AND id = ANY($1::uuid[])`, ids, status, adoptedAt, adoptedBy)
 	if err != nil {
 		return 0, err
 	}
@@ -282,13 +287,13 @@ func (s *Service) ListRuns(ctx context.Context, limit, offset int) ([]Run, int, 
 		limit = 30
 	}
 	var total int
-	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM upstream_sync_run`).Scan(&total); err != nil {
+	if err := s.queryRow(ctx, `SELECT count(*) FROM upstream_sync_run WHERE project_id=@project`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT id::text, mode, trigger_source, status, base_sha,
+	rows, err := s.query(ctx, `SELECT id::text, mode, trigger_source, status, base_sha,
  observed_head_sha, cursor_sha, scanned_commits, absorbed_commits, item_count,
  has_more, error, started_at, completed_at, created_at
- FROM upstream_sync_run ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
+ FROM upstream_sync_run WHERE project_id=@project ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY upstream_item_project_cluster ON upstream_sync_item(project_id,cluster_key);

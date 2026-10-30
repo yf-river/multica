@@ -37,7 +37,8 @@ export function useCanonicalIssueUrl(
 ) {
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
-  const canonicalHref = identifier ? `${paths.issueDetail(identifier)}${hash}` : null;
+  const query=navigation.searchParams.toString();
+  const canonicalHref = identifier ? `${paths.issueDetail(identifier)}${query?`?${query}`:""}${hash}` : null;
   // `useWorkspacePaths()` 与导航适配器每次渲染都会重建，所以由这个 ref——
   // 而不是依赖数组——来保证 replace 每个目标只跑一次，而非每次 commit 都跑。
   const replacedRef = useRef<string | null>(null);

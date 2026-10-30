@@ -3,45 +3,30 @@ package upstream
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/multica-ai/multica/server/internal/testagents"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 )
 
 const (
-	// DefaultScheduleHour 是未配置时的每日同步整点（北京时间）。
+	// DefaultScheduleHour 是旧设置协议的缺省值，仅用于兼容读取。
 	DefaultScheduleHour = 9
 	// MaxInstructionsLength 与监督提示词保持一致的上限，避免把整库写满。
 	MaxInstructionsLength = 200_000
 )
 
-// DailyCron 返回北京时间每天 hour 点执行的 cron 表达式。
-func DailyCron(hour int) string { return fmt.Sprintf("0 %d * * *", hour) }
-
-// NextDailyRun 按北京时间计算严格晚于当前时刻的下一次运行。
-func NextDailyRun(now time.Time, hour int) time.Time {
-	zone := time.FixedZone("Asia/Shanghai", 8*3600)
-	local := now.In(zone)
-	next := time.Date(local.Year(), local.Month(), local.Day(), hour, 0, 0, 0, zone)
-	if !next.After(now) {
-		next = next.AddDate(0, 0, 1)
-	}
-	return next
-}
-
 // Settings 是一次设置保存的完整输入。RuntimeID 为空表示沿用已保存的绑定：
 // 没有运行时的成员也能保存批量、时间、提示词和暂停状态。
 type Settings struct {
-	UpstreamURL    string
-	UpstreamBranch string
-	LocalRef       string
-	BatchSize      int
-	ScheduleHour   int
-	Enabled        bool
+	BootstrapBaseSHA string
+	UpstreamURL      string
+	UpstreamBranch   string
+	LocalRef         string
+	BatchSize        int
+	ScheduleHour     int
+	Enabled          bool
 	// Instructions 为 nil 表示这次不改提示词；空串表示恢复内置默认。
 	Instructions *string
 	// DefaultInstructions 是随代码发布的内置提示词，只用于判断是否需要落库。
@@ -68,43 +53,47 @@ func normalizeInstructions(override, defaults string) string {
 	return override
 }
 
-// SaveSettings 保存同步范围、执行体与计划。
-//
-// 执行体是平台托管的单条 Agent：首次选择运行时时创建，之后换运行时只改绑定，
-// 自动化同样按配置里的 id 复用，不再产生第二条。调度只在首次创建、改整点或
-// 从暂停恢复时重算，避免每次保存都把当天批次推到次日。
+// SaveSettings 保存项目的仓库范围、同步执行体、提示词与人工同步状态。
 func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string) (string, string, error) {
 	if in.BatchSize < 1 || in.BatchSize > 500 {
 		return "", "", ValidationError{Field: "batch_size", Message: "批量大小应在1到500之间"}
 	}
-	if in.ScheduleHour < 0 || in.ScheduleHour > 23 {
-		return "", "", ValidationError{Field: "schedule_hour", Message: "自动同步时间应为0到23点之间"}
-	}
 	if in.Instructions != nil && len(*in.Instructions) > MaxInstructionsLength {
 		return "", "", ValidationError{Field: "instructions", Message: "提示词过长，请控制在20万字符以内"}
 	}
+	if in.BootstrapBaseSHA != "" && !fullSHA.MatchString(in.BootstrapBaseSHA) {
+		return "", "", ValidationError{Field: "bootstrap_base_sha", Message: "分析起点必须是完整提交 SHA"}
+	}
 	runtimeID := strings.TrimSpace(in.RuntimeID)
 
-	tx, err := s.Pool.Begin(ctx)
+	tx, err := s.begin(ctx)
 	if err != nil {
 		return "", "", err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_config(singleton) VALUES(1) ON CONFLICT(singleton) DO NOTHING`); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_config(project_id) VALUES(@project) ON CONFLICT(project_id) DO NOTHING`); err != nil {
 		return "", "", err
 	}
 
 	var currentURL, currentBranch, currentRef, base, currentAgent, currentPilot, currentRuntime, currentInstructions string
 	var currentHour int
 	var currentState string
-	// 提示词与整点存在独立的设置表，配置表保持升级前的结构；没有设置行时按默认值处理。
+	// 提示词独立保存；schedule_hour 兼容旧协议，不参与派发。
 	if err = tx.QueryRow(ctx, `SELECT c.upstream_url,c.upstream_branch,c.local_ref,c.bootstrap_base_sha,
  COALESCE(c.agent_id::text,''),COALESCE(c.autopilot_id::text,''),COALESCE(c.runtime_id::text,''),
  COALESCE(ss.schedule_hour,9),c.sync_state,COALESCE(ss.instructions,'')
- FROM upstream_sync_config c LEFT JOIN upstream_sync_settings ss ON ss.singleton=1
- WHERE c.singleton=1 FOR UPDATE OF c`).
+ FROM upstream_sync_config c LEFT JOIN upstream_sync_settings ss ON ss.project_id=@project
+ WHERE c.project_id=@project FOR UPDATE OF c`).
 		Scan(&currentURL, &currentBranch, &currentRef, &base, &currentAgent, &currentPilot, &currentRuntime, &currentHour, &currentState, &currentInstructions); err != nil {
 		return "", "", err
+	}
+	if base != "" && in.BootstrapBaseSHA != "" && in.BootstrapBaseSHA != base {
+		return "", "", ValidationError{Field: "bootstrap_base_sha", Message: "已有历史不能直接更换分析起点"}
+	}
+	if base == "" && in.BootstrapBaseSHA != "" {
+		if _, err = tx.Exec(ctx, `UPDATE upstream_sync_config SET bootstrap_base_sha=$1 WHERE project_id=@project`, in.BootstrapBaseSHA); err != nil {
+			return "", "", err
+		}
 	}
 	if base != "" && (currentURL != in.UpstreamURL || currentBranch != in.UpstreamBranch || currentRef != in.LocalRef) {
 		return "", "", ValidationError{Field: "repository", Message: "已有同步历史，不能直接更换仓库或比较基线"}
@@ -121,9 +110,7 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		}
 	}
 
-	// 先定位已有执行体：配置里记录的 id 优先，其次按系统标识查找。
-	// 执行体保持 kind='system' 且键按运行时派生：升级期间仍在服务的旧程序按同一个
-	// 键找到它，不会另建一条 Agent 和自动化；回退旧版本也不需要改数据库。
+	// 优先沿用项目绑定的执行体及历史身份。
 	var agentID, agentOwner, agentRuntime, agentModel, agentThinking, agentWorkspace string
 	err = tx.QueryRow(ctx, `SELECT id::text,COALESCE(owner_id::text,''),COALESCE(runtime_id::text,''),
  COALESCE(model,''),COALESCE(thinking_level,''),workspace_id::text
@@ -131,18 +118,8 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		currentAgent, ExecutorSystemKey, ExecutorSystemKeyPrefix+"%").
 		Scan(&agentID, &agentOwner, &agentRuntime, &agentModel, &agentThinking, &agentWorkspace)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// 没有配置记录的执行体时，优先接管旧版为这次选择的运行时建的那条，
-		// 其次才退回任意历史执行体。
-		err = tx.QueryRow(ctx, `SELECT id::text,COALESCE(owner_id::text,''),COALESCE(runtime_id::text,''),
- COALESCE(model,''),COALESCE(thinking_level,''),workspace_id::text
- FROM agent WHERE kind='system' AND (system_key=$1 OR system_key LIKE $2)
- ORDER BY (system_key=$3) DESC, created_at LIMIT 1`,
-			ExecutorSystemKey, ExecutorSystemKeyPrefix+"%", ExecutorSystemKeyFor(runtimeID)).
-			Scan(&agentID, &agentOwner, &agentRuntime, &agentModel, &agentThinking, &agentWorkspace)
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = nil
-			agentID = ""
-		}
+		err = nil
+		agentID = ""
 	}
 	if err != nil {
 		return "", "", err
@@ -195,8 +172,8 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 			agentID = newID()
 			if _, err = tx.Exec(ctx, `INSERT INTO agent(id,workspace_id,name,description,avatar_url,runtime_mode,runtime_id,
  instructions,visibility,permission_mode,max_concurrent_tasks,kind,system_key,status,owner_id,model,thinking_level)
- VALUES($1,$2,'上游观察员','由上游同步设置自动维护，请到上游同步页面修改','🛰',$3,$4,$5,'private','private',1,'system',$6,'offline',$7,NULLIF($8,''),NULLIF($9,''))`,
-				agentID, workspaceID, runtimeMode, runtimeID, effective, ExecutorSystemKeyFor(runtimeID), effectiveOwner, model, thinking); err != nil {
+ VALUES($1,$2,$10,'由上游同步设置自动维护，请到上游同步页面修改','🛰',$3,$4,$5,'private','private',1,'system',$6,'offline',$7,NULLIF($8,''),NULLIF($9,''))`,
+				agentID, workspaceID, runtimeMode, runtimeID, effective, s.executorKey(), effectiveOwner, model, thinking, "上游观察员 · "+s.Project()); err != nil {
 				return "", "", err
 			}
 		} else {
@@ -204,12 +181,12 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 			// Agent 共用一个键，旧程序按键读取时会拿到不一定是配置绑定的那条。
 			if _, err = tx.Exec(ctx, `UPDATE agent SET system_key=$1::text||id::text,updated_at=now()
  WHERE kind='system' AND system_key=$2 AND id<>$3`,
-				ExecutorOrphanPrefix, ExecutorSystemKeyFor(runtimeID), agentID); err != nil {
+				ExecutorOrphanPrefix, s.executorKey(), agentID); err != nil {
 				return "", "", err
 			}
 			if _, err = tx.Exec(ctx, `UPDATE agent SET workspace_id=$2,runtime_id=$3,runtime_mode=$4,instructions=$5,
  owner_id=$6,system_key=$7,model=NULLIF($8,''),thinking_level=NULLIF($9,''),archived_at=NULL,archived_by=NULL,updated_at=now() WHERE id=$1`,
-				agentID, workspaceID, runtimeID, runtimeMode, effective, effectiveOwner, ExecutorSystemKeyFor(runtimeID), model, thinking); err != nil {
+				agentID, workspaceID, runtimeID, runtimeMode, effective, effectiveOwner, s.executorKey(), model, thinking); err != nil {
 				return "", "", err
 			}
 		}
@@ -270,8 +247,7 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 				return "", "", err
 			}
 		}
-		reschedule := currentHour != in.ScheduleHour || (currentState == "paused" && in.Enabled)
-		if err = upsertSchedule(ctx, tx, pilot, in.ScheduleHour, in.Enabled, reschedule); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE autopilot_trigger SET enabled=false,updated_at=now() WHERE autopilot_id=$1 AND kind='schedule'`, pilot); err != nil {
 			return "", "", err
 		}
 	} else if currentPilot != "" {
@@ -290,8 +266,8 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 	}
 
 	// 设置页新增的两项单独落表，配置表保持升级前的列，旧程序读写同一行不受影响。
-	if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_settings(singleton,instructions,schedule_hour,updated_at)
- VALUES(1,$1,$2,now()) ON CONFLICT(singleton) DO UPDATE
+	if _, err = tx.Exec(ctx, `INSERT INTO upstream_sync_settings(project_id,instructions,schedule_hour,updated_at)
+ VALUES(@project,$1,$2,now()) ON CONFLICT(project_id) DO UPDATE
  SET instructions=EXCLUDED.instructions,schedule_hour=EXCLUDED.schedule_hour,updated_at=now()`, override, in.ScheduleHour); err != nil {
 		return "", "", err
 	}
@@ -303,8 +279,8 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
  created_by=COALESCE(created_by,$5),runtime_id=NULLIF($6,'')::uuid,
  agent_id=NULLIF($7,'')::uuid,autopilot_id=NULLIF($8,'')::uuid,
  sync_state=CASE WHEN $9='paused' THEN 'paused' WHEN sync_state IN ('idle','paused') THEN
-   CASE WHEN cursor_sha<>'' AND NOT COALESCE((SELECT has_more FROM upstream_sync_run WHERE status='completed' ORDER BY completed_at DESC LIMIT 1),true) THEN 'incremental' ELSE 'bootstrap' END
-   ELSE sync_state END,updated_at=now() WHERE singleton=1`,
+   CASE WHEN cursor_sha<>'' AND NOT COALESCE((SELECT has_more FROM upstream_sync_run WHERE project_id=@project AND status='completed' ORDER BY completed_at DESC LIMIT 1),true) THEN 'incremental' ELSE 'bootstrap' END
+   ELSE sync_state END,updated_at=now() WHERE project_id=@project`,
 		in.UpstreamURL, in.UpstreamBranch, in.LocalRef, in.BatchSize, actorID,
 		boundRuntime, agentID, pilot, state)
 	if err != nil {
@@ -319,34 +295,4 @@ func (s *Service) SaveSettings(ctx context.Context, in Settings, actorID string)
 		return "", "", err
 	}
 	return agentID, pilot, nil
-}
-
-// upsertSchedule 维护唯一的每日调度。reschedule=false 时保留仍在未来的下次运行时间，
-// 只有已过期或从未计算过才重新推到下一个整点。
-// 修改 1. 本分支把 410 租约过期说明统一放进 service.UpstreamSyncInstructions()，
-// 所以这里不再保留只承载它、且已无调用方的 DailyPrompt 常量。
-func upsertSchedule(ctx context.Context, tx pgx.Tx, pilot string, hour int, enabled, reschedule bool) error {
-	cron := DailyCron(hour)
-	var trigger string
-	var nextRunAt *time.Time
-	err := tx.QueryRow(ctx, `SELECT id::text,next_run_at FROM autopilot_trigger WHERE autopilot_id=$1 AND kind='schedule' LIMIT 1`, pilot).
-		Scan(&trigger, &nextRunAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		_, err = tx.Exec(ctx, `INSERT INTO autopilot_trigger(id,autopilot_id,kind,enabled,cron_expression,timezone,next_run_at,label)
- VALUES($1,$2,'schedule',$3,$4,'Asia/Shanghai',$5,'每日同步')`, newID(), pilot, enabled, cron, NextDailyRun(time.Now(), hour))
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	next := time.Now()
-	if nextRunAt != nil && !reschedule {
-		next = *nextRunAt
-	}
-	if !next.After(time.Now()) {
-		next = NextDailyRun(time.Now(), hour)
-	}
-	_, err = tx.Exec(ctx, `UPDATE autopilot_trigger SET enabled=$2,cron_expression=$3,timezone='Asia/Shanghai',next_run_at=$4,updated_at=now() WHERE id=$1`,
-		trigger, enabled, cron, next)
-	return err
 }

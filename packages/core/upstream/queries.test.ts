@@ -16,7 +16,7 @@ describe("上游建议清单分页", () => {
       const result = await observer.fetchNextPage();
       expect(result.data?.pages.flatMap((page) => page.runs).map((run) => run.id)).toEqual(runs.map((run) => run.id));
       expect(result.hasNextPage).toBe(false);
-      expect(list.mock.calls).toEqual([[30, 0], [30, 30]]);
+      expect(list.mock.calls).toEqual([[30, 0, "multica"], [30, 30, "multica"]]);
     } finally {
       observer.destroy();
       client.clear();
@@ -31,7 +31,7 @@ describe("上游建议清单分页", () => {
     try {
       await observer.refetch();
       expect(observer.getCurrentResult().hasNextPage).toBe(false);
-      expect(list.mock.calls).toEqual([[30, 0]]);
+      expect(list.mock.calls).toEqual([[30, 0, "multica"]]);
     } finally {
       observer.destroy();
       client.clear();

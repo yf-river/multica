@@ -133,5 +133,8 @@
     "failed": "失败",
     "cancelled": "取消",
     "metered": "用量覆盖"
+  },
+  "insights": {
+    "token_total": "{{count}} Token"
   }
 }

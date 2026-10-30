@@ -526,6 +526,7 @@ export interface AgentTask {
    * 在用量上报上线前跑完的任务并不免费，只是我们不知道它花了多少。
    */
   usage?: TaskUsage[];
+  insight_costs?: Record<string, Record<string, {peak?: {uncached:number;cacheRead:number;cacheWrite:number;output:number};off?: {uncached:number;cacheRead:number;cacheWrite:number;output:number}}>>[];
 }
 
 /**

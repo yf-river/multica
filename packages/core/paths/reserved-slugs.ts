@@ -64,6 +64,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "press",
   "download",
   "usecases",
+  "insights",
 
   // Workspace route segments
   // Reserving each segment name prevents `/{slug}/{view}` from being visually

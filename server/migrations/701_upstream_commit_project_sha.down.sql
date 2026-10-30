@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY upstream_commit_project_sha;

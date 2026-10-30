@@ -1925,6 +1925,7 @@ export const AgentTaskSchema = z.object({
   // 元数据，一条畸形记录只赔上该行的用量数字，不会抹掉整条执行日志。
   // `.catch(undefined)` 把坏数组折叠成「无用量记录」，UI 已用破折号渲染这种情形。
   usage: z.array(TaskUsageSchema).optional().catch(undefined),
+  insight_costs: z.array(z.record(z.string(),z.record(z.string(),z.object({peak:z.object({uncached:z.number(),cacheRead:z.number(),cacheWrite:z.number(),output:z.number()}).optional(),off:z.object({uncached:z.number(),cacheRead:z.number(),cacheWrite:z.number(),output:z.number()}).optional()})))).optional(),
 }).loose();
 
 // Outcome counts are required: every backend that serves this endpoint
@@ -3375,6 +3376,7 @@ export const UpstreamConfigSchema = z.object({
   agent_id: z.string().default(""), autopilot_id: z.string().default(""),
   batch_size: z.number(), schedule_hour: z.number().default(9),
   sync_state: z.string(),
+  baseline_committed_at:z.string().nullable().optional(),head_committed_at:z.string().nullable().optional(),pending_commits:z.number().nullable().optional(),
   bootstrap_base_sha: z.string(), cursor_sha: z.string(), head_sha: z.string(),
   last_run_at: z.string().nullable(), error: z.string().default(""),
   model: z.string().default(""), thinking_level: z.string().default(""),
@@ -3480,3 +3482,29 @@ export const KnowledgeUploadResponseSchema = z.object({
   filename: z.string(),
   result: z.unknown(),
 }).loose();
+
+export const UpstreamProjectsSchema = z.object({
+ projects: z.array(z.object({id:z.string(),name:z.string(),enabled:z.boolean(),syncing:z.boolean().optional().default(false),snapshot:UpstreamSnapshotSchema})),
+ can_write:z.boolean().default(false),
+});
+export const UpstreamActionSchema = z.object({ok:z.boolean().optional(),id:z.string().optional(),status:z.string().optional()}).passthrough();
+
+export type UpstreamProjects = z.output<typeof UpstreamProjectsSchema>;
+
+export const InsightSessionSchema=z.object({
+ id:z.string(),session_id:z.string(),daemon_id:z.string().optional().default(""),cwd:z.string().optional(),parent_session_id:z.string(),workspace_id:z.string(),chat_session_id:z.string(),issue_id:z.string(),agent_id:z.string(),seq:z.number(),projections:z.record(z.string(),z.unknown()),updated_at:z.string(),title:z.string(),workspace_name:z.string(),workspace_slug:z.string(),archived:z.boolean(),run_ids:z.array(z.string()).optional(),
+});
+export const InsightListSchema=z.object({sessions:z.array(InsightSessionSchema),total:z.number()});
+export const InsightDetailSchema=z.object({session:InsightSessionSchema,runs:z.array(z.string())});
+export const InsightEventsSchema=z.object({events:z.array(z.object({type:z.string(),seq:z.number(),time:z.number(),data:z.unknown().optional()}).passthrough())});
+export type InsightSession=z.output<typeof InsightSessionSchema>;
+export type InsightList=z.output<typeof InsightListSchema>;
+export type InsightDetail=z.output<typeof InsightDetailSchema>;
+export type InsightEvents=z.output<typeof InsightEventsSchema>;
+
+export const UpstreamDeploymentsSchema=z.object({available:z.boolean(),jobs:z.array(z.object({id:z.string(),action:z.string(),version:z.string(),status:z.string(),result:z.record(z.string(),z.unknown()),error:z.string(),created_at:z.string(),updated_at:z.string()}))});
+export type UpstreamDeployments=z.output<typeof UpstreamDeploymentsSchema>;
+export const InsightPreferencesSchema=z.record(z.string(),z.string());
+export const InsightPriceCatalogSchema=z.record(z.string(),z.unknown());
+
+export const InsightRunsSchema=z.object({runs:z.array(z.object({id:z.string(),provider:z.string(),status:z.string(),started_at:z.string()}))});

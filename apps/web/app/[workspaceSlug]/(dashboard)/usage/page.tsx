@@ -1,2 +1,6 @@
-/** 用量总览页路由：直接把共享的 DashboardPage 作为默认导出转发（用量即工作台首页内容）。 */
-export { DashboardPage as default } from "@multica/views/dashboard/dashboard-page";
+import {redirect} from 'next/navigation';
+export default async function Page({params,searchParams}:{params:Promise<{workspaceSlug:string}>;searchParams:Promise<Record<string,string|string[]|undefined>>}){
+ const {workspaceSlug}=await params;const values=await searchParams;const q=new URLSearchParams();
+ for(const [key,value]of Object.entries(values)){if(typeof value==='string')q.set(key,value);else if(Array.isArray(value))for(const item of value)q.append(key,item)}
+ redirect(`/${encodeURIComponent(workspaceSlug)}/insights${q.size?'?'+q:''}`);
+}

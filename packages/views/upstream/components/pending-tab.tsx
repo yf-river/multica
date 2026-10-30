@@ -33,10 +33,12 @@ function formatDay(value: string | null): string {
 
 export function PendingTab({
   wsId,
+  projectId = "multica",
   snapshot,
   onOpenSettings,
 }: {
   wsId: string;
+  projectId?: string;
   snapshot?: UpstreamSnapshot;
   onOpenSettings: () => void;
 }) {
@@ -54,6 +56,7 @@ export function PendingTab({
 
   const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery(
     upstreamItemsOptions(wsId, {
+      project_id: projectId,
       status,
       verdict: verdict === ANY ? "" : verdict,
       presence: presence === ANY ? "" : presence,
@@ -61,7 +64,7 @@ export function PendingTab({
     }),
   );
   const mark = useMarkUpstreamItems();
-  const createTask = useCreateUpstreamAbsorptionTask();
+  const createTask = useCreateUpstreamAbsorptionTask(projectId);
   const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
   const canWrite = snapshot?.can_write ?? false;
 
@@ -81,7 +84,7 @@ export function PendingTab({
 
   const apply = (next: "adopted" | "ignored" | "open") => {
     if (selected.length === 0) return;
-    mark.mutate({ ids: selected, status: next }, { onSuccess: () => setSelected([]) });
+    mark.mutate({ ids: selected, status: next, project_id: projectId }, { onSuccess: () => setSelected([]) });
   };
 
   // 修改 5. 每行都有一个「创建吸收任务」，点一下就在当前工作区真建一个任务；先确认，

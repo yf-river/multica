@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/bowenliang123/dsh-context",
+  "commit": "402742a885a7aaf030e17b280627871cd5238de6",
+  "version": "0.78.2",
+  "purpose": "Native Context Insights baseline; fixed source and parity tests"
+}

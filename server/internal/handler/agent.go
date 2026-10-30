@@ -567,7 +567,8 @@ type AgentTaskResponse struct {
 	// nil 与 [] 都表示「无用量记录」，UI 对两者渲染破折号——早于用量上报的
 	// 运行，或死在任何模型调用之前的运行，确实没有数字；显示 0 反而断言它
 	// 免费。omitempty 让两者都不上线。
-	Usage []TaskUsageData `json:"usage,omitempty"`
+	Usage        []TaskUsageData   `json:"usage,omitempty"`
+	InsightCosts []json.RawMessage `json:"insight_costs,omitempty"`
 	// Traces 是本运行在外部链路观测系统里的根请求，0..N 条。与 Usage 相互独立：
 	// 一次运行可能有用量却没有链路（backend 不暴露标识），也可能有链路而没有用量
 	// （请求发出去了但上游没回用量）。correlation=inferred_window 表示这条只是按

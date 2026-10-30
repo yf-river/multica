@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "bash ../../scripts/dev-env.sh require-local && sh -c 'next dev --webpack --port \"${FRONTEND_PORT:-3000}\"'",
-    "build": "next build --webpack",
+    "build": "pnpm --filter @multica/context-insights build && pnpm --filter @multica/views build:insights && next build --webpack",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

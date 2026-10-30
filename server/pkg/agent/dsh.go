@@ -68,6 +68,7 @@ type dshMCPServer struct {
 
 // dshExecuteCommand 是下发"执行"的入站命令帧。
 type dshExecuteCommand struct {
+	InsightsSince     int64              `json:"insights_since,omitempty"`
 	Archive           bool               `json:"archive,omitempty"`
 	Version           int                `json:"v"`
 	Type              string             `json:"type"`              // 固定 "execute"
@@ -101,6 +102,7 @@ type dshWireError struct {
 type dshFrame struct {
 	Capabilities *struct {
 		Archive       bool `json:"archive"`
+		Insights      bool `json:"insights"`
 		PlanReview    bool `json:"plan_review"`
 		UserQuestions bool `json:"user_questions"`
 	} `json:"capabilities,omitempty"`
@@ -350,8 +352,9 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		requestID = "multica-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 	command := dshExecuteCommand{
-		Archive: opts.ArchiveEvent != nil,
-		Version: DshProtocolVersion, Type: "execute", RequestID: requestID,
+		Archive:       opts.ArchiveEvent != nil,
+		InsightsSince: opts.InsightsSince,
+		Version:       DshProtocolVersion, Type: "execute", RequestID: requestID,
 		HumanInteractions: opts.HumanInteractions, PlanDecision: opts.PlanDecision,
 		Cwd: opts.Cwd, Prompt: prompt, Command: opts.Command, ApprovalPolicy: opts.ApprovalPolicy, ResumeSessionID: opts.ResumeSessionID,
 		Model: model, ReasoningEffort: opts.ThinkingLevel, MCPServers: mcpServers,
@@ -445,6 +448,18 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				state.invalidFrames++
 				continue
 			}
+			if opts.InsightsEvent != nil && executeSent && frame.RequestID == requestID {
+				var kind struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal([]byte(line), &kind) == nil && (kind.Type == "archive" || kind.Type == "insights" || kind.Type == "insight_context") {
+					if e := opts.InsightsEvent(json.RawMessage(line)); e != nil {
+						state.protocolError = "persist Context Insights: " + e.Error()
+						cancel()
+						continue
+					}
+				}
+			}
 			if opts.ArchiveEvent != nil && executeSent {
 				if err := opts.ArchiveEvent(json.RawMessage(line)); err != nil {
 					state.protocolError = "archive original DSH event: " + err.Error()
@@ -473,6 +488,9 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 				}
 				if state.protocolError == "" && opts.ArchiveEvent != nil && (frame.Capabilities == nil || !frame.Capabilities.Archive) {
 					state.protocolError = "dsh raw archive capability unavailable; execution was not sent"
+				}
+				if state.protocolError == "" && opts.InsightsSince > 0 && (frame.Capabilities == nil || !frame.Capabilities.Insights) {
+					state.protocolError = "dsh Context Insights capability unavailable; execution was not sent"
 				}
 				if state.protocolError == "" && opts.HumanInteractions && (!state.planReview || !state.userQuestions) {
 					state.protocolError = "dsh human interaction capabilities are unavailable; execution was not sent"

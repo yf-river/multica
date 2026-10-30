@@ -96,6 +96,25 @@ func BuildManifest(ctx context.Context, mirror string, c Config, processed []str
 			pending = append(pending, sha)
 		}
 	}
+	m.PendingCommits = new(int)
+	*m.PendingCommits = len(pending)
+	commitDate := func(sha string) (*time.Time, error) {
+		text, e := gitOutput(ctx, mirror, "show", "-s", "--format=%cI", sha)
+		if e != nil {
+			return nil, e
+		}
+		at, e := time.Parse(time.RFC3339, text)
+		if e != nil {
+			return nil, e
+		}
+		return &at, nil
+	}
+	if m.BaseCommittedAt, err = commitDate(m.BaseSHA); err != nil {
+		return m, err
+	}
+	if m.HeadCommittedAt, err = commitDate(m.HeadSHA); err != nil {
+		return m, err
+	}
 	m.HasMore = len(pending) > c.BatchSize
 	if m.HasMore {
 		pending = pending[:c.BatchSize]

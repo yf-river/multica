@@ -335,6 +335,10 @@ import {
   IssueTableGroupsResponseSchema,
   IssueTableRowsResponseSchema,
   ListAutopilotsResponseSchema,
+  InsightPreferencesSchema,InsightPriceCatalogSchema,UpstreamDeploymentsSchema,
+  InsightListSchema,InsightDetailSchema,InsightEventsSchema,
+  UpstreamProjectsSchema,
+  UpstreamActionSchema,
   UpstreamSnapshotSchema,
   UpstreamItemsSchema,
   UpstreamRunsSchema,
@@ -925,20 +929,61 @@ export class ApiClient {
     return this.fetch<{ok: boolean}>("/api/test-agent-control", {method:"POST",body:JSON.stringify(body)});
   }
 
-  async getUpstreamSnapshot() {
-    return parseOrThrow<UpstreamSnapshot>(await this.fetch<unknown>("/api/upstream/"), UpstreamSnapshotSchema, { endpoint: "GET /api/upstream" });
+  async listContextInsights(workspaceId=""):Promise<import("./schemas").InsightList> {
+    return parseOrThrow<import("./schemas").InsightList>(await this.fetch<unknown>(`/api/insights?workspace_id=${encodeURIComponent(workspaceId)}&all=true`),InsightListSchema,{endpoint:"GET /api/insights"});
   }
-  async listUpstreamItems(params: { status?: string; verdict?: string; presence?: string; q?: string; limit?: number; offset?: number }) {
+
+  async listContextInsightRuns(issueId="",chatSessionId="") {
+    const {InsightRunsSchema}=await import('./schemas');
+    return parseOrThrow<import("zod").z.output<typeof InsightRunsSchema>>(await this.fetch<unknown>(`/api/insights/runs?issue_id=${encodeURIComponent(issueId)}&chat_session_id=${encodeURIComponent(chatSessionId)}`),InsightRunsSchema,{endpoint:'GET /api/insights/runs'});
+  }
+  async getContextInsight(id:string) {
+    return parseOrThrow<import("./schemas").InsightDetail>(await this.fetch<unknown>(`/api/insights/${encodeURIComponent(id)}`),InsightDetailSchema,{endpoint:"GET /api/insights/detail"});
+  }
+  async getContextInsightAttachment(id:string,attachmentId:string):Promise<Blob>{
+    return (await this.fetchRaw(`/api/insights/${encodeURIComponent(id)}/attachment?id=${encodeURIComponent(attachmentId)}`)).blob();
+  }
+  async getContextInsightEvents(id:string,before:number) {
+    return parseOrThrow<import("./schemas").InsightEvents>(await this.fetch<unknown>(`/api/insights/${encodeURIComponent(id)}/events?before=${before}`),InsightEventsSchema,{endpoint:"GET /api/insights/events"});
+  }
+  async getInsightPreferences():Promise<Record<string,string>> {
+    return parseOrThrow<Record<string,string>>(await this.fetch<unknown>("/api/insights/preferences"),InsightPreferencesSchema, {endpoint:"GET /api/insights/preferences"});
+  }
+  async saveInsightPreferences(value:Record<string,string>):Promise<Record<string,string>> {
+    return parseOrThrow<Record<string,string>>(await this.fetch<unknown>("/api/insights/preferences",{method:"PUT",body:JSON.stringify(value)}),InsightPreferencesSchema, {endpoint:"PUT /api/insights/preferences"});
+  }
+  async getInsightPrices():Promise<unknown> {return parseOrThrow<Record<string,unknown>>(await this.fetch<unknown>("/api/insights/prices"),InsightPriceCatalogSchema, {endpoint:"GET /api/insights/prices"});}
+  async getUpstreamDeployments(projectId:string) {
+    return parseWithFallback<import("./schemas").UpstreamDeployments>(await this.fetch<unknown>(`/api/upstream/deployments?project_id=${encodeURIComponent(projectId)}`),UpstreamDeploymentsSchema,{available:false,jobs:[]},{endpoint:"GET /api/upstream/deployments"});
+  }
+  async prepareUpstreamDeployment(projectId:string,action:"prepare"|"deploy"|"recover",version="") {
+    return parseWithFallback(await this.fetch<unknown>(`/api/upstream/deployments?project_id=${encodeURIComponent(projectId)}`,{method:"POST",body:JSON.stringify({action,version})}),UpstreamActionSchema,{}, {endpoint:"POST /api/upstream/deployments"});
+  }
+  async listUpstreamProjects(): Promise<import("./schemas").UpstreamProjects> {
+    return parseWithFallback<import("./schemas").UpstreamProjects>(await this.fetch<unknown>("/api/upstream/projects"), UpstreamProjectsSchema, {projects:[],can_write:false}, {endpoint:"GET /api/upstream/projects"});
+  }
+  async saveUpstreamProject(body: {id:string;name:string;enabled:boolean}) {
+    return parseWithFallback(await this.fetch<unknown>("/api/upstream/projects",{method:"PUT",body:JSON.stringify(body)}),UpstreamActionSchema,{}, {endpoint:"PUT /api/upstream/projects"});
+  }
+  async syncUpstreamProject(projectId:string) {
+    return parseWithFallback(await this.fetch<unknown>(`/api/upstream/sync?project_id=${encodeURIComponent(projectId)}`,{method:"POST",body:"{}"}),UpstreamActionSchema,{}, {endpoint:"POST /api/upstream/sync"});
+  }
+  async getUpstreamSnapshot(projectId = "multica") {
+    return parseOrThrow<UpstreamSnapshot>(await this.fetch<unknown>(`/api/upstream/?project_id=${encodeURIComponent(projectId)}`), UpstreamSnapshotSchema, { endpoint: "GET /api/upstream" });
+  }
+  async listUpstreamItems(params: { status?: string; verdict?: string; presence?: string; q?: string; limit?: number; offset?: number; project_id?: string }) {
     const q = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== "") q.set(key, String(value));
     }
     return parseOrThrow<{ items: UpstreamItem[]; total: number }>(await this.fetch<unknown>(`/api/upstream/items?${q}`), UpstreamItemsSchema, { endpoint: "GET /api/upstream/items" });
   }
-  async listUpstreamRuns(limit = 30, offset = 0) {
-    return parseOrThrow<{ runs: UpstreamRun[]; total: number }>(await this.fetch<unknown>(`/api/upstream/runs?limit=${limit}&offset=${offset}`), UpstreamRunsSchema, { endpoint: "GET /api/upstream/runs" });
+  async listUpstreamRuns(limit = 30, offset = 0, projectId = "multica") {
+    return parseOrThrow<{ runs: UpstreamRun[]; total: number }>(await this.fetch<unknown>(`/api/upstream/runs?limit=${limit}&offset=${offset}&project_id=${encodeURIComponent(projectId)}`), UpstreamRunsSchema, { endpoint: "GET /api/upstream/runs" });
   }
   async updateUpstreamConfig(body: {
+    bootstrap_base_sha?: string;
+    project_id?: string;
     upstream_url: string;
     upstream_branch: string;
     local_ref: string;
@@ -951,16 +996,16 @@ export class ApiClient {
     /** 省略表示不改提示词；空串表示恢复内置默认。 */
     instructions?: string;
   }) {
-    return this.fetch<{ ok: boolean; agent_id: string; autopilot_id: string }>("/api/upstream/", { method: "PUT", body: JSON.stringify(body) });
+    return this.fetch<{ ok: boolean; agent_id: string; autopilot_id: string }>(`/api/upstream/?project_id=${encodeURIComponent(body.project_id ?? "multica")}`, { method: "PUT", body: JSON.stringify(body) });
   }
   async getUpstreamInstructions() {
     return this.fetch<{ instructions: string }>("/api/upstream/instructions");
   }
-  async markUpstreamItems(body: { ids: string[]; status: "adopted" | "ignored" | "open" }) {
-    return this.fetch<{ updated: number }>("/api/upstream/items/status", { method: "PATCH", body: JSON.stringify(body) });
+  async markUpstreamItems(body: { ids: string[]; status: "adopted" | "ignored" | "open"; project_id?: string }) {
+    return this.fetch<{ updated: number }>(`/api/upstream/items/status?project_id=${encodeURIComponent(body.project_id ?? "multica")}`, { method: "PATCH", body: JSON.stringify(body) });
   }
-  async createUpstreamAbsorptionTask(itemId: string) {
-    return this.fetch<{ issue_id: string; status: string; existing: boolean }>(`/api/upstream/items/${encodeURIComponent(itemId)}/absorption-task`, { method: "POST" });
+  async createUpstreamAbsorptionTask(itemId: string,projectId="multica") {
+    return this.fetch<{ issue_id: string; status: string; existing: boolean }>(`/api/upstream/items/${encodeURIComponent(itemId)}/absorption-task?project_id=${encodeURIComponent(projectId)}`, { method: "POST" });
   }
   async getSupervision() {
     return parseOrThrow<SupervisionSnapshot>(await this.fetch<unknown>("/api/supervision/"), supervisionSnapshotSchema, { endpoint: "GET /api/supervision", sensitive: true });

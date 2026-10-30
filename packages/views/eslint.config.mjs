@@ -12,6 +12,8 @@ import {
 // `eslint-i18n-guard.mjs` pins shut.
 
 export default [
+  // 固定版本原生源码由独立 strict 编译和上游对照测试检查；生成物不参与 lint。
+  {ignores:["insights/native/**","insights/native-dist/**"]},
   ...reactConfig,
   {
     files: ["**/*.tsx"],

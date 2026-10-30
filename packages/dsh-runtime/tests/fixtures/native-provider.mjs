@@ -8,7 +8,7 @@ let requests = 0
 
 class FixtureAdapter extends LlmAdapter {
   async listModels() { return [{provider: 'multica-fixture', id: 'native-interaction', name: 'Native interaction fixture'}] }
-  async resolveModel(provider, model) { return {provider, id: model, name: 'Native interaction fixture', context: {contextWindow: 1048576}, inputModalities: ['text']} }
+  async resolveModel(provider, model) { return {provider, id: model, name: 'Native interaction fixture', context: {contextWindow: 1048576}, inputModalities: process.env.MULTICA_DSH_FIXTURE_PHASE === 'image' ? ['text','image'] : ['text']} }
   async *stream(options) {
     const phase = process.env.MULTICA_DSH_FIXTURE_PHASE
     appendFileSync(process.env.MULTICA_DSH_FIXTURE_REQUESTS, JSON.stringify({phase, messages: options.messages, tools: options.tools}) + '\n', {mode: 0o600})
@@ -16,7 +16,10 @@ class FixtureAdapter extends LlmAdapter {
     if (phase === 'provider-error') throw new Error('Deterministic fixture provider failure')
     if (options.provider !== 'multica-fixture' || options.model !== 'native-interaction') throw new Error('Fixture model identity changed')
     let name, args
-    if (requests === 1 && (phase === 'plan' || phase === 'keep-planning')) {
+    if (requests === 1 && phase === 'image') {
+      name = 'read_image'
+      args = {file_path: 'image.png'}
+    } else if (requests === 1 && (phase === 'plan' || phase === 'keep-planning')) {
       name = 'exit_plan_mode'
       args = {plan: '# Native fixture plan\n\n1. Read the task.\n2. Write approved.txt only after approval.\n'}
     } else if (requests === 1 && phase === 'question') {
@@ -38,7 +41,7 @@ class FixtureAdapter extends LlmAdapter {
       return
     }
     if (phase === 'plan' || phase === 'keep-planning' || phase === 'question') throw new Error('Native human interaction unexpectedly continued calling the model')
-    const text = phase === 'canary' ? 'MULTICA_DSH_CANARY_OK' : phase === 'answer' ? 'DSH_ANSWER_RESUMED' : 'DSH_APPROVED_DONE'
+    const text = phase === 'large-answer' ? 'INSIGHTS-LARGE-START\n' + '完整原文'.repeat(30000) + '\nINSIGHTS-LARGE-END' : phase === 'canary' ? 'MULTICA_DSH_CANARY_OK' : phase === 'answer' ? 'DSH_ANSWER_RESUMED' : 'DSH_APPROVED_DONE'
     yield {type: 'block-start', index: 0, blockType: 'text'}
     yield {type: 'text-delta', index: 0, text}
     yield {type: 'block-end', index: 0, block: {type: 'text', text}}

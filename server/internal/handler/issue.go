@@ -4138,6 +4138,9 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLsWithEvents(ctx context.Con
 		if err := deleteSupervisionData(ctx, tx, uuidToString(issue.WorkspaceID), uuidToString(issue.ID)); err != nil {
 			return issueDeleteResult{}, nil, err
 		}
+		if err := deleteContextInsightData(ctx, tx, uuidToString(issue.WorkspaceID), uuidToString(issue.ID), false); err != nil {
+			return issueDeleteResult{}, nil, err
+		}
 		if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID}); err != nil {
 			return issueDeleteResult{}, nil, fmt.Errorf("delete issue: %w", err)
 		}

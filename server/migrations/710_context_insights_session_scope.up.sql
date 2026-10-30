@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY context_insights_session_scope ON context_insights_session(workspace_id,chat_session_id,issue_id);
