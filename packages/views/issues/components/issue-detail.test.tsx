@@ -121,6 +121,9 @@ vi.mock("../../navigation", () => ({
   useNavigation: () => ({
     push: vi.fn(),
     pathname: "/issues/issue-1",
+    searchParams: new URLSearchParams(),
+    hash: "",
+    replace: vi.fn(),
     getShareableUrl: (p: string) => `https://app.multica.com${p}`,
   }),
   useBackOrReplace: () => vi.fn(),
@@ -1035,7 +1038,7 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Properties")).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Properties" })).toBeInTheDocument();
     });
 
     // Core rows — always rendered regardless of whether the issue has a value.
@@ -1069,7 +1072,7 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Properties")).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Properties" })).toBeInTheDocument();
     });
 
     expect(screen.getByText("Priority")).toBeInTheDocument();

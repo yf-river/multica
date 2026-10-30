@@ -157,11 +157,13 @@ export function AnimatedRightSidebar({
   motionEnabled,
   children,
   className,
+  contentClassName,
 }: {
   open: boolean;
   motionEnabled?: boolean;
   children: ReactNode;
   className?: string;
+  contentClassName?: string;
 }) {
   return (
     <motion.div
@@ -180,7 +182,7 @@ export function AnimatedRightSidebar({
       initial={false}
       transition={motionEnabled ? rightSidebarTransition : { duration: 0 }}
     >
-      <div className="p-4">{children}</div>
+      <div className={cn("p-4", contentClassName)}>{children}</div>
     </motion.div>
   );
 }

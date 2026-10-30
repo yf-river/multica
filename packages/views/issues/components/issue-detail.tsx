@@ -1,5 +1,8 @@
 "use client";
-import {InsightsSurface} from "../../insights/insights-surface";
+import { InsightsPage } from "../../insights/insights-page";
+import { InsightsRealtimeBar } from "../../insights/realtime-bar";
+import { useInsightsView } from "../../insights/use-insights-view";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 
 // 本文件：IssueDetail —— 单个问题（issue）的详情页核心组件。
 // 负责渲染标题、描述、子任务列表、活动/评论时间线、右侧属性边栏，
@@ -43,7 +46,7 @@ import { BreadcrumbHeader, type BreadcrumbSegment } from "../../layout/breadcrum
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
-import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, ImageSequenceProvider } from "../../editor";
 import { collectImageSequence, type ImageSequenceBlock } from "@multica/core/attachments/image-sequence";
@@ -1130,6 +1133,7 @@ export function IssueDetailSkeleton({ leading }: { leading?: ReactNode } = {}) {
 export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, leadingAction }: IssueDetailProps) {
   const { t } = useT("issues");
   const locale = useLocale();
+  const { insights, change: changeInsights, taskId: insightTaskId, sessionKey: insightSessionKey } = useInsightsView();
   const timeAgo = useTimeAgo();
   const id = issueId;
   const user = useAuthStore((s) => s.user);
@@ -2177,6 +2181,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       else panel.collapse();
     });
   }, [beginDesktopSidebarToggle, isMobile, sidebarRef]);
+
+  const openInsightsSidebar = useCallback(() => {
+    if (isMobile) {
+      setMobileSidebarOpen(true);
+    } else if (sidebarRef.current?.isCollapsed()) {
+      beginDesktopSidebarToggle(true);
+      sidebarRef.current.expand();
+    }
+  }, [isMobile, sidebarRef, beginDesktopSidebarToggle]);
+
+  const loadedIssueId = issue?.id;
+  useEffect(() => {
+    if (insights && loadedIssueId) openInsightsSidebar();
+  }, [insights, insightTaskId, insightSessionKey, loadedIssueId, openInsightsSidebar]);
 
   useRightSidebarShortcut(rightSidebarShortcutTargetRef, handleToggleSidebar);
 
@@ -3441,7 +3459,37 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     </ImageSequenceProvider>
     </CurrentIssueRenderContextProvider>
   );
-  const detailContent = <InsightsSurface issueId={id} title={`${issue.identifier} ${issue.title}`}>{conversationContent}</InsightsSurface>;
+  const detailContent = (
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+      {conversationContent}
+      <InsightsRealtimeBar
+        workspaceId={wsId}
+        issueId={id}
+        onOpen={() => { changeInsights(true); openInsightsSidebar(); }}
+      />
+    </div>
+  );
+  const sidebarTabs = (
+    <Tabs
+      value={insights ? "insights" : "properties"}
+      onValueChange={(value) => changeInsights(value === "insights")}
+      className="h-full min-h-0 min-w-0 gap-0"
+      data-sidebar-right-open=""
+    >
+      <div className="flex h-12 shrink-0 items-center border-b px-3 max-md:pr-12">
+        <TabsList variant="line" aria-label={locale.startsWith("zh") ? "任务侧栏" : "Task sidebar"}>
+          <TabsTrigger value="properties">{t(($) => $.detail.section_properties)}</TabsTrigger>
+          <TabsTrigger value="insights">{locale.startsWith("zh") ? "上下文洞察" : "Context Insights"}</TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="properties" keepMounted className="min-h-0 overflow-y-auto p-4">
+        {sidebarContent}
+      </TabsContent>
+      <TabsContent value="insights" className="min-h-0 overflow-hidden">
+        <InsightsPage workspaceId={wsId} issueId={id} taskId={insightTaskId} sessionKey={insightSessionKey} />
+      </TabsContent>
+    </Tabs>
+  );
 
 
   if (isMobile) {
@@ -3449,8 +3497,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <div className="flex flex-1 min-h-0">
         {detailContent}
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-          <SheetContent side="right" showCloseButton={false} className="w-[320px] overflow-y-auto p-4">
-            {sidebarContent}
+          <SheetContent side="right" className="overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[420px]">
+            <SheetTitle className="sr-only">{issue.identifier} {issue.title}</SheetTitle>
+            {sidebarTabs}
           </SheetContent>
         </Sheet>
       </div>
@@ -3469,14 +3518,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         data-right-sidebar-motion={desktopSidebarMotionEnabled ? "enabled" : undefined}
         defaultSize={desktopSidebarOpen ? 320 : 0}
         minSize={260}
-        maxSize={420}
+        maxSize={insights ? 720 : 420}
         collapsible
         groupResizeBehavior="preserve-pixel-size"
         panelRef={sidebarRef}
         onResize={handleDesktopSidebarResize}
       >
-        <AnimatedRightSidebar open={desktopSidebarVisualOpen} motionEnabled={desktopSidebarMotionEnabled}>
-          {sidebarContent}
+        <AnimatedRightSidebar open={desktopSidebarVisualOpen} motionEnabled={desktopSidebarMotionEnabled} className="overflow-y-hidden" contentClassName="h-full min-h-0 p-0">
+          {sidebarTabs}
         </AnimatedRightSidebar>
       </ResizablePanel>
     </ResizablePanelGroup>

@@ -2,10 +2,10 @@
 import type { ReactNode } from "react";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { Button } from "@multica/ui/components/ui/button";
-import { useNavigation } from "../navigation";
 import { useLocale } from "../i18n";
 import { InsightsPage } from "./insights-page";
 import { InsightsRealtimeBar } from "./realtime-bar";
+import { useInsightsView } from "./use-insights-view";
 
 export function InsightsSurface({
   children,
@@ -19,19 +19,8 @@ export function InsightsSurface({
   title?: string;
 }) {
   const wsId = useWorkspaceId();
-  const nav = useNavigation();
   const zh = useLocale().startsWith("zh");
-  const insights = nav.searchParams.get("view") === "insights";
-  const change = (open: boolean) => {
-    const q = new URLSearchParams(nav.searchParams);
-    if (open) q.set("view", "insights");
-    else {
-      q.delete("view");
-      q.delete("insight");
-      q.delete("run");
-    }
-    nav.replace(`${nav.pathname}${q.size ? "?" + q : ""}${nav.hash}`);
-  };
+  const { insights, change, taskId, sessionKey } = useInsightsView();
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1">
@@ -66,8 +55,8 @@ export function InsightsSurface({
             workspaceId={wsId}
             issueId={issueId}
             chatSessionId={chatSessionId}
-            taskId={nav.searchParams.get("run") ?? undefined}
-            sessionKey={nav.searchParams.get("insight") ?? undefined}
+            taskId={taskId}
+            sessionKey={sessionKey}
           />
         </div>
       ) : (
