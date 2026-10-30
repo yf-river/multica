@@ -3465,7 +3465,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <InsightsRealtimeBar
         workspaceId={wsId}
         issueId={id}
-        onOpen={() => { changeInsights(true); openInsightsSidebar(); }}
       />
     </div>
   );

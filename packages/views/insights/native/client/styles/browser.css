@@ -58,7 +58,7 @@
 .lc-br-delta-down, .lc-br-tdelta-down { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 15%, transparent); }
 .lc-br-tokens-grp { flex: none; min-width: 0; display: inline-flex; align-items: center; gap: 4px; }
 .lc-br-pct { flex: none; width: 36px; text-align: right; color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.lc-br-.multica-insights { border-top: var(--lc-line-fine, 1px solid var(--dsw-alias-border-l1)); padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; }
+.lc-br-body { border-top: var(--lc-line-fine, 1px solid var(--dsw-alias-border-l1)); padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; }
 .lc-br-elem { border-radius: 6px; }
 .lc-br-elem:nth-child(even of .lc-br-elem):not(.lc-br-elem-on) { background: var(--lc-list-stripe); }
 .lc-br-elem-on { background: var(--dsw-alias-interactive-bg-active); }

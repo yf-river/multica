@@ -12,7 +12,7 @@
 .lc-cmd-floor { margin: 0 0 6px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .lc-cmd-floor-btn { border: 0; background: transparent; padding: 0 0 0 6px; font: inherit; font-size: 11px; color: var(--dsw-alias-state-business-primary); text-decoration: underline; cursor: pointer; }
 
-.lc-cmd-.multica-insights { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr); gap: 16px; flex: 1; min-height: 0; }
+.lc-cmd-body { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr); gap: 16px; flex: 1; min-height: 0; }
 .lc-cmd-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .lc-cmd-main:only-child { grid-column: 1 / -1; }
 .lc-cmd-list { flex: 1; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; }
@@ -92,7 +92,7 @@
 .lc-cmd-fact-cwd { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @container lc-card (max-width: 719px) {
-  .lc-cmd-.multica-insights { display: flex; flex-direction: column; }
+  .lc-cmd-body { display: flex; flex-direction: column; }
   .lc-cmd-rail { flex: none; flex-direction: row; flex-wrap: wrap; gap: 8px 18px; }
   .lc-cmd-rail-sec { flex: 1 1 200px; }
   .lc-cmd-progs-list { max-height: 238px; }

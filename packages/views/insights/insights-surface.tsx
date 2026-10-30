@@ -64,7 +64,6 @@ export function InsightsSurface({
           workspaceId={wsId}
           issueId={issueId}
           chatSessionId={chatSessionId}
-          onOpen={() => change(true)}
         />
       )}
     </div>

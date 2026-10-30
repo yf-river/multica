@@ -1,0 +1,36 @@
+{
+  "sources": {
+    "dsh-client-ui-chat": {
+      "version": "0.2.1-rc.3",
+      "source": "lib/client.js",
+      "sha256": "a00e5176d1257d51604cefbe9a15d326d4283439df31f76ba20ff690c76e10a1"
+    },
+    "dsh-client-ui-conversation": {
+      "version": "0.2.1-rc.3",
+      "source": "lib/client.js",
+      "sha256": "b81765f0998430bbf5ab6389e89a082b799f017275c5abe1efb3c701f0fa708a"
+    },
+    "dsh-client-locale": {
+      "version": "0.2.1-rc.3",
+      "source": "lib/client.js",
+      "sha256": "bad8fe9bfb07af2a60c80933be65ceafdaab5386f404fb264401c7e540a36e16"
+    },
+    "dsh-client-ui-theme": {
+      "version": "0.2.1-rc.3",
+      "source": "lib/client.js",
+      "sha256": "f9915fb53d5f156e75291e63be66c80e607a82bfd03c7d583e0a12ebef5a6cb8",
+      "tokens": [
+        "--dsw-radius-sm",
+        "--dsw-radius-lg",
+        "--dsw-static-neutral-bluish-400",
+        "--dsw-static-blue-450"
+      ]
+    }
+  },
+  "adaptations": [
+    "ES module imports and exports; CSS extracted without selector changes",
+    "ActivityPill requires the persisted sessionStats projection; window-node fallback excluded",
+    "Only consumed dictionary entries retained; host supplies locale and projection adapters",
+    "InputBar root and dock CSS retained; Multica supplies composer side clearance"
+  ]
+}

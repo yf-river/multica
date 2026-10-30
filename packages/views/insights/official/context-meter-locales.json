@@ -1,0 +1,20 @@
+{
+  "zh": {
+    "context.aria": "上下文已用 {percent}",
+    "context.used": "上下文已用",
+    "context.system": "系统提示词",
+    "context.tools": "工具定义",
+    "context.messages": "对话消息",
+    "number.thousand": "{value}K",
+    "number.million": "{value}M"
+  },
+  "en": {
+    "context.aria": "{percent} of context used",
+    "context.used": "of context used",
+    "context.system": "System prompt",
+    "context.tools": "Tool definitions",
+    "context.messages": "Messages",
+    "number.thousand": "{value}K",
+    "number.million": "{value}M"
+  }
+}

@@ -43,3 +43,13 @@ Daemon 在其工作目录下 `.insights` 持久化 JSONL 队列。Server 事务�
 冻结的 Desktop 仍引用旧 Dashboard 及其图表和翻译，因此这些仍有消费者的模块保留；Web 的 usage 路由已经重定向。固定上游的原生字体与 CSS 按原版视觉对照验收，Multica 外层适配继续受设计规则检查。运行包在 dist/third-party 保存原版与官方统计、Zod、Schemastery 的许可证与来源。
 
 洞察偏好提供跟随 Multica、中文和英文显示；费用沿用原版按语言选择人民币或美元的规则。Multica 外层导航使用平台现有语言。图片验证使用原生 DSH 与明确标识的本地模型夹具，覆盖原生图片引用、原件校验、可靠上报和有权限的下载；CodeBuddy DSH 适配器目前将模型声明为纯文本，不把 PNG 解析或文字描述当成视觉模型验收。
+
+## 原生界面适配边界
+
+聊天与任务复用完整 Context 页面；任务在右侧属性栏切换，聊天通过现有视图入口切换。实际 DSH 会话由当前关联及 `run` / `insight` 链接定位，子 Agent 跳转同步链接。总览中的会话卡片负责完整累计口径，Context 展示一个实际会话。
+
+统计偏好由原版 Overview 的设置入口打开，复用固定基线的 SettingsCard 展示字段、选项和默认值，仅保留统计视图分组与 Multica 语言适配。原版页面样式只对真实 body 选择器隔离作用域，其他选择器及规则与基线一致。
+
+底栏复用官方 chat 的 ActivityPill、UsagePill，以及 conversation 的 ContextMeter。三项分别打开原版明细；无统计或容量时遵循官方隐藏规则。源码片段、原版 CSS、字典、来源散列及许可证位于 `packages/views/insights/official`，运行不读取本机 DSH 安装目录。适配层将持久化会话统计与分离计费桶提供给官方组件。
+
+原版视觉验收在独立文档中加载 vendor 的原始 CSS；共享的仅为宿主字体、颜色及通用 utility 样式，不使用移植后的洞察 CSS 作为参照。原版排除的推广、插件更新及插槽配置仍遵循固定范围。

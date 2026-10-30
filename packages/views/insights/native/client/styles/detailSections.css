@@ -11,7 +11,7 @@
 .lc-ts-call-state i { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .lc-ts-call-ok { color: var(--dsw-alias-state-success-primary); background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent); }
 .lc-ts-call-err { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); }
-.lc-ts-desc-.multica-insights { margin: 0; padding: 8px 10px; color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto; scrollbar-width: thin; }
+.lc-ts-desc-body { margin: 0; padding: 8px 10px; color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto; scrollbar-width: thin; }
 .lc-ts-lines { counter-reset: lc-line; }
 .lc-ts-line { display: block; position: relative; padding-left: 26px; }
 .lc-ts-line::before { content: counter(lc-line); counter-increment: lc-line; position: absolute; left: 0; width: 20px; padding-right: 6px; text-align: right; color: var(--dsw-alias-label-tertiary); font-size: 11px; user-select: none; }

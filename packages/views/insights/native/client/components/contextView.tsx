@@ -777,8 +777,6 @@ export function makeContextView(
               onCommandPick={hasCommands ? setCommandFocus : undefined}
               onCommandMore={hasCommands ? onCommandMore : undefined}
               onEventsClick={onEventsClick} />
-            <div className="lc-col">
-            </div>
           </div>
         )}
         <div className="lc-cols lc-head">
@@ -862,7 +860,7 @@ export function makeContextView(
 
         <div className="lc-foot">{t('footer')}</div>
 
-        {gate !== null && <p role="alert">{gate.current} / {gate.minimum}</p>}
+        {gate !== null && <div role="alert"><DetailNote state="failed" /></div>}
       </div>
     )
   }

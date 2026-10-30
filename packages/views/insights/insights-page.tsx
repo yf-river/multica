@@ -1,17 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { aggregateInsightSessions } from "@multica/core/insights/aggregate";
-import {
-  billedTokensOf,
-  estimateSessionCost,
-  formatCost,
-} from "@multica/context-insights/cost";
-import { useModelPrices } from "./native-dist/client/modelPrices";
-import { fmt } from "./native-dist/client/format";
-import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -21,9 +13,11 @@ import {
 } from "@multica/ui/components/ui/dialog";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
+import { makePluginConfigCard } from "./native-dist/client/components/settingsCard";
 import { makeContextView } from "./native-dist/client/components/contextView";
 import { makeOverviewPanel } from "./native-dist/client/components/overviewPanel";
 import { makeViewKit } from "./native-dist/client/viewkit";
+import type { SettingsState } from "./native-dist/client/settings";
 import { createContextSettings } from "./native-dist/client/settings";
 import { makeAgentHeads } from "./native-dist/client/agentHeads";
 import { setPageFace } from "./native-dist/client/historyPage";
@@ -65,55 +59,6 @@ function NativeInsights({
   });
   const locale = prefs.data?.language === "en" ? "en" : prefs.data?.language === "zh" ? "zh" : i18n.language.startsWith("zh") ? "zh" : "en";
   const dict = locale === "zh" ? DICT_ZH : DICT_EN;
-  const preferenceNames: Record<string, string> =
-    locale === "zh"
-      ? {
-          language: "显示语言",
-          defaultGranularity: "趋势粒度",
-          defaultTrendMode: "趋势模式",
-          defaultDeltaBase: "增量基准",
-          defaultToolSort: "工具排序",
-          defaultFileSort: "文件排序",
-          defaultDurationCurve: "耗时曲线",
-          overviewAutoSteps: "趋势自动概览阈值",
-          defaultOverviewRange: "总览时间范围",
-        }
-      : {
-          language: "Display language",
-          defaultGranularity: "Trend granularity",
-          defaultTrendMode: "Trend mode",
-          defaultDeltaBase: "Delta base",
-          defaultToolSort: "Tool sorting",
-          defaultFileSort: "File sorting",
-          defaultDurationCurve: "Duration curve",
-          overviewAutoSteps: "Automatic trend overview",
-          defaultOverviewRange: "Overview date range",
-        };
-  const preferenceValues: Record<string, string> =
-    locale === "zh"
-      ? {
-          auto: "跟随 Multica",
-          zh: "简体中文",
-          en: "English",
-          step: "步骤",
-          turn: "轮次",
-          total: "总量",
-          delta: "增量",
-          count: "次数",
-          size: "大小",
-          name: "名称",
-          lines: "行数",
-          latest: "最近",
-          path: "路径",
-          show: "显示",
-          hide: "隐藏",
-          off: "关闭",
-          today: "今天",
-          "7d": "近 7 天",
-          "30d": "近 30 天",
-          all: "全部",
-        }
-      : {auto: "Follow Multica", zh: "简体中文", en: "English"};
   const rangeParam = navigation.searchParams.get("range");
   const routeRange = ["today", "7d", "30d", "all"].includes(rangeParam ?? "")
     ? rangeParam
@@ -131,6 +76,7 @@ function NativeInsights({
       qc.invalidateQueries({ queryKey: ["insights-preferences"] }),
   });
   const [showPrefs, setShowPrefs] = useState(false);
+  const preferencesRef = useRef<HTMLDivElement>(null);
   const all = useMemo(() => list.data?.sessions ?? [], [list.data]);
   const own = useMemo(
     () =>
@@ -141,12 +87,6 @@ function NativeInsights({
       ),
     [all, issueId, chatSessionId],
   );
-  const runs = useQuery({
-    queryKey: ["insights", "runs", issueId, chatSessionId],
-    queryFn: () => api.listContextInsightRuns(issueId, chatSessionId),
-    enabled: Boolean(issueId || chatSessionId),
-    refetchInterval: 5000,
-  });
   const [picked, setPicked] = useState(sessionKey ?? "");
   useEffect(() => setPicked(sessionKey ?? ""), [sessionKey]);
   const selected =
@@ -230,15 +170,6 @@ function NativeInsights({
       representatives,
     };
   }, [all, locale]);
-  const totals = useMemo(() => aggregateInsightSessions(own), [own]);
-  const prices = useModelPrices();
-  const totalCost = totals
-    ? estimateSessionCost(
-        totals.timeline.cost,
-        prices.book,
-        locale === "zh" ? "cny" : "usd",
-      )
-    : null;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const listeners = useRef(new Set<() => void>());
@@ -253,6 +184,9 @@ function NativeInsights({
       if (!s) return;
       if (isContext && own.some((row) => row.id === id)) {
         setPicked(id);
+        const params = new URLSearchParams(navigation.searchParams);
+        params.set("insight", id);
+        navigation.replace(`${navigation.pathname}?${params}${navigation.hash}`);
         return;
       }
       const base = `/${encodeURIComponent(s.workspace_slug)}`;
@@ -339,6 +273,10 @@ function NativeInsights({
       Context: makeContextView(ctx, kit, settings, makeAgentHeads()),
       Overview: makeOverviewPanel(ctx, kit, settings),
       settings,
+      Preferences: makePluginConfigCard(kit),
+      useSettings<T>(selector: (state: SettingsState) => T): T {
+        return selector(useSyncExternalStore(settings.store.subscribe, settings.store.getSnapshot, settings.store.getSnapshot));
+      },
     };
   }, [locale, dict, attachments]);
   useEffect(() => {
@@ -381,7 +319,6 @@ function NativeInsights({
   const failure =
     list.error ??
     detail.error ??
-    runs.error ??
     prefs.error ??
     updatePrefs.error;
   return (
@@ -397,7 +334,14 @@ function NativeInsights({
           {failure.message}
         </p>
       ) : null}
-      <Dialog open={showPrefs} onOpenChange={setShowPrefs}>
+      <Dialog open={showPrefs} onOpenChange={(open, details) => {
+        // 原版菜单自行处理 Escape，外层偏好弹窗只关闭最上层。
+        if (!open && details.reason === "escape-key" && (details.event.defaultPrevented || preferencesRef.current?.querySelector('[aria-haspopup="menu"][aria-expanded="true"]'))) {
+          details.cancel();
+          return;
+        }
+        setShowPrefs(open);
+      }}>
         <DialogContent className="max-h-[85svh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
@@ -409,104 +353,21 @@ function NativeInsights({
                 : "Default display preferences for charts and overview"}
             </DialogDescription>
           </DialogHeader>
-          {Object.entries({
-            language: ["auto", "zh", "en"],
-            defaultGranularity: ["step", "turn"],
-            defaultTrendMode: ["total", "delta"],
-            defaultDeltaBase: ["step", "turn"],
-            defaultToolSort: ["count", "size", "name"],
-            defaultFileSort: ["lines", "count", "latest", "path", "name"],
-            defaultDurationCurve: ["show", "hide"],
-            overviewAutoSteps: ["100", "200", "300", "off"],
-            defaultOverviewRange: ["30d", "today", "7d", "all"],
-          }).map(([field, options]) => (
-            <label
-              key={field}
-              className="mb-3 flex flex-wrap items-center gap-3 text-body"
-            >
-              <span>{preferenceNames[field]}</span>
-              <select
-                aria-label={preferenceNames[field]}
-                value={prefs.data?.[field] ?? options[0]}
-                onChange={(e) =>
-                  updatePrefs.mutate({ ...prefs.data, [field]: e.target.value })
-                }
-                className="rounded border bg-background p-2"
-              >
-                {options.map((option) => (
-                  <option key={option} value={option}>
-                    {preferenceValues[option] ?? option}
-                  </option>
-                ))}
+          <div className="multica-insights" ref={preferencesRef}>
+            <label className="lc-settings-row">
+              <span className="lc-settings-label">{locale === "zh" ? "显示语言" : "Display language"}</span>
+              <select value={prefs.data?.language ?? "auto"} onChange={(event) => updatePrefs.mutate({ ...prefs.data, language: event.target.value })}>
+                <option value="auto">{locale === "zh" ? "跟随 Multica" : "Follow Multica"}</option>
+                <option value="zh">{"简体中文"}</option>
+                <option value="en">{"English"}</option>
               </select>
             </label>
-          ))}
-          <Button onClick={() => setShowPrefs(false)}>
-            {locale === "zh" ? "确定" : "Done"}
-          </Button>
+            <host.Preferences useContextSettings={host.useSettings} set={host.settings.set} />
+          </div>
         </DialogContent>
       </Dialog>
       {isContext ? (
         <div className="flex h-full min-h-0 flex-col">
-          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b p-2 text-caption">
-            <select
-              aria-label={locale === "zh" ? "DSH 会话" : "DSH session"}
-              value={selected?.id ?? ""}
-              onChange={(e) => {
-                setPicked(e.target.value);
-                const params = new URLSearchParams(navigation.searchParams);
-                params.set("insight", e.target.value);
-                navigation.replace(
-                  `${navigation.pathname}?${params}${navigation.hash}`,
-                );
-              }}
-              className="min-w-0 max-w-full rounded border bg-background p-2"
-            >
-              {own.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.session_id}
-                  {s.parent_session_id ? " · child" : ""}
-                </option>
-              ))}
-            </select>
-            <Button variant="ghost" onClick={() => setShowPrefs(true)}>
-              {locale === "zh" ? "偏好" : "Preferences"}
-            </Button>
-            {totals ? (
-              <span className="ml-auto tabular-nums">
-                {locale === "zh" ? "累计" : "Total"}{" "}
-                {fmt(billedTokensOf(totals.timeline.cost))} ·{" "}
-                {totalCost !== null
-                  ? formatCost(totalCost, locale === "zh" ? "cny" : "usd")
-                  : "—"}
-              </span>
-            ) : null}
-            <select
-              aria-label={locale === "zh" ? "单次运行" : "Run"}
-              value={taskId ?? ""}
-              onChange={(event) => {
-                const params = new URLSearchParams(navigation.searchParams);
-                params.delete("insight");
-                setPicked("");
-                if (event.target.value) params.set("run", event.target.value);
-                else params.delete("run");
-                navigation.replace(
-                  `${navigation.pathname}?${params}${navigation.hash}`,
-                );
-              }}
-              className="max-w-full rounded border bg-background p-2"
-            >
-              <option value="">
-                {locale === "zh" ? "全部运行" : "All runs"}
-              </option>
-              {runs.data?.runs.map((run) => (
-                <option key={run.id} value={run.id}>
-                  {run.provider} · {new Date(run.started_at).toLocaleString()} ·{" "}
-                  {run.status}
-                </option>
-              ))}
-            </select>
-          </div>
           {taskId && !own.some((s) => s.run_ids?.includes(taskId)) ? (
             <p className="p-4 text-body text-muted-foreground">
               {locale === "zh"
